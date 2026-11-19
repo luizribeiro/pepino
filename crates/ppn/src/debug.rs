@@ -1,4 +1,7 @@
+use std::path::PathBuf;
+
 use ppn::error::{CliError, ErrorKind};
+use ppn::input::read_text;
 use ppn::output::{CommandResult, Render};
 use ppn::terminal::Terminal;
 use serde::Serialize;
@@ -15,6 +18,16 @@ pub enum Command {
     /// Exercise confirmation handling.
     #[command(after_help = "Examples:\n  ppn debug confirm --yes")]
     Confirm,
+    /// Read text from the command line, stdin, or a file.
+    #[command(after_help = "Examples:\n  ppn debug input --from-file release-notes.txt")]
+    Input {
+        /// Text or - to read stdin.
+        #[arg(value_name = "TEXT")]
+        value: Option<String>,
+        /// Read text from a file.
+        #[arg(long, conflicts_with = "value")]
+        from_file: Option<PathBuf>,
+    },
 }
 
 pub fn run(command: Command, terminal: &Terminal) -> Result<CommandResult, CliError> {
@@ -24,6 +37,10 @@ pub fn run(command: Command, terminal: &Terminal) -> Result<CommandResult, CliEr
         Command::Confirm => {
             let confirmed = terminal.confirm("Archive the release board?")?;
             Ok(CommandResult::document(Confirmation { confirmed }))
+        }
+        Command::Input { value, from_file } => {
+            let text = read_text(value, from_file.as_deref())?;
+            Ok(CommandResult::document(Text { text }))
         }
     }
 }
@@ -41,5 +58,16 @@ impl Render for Confirmation {
             "Declined"
         }
         .into()
+    }
+}
+
+#[derive(Serialize)]
+struct Text {
+    text: String,
+}
+
+impl Render for Text {
+    fn human(&self, _: &Terminal) -> String {
+        self.text.clone()
     }
 }

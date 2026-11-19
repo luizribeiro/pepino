@@ -1,0 +1,2 @@
+Ship the release notes.
+Coordinate with José before announcing.

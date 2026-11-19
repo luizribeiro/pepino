@@ -217,3 +217,54 @@ fn noninteractive_confirmation_requires_yes() {
         serde_json::from_str(&run_ppn(&["--yes", "debug", "confirm", "--json"])).unwrap();
     assert_eq!(json, serde_json::json!({"schema": 1, "confirmed": true}));
 }
+
+#[test]
+fn reads_text_from_an_argument_stdin_or_a_file() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let text = include_str!("fixtures/release-notes.txt");
+    assert_eq!(run_ppn(&["debug", "input", text]), text);
+    assert_eq!(run_ppn(&["debug", "input", "--", "--json"]), "--json\n");
+
+    let mut child = ppn()
+        .args(["debug", "input", "-", "--json"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(text.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/release-notes.txt"
+    );
+    let file_output = run_ppn(&["debug", "input", "--from-file", path, "--json"]);
+    assert_eq!(output.stdout, file_output.as_bytes());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&file_output).unwrap(),
+        serde_json::json!({"schema": 1, "text": text})
+    );
+
+    let output = ppn()
+        .args(["debug", "input", "--from-file", path, text, "--json"])
+        .output()
+        .unwrap();
+    assert_json_error(output, 2, "usage");
+
+    let missing = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/missing.txt");
+    let output = ppn()
+        .args(["debug", "input", "--from-file", missing, "--json"])
+        .output()
+        .unwrap();
+    assert_json_error(output, 3, "not_found");
+}
