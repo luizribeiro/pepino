@@ -4,6 +4,7 @@ mod lex;
 
 use std::fmt;
 
+pub use chrono::NaiveDate as Date;
 use thiserror::Error;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -62,7 +63,13 @@ impl State {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Comparison {
     pub operator: Operator,
-    pub value: String,
+    pub value: Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Value {
+    Text(String),
+    Date(Date),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -132,6 +139,8 @@ pub enum ErrorKind {
     UnknownState { value: String },
     #[error("unsupported presence field {field:?}; use due, parent, assignee, or a custom field")]
     UnsupportedPresence { field: String },
+    #[error("invalid date {value:?}; use a calendar date such as 2026-12-01")]
+    InvalidDate { value: String },
 }
 
 pub fn parse(input: &str) -> Result<Filter, ParseError> {
@@ -189,7 +198,15 @@ fn parse_keyed(key: String, raw: &str) -> Result<Clause, ErrorKind> {
             .map(Clause::Has),
         _ => {
             let alternatives = operands
-                .map(|item| item.map(|(operator, value)| Comparison { operator, value }))
+                .map(|item| {
+                    let (operator, value) = item?;
+                    let value = if field == FieldKind::Date {
+                        Value::Date(parse_date(value)?)
+                    } else {
+                        Value::Text(value)
+                    };
+                    Ok(Comparison { operator, value })
+                })
                 .collect::<Result<_, _>>()?;
             Ok(Clause::Match { key, alternatives })
         }
@@ -246,6 +263,14 @@ fn parse_operand(key: &str, field: FieldKind, raw: &str) -> Result<(Operator, St
     Ok((operator, value))
 }
 
+fn parse_date(value: String) -> Result<Date, ErrorKind> {
+    value
+        .parse::<Date>()
+        .ok()
+        .filter(|date| date.to_string() == value)
+        .ok_or(ErrorKind::InvalidDate { value })
+}
+
 fn decode_required(raw: &str, empty: ErrorKind) -> Result<String, ErrorKind> {
     let value = lex::decode(raw)?;
     if value.is_empty() {
@@ -296,7 +321,7 @@ mod tests {
                 alternatives: ["garden", "needs review", "tools, seeds"]
                     .map(|value| Comparison {
                         operator: Operator::Eq,
-                        value: value.into(),
+                        value: Value::Text(value.into()),
                     })
                     .into(),
             }
@@ -306,6 +331,36 @@ mod tests {
         assert_eq!(
             parse_argv(&["tag:needs review"]),
             parse(r#"tag:"needs review""#)
+        );
+    }
+
+    #[test]
+    fn calendar_dates_are_typed_and_validated() {
+        let filter = parse("due:2026-12-01 created:>=2024-02-29 updated:<2027-01-01").unwrap();
+        let expected = [
+            ("due", Operator::Eq, "2026-12-01"),
+            ("created", Operator::Ge, "2024-02-29"),
+            ("updated", Operator::Lt, "2027-01-01"),
+        ];
+        for (term, (key, operator, date)) in filter.terms().iter().zip(expected) {
+            assert_eq!(
+                term.clause,
+                Clause::Match {
+                    key: key.into(),
+                    alternatives: vec![Comparison {
+                        operator,
+                        value: Value::Date(date.parse().unwrap())
+                    }],
+                }
+            );
+        }
+        let error = parse("tag:garden due:2026-02-29").unwrap_err();
+        assert_eq!(error.term, "due:2026-02-29");
+        assert_eq!(
+            error.kind,
+            ErrorKind::InvalidDate {
+                value: "2026-02-29".into()
+            }
         );
     }
 
@@ -380,7 +435,7 @@ mod tests {
                 panic!("expected match");
             };
             assert_eq!(key, name);
-            assert_eq!(alternatives[0].value, value);
+            assert_eq!(alternatives[0].value, Value::Text(value.into()));
         }
 
         let error = parse("tag:garden status:todo,in-progress").unwrap_err();
@@ -412,11 +467,14 @@ mod tests {
                 panic!("expected match");
             };
             assert_eq!(
-                alternatives
+                alternatives,
+                &pairs
                     .iter()
-                    .map(|c| (c.operator, c.value.as_str()))
-                    .collect::<Vec<_>>(),
-                pairs
+                    .map(|&(operator, value)| Comparison {
+                        operator,
+                        value: Value::Text(value.into()),
+                    })
+                    .collect::<Vec<_>>()
             );
         }
         let error = parse("garden -tag:>=seeds").unwrap_err();
