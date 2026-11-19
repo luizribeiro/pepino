@@ -28,6 +28,12 @@ macro_rules! define_events {
         }
 
         impl Event {
+            pub const fn kind(&self) -> &'static str {
+                match self {
+                    $(Self::$variant { .. } => $tag),+
+                }
+            }
+
             pub(crate) fn knows_variant(tag: &str) -> bool {
                 matches!(tag, $($tag)|+)
             }
@@ -84,6 +90,21 @@ pub enum InvalidEvent {
 }
 
 impl Event {
+    /// Returns the target task. For edges, this is the source task.
+    pub const fn task(&self) -> Option<TaskId> {
+        match self {
+            Self::TaskCreated { .. } => None,
+            Self::TaskFieldSet { task, .. }
+            | Self::TagAdded { task, .. }
+            | Self::TagRemoved { task, .. }
+            | Self::AssigneeAdded { task, .. }
+            | Self::AssigneeRemoved { task, .. }
+            | Self::CommentAdded { task, .. }
+            | Self::TaskDeleted { task } => Some(*task),
+            Self::EdgeAdded { from, .. } | Self::EdgeRemoved { from, .. } => Some(*from),
+        }
+    }
+
     pub fn validate(&self) -> Result<(), InvalidEvent> {
         match self {
             Self::TaskCreated { title, fields } => {

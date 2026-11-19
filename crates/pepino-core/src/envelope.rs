@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
 use crate::{
-    DeviceId, Event, EventId, Hlc, InvalidEvent, UnknownValue,
+    DeviceId, Event, EventId, Hlc, InvalidEvent, TaskId, UnknownValue,
     future_value::substitute_unknown_values,
 };
 
@@ -134,6 +134,13 @@ impl Envelope {
     /// The supplied ID is not checked against the bytes.
     pub fn decode_with_id(id: EventId, bytes: &[u8]) -> Result<DecodeOutcome, DecodeError> {
         decode_content(bytes, Some(id))
+    }
+
+    pub const fn created_task(&self) -> Option<TaskId> {
+        match self.event {
+            Event::TaskCreated { .. } => Some(TaskId(self.id)),
+            _ => None,
+        }
     }
 
     pub const fn order_key(&self) -> (Hlc, EventId) {
@@ -265,7 +272,6 @@ fn has_duplicate_fields(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TaskId;
 
     #[test]
     fn content_id_tracks_only_signed_content() {

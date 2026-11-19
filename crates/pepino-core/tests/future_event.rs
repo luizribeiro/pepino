@@ -167,8 +167,20 @@ fn event_superset_preserves_known_encodings() {
             Event::TaskDeleted { task },
         ),
     ] {
+        let tagged = serde_json::to_value(&future).unwrap();
+        assert!(tagged.get(known.kind()).is_some());
+        let target = if matches!(known, Event::TaskCreated { .. }) {
+            None
+        } else {
+            Some(task)
+        };
+        assert_eq!(known.task(), target);
         let bytes = encode(future);
         let expected = Envelope::new(author, hlc, known).unwrap();
+        assert_eq!(
+            expected.created_task(),
+            target.is_none().then_some(TaskId(expected.id))
+        );
         assert_eq!(
             Envelope::decode(&bytes).unwrap(),
             DecodeOutcome::Known(expected)

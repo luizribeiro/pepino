@@ -18,6 +18,7 @@ fn round_trips_task_creation_with_local_or_external_id() {
     };
     let local = Envelope::new(author, hlc, event.clone()).unwrap();
     let external = Envelope::with_id(EventId::from_bytes([19; 32]), author, hlc, event);
+    assert_eq!(external.created_task(), Some(TaskId(external.id)));
     let encoded = local.encode().unwrap();
     assert_eq!(
         Envelope::decode(&encoded).unwrap(),
