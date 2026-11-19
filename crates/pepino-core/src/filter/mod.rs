@@ -1,6 +1,7 @@
 //! Parse task listing filters.
 
 mod date;
+mod display;
 mod lex;
 
 use std::fmt;
@@ -83,16 +84,21 @@ pub enum Operator {
 }
 
 impl Operator {
+    fn symbol(self) -> &'static str {
+        match self {
+            Self::Eq => "",
+            Self::Lt => "<",
+            Self::Le => "<=",
+            Self::Gt => ">",
+            Self::Ge => ">=",
+        }
+    }
+
     fn split(raw: &str) -> (Self, &str) {
-        [
-            (Self::Le, "<="),
-            (Self::Ge, ">="),
-            (Self::Lt, "<"),
-            (Self::Gt, ">"),
-        ]
-        .into_iter()
-        .find_map(|(op, prefix)| raw.strip_prefix(prefix).map(|value| (op, value)))
-        .unwrap_or((Self::Eq, raw))
+        [Self::Le, Self::Ge, Self::Lt, Self::Gt]
+            .into_iter()
+            .find_map(|op| raw.strip_prefix(op.symbol()).map(|value| (op, value)))
+            .unwrap_or((Self::Eq, raw))
     }
 }
 
@@ -300,6 +306,34 @@ mod tests {
 
     fn parse_argv<S: AsRef<str>>(argv: &[S]) -> Result<Filter, ParseError> {
         super::parse_argv(argv, today())
+    }
+
+    #[test]
+    fn mixed_filter_has_one_canonical_spelling() {
+        let input = r#" tag:garden  status:todo assignee:me due:<fri -tag:someday "fix the fence" -@"Weekend backlog" -has:parent is:blocked,ready effort:">threshold",>=5 "#;
+        let argv = [
+            "tag:garden",
+            "status:todo",
+            "assignee:me",
+            "due:<fri",
+            "-tag:someday",
+            "fix the fence",
+            "-@Weekend backlog",
+            "-has:parent",
+            "is:blocked,ready",
+            r#"effort:">threshold",>=5"#,
+        ];
+        let expected = input
+            .split("  ")
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .replace("<fri", "<2026-11-20");
+        let filter = parse(input).unwrap();
+        assert_eq!(parse_argv(&argv).unwrap(), filter);
+        assert_eq!(filter.to_string(), expected);
+        assert_eq!(super::parse(&expected, Date::MAX).unwrap(), filter);
+        assert_eq!(Filter::default().to_string(), "");
     }
 
     #[test]
