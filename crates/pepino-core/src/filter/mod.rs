@@ -95,6 +95,8 @@ pub enum ErrorKind {
     EmptyValue,
     #[error("comparisons are unavailable for {key:?}; use {key}:value for equality")]
     UnsupportedComparison { key: String },
+    #[error("unknown status {value:?}; use todo, doing, done, or cancelled")]
+    UnknownStatus { value: String },
 }
 
 pub fn parse(input: &str) -> Result<Filter, ParseError> {
@@ -130,32 +132,52 @@ fn parse_term(raw: &str, position: Position) -> Result<Term, ParseError> {
 fn parse_clause(body: &str) -> Result<Clause, ErrorKind> {
     if let Some((key, values)) = lex::split_once(body, ':') {
         let key = decode_required(key, ErrorKind::EmptyKey)?;
+        let field = FieldKind::of(&key);
         let alternatives = lex::split(values, ',')
-            .map(|value| parse_comparison(&key, value))
+            .map(|value| parse_comparison(&key, field, value))
             .collect::<Result<_, _>>()?;
         return Ok(Clause::Match { key, alternatives });
     }
     decode_required(body, ErrorKind::EmptyTerm).map(Clause::Text)
 }
 
-fn parse_comparison(key: &str, raw: &str) -> Result<Comparison, ErrorKind> {
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum FieldKind {
+    Exact,
+    Status,
+    Date,
+    Priority,
+    Predicate,
+    Custom,
+}
+
+impl FieldKind {
+    fn of(key: &str) -> Self {
+        match key {
+            "tag" | "assignee" | "board" | "parent" | "blocks" | "blocked-by" => Self::Exact,
+            "status" => Self::Status,
+            "due" | "created" | "updated" => Self::Date,
+            "priority" => Self::Priority,
+            "is" | "has" => Self::Predicate,
+            _ => Self::Custom,
+        }
+    }
+
+    fn supports_comparison(self) -> bool {
+        matches!(self, Self::Date | Self::Priority | Self::Custom)
+    }
+}
+
+fn parse_comparison(key: &str, field: FieldKind, raw: &str) -> Result<Comparison, ErrorKind> {
     let (operator, raw) = Operator::split(raw);
     let value = decode_required(raw, ErrorKind::EmptyValue)?;
-    if operator != Operator::Eq
-        && matches!(
-            key,
-            "tag"
-                | "status"
-                | "assignee"
-                | "board"
-                | "parent"
-                | "blocks"
-                | "blocked-by"
-                | "is"
-                | "has"
-        )
-    {
+    if operator != Operator::Eq && !field.supports_comparison() {
         return Err(ErrorKind::UnsupportedComparison { key: key.into() });
+    }
+    if field == FieldKind::Status
+        && !matches!(value.as_str(), "todo" | "doing" | "done" | "cancelled")
+    {
+        return Err(ErrorKind::UnknownStatus { value });
     }
     Ok(Comparison { operator, value })
 }
@@ -220,6 +242,39 @@ mod tests {
         assert_eq!(
             parse_argv(&["tag:needs review"]),
             parse(r#"tag:"needs review""#)
+        );
+    }
+
+    #[test]
+    fn built_in_field_matches_preserve_symbolic_values() {
+        let filter = parse("board:garden parent:ab12 blocks:cd34 blocked-by:ef56 assignee:me status:todo,doing,done,cancelled").unwrap();
+        for (term, (name, value)) in filter.terms().iter().zip([
+            ("board", "garden"),
+            ("parent", "ab12"),
+            ("blocks", "cd34"),
+            ("blocked-by", "ef56"),
+            ("assignee", "me"),
+            ("status", "todo"),
+        ]) {
+            let Clause::Match { key, alternatives } = &term.clause else {
+                panic!("expected match");
+            };
+            assert_eq!(key, name);
+            assert_eq!(alternatives[0].value, value);
+        }
+
+        let error = parse("tag:garden status:todo,in-progress").unwrap_err();
+        assert_eq!(error.term, "status:todo,in-progress");
+        assert_eq!(
+            error.kind,
+            ErrorKind::UnknownStatus {
+                value: "in-progress".into()
+            }
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("todo, doing, done, or cancelled")
         );
     }
 
