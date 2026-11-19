@@ -28,3 +28,16 @@ fn prints_help() {
     assert!(help.contains("--help"));
     assert!(help.contains("--version"));
 }
+
+#[test]
+fn unknown_argument_is_a_usage_error() {
+    let output = Command::new(env!("CARGO_BIN_EXE_ppn"))
+        .arg("--unrecognized")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.starts_with("error: unexpected argument '--unrecognized'"));
+    assert!(!stderr.contains('\x1b'));
+}
