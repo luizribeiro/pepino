@@ -24,7 +24,39 @@ pub struct Term {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Clause {
     Text(String),
-    Match { key: String, values: Vec<String> },
+    Match {
+        key: String,
+        alternatives: Vec<Comparison>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Comparison {
+    pub operator: Operator,
+    pub value: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Operator {
+    Eq,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl Operator {
+    fn split(raw: &str) -> (Self, &str) {
+        [
+            (Self::Le, "<="),
+            (Self::Ge, ">="),
+            (Self::Lt, "<"),
+            (Self::Gt, ">"),
+        ]
+        .into_iter()
+        .find_map(|(op, prefix)| raw.strip_prefix(prefix).map(|value| (op, value)))
+        .unwrap_or((Self::Eq, raw))
+    }
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -61,6 +93,8 @@ pub enum ErrorKind {
     EmptyKey,
     #[error("empty value; supply a value for each alternative")]
     EmptyValue,
+    #[error("comparisons are unavailable for {key:?}; use {key}:value for equality")]
+    UnsupportedComparison { key: String },
 }
 
 pub fn parse(input: &str) -> Result<Filter, ParseError> {
@@ -96,12 +130,34 @@ fn parse_term(raw: &str, position: Position) -> Result<Term, ParseError> {
 fn parse_clause(body: &str) -> Result<Clause, ErrorKind> {
     if let Some((key, values)) = lex::split_once(body, ':') {
         let key = decode_required(key, ErrorKind::EmptyKey)?;
-        let values = lex::split(values, ',')
-            .map(|value| decode_required(value, ErrorKind::EmptyValue))
+        let alternatives = lex::split(values, ',')
+            .map(|value| parse_comparison(&key, value))
             .collect::<Result<_, _>>()?;
-        return Ok(Clause::Match { key, values });
+        return Ok(Clause::Match { key, alternatives });
     }
     decode_required(body, ErrorKind::EmptyTerm).map(Clause::Text)
+}
+
+fn parse_comparison(key: &str, raw: &str) -> Result<Comparison, ErrorKind> {
+    let (operator, raw) = Operator::split(raw);
+    let value = decode_required(raw, ErrorKind::EmptyValue)?;
+    if operator != Operator::Eq
+        && matches!(
+            key,
+            "tag"
+                | "status"
+                | "assignee"
+                | "board"
+                | "parent"
+                | "blocks"
+                | "blocked-by"
+                | "is"
+                | "has"
+        )
+    {
+        return Err(ErrorKind::UnsupportedComparison { key: key.into() });
+    }
+    Ok(Comparison { operator, value })
 }
 
 fn decode_required(raw: &str, empty: ErrorKind) -> Result<String, ErrorKind> {
@@ -151,8 +207,11 @@ mod tests {
             filter.terms()[0].clause,
             Clause::Match {
                 key: "tag".into(),
-                values: ["garden", "needs review", "tools, seeds"]
-                    .map(String::from)
+                alternatives: ["garden", "needs review", "tools, seeds"]
+                    .map(|value| Comparison {
+                        operator: Operator::Eq,
+                        value: value.into(),
+                    })
                     .into(),
             }
         );
@@ -161,6 +220,40 @@ mod tests {
         assert_eq!(
             parse_argv(&["tag:needs review"]),
             parse(r#"tag:"needs review""#)
+        );
+    }
+
+    #[test]
+    fn comparison_operators_apply_to_each_alternative() {
+        use Operator::*;
+        let filter = parse(r#"priority:>=2,<4 effort:<=8,>12 tag:">gate""#).unwrap();
+        let expected = [
+            [(Ge, "2"), (Lt, "4")].as_slice(),
+            &[(Le, "8"), (Gt, "12")],
+            &[(Eq, ">gate")],
+        ];
+        for (term, pairs) in filter.terms().iter().zip(expected) {
+            let Clause::Match { alternatives, .. } = &term.clause else {
+                panic!("expected match");
+            };
+            assert_eq!(
+                alternatives
+                    .iter()
+                    .map(|c| (c.operator, c.value.as_str()))
+                    .collect::<Vec<_>>(),
+                pairs
+            );
+        }
+        let error = parse("garden -tag:>=seeds").unwrap_err();
+        assert_eq!(error.term, "-tag:>=seeds");
+        assert_eq!(error.position, Position::Byte(7));
+        assert_eq!(
+            error.kind,
+            ErrorKind::UnsupportedComparison { key: "tag".into() }
+        );
+        assert_eq!(
+            parse("priority:>=").unwrap_err().kind,
+            ErrorKind::EmptyValue
         );
     }
 
