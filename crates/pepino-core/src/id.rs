@@ -1,6 +1,7 @@
 use std::{fmt, marker::PhantomData, str::FromStr};
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent, bound = "")]
@@ -28,12 +29,27 @@ impl<Kind> fmt::Display for Id<Kind> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum ParseIdError {
+    #[error("expected 64 hexadecimal digits")]
+    InvalidLength,
+    #[error("invalid hexadecimal digit at byte {index}")]
+    InvalidDigit { index: usize },
+}
+
 impl<Kind> FromStr for Id<Kind> {
-    type Err = hex::FromHexError;
+    type Err = ParseIdError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         let mut bytes = [0; 32];
-        hex::decode_to_slice(text, &mut bytes)?;
+        hex::decode_to_slice(text, &mut bytes).map_err(|err| match err {
+            hex::FromHexError::InvalidHexCharacter { index, .. } => {
+                ParseIdError::InvalidDigit { index }
+            }
+            hex::FromHexError::OddLength | hex::FromHexError::InvalidStringLength => {
+                ParseIdError::InvalidLength
+            }
+        })?;
         Ok(Self::from_bytes(bytes))
     }
 }
@@ -87,8 +103,18 @@ mod tests {
 
     #[test]
     fn rejects_malformed_ids() {
-        assert!("8a4b507f".parse::<EventId>().is_err());
-        assert!("gg".repeat(32).parse::<DeviceId>().is_err());
+        assert_eq!(
+            "8a4b507f".parse::<EventId>(),
+            Err(ParseIdError::InvalidLength)
+        );
+        assert_eq!(
+            ("ab".repeat(31) + "cf!").parse::<DeviceId>(),
+            Err(ParseIdError::InvalidLength)
+        );
+        assert_eq!(
+            ("ab".repeat(31) + "c!").parse::<DeviceId>(),
+            Err(ParseIdError::InvalidDigit { index: 63 })
+        );
         assert!(serde_json::from_str::<IdentityId>("[138,75,80,127]").is_err());
     }
 }

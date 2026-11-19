@@ -12,4 +12,6 @@ pub use envelope::{
 pub use event::{Event, InitialFields, InvalidEvent};
 pub use field::{Date, EdgeKind, FieldName, FieldValue, InvalidFieldName, Status};
 pub use future_value::UnknownValue;
-pub use id::{DeviceId, DeviceKind, EventId, EventKind, Id, IdentityId, IdentityKind, TaskId};
+pub use id::{
+    DeviceId, DeviceKind, EventId, EventKind, Id, IdentityId, IdentityKind, ParseIdError, TaskId,
+};
