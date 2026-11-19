@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use ciborium::Value;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
 use crate::{DeviceId, Event, EventId, Hlc};
@@ -39,8 +39,16 @@ pub enum DecodeError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DecodeOutcome {
     Known(Envelope),
-    UnknownVersion { version: u64 },
-    UnknownEvent { variant: String },
+    UnknownVersion {
+        version: u64,
+        id: EventId,
+        author: Option<DeviceId>,
+        hlc: Option<Hlc>,
+        bytes: Vec<u8>,
+    },
+    UnknownEvent {
+        variant: String,
+    },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -112,13 +120,23 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
     let Value::Array(frame) = frame else {
         return Err(DecodeError::InvalidFrame);
     };
-    let [Value::Integer(version), content] = frame.as_slice() else {
+    let Some(Value::Integer(version)) = frame.first() else {
         return Err(DecodeError::InvalidFrame);
     };
     let version = u64::try_from(*version).map_err(|_| DecodeError::InvalidFrame)?;
+    let id = id.unwrap_or_else(|| EventId::hash_content_bytes(bytes));
     if version != VERSION {
-        return Ok(DecodeOutcome::UnknownVersion { version });
+        return Ok(DecodeOutcome::UnknownVersion {
+            version,
+            id,
+            author: future_metadata(frame.get(1), "author"),
+            hlc: future_metadata(frame.get(1), "hlc"),
+            bytes: bytes.to_vec(),
+        });
     }
+    let [_, content] = frame.as_slice() else {
+        return Err(DecodeError::InvalidFrame);
+    };
 
     let Content { author, hlc, event }: Content<Value> = content
         .deserialized()
@@ -143,10 +161,21 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
     if canonical != bytes {
         return Err(DecodeError::NonCanonical);
     }
-    let id = id.unwrap_or_else(|| EventId::hash_content_bytes(bytes));
     Ok(DecodeOutcome::Known(Envelope::with_id(
         id, author, hlc, event,
     )))
+}
+
+fn future_metadata<T: DeserializeOwned>(content: Option<&Value>, name: &str) -> Option<T> {
+    let mut matches = content?
+        .as_map()?
+        .iter()
+        .filter(|(key, _)| key.as_text() == Some(name));
+    let (_, value) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    value.deserialized().ok()
 }
 
 fn content_error(value: &Value, error: DecodeError) -> DecodeError {

@@ -32,10 +32,16 @@ fn round_trips_task_creation_with_local_or_external_id() {
 #[test]
 fn unknown_version_still_requires_a_complete_frame() {
     let mut bytes = Vec::new();
-    ciborium::into_writer(&(2, "future content format"), &mut bytes).unwrap();
+    ciborium::into_writer(&(2, "future content format", true), &mut bytes).unwrap();
     assert_eq!(
         Envelope::decode(&bytes).unwrap(),
-        DecodeOutcome::UnknownVersion { version: 2 }
+        DecodeOutcome::UnknownVersion {
+            version: 2,
+            id: EventId::from_bytes(*blake3::hash(&bytes).as_bytes()),
+            author: None,
+            hlc: None,
+            bytes: bytes.clone(),
+        }
     );
     assert!(matches!(
         Envelope::decode(&bytes[..bytes.len() - 1]),
@@ -45,6 +51,39 @@ fn unknown_version_still_requires_a_complete_frame() {
     assert!(matches!(
         Envelope::decode(&bytes),
         Err(DecodeError::TrailingData)
+    ));
+}
+
+#[test]
+fn future_frames_preserve_metadata_when_available() {
+    let id = EventId::from_bytes([81; 32]);
+    let author = DeviceId::from_bytes([12; 32]);
+    let hlc = Hlc {
+        wall_ms: 45,
+        counter: 2,
+    };
+    let content = ciborium::Value::Map(vec![
+        (
+            "author".into(),
+            ciborium::Value::serialized(&author).unwrap(),
+        ),
+        ("hlc".into(), ciborium::Value::serialized(&hlc).unwrap()),
+    ]);
+    let mut bytes = Vec::new();
+    ciborium::into_writer(&(12, content, "future payload"), &mut bytes).unwrap();
+    assert_eq!(
+        Envelope::decode_with_id(id, &bytes).unwrap(),
+        DecodeOutcome::UnknownVersion {
+            version: 12,
+            id,
+            author: Some(author),
+            hlc: Some(hlc),
+            bytes,
+        }
+    );
+    assert!(matches!(
+        Envelope::decode(&[0x81, 2]),
+        Ok(DecodeOutcome::UnknownVersion { version: 2, .. })
     ));
 }
 
