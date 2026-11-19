@@ -9,7 +9,8 @@ use serde::Serialize;
 struct Help {
     #[serde(flatten)]
     command: CommandInfo,
-    exit_codes: [ExitStatus; 7],
+    exit_codes: Vec<ExitStatus>,
+    error_codes: Vec<ErrorCode>,
     #[serde(skip)]
     text: StyledStr,
 }
@@ -18,6 +19,27 @@ struct Help {
 struct ExitStatus {
     status: u8,
     code: &'static str,
+}
+
+#[derive(Serialize)]
+struct ErrorCode {
+    code: &'static str,
+    status: u8,
+    meaning: &'static str,
+}
+
+fn exit_codes() -> Vec<ExitStatus> {
+    let mut codes = vec![ExitStatus {
+        status: 0,
+        code: "ok",
+    }];
+    codes.extend(ErrorKind::all().iter().map(|kind| ExitStatus {
+        status: kind.status(),
+        code: kind.code(),
+    }));
+    codes.sort_by_key(|entry| entry.status);
+    codes.dedup_by_key(|entry| entry.status);
+    codes
 }
 
 impl Render for Help {
@@ -38,28 +60,17 @@ pub fn run(mut command: Command, help_text: Option<StyledStr>) -> CommandResult 
             _ => command.render_help(),
         }
     });
-    let exit_codes = [
-        None,
-        Some(ErrorKind::Failure),
-        Some(ErrorKind::Usage),
-        Some(ErrorKind::NotFound),
-        Some(ErrorKind::AmbiguousId),
-        Some(ErrorKind::PermissionDenied),
-        Some(ErrorKind::DaemonUnreachable),
-    ]
-    .map(|kind| match kind {
-        None => ExitStatus {
-            status: 0,
-            code: "ok",
-        },
-        Some(kind) => ExitStatus {
-            status: kind.status(),
-            code: kind.code(),
-        },
-    });
     CommandResult::document(Help {
         command: CommandInfo::from_command(&command),
-        exit_codes,
+        exit_codes: exit_codes(),
+        error_codes: ErrorKind::all()
+            .iter()
+            .map(|kind| ErrorCode {
+                code: kind.code(),
+                status: kind.status(),
+                meaning: kind.meaning(),
+            })
+            .collect(),
         text,
     })
 }

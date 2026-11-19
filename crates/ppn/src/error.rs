@@ -16,6 +16,22 @@ pub enum ErrorKind {
 }
 
 impl ErrorKind {
+    pub fn all() -> &'static [Self] {
+        <Self as clap::ValueEnum>::value_variants()
+    }
+
+    pub const fn meaning(self) -> &'static str {
+        match self {
+            Self::Failure => "The command failed.",
+            Self::Usage => "The arguments or options are invalid.",
+            Self::NotFound => "The requested item could not be found.",
+            Self::AmbiguousId => "The identifier matches multiple items.",
+            Self::PermissionDenied => "The operation is not permitted.",
+            Self::DaemonUnreachable => "The daemon or network could not be reached.",
+            Self::ConfirmationRequired => "The operation needs explicit confirmation.",
+        }
+    }
+
     pub const fn status(self) -> u8 {
         match self {
             Self::Failure | Self::ConfirmationRequired => 1,

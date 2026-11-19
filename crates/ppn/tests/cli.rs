@@ -1,3 +1,4 @@
+use ppn::error::ErrorKind;
 use std::process::Command;
 
 fn ppn() -> Command {
@@ -274,15 +275,8 @@ fn unknown_command_respects_json_even_when_clap_stops_before_the_flag() {
 
 #[test]
 fn simulated_errors_keep_their_codes_and_exit_statuses() {
-    for (code, status) in [
-        ("failure", 1),
-        ("usage", 2),
-        ("not_found", 3),
-        ("ambiguous_id", 4),
-        ("permission_denied", 5),
-        ("daemon_unreachable", 6),
-        ("confirmation_required", 1),
-    ] {
+    for kind in ErrorKind::all() {
+        let (code, status) = (kind.code(), i32::from(kind.status()));
         let args = ["debug", "fail", code];
         let output = ppn().args(args).arg("--json").output().unwrap();
         let diagnostic = assert_json_error(output, status, code);
@@ -299,6 +293,29 @@ fn simulated_errors_keep_their_codes_and_exit_statuses() {
             human
                 .stderr
                 .starts_with(b"error: Simulated command failure.\nhint:")
+        );
+    }
+}
+
+#[test]
+fn help_lists_every_error_code_and_its_exit_status() {
+    let help: serde_json::Value = serde_json::from_str(&run_ppn(&["help", "--json"])).unwrap();
+    let codes = help["error_codes"].as_array().unwrap();
+    assert_eq!(codes.len(), ErrorKind::all().len());
+    for kind in ErrorKind::all() {
+        let code = codes
+            .iter()
+            .find(|entry| entry["code"] == kind.code())
+            .unwrap();
+        assert_eq!(code["status"], kind.status());
+        assert_eq!(code["meaning"], kind.meaning());
+        assert_eq!(kind.meaning().trim().lines().count(), 1);
+        assert!(
+            help["exit_codes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["status"] == kind.status())
         );
     }
 }
