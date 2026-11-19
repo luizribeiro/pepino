@@ -18,10 +18,19 @@
       (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          inherit (pkgs.lib) fileset;
+
           packageArgs = {
             pname = "ppn";
             inherit (workspace) version;
-            src = ./.;
+            src = fileset.toSource {
+              root = ./.;
+              fileset = fileset.unions [
+                ./Cargo.lock
+                ./Cargo.toml
+                ./crates
+              ];
+            };
             cargoLock.lockFile = ./Cargo.lock;
           };
 
