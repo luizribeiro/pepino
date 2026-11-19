@@ -1,5 +1,6 @@
 use std::env;
 use std::io::{self, BufRead, IsTerminal, Write};
+use std::time::Duration;
 
 use clap::ValueEnum;
 
@@ -18,11 +19,10 @@ pub struct Terminal {
     pub stdout_is_tty: bool,
     pub stdin_is_tty: bool,
     pub color: bool,
-    yes: bool,
 }
 
 impl Terminal {
-    pub fn detect(color: Color, yes: bool) -> Self {
+    pub fn detect(color: Color) -> Self {
         let stdout_is_tty = io::stdout().is_terminal();
         let stdin_is_tty = io::stdin().is_terminal();
         let no_color = env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty());
@@ -31,7 +31,23 @@ impl Terminal {
             stdout_is_tty,
             stdin_is_tty,
             color: use_color(color, stdout_is_tty, no_color, dumb),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Context {
+    pub terminal: Terminal,
+    pub yes: bool,
+    pub timeout: Option<Duration>,
+}
+
+impl Context {
+    pub fn detect(color: Color, yes: bool, timeout: Option<Duration>) -> Self {
+        Self {
+            terminal: Terminal::detect(color),
             yes,
+            timeout,
         }
     }
 
@@ -39,7 +55,7 @@ impl Terminal {
         if self.yes {
             return Ok(true);
         }
-        if !self.stdin_is_tty {
+        if !self.terminal.stdin_is_tty {
             return Err(CliError::new(ErrorKind::ConfirmationRequired, prompt)
                 .with_hint("Pass --yes to confirm."));
         }

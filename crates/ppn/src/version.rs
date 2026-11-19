@@ -1,5 +1,5 @@
 use ppn::output::{CommandResult, Render};
-use ppn::terminal::Terminal;
+use ppn::terminal::{Context, Terminal};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -13,7 +13,7 @@ impl Render for Version {
     }
 }
 
-pub fn run() -> CommandResult {
+pub fn run(_: &Context) -> CommandResult {
     CommandResult::document(Version {
         version: env!("CARGO_PKG_VERSION"),
     })

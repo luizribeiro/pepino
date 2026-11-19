@@ -101,7 +101,7 @@ mod tests {
             .into_iter()
             .map(|title| Ok(Task { title }));
         let mut stdout = Vec::new();
-        (CommandResult::stream(rows).0)(true, &Terminal::detect(Color::Never, false), &mut stdout)
+        (CommandResult::stream(rows).0)(true, &Terminal::detect(Color::Never), &mut stdout)
             .unwrap();
         assert_eq!(
             String::from_utf8(stdout).unwrap(),
@@ -137,8 +137,7 @@ mod tests {
         };
         let command = CommandResult::stream([Ok(first), Err(interrupted), Ok(later)].into_iter());
         let mut stdout = Sink::default();
-        let error =
-            (command.0)(true, &Terminal::detect(Color::Never, false), &mut stdout).unwrap_err();
+        let error = (command.0)(true, &Terminal::detect(Color::Never), &mut stdout).unwrap_err();
         assert_eq!(error.kind(), ErrorKind::DaemonUnreachable);
         assert_eq!(
             stdout.flushed,

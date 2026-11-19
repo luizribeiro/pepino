@@ -5,7 +5,7 @@ use clap::{ColorChoice, CommandFactory, Parser, Subcommand, error::ErrorKind};
 use ppn::error::CliError;
 use ppn::flags::{Globals, color_on_early_exit, json_from_env, json_on_command_line};
 use ppn::output::finish;
-use ppn::terminal::Terminal;
+use ppn::terminal::Context;
 
 use crate::{debug, help, version};
 
@@ -56,45 +56,46 @@ pub fn run() -> ExitCode {
             return finish(
                 Err(error),
                 json_flag,
-                &Terminal::detect(color_on_early_exit(&args), false),
+                &Context::detect(color_on_early_exit(&args), false, None).terminal,
             );
         }
     };
     match Cli::try_parse_from(&args) {
         Ok(cli) => {
-            let terminal = Terminal::detect(cli.globals.color, cli.globals.yes);
+            let context = context_for(&cli.globals);
             let result = match cli.command {
-                Some(Command::Version) => Ok(version::run()),
+                Some(Command::Version) => Ok(version::run(&context)),
                 Some(Command::Help { path }) => {
                     let mut definition = Cli::command();
                     definition.build();
                     help_target(&definition, path.iter().map(String::as_str))
-                        .map(|command| help::run(command.clone(), None))
+                        .map(|command| help::run(&context, command.clone(), None))
                 }
-                Some(Command::Debug { command }) => debug::run(command, &terminal),
+                Some(Command::Debug { command }) => debug::run(&context, command),
                 None => return ExitCode::SUCCESS,
             };
-            finish(result, cli.globals.json, &terminal)
+            finish(result, cli.globals.json, &context.terminal)
         }
         Err(error) => {
             let mut definition = Cli::command();
             let json = json_flag || json_env;
+            let context = Context::detect(color_on_early_exit(&args), false, None);
             let result = match error.kind() {
                 ErrorKind::DisplayHelp => {
                     definition.build();
                     help_flag_target(&definition, &args, json)
-                        .map(|command| help::run(command.clone(), Some(error.render())))
+                        .map(|command| help::run(&context, command.clone(), Some(error.render())))
                 }
-                ErrorKind::DisplayVersion => Ok(version::run()),
+                ErrorKind::DisplayVersion => Ok(version::run(&context)),
                 _ => Err(CliError::usage(error)),
             };
-            finish(
-                result,
-                json,
-                &Terminal::detect(color_on_early_exit(&args), false),
-            )
+            finish(result, json, &context.terminal)
         }
     }
+}
+
+fn context_for(globals: &Globals) -> Context {
+    Context::detect(globals.color, globals.yes, globals.timeout)
 }
 
 fn help_flag_target<'a>(
@@ -178,4 +179,22 @@ mod tests {
             assert_documented(child);
         }
     }
+}
+#[test]
+fn context_carries_global_command_options() {
+    let cli = Cli::try_parse_from([
+        "ppn",
+        "debug",
+        "confirm",
+        "--timeout",
+        "5",
+        "--yes",
+        "--color",
+        "never",
+    ])
+    .unwrap();
+    let context = context_for(&cli.globals);
+    assert_eq!(context.timeout, Some(std::time::Duration::from_secs(5)));
+    assert!(context.yes);
+    assert!(!context.terminal.color);
 }

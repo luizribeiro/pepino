@@ -2,7 +2,7 @@ use clap::{Command, builder::StyledStr};
 use ppn::error::ErrorKind;
 use ppn::help_tree::CommandInfo;
 use ppn::output::{CommandResult, Render};
-use ppn::terminal::Terminal;
+use ppn::terminal::{Context, Terminal};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -52,7 +52,7 @@ impl Render for Help {
     }
 }
 
-pub fn run(mut command: Command, help_text: Option<StyledStr>) -> CommandResult {
+pub fn run(_: &Context, mut command: Command, help_text: Option<StyledStr>) -> CommandResult {
     command.build();
     let text = help_text.unwrap_or_else(|| {
         match command.try_get_matches_from_mut([command.get_name().to_owned(), "--help".into()]) {
