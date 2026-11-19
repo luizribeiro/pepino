@@ -1,5 +1,6 @@
 //! Parse task listing filters.
 
+mod date;
 mod lex;
 
 use std::fmt;
@@ -139,52 +140,56 @@ pub enum ErrorKind {
     UnknownState { value: String },
     #[error("unsupported presence field {field:?}; use due, parent, assignee, or a custom field")]
     UnsupportedPresence { field: String },
-    #[error("invalid date {value:?}; use a calendar date such as 2026-12-01")]
+    #[error(
+        "invalid date {value:?}; use YYYY-MM-DD, today, tomorrow, yesterday, a weekday, or an offset such as +3d"
+    )]
     InvalidDate { value: String },
 }
 
-pub fn parse(input: &str) -> Result<Filter, ParseError> {
+/// Parse whitespace-separated terms using the supplied calendar date.
+pub fn parse(input: &str, today: Date) -> Result<Filter, ParseError> {
     let mut terms = Vec::new();
     let mut rest = input.trim_start();
     while !rest.is_empty() {
         let position = Position::Byte(input.len() - rest.len());
         let end = lex::term_end(rest).map_err(|kind| error(rest, position, kind))?;
-        terms.push(parse_term(&rest[..end], position)?);
+        terms.push(parse_term(&rest[..end], position, today)?);
         rest = rest[end..].trim_start();
     }
     Ok(Filter(terms))
 }
 
 /// Parse arguments that the caller has already split into individual terms.
-pub fn parse_argv<S: AsRef<str>>(argv: &[S]) -> Result<Filter, ParseError> {
+pub fn parse_argv<S: AsRef<str>>(argv: &[S], today: Date) -> Result<Filter, ParseError> {
     argv.iter()
         .enumerate()
-        .map(|(index, raw)| parse_term(raw.as_ref(), Position::Argument(index)))
+        .map(|(index, raw)| parse_term(raw.as_ref(), Position::Argument(index), today))
         .collect::<Result<Vec<_>, _>>()
         .map(Filter)
 }
 
-fn parse_term(raw: &str, position: Position) -> Result<Term, ParseError> {
+fn parse_term(raw: &str, position: Position, today: Date) -> Result<Term, ParseError> {
     let body = raw.strip_prefix('-');
-    let clause = parse_clause(body.unwrap_or(raw)).map_err(|kind| error(raw, position, kind))?;
+    let clause =
+        parse_clause(body.unwrap_or(raw), today).map_err(|kind| error(raw, position, kind))?;
     Ok(Term {
         negated: body.is_some(),
         clause,
     })
 }
 
-fn parse_clause(body: &str) -> Result<Clause, ErrorKind> {
+fn parse_clause(body: &str, today: Date) -> Result<Clause, ErrorKind> {
     if let Some(name) = body.strip_prefix('@') {
         return decode_required(name, ErrorKind::EmptyView).map(Clause::View);
     }
     if let Some((key, values)) = lex::split_once(body, ':') {
         let key = decode_required(key, ErrorKind::EmptyKey)?;
-        return parse_keyed(key, values);
+        return parse_keyed(key, values, today);
     }
     decode_required(body, ErrorKind::EmptyTerm).map(Clause::Text)
 }
 
-fn parse_keyed(key: String, raw: &str) -> Result<Clause, ErrorKind> {
+fn parse_keyed(key: String, raw: &str, today: Date) -> Result<Clause, ErrorKind> {
     let field = FieldKind::of(&key);
     let operands = lex::split(raw, ',').map(|raw| parse_operand(&key, field, raw));
     match key.as_str() {
@@ -201,7 +206,9 @@ fn parse_keyed(key: String, raw: &str) -> Result<Clause, ErrorKind> {
                 .map(|item| {
                     let (operator, value) = item?;
                     let value = if field == FieldKind::Date {
-                        Value::Date(parse_date(value)?)
+                        Value::Date(
+                            date::resolve(&value, today).ok_or(ErrorKind::InvalidDate { value })?,
+                        )
                     } else {
                         Value::Text(value)
                     };
@@ -263,14 +270,6 @@ fn parse_operand(key: &str, field: FieldKind, raw: &str) -> Result<(Operator, St
     Ok((operator, value))
 }
 
-fn parse_date(value: String) -> Result<Date, ErrorKind> {
-    value
-        .parse::<Date>()
-        .ok()
-        .filter(|date| date.to_string() == value)
-        .ok_or(ErrorKind::InvalidDate { value })
-}
-
 fn decode_required(raw: &str, empty: ErrorKind) -> Result<String, ErrorKind> {
     let value = lex::decode(raw)?;
     if value.is_empty() {
@@ -290,6 +289,39 @@ fn error(term: &str, position: Position, kind: ErrorKind) -> ParseError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn today() -> Date {
+        "2026-11-19".parse().unwrap()
+    }
+
+    fn parse(input: &str) -> Result<Filter, ParseError> {
+        super::parse(input, today())
+    }
+
+    fn parse_argv<S: AsRef<str>>(argv: &[S]) -> Result<Filter, ParseError> {
+        super::parse_argv(argv, today())
+    }
+
+    #[test]
+    fn dates_resolve_across_weeks_and_years() {
+        let today = "2027-12-31".parse().unwrap();
+        let relative = "due:today,tomorrow,yesterday,fri,friday,mon,monday,+3d,-1w updated:<sunday created:>=+1w";
+        let absolute = "due:2027-12-31,2028-01-01,2027-12-30,2027-12-31,2027-12-31,2028-01-03,2028-01-03,2028-01-03,2027-12-24 updated:<2028-01-02 created:>=2028-01-07";
+        assert_eq!(
+            super::parse(relative, today).unwrap(),
+            super::parse(absolute, today).unwrap()
+        );
+        for value in ["+3", "-1m", "+9223372036854775807w", "next week"] {
+            let error = super::parse_argv(&[format!("due:>{value}")], today).unwrap_err();
+            assert_eq!(
+                error.kind,
+                ErrorKind::InvalidDate {
+                    value: value.into()
+                }
+            );
+        }
+        assert!(super::parse("due:tomorrow", Date::MAX).is_err());
+    }
 
     #[test]
     fn free_text_terms() {
