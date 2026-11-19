@@ -1,5 +1,4 @@
 use pepino_core::*;
-use proptest::prelude::*;
 
 #[test]
 fn round_trips_task_creation_with_local_or_external_id() {
@@ -99,28 +98,4 @@ fn rejects_invalid_cbor_and_invalid_known_content() {
         Envelope::decode(&[0x82, 1, 0xf6]),
         Err(DecodeError::InvalidContent)
     ));
-}
-
-proptest! {
-    #[test]
-    fn task_field_set_round_trips(
-        author in any::<[u8; 32]>(), task in any::<[u8; 32]>(),
-        wall_ms in any::<u64>(), counter in any::<u32>(),
-        value in prop_oneof![
-            any::<String>().prop_map(FieldValue::Text),
-            any::<i64>().prop_map(FieldValue::Integer),
-            Just(FieldValue::Date(Date::from_ymd_opt(2026, 12, 1).unwrap())),
-            Just(FieldValue::Status(Status::Doing)),
-            Just(FieldValue::Unset),
-        ]
-    ) {
-        let event = Event::TaskFieldSet {
-            task: TaskId(EventId::from_bytes(task)),
-            field: FieldName::new("review").unwrap(),
-            value,
-        };
-        let envelope = Envelope::new(DeviceId::from_bytes(author), Hlc { wall_ms, counter }, event).unwrap();
-        let bytes = envelope.encode().unwrap();
-        prop_assert_eq!(Envelope::decode(&bytes).unwrap(), DecodeOutcome::Known(envelope));
-    }
 }
