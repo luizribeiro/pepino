@@ -55,3 +55,41 @@ pub fn run() -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ppn::help_tree::examples;
+
+    #[test]
+    fn every_command_has_a_one_line_summary_and_an_example() {
+        let mut command = Cli::command();
+        command.build();
+        assert_documented(&command);
+    }
+
+    fn assert_documented(command: &clap::Command) {
+        let name = command.get_bin_name().unwrap_or_else(|| command.get_name());
+        let summary = command
+            .get_about()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        assert_eq!(
+            summary.trim().lines().count(),
+            1,
+            "{name} needs a one-line summary"
+        );
+
+        let rendered = command.clone().render_long_help().to_string();
+        assert!(
+            examples(command)
+                .iter()
+                .any(|example| rendered.lines().any(|line| line.trim() == example)),
+            "{name} needs an example in its help text"
+        );
+
+        for child in command.get_subcommands() {
+            assert_documented(child);
+        }
+    }
+}
