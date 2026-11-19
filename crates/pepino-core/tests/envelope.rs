@@ -39,7 +39,7 @@ fn unknown_version_still_requires_a_complete_frame() {
     );
     assert!(matches!(
         Envelope::decode(&bytes[..bytes.len() - 1]),
-        Err(DecodeError::Cbor(_))
+        Err(DecodeError::Cbor)
     ));
     bytes.push(0);
     assert!(matches!(
@@ -50,17 +50,14 @@ fn unknown_version_still_requires_a_complete_frame() {
 
 #[test]
 fn rejects_invalid_cbor_and_invalid_known_content() {
-    assert!(matches!(
-        Envelope::decode(&[0xff]),
-        Err(DecodeError::Cbor(_))
-    ));
+    assert!(matches!(Envelope::decode(&[0xff]), Err(DecodeError::Cbor)));
     assert!(matches!(
         Envelope::decode(&[0x81, 1]),
         Err(DecodeError::InvalidFrame)
     ));
     assert!(matches!(
         Envelope::decode(&[0x82, 1, 0xf6]),
-        Err(DecodeError::InvalidContent(_))
+        Err(DecodeError::InvalidContent)
     ));
 }
 

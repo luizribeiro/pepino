@@ -16,16 +16,16 @@ pub struct Envelope {
 
 #[derive(Debug, Error)]
 #[error("could not encode event content")]
-pub struct EncodeError(#[from] ciborium::ser::Error<std::io::Error>);
+pub struct EncodeError(#[source] ciborium::ser::Error<std::io::Error>);
 
 #[derive(Debug, Error)]
 pub enum DecodeError {
     #[error("invalid event CBOR")]
-    Cbor(#[from] ciborium::de::Error<std::io::Error>),
+    Cbor,
     #[error("expected a two-item array with an unsigned format version")]
     InvalidFrame,
     #[error("invalid version 1 event content")]
-    InvalidContent(#[from] ciborium::value::Error),
+    InvalidContent,
     #[error("invalid event variant tag")]
     InvalidEventTag,
     #[error("unexpected bytes after event content")]
@@ -48,7 +48,8 @@ struct Content<E> {
 
 pub fn encode_content(author: DeviceId, hlc: Hlc, event: &Event) -> Result<Vec<u8>, EncodeError> {
     let mut bytes = Vec::new();
-    ciborium::into_writer(&(VERSION, Content { author, hlc, event }), &mut bytes)?;
+    ciborium::into_writer(&(VERSION, Content { author, hlc, event }), &mut bytes)
+        .map_err(EncodeError)?;
     Ok(bytes)
 }
 
@@ -87,6 +88,8 @@ impl Envelope {
         decode_content(bytes, None)
     }
 
+    /// Decodes the content using a trusted ID supplied by the caller.
+    /// The supplied ID is not checked against the bytes.
     pub fn decode_with_id(id: EventId, bytes: &[u8]) -> Result<DecodeOutcome, DecodeError> {
         decode_content(bytes, Some(id))
     }
@@ -98,7 +101,7 @@ impl Envelope {
 
 fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, DecodeError> {
     let mut remaining = bytes;
-    let frame: Value = ciborium::from_reader(&mut remaining)?;
+    let frame: Value = ciborium::from_reader(&mut remaining).map_err(|_| DecodeError::Cbor)?;
     if !remaining.is_empty() {
         return Err(DecodeError::TrailingData);
     }
@@ -113,7 +116,9 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
         return Ok(DecodeOutcome::UnknownVersion { version });
     }
 
-    let Content { author, hlc, event }: Content<Value> = content.deserialized()?;
+    let Content { author, hlc, event }: Content<Value> = content
+        .deserialized()
+        .map_err(|_| DecodeError::InvalidContent)?;
     let variant = match &event {
         Value::Text(variant) => variant,
         Value::Map(entries) => match entries.as_slice() {
@@ -127,7 +132,9 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
             variant: variant.clone(),
         });
     }
-    let event = event.deserialized()?;
+    let event = event
+        .deserialized()
+        .map_err(|_| DecodeError::InvalidContent)?;
     let id = id.unwrap_or_else(|| EventId::hash_content_bytes(bytes));
     Ok(DecodeOutcome::Known(Envelope::with_id(
         id, author, hlc, event,
@@ -181,7 +188,7 @@ mod tests {
         }
         assert!(matches!(
             Envelope::decode(&encode(FutureEvent::TagAdded { task, tag: 4 })),
-            Err(DecodeError::InvalidContent(_))
+            Err(DecodeError::InvalidContent)
         ));
     }
 
