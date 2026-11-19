@@ -21,6 +21,16 @@ impl Clock {
         Self { latest: None }
     }
 
+    pub const fn from_hlc(latest: Hlc) -> Self {
+        Self {
+            latest: Some(latest),
+        }
+    }
+
+    pub const fn latest(&self) -> Option<Hlc> {
+        self.latest
+    }
+
     pub fn observe(&mut self, remote: Hlc) {
         self.latest = self.latest.max(Some(remote));
     }
@@ -49,6 +59,19 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
+
+    #[test]
+    fn resumes_from_persisted_timestamp() {
+        let wall_ms = 1_795_144_800_000;
+        let mut running = Clock::new();
+        assert_eq!(running.latest(), None);
+        let stored = running.tick(wall_ms).unwrap();
+        assert_eq!(running.latest(), Some(stored));
+        let mut restored = Clock::from_hlc(stored);
+        assert_eq!(restored.latest(), Some(stored));
+        assert_eq!(restored.tick(wall_ms - 1), running.tick(wall_ms - 1));
+        assert_eq!(restored.latest(), running.latest());
+    }
 
     #[test]
     fn rolls_counter_over_within_the_same_wall_millisecond() {
