@@ -155,6 +155,22 @@ pub enum ErrorKind {
 }
 
 /// Parse whitespace-separated terms using the supplied calendar date.
+///
+/// The displayed filter stores resolved dates in calendar form.
+///
+/// ```
+/// use pepino_core::filter::{Date, parse, parse_argv};
+///
+/// let today = Date::from_ymd_opt(2026, 11, 26).unwrap();
+/// let filter = parse(r#"tag:garden due:<fri "fix the fence""#, today)?;
+/// let argv = ["tag:garden", "due:<fri", "fix the fence"];
+/// assert_eq!(parse_argv(&argv, today)?, filter);
+/// assert_eq!(
+///     filter.to_string(),
+///     r#"tag:garden due:<2026-11-27 "fix the fence""#,
+/// );
+/// # Ok::<(), pepino_core::filter::ParseError>(())
+/// ```
 pub fn parse(input: &str, today: Date) -> Result<Filter, ParseError> {
     let mut terms = Vec::new();
     let mut rest = input.trim_start();
@@ -168,6 +184,9 @@ pub fn parse(input: &str, today: Date) -> Result<Filter, ParseError> {
 }
 
 /// Parse arguments that the caller has already split into individual terms.
+///
+/// Whitespace within an argument is literal. Keep filter-level quotes in an
+/// argument to protect punctuation from its filter syntax, as in `tag:"tools,seeds"`.
 pub fn parse_argv<S: AsRef<str>>(argv: &[S], today: Date) -> Result<Filter, ParseError> {
     argv.iter()
         .enumerate()
