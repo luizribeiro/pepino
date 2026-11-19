@@ -1,4 +1,5 @@
 use ciborium::Value;
+use serde::de::DeserializeOwned;
 
 use crate::{EdgeKind, Status};
 
@@ -35,14 +36,10 @@ pub(crate) fn substitute_unknown_values(event: &mut Value) -> Vec<UnknownValue> 
             }
         }
         "edge_added" | "edge_removed" => {
-            if let Some(value) = member(payload, "kind") {
-                let value = untag(value);
-                if let Some(tag) = value.as_text()
-                    && value.deserialized::<EdgeKind>().is_err()
-                {
-                    unknown.push(UnknownValue::EdgeKind(tag.into()));
-                    *value = "relates".into();
-                }
+            if let Some(value) = member(payload, "kind")
+                && let Some(tag) = substitute_unknown_enum::<EdgeKind>(value, "relates")
+            {
+                unknown.push(UnknownValue::EdgeKind(tag));
             }
         }
         _ => {}
@@ -51,24 +48,29 @@ pub(crate) fn substitute_unknown_values(event: &mut Value) -> Vec<UnknownValue> 
 }
 
 fn status(value: &mut Value, unknown: &mut Vec<UnknownValue>) {
-    let value = untag(value);
-    if let Some(tag) = value.as_text()
-        && value.deserialized::<Status>().is_err()
-    {
-        unknown.push(UnknownValue::Status(tag.into()));
-        *value = "todo".into();
+    if let Some(tag) = substitute_unknown_enum::<Status>(value, "todo") {
+        unknown.push(UnknownValue::Status(tag));
     }
+}
+
+fn substitute_unknown_enum<T: DeserializeOwned>(
+    value: &mut Value,
+    placeholder: &str,
+) -> Option<String> {
+    let value = untag(value);
+    let tag = variant_tag(value)?;
+    if Value::Text(tag.into()).deserialized::<T>().is_ok() {
+        return None;
+    }
+    let tag = tag.to_owned();
+    *value = placeholder.into();
+    Some(tag)
 }
 
 fn field_value(value: &mut Value, unknown: &mut Vec<UnknownValue>) {
     let value = untag(value);
-    let tag = match value {
-        Value::Text(tag) => tag.as_str(),
-        Value::Map(entries) => match entries.as_slice() {
-            [(Value::Text(tag), _)] => tag.as_str(),
-            _ => return,
-        },
-        _ => return,
+    let Some(tag) = variant_tag(value) else {
+        return;
     };
     match tag {
         "status" => {
@@ -89,6 +91,17 @@ fn member<'a>(value: &'a mut Value, name: &str) -> Option<&'a mut Value> {
         .as_map_mut()?
         .iter_mut()
         .find_map(|(key, value)| (key.as_text() == Some(name)).then_some(value))
+}
+
+fn variant_tag(value: &Value) -> Option<&str> {
+    match value {
+        Value::Text(tag) => Some(tag),
+        Value::Map(entries) => match entries.as_slice() {
+            [(Value::Text(tag), _)] => Some(tag),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn variant_payload(value: &mut Value) -> Option<(&str, &mut Value)> {

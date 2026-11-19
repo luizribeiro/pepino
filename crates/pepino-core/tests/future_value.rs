@@ -47,13 +47,7 @@ fn distinguishes_unknown_nested_values_from_corruption() {
     let future_value = map(field()
         .into_iter()
         .chain([("value", map([("duration", 20.into())]))]));
-    let edge = |to| {
-        map([
-            ("from", task.clone()),
-            ("kind", "depends_on".into()),
-            ("to", to),
-        ])
-    };
+    let edge = |kind, to| map([("from", task.clone()), ("kind", kind), ("to", to)]);
     let to = Value::serialized(&TaskId(EventId::from_bytes([61; 32]))).unwrap();
 
     for (variant, payload, values) in [
@@ -77,12 +71,12 @@ fn distinguishes_unknown_nested_values_from_corruption() {
         ),
         (
             "edge_added",
-            edge(to.clone()),
+            edge("depends_on".into(), to.clone()),
             vec![UnknownValue::EdgeKind("depends_on".into())],
         ),
         (
             "edge_removed",
-            edge(to),
+            edge(map([("depends_on", "weather".into())]), to.clone()),
             vec![UnknownValue::EdgeKind("depends_on".into())],
         ),
     ] {
@@ -103,8 +97,12 @@ fn distinguishes_unknown_nested_values_from_corruption() {
         .into_iter()
         .chain([("value", map([("integer", "high".into())]))]));
     for (variant, payload) in [
-        ("edge_added", edge(4.into())),
+        ("edge_added", edge("depends_on".into(), 4.into())),
         ("task_field_set", bad_value),
+        (
+            "edge_removed",
+            edge(map([("relates", "weather".into())]), to),
+        ),
     ] {
         assert!(matches!(
             Envelope::decode(&encode(variant, payload)),
