@@ -33,9 +33,8 @@ pub(super) fn term_end(input: &str) -> Result<usize, ErrorKind> {
     Ok(input.len())
 }
 
-pub(super) fn decode(input: &str) -> String {
+pub(super) fn decode(input: &str) -> Result<String, ErrorKind> {
     characters(input)
-        .filter_map(Result::ok)
-        .map(|(_, ch, _)| ch)
+        .map(|item| item.map(|(_, ch, _)| ch))
         .collect()
 }
