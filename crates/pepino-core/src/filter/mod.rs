@@ -18,7 +18,13 @@ impl Filter {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Term {
     pub negated: bool,
-    pub text: String,
+    pub clause: Clause,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Clause {
+    Text(String),
+    Match { key: String, values: Vec<String> },
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -51,6 +57,10 @@ pub enum ErrorKind {
     UnterminatedQuote,
     #[error("empty term; supply a search term")]
     EmptyTerm,
+    #[error("empty key; supply a field name before ':'")]
+    EmptyKey,
+    #[error("empty value; supply a value for each alternative")]
+    EmptyValue,
 }
 
 pub fn parse(input: &str) -> Result<Filter, ParseError> {
@@ -76,14 +86,30 @@ pub fn parse_argv<S: AsRef<str>>(argv: &[S]) -> Result<Filter, ParseError> {
 
 fn parse_term(raw: &str, position: Position) -> Result<Term, ParseError> {
     let body = raw.strip_prefix('-');
-    let text = lex::decode(body.unwrap_or(raw)).map_err(|kind| error(raw, position, kind))?;
-    if text.is_empty() {
-        return Err(error(raw, position, ErrorKind::EmptyTerm));
-    }
+    let clause = parse_clause(body.unwrap_or(raw)).map_err(|kind| error(raw, position, kind))?;
     Ok(Term {
         negated: body.is_some(),
-        text,
+        clause,
     })
+}
+
+fn parse_clause(body: &str) -> Result<Clause, ErrorKind> {
+    if let Some((key, values)) = lex::split_once(body, ':') {
+        let key = decode_required(key, ErrorKind::EmptyKey)?;
+        let values = lex::split(values, ',')
+            .map(|value| decode_required(value, ErrorKind::EmptyValue))
+            .collect::<Result<_, _>>()?;
+        return Ok(Clause::Match { key, values });
+    }
+    decode_required(body, ErrorKind::EmptyTerm).map(Clause::Text)
+}
+
+fn decode_required(raw: &str, empty: ErrorKind) -> Result<String, ErrorKind> {
+    let value = lex::decode(raw)?;
+    if value.is_empty() {
+        return Err(empty);
+    }
+    Ok(value)
 }
 
 fn error(term: &str, position: Position, kind: ErrorKind) -> ParseError {
@@ -105,15 +131,47 @@ mod tests {
             filter
                 .terms()
                 .iter()
-                .map(|t| (t.negated, t.text.as_str()))
+                .map(|t| (t.negated, &t.clause))
                 .collect::<Vec<_>>(),
             [
-                (false, "garden"),
-                (false, "fix the \"split\" fence"),
-                (true, "shed")
+                (false, &Clause::Text("garden".into())),
+                (false, &Clause::Text("fix the \"split\" fence".into())),
+                (true, &Clause::Text("shed".into()))
             ]
         );
         assert!(parse("  \n").unwrap().terms().is_empty());
+    }
+
+    #[test]
+    fn keyed_terms_preserve_quoted_delimiters() {
+        let filter =
+            parse(r#"tag:garden,"needs review","tools, seeds" "plot: north" -assignee:me"#)
+                .unwrap();
+        assert_eq!(
+            filter.terms()[0].clause,
+            Clause::Match {
+                key: "tag".into(),
+                values: ["garden", "needs review", "tools, seeds"]
+                    .map(String::from)
+                    .into(),
+            }
+        );
+        assert_eq!(filter.terms()[1].clause, Clause::Text("plot: north".into()));
+        assert!(filter.terms()[2].negated);
+        assert_eq!(
+            parse_argv(&["tag:needs review"]),
+            parse(r#"tag:"needs review""#)
+        );
+    }
+
+    #[test]
+    fn empty_keys_and_values_report_the_whole_term() {
+        assert_eq!(parse(":garden").unwrap_err().kind, ErrorKind::EmptyKey);
+        for raw in ["tag:", "tag:,garden", "tag:garden,", r#"tag:"""#] {
+            let error = parse_argv(&[raw]).unwrap_err();
+            assert_eq!(error.term, raw);
+            assert_eq!(error.kind, ErrorKind::EmptyValue);
+        }
     }
 
     #[test]
