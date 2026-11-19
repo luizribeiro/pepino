@@ -1,8 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
-use crate::{Date, EdgeKind, FieldName, FieldValue, IdentityId, Status, TaskId};
+use crate::{
+    Date, EdgeKind, FieldName, FieldValue, IdentityId, InvalidFieldName, Status, TaskId,
+    field::valid_name,
+};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct InitialFields {
@@ -41,6 +45,83 @@ define_events! {
     "edge_removed" => EdgeRemoved { from: TaskId, kind: EdgeKind, to: TaskId },
     "comment_added" => CommentAdded { task: TaskId, text: String },
     "task_deleted" => TaskDeleted { task: TaskId },
+}
+
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum InvalidEvent {
+    #[error("task title is empty")]
+    EmptyTitle,
+    #[error("invalid field name {field:?}: {reason}")]
+    FieldName {
+        field: String,
+        reason: InvalidFieldName,
+    },
+    #[error("incorrect value type for built-in field {0:?}")]
+    FieldType(FieldName),
+    #[error("built-in field {0:?} cannot appear in initial custom fields")]
+    BuiltInCustomField(FieldName),
+    #[error("invalid tag {0:?}")]
+    Tag(String),
+    #[error("edge connects task {0} to itself")]
+    SelfEdge(TaskId),
+}
+
+impl Event {
+    pub fn validate(&self) -> Result<(), InvalidEvent> {
+        match self {
+            Self::TaskCreated { title, fields } => {
+                validate_title(title)?;
+                for tag in &fields.tags {
+                    validate_tag(tag)?;
+                }
+                for field in fields.custom.keys() {
+                    validate_field_name(field)?;
+                    if !field.is_custom() {
+                        return Err(InvalidEvent::BuiltInCustomField(field.clone()));
+                    }
+                }
+                Ok(())
+            }
+            Self::TaskFieldSet { field, value, .. } => {
+                validate_field_name(field)?;
+                match (field.as_str(), value) {
+                    ("title", FieldValue::Text(title)) => validate_title(title),
+                    ("description", FieldValue::Text(_) | FieldValue::Unset)
+                    | ("status", FieldValue::Status(_))
+                    | ("due", FieldValue::Date(_) | FieldValue::Unset)
+                    | ("priority", FieldValue::Integer(_) | FieldValue::Unset) => Ok(()),
+                    _ if field.is_custom() => Ok(()),
+                    _ => Err(InvalidEvent::FieldType(field.clone())),
+                }
+            }
+            Self::TagAdded { tag, .. } | Self::TagRemoved { tag, .. } => validate_tag(tag),
+            Self::EdgeAdded { from, to, .. } | Self::EdgeRemoved { from, to, .. } if from == to => {
+                Err(InvalidEvent::SelfEdge(*from))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+fn validate_field_name(field: &FieldName) -> Result<(), InvalidEvent> {
+    field.validate().map_err(|reason| InvalidEvent::FieldName {
+        field: field.as_str().into(),
+        reason,
+    })
+}
+
+fn validate_title(title: &str) -> Result<(), InvalidEvent> {
+    if title.is_empty() {
+        return Err(InvalidEvent::EmptyTitle);
+    }
+    Ok(())
+}
+
+fn validate_tag(tag: &str) -> Result<(), InvalidEvent> {
+    if !valid_name(tag, b"./") {
+        return Err(InvalidEvent::Tag(tag.into()));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
