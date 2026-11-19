@@ -4,7 +4,10 @@ use ciborium::Value;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
-use crate::{DeviceId, Event, EventId, Hlc, UnknownValue, future_value::substitute_unknown_values};
+use crate::{
+    DeviceId, Event, EventId, Hlc, InvalidEvent, UnknownValue,
+    future_value::substitute_unknown_values,
+};
 
 const VERSION: u64 = 1;
 
@@ -19,6 +22,14 @@ pub struct Envelope {
 #[derive(Debug, Error)]
 #[error("could not encode event content")]
 pub struct EncodeError(#[source] ciborium::ser::Error<std::io::Error>);
+
+#[derive(Debug, Error)]
+pub enum NewEnvelopeError {
+    #[error(transparent)]
+    InvalidEvent(#[from] InvalidEvent),
+    #[error(transparent)]
+    Encode(#[from] EncodeError),
+}
 
 #[derive(Debug, Error)]
 pub enum DecodeError {
@@ -61,6 +72,12 @@ pub enum DecodeOutcome {
         values: Vec<UnknownValue>,
         bytes: Vec<u8>,
     },
+    InvalidEvent {
+        id: EventId,
+        author: DeviceId,
+        hlc: Hlc,
+        reason: InvalidEvent,
+    },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -90,7 +107,8 @@ impl EventId {
 }
 
 impl Envelope {
-    pub fn new(author: DeviceId, hlc: Hlc, event: Event) -> Result<Self, EncodeError> {
+    pub fn new(author: DeviceId, hlc: Hlc, event: Event) -> Result<Self, NewEnvelopeError> {
+        event.validate()?;
         let id = EventId::for_content(author, hlc, &event)?;
         Ok(Self::with_id(id, author, hlc, event))
     }
@@ -195,6 +213,14 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
     let canonical = encode_content(author, hlc, &event).map_err(|_| DecodeError::InvalidContent)?;
     if canonical != bytes {
         return Err(DecodeError::NonCanonical);
+    }
+    if let Err(reason) = event.validate() {
+        return Ok(DecodeOutcome::InvalidEvent {
+            id,
+            author,
+            hlc,
+            reason,
+        });
     }
     Ok(DecodeOutcome::Known(Envelope::with_id(
         id, author, hlc, event,

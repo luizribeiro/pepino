@@ -103,3 +103,41 @@ fn creation_and_updates_share_domain_rules() {
         assert_eq!(event.validate(), Err(InvalidEvent::SelfEdge(task)));
     }
 }
+
+#[test]
+fn rejects_local_invalid_events_and_preserves_invalid_wire_metadata() {
+    let author = DeviceId::from_bytes([74; 32]);
+    let hlc = Hlc {
+        wall_ms: 397,
+        counter: 2,
+    };
+    let event = Event::TaskCreated {
+        title: String::new(),
+        fields: InitialFields::default(),
+    };
+    assert!(matches!(
+        Envelope::new(author, hlc, event.clone()),
+        Err(NewEnvelopeError::InvalidEvent(InvalidEvent::EmptyTitle))
+    ));
+    let bytes = encode_content(author, hlc, &event).unwrap();
+    let invalid = |id| DecodeOutcome::InvalidEvent {
+        id,
+        author,
+        hlc,
+        reason: InvalidEvent::EmptyTitle,
+    };
+    assert_eq!(
+        Envelope::decode(&bytes).unwrap(),
+        invalid(EventId::for_content(author, hlc, &event).unwrap())
+    );
+    let external = EventId::from_bytes([81; 32]);
+    assert_eq!(
+        Envelope::decode_with_id(external, &bytes).unwrap(),
+        invalid(external)
+    );
+    let overlong_version = [&[0x82, 0x18, 1], &bytes[2..]].concat();
+    assert!(matches!(
+        Envelope::decode(&overlong_version),
+        Err(DecodeError::NonCanonical)
+    ));
+}
