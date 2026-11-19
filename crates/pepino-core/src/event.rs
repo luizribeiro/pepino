@@ -15,51 +15,32 @@ pub struct InitialFields {
     pub custom: BTreeMap<FieldName, FieldValue>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Event {
-    TaskCreated {
-        title: String,
-        fields: InitialFields,
-    },
-    TaskFieldSet {
-        task: TaskId,
-        field: FieldName,
-        value: FieldValue,
-    },
-    TagAdded {
-        task: TaskId,
-        tag: String,
-    },
-    TagRemoved {
-        task: TaskId,
-        tag: String,
-    },
-    AssigneeAdded {
-        task: TaskId,
-        who: IdentityId,
-    },
-    AssigneeRemoved {
-        task: TaskId,
-        who: IdentityId,
-    },
-    EdgeAdded {
-        from: TaskId,
-        kind: EdgeKind,
-        to: TaskId,
-    },
-    EdgeRemoved {
-        from: TaskId,
-        kind: EdgeKind,
-        to: TaskId,
-    },
-    CommentAdded {
-        task: TaskId,
-        text: String,
-    },
-    TaskDeleted {
-        task: TaskId,
-    },
+macro_rules! define_events {
+    ($($tag:literal => $variant:ident { $($field:ident: $ty:ty),+ }),+ $(,)?) => {
+        #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+        pub enum Event {
+            $(#[serde(rename = $tag)] $variant { $($field: $ty),+ }),+
+        }
+
+        impl Event {
+            pub(crate) fn knows_variant(tag: &str) -> bool {
+                matches!(tag, $($tag)|+)
+            }
+        }
+    };
+}
+
+define_events! {
+    "task_created" => TaskCreated { title: String, fields: InitialFields },
+    "task_field_set" => TaskFieldSet { task: TaskId, field: FieldName, value: FieldValue },
+    "tag_added" => TagAdded { task: TaskId, tag: String },
+    "tag_removed" => TagRemoved { task: TaskId, tag: String },
+    "assignee_added" => AssigneeAdded { task: TaskId, who: IdentityId },
+    "assignee_removed" => AssigneeRemoved { task: TaskId, who: IdentityId },
+    "edge_added" => EdgeAdded { from: TaskId, kind: EdgeKind, to: TaskId },
+    "edge_removed" => EdgeRemoved { from: TaskId, kind: EdgeKind, to: TaskId },
+    "comment_added" => CommentAdded { task: TaskId, text: String },
+    "task_deleted" => TaskDeleted { task: TaskId },
 }
 
 #[cfg(test)]

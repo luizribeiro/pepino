@@ -26,18 +26,17 @@ pub enum DecodeError {
     InvalidFrame,
     #[error("invalid version 1 event content")]
     InvalidContent(#[from] ciborium::value::Error),
+    #[error("invalid event variant tag")]
+    InvalidEventTag,
     #[error("unexpected bytes after event content")]
     TrailingData,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "keep known envelopes allocation-free"
-)]
 pub enum DecodeOutcome {
     Known(Envelope),
     UnknownVersion { version: u64 },
+    UnknownEvent { variant: String },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -114,7 +113,21 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
         return Ok(DecodeOutcome::UnknownVersion { version });
     }
 
-    let Content { author, hlc, event } = content.deserialized()?;
+    let Content { author, hlc, event }: Content<Value> = content.deserialized()?;
+    let variant = match &event {
+        Value::Text(variant) => variant,
+        Value::Map(entries) => match entries.as_slice() {
+            [(Value::Text(variant), _)] => variant,
+            _ => return Err(DecodeError::InvalidEventTag),
+        },
+        _ => return Err(DecodeError::InvalidEventTag),
+    };
+    if !Event::knows_variant(variant) {
+        return Ok(DecodeOutcome::UnknownEvent {
+            variant: variant.clone(),
+        });
+    }
+    let event = event.deserialized()?;
     let id = id.unwrap_or_else(|| EventId::hash_content_bytes(bytes));
     Ok(DecodeOutcome::Known(Envelope::with_id(
         id, author, hlc, event,
@@ -125,6 +138,52 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
 mod tests {
     use super::*;
     use crate::TaskId;
+
+    #[test]
+    fn skips_future_events_and_rejects_corrupt_known_events() {
+        #[derive(Serialize)]
+        #[serde(rename_all = "snake_case")]
+        enum FutureEvent {
+            ReminderAdded { task: TaskId, message: String },
+            BoardArchived,
+            TagAdded { task: TaskId, tag: u8 },
+        }
+
+        let author = DeviceId::from_bytes([61; 32]);
+        let hlc = Hlc {
+            wall_ms: 1_795_144_800_000,
+            counter: 3,
+        };
+        let task = TaskId(EventId::from_bytes([59; 32]));
+        let encode = |event| {
+            let mut bytes = Vec::new();
+            ciborium::into_writer(&(VERSION, Content { author, hlc, event }), &mut bytes).unwrap();
+            bytes
+        };
+        for (event, variant) in [
+            (
+                FutureEvent::ReminderAdded {
+                    task,
+                    message: "Pick up hinges".into(),
+                },
+                "reminder_added",
+            ),
+            (FutureEvent::BoardArchived, "board_archived"),
+        ] {
+            let bytes = encode(event);
+            assert_eq!(
+                Envelope::decode(&bytes).unwrap(),
+                DecodeOutcome::UnknownEvent {
+                    variant: variant.into()
+                }
+            );
+            assert!(Envelope::decode(&bytes[..bytes.len() - 1]).is_err());
+        }
+        assert!(matches!(
+            Envelope::decode(&encode(FutureEvent::TagAdded { task, tag: 4 })),
+            Err(DecodeError::InvalidContent(_))
+        ));
+    }
 
     #[test]
     fn content_id_tracks_only_signed_content() {
