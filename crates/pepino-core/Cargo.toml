@@ -6,7 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+blake3 = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
+ciborium = "0.2"
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
