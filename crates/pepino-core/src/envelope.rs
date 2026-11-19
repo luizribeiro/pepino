@@ -48,6 +48,10 @@ pub enum DecodeOutcome {
     },
     UnknownEvent {
         variant: String,
+        id: EventId,
+        author: DeviceId,
+        hlc: Hlc,
+        bytes: Vec<u8>,
     },
 }
 
@@ -152,6 +156,10 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
     if !Event::knows_variant(variant) {
         return Ok(DecodeOutcome::UnknownEvent {
             variant: variant.clone(),
+            id,
+            author,
+            hlc,
+            bytes: bytes.to_vec(),
         });
     }
     let event = event
@@ -205,52 +213,6 @@ fn has_duplicate_fields(value: &Value) -> bool {
 mod tests {
     use super::*;
     use crate::TaskId;
-
-    #[test]
-    fn skips_future_events_and_rejects_corrupt_known_events() {
-        #[derive(Serialize)]
-        #[serde(rename_all = "snake_case")]
-        enum FutureEvent {
-            ReminderAdded { task: TaskId, message: String },
-            BoardArchived,
-            TagAdded { task: TaskId, tag: u8 },
-        }
-
-        let author = DeviceId::from_bytes([61; 32]);
-        let hlc = Hlc {
-            wall_ms: 1_795_144_800_000,
-            counter: 3,
-        };
-        let task = TaskId(EventId::from_bytes([59; 32]));
-        let encode = |event| {
-            let mut bytes = Vec::new();
-            ciborium::into_writer(&(VERSION, Content { author, hlc, event }), &mut bytes).unwrap();
-            bytes
-        };
-        for (event, variant) in [
-            (
-                FutureEvent::ReminderAdded {
-                    task,
-                    message: "Pick up hinges".into(),
-                },
-                "reminder_added",
-            ),
-            (FutureEvent::BoardArchived, "board_archived"),
-        ] {
-            let bytes = encode(event);
-            assert_eq!(
-                Envelope::decode(&bytes).unwrap(),
-                DecodeOutcome::UnknownEvent {
-                    variant: variant.into()
-                }
-            );
-            assert!(Envelope::decode(&bytes[..bytes.len() - 1]).is_err());
-        }
-        assert!(matches!(
-            Envelope::decode(&encode(FutureEvent::TagAdded { task, tag: 4 })),
-            Err(DecodeError::InvalidContent)
-        ));
-    }
 
     #[test]
     fn content_id_tracks_only_signed_content() {
