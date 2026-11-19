@@ -75,7 +75,7 @@ fn event_superset_preserves_known_encodings() {
         ciborium::into_writer(&(1, Content { author, hlc, event }), &mut bytes).unwrap();
         bytes
     };
-    let field = FieldName::new("description");
+    let field = FieldName::new("description").unwrap();
     let field_for_future = field.clone();
     for (future, known) in [
         (

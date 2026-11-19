@@ -16,12 +16,16 @@ fn version_one_event_encodings_are_stable() {
             priority: Some(-25),
             tags: ["garden".into(), "repairs".into()].into(),
             assignees: [IdentityId::from_bytes([0x2a; 32])].into(),
-            custom: [(FieldName::new("estimate"), FieldValue::Integer(256))].into(),
+            custom: [(
+                FieldName::new("estimate").unwrap(),
+                FieldValue::Integer(256),
+            )]
+            .into(),
         },
     };
     let changed = Event::TaskFieldSet {
         task: TaskId(EventId::from_bytes([0x3b; 32])),
-        field: FieldName::new("status"),
+        field: FieldName::new("status").unwrap(),
         value: FieldValue::Status(Status::Done),
     };
 

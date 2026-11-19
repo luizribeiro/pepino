@@ -115,7 +115,7 @@ proptest! {
     ) {
         let event = Event::TaskFieldSet {
             task: TaskId(EventId::from_bytes(task)),
-            field: FieldName::new("review"),
+            field: FieldName::new("review").unwrap(),
             value,
         };
         let envelope = Envelope::new(DeviceId::from_bytes(author), Hlc { wall_ms, counter }, event).unwrap();

@@ -58,7 +58,10 @@ mod tests {
                 priority: Some(2),
                 tags: BTreeSet::from(["garden".into()]),
                 assignees: BTreeSet::from([IdentityId::from_bytes([25; 32])]),
-                custom: BTreeMap::from([(FieldName::new("estimate"), FieldValue::Integer(3))]),
+                custom: BTreeMap::from([(
+                    FieldName::new("estimate").unwrap(),
+                    FieldValue::Integer(3),
+                )]),
             },
         };
         let json = serde_json::to_value(&event).unwrap();
