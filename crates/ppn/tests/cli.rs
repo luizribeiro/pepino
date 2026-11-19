@@ -36,6 +36,11 @@ fn prints_help() {
 }
 
 #[test]
+fn no_subcommand_is_a_no_op() {
+    assert!(run_ppn(&[]).is_empty());
+}
+
+#[test]
 fn unknown_argument_is_a_usage_error() {
     let output = ppn().arg("--unrecognized").output().unwrap();
     assert_eq!(output.status.code(), Some(2));
@@ -103,6 +108,17 @@ fn help_describes_the_cli_in_both_formats() {
     assert!(!run_ppn(&["help", "--color", "always"]).contains('\x1b'));
 
     let help: serde_json::Value = serde_json::from_str(&run_ppn(&["help", "--json"])).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&run_ppn(&["--help", "--json"])).unwrap(),
+        help
+    );
+    let from_env = ppn().env("PPN_JSON", "1").arg("help").output().unwrap();
+    assert!(from_env.status.success(), "{from_env:?}");
+    assert!(from_env.stderr.is_empty(), "{from_env:?}");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&from_env.stdout).unwrap(),
+        help
+    );
     assert_eq!(help["schema"], 1);
     assert_eq!(help["name"], "ppn");
     let commands = help["commands"].as_array().unwrap();

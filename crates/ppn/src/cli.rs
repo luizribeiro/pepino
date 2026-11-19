@@ -50,15 +50,17 @@ pub fn run() -> ExitCode {
             let terminal = Terminal::detect(cli.globals.color, cli.globals.yes);
             let result = match cli.command {
                 Some(Command::Version) => Ok(version::run()),
-                Some(Command::Help) | None => Ok(help::run(Cli::command(), None)),
+                Some(Command::Help) => Ok(help::run(Cli::command(), None)),
                 Some(Command::Debug { command }) => debug::run(command, &terminal),
+                None => return ExitCode::SUCCESS,
             };
             finish(result, cli.globals.json, &terminal)
         }
         Err(error) => {
-            let json = Globals::json_on_early_exit(&args, &Cli::command());
+            let definition = Cli::command();
+            let json = Globals::json_on_early_exit(&args, &definition);
             let result = match error.kind() {
-                ErrorKind::DisplayHelp => Ok(help::run(Cli::command(), Some(error.render()))),
+                ErrorKind::DisplayHelp => Ok(help::run(definition, Some(error.render()))),
                 ErrorKind::DisplayVersion => Ok(version::run()),
                 _ => Err(CliError::usage(error)),
             };
