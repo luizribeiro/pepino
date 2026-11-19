@@ -145,7 +145,7 @@ fn help_describes_the_cli_in_both_formats() {
 
     let help: serde_json::Value = serde_json::from_str(&run_ppn(&["help", "--json"])).unwrap();
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&run_ppn(&["--help", "--json"])).unwrap(),
+        serde_json::from_str::<serde_json::Value>(&run_ppn(&["-h", "--json"])).unwrap(),
         help
     );
     let from_env = ppn().env("PPN_JSON", "1").arg("help").output().unwrap();
@@ -183,6 +183,25 @@ fn help_describes_the_cli_in_both_formats() {
         help["exit_codes"][6],
         serde_json::json!({"status": 6, "code": "daemon_unreachable"})
     );
+}
+
+#[test]
+fn help_can_describe_a_command_or_nested_subcommand() {
+    for path in [&["version"][..], &["debug", "input"][..]] {
+        let explicit = [&["help"], path].concat();
+        let flag = [path, &["--help"]].concat();
+        assert_eq!(run_ppn(&explicit), run_ppn(&flag));
+        let expected = run_ppn(&[explicit.as_slice(), &["--json"]].concat());
+        assert_eq!(run_ppn(&[flag.as_slice(), &["--json"]].concat()), expected);
+        let help: serde_json::Value = serde_json::from_str(&expected).unwrap();
+        assert_eq!(help["name"], *path.last().unwrap());
+        assert_eq!(help["commands"], serde_json::json!([]));
+    }
+    let unknown = ppn()
+        .args(["help", "debug", "missing", "--json"])
+        .output()
+        .unwrap();
+    assert_json_error(unknown, 2, "usage");
 }
 
 fn assert_json_error(output: std::process::Output, status: i32, code: &str) -> serde_json::Value {

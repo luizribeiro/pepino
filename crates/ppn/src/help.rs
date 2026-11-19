@@ -32,7 +32,12 @@ impl Render for Help {
 
 pub fn run(mut command: Command, help_text: Option<StyledStr>) -> CommandResult {
     command.build();
-    let text = help_text.unwrap_or_else(|| command.render_help());
+    let text = help_text.unwrap_or_else(|| {
+        match command.try_get_matches_from_mut([command.get_name().to_owned(), "--help".into()]) {
+            Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => error.render(),
+            _ => command.render_help(),
+        }
+    });
     let exit_codes = [
         None,
         Some(ErrorKind::Failure),

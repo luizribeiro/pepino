@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::{env, process::ExitCode};
 
 use clap::{ColorChoice, CommandFactory, Parser, Subcommand, error::ErrorKind};
@@ -30,7 +31,10 @@ enum Command {
     Version,
     /// Show help for ppn.
     #[command(after_help = "Examples:\n  ppn help --json")]
-    Help,
+    Help {
+        /// Command and optional subcommands to describe.
+        path: Vec<String>,
+    },
     /// Exercise CLI behavior.
     #[command(
         hide = true,
@@ -50,17 +54,26 @@ pub fn run() -> ExitCode {
             let terminal = Terminal::detect(cli.globals.color, cli.globals.yes);
             let result = match cli.command {
                 Some(Command::Version) => Ok(version::run()),
-                Some(Command::Help) => Ok(help::run(Cli::command(), None)),
+                Some(Command::Help { path }) => {
+                    let mut definition = Cli::command();
+                    definition.build();
+                    help_target(&definition, path.iter().map(String::as_str))
+                        .map(|command| help::run(command.clone(), None))
+                }
                 Some(Command::Debug { command }) => debug::run(command, &terminal),
                 None => return ExitCode::SUCCESS,
             };
             finish(result, cli.globals.json, &terminal)
         }
         Err(error) => {
-            let definition = Cli::command();
+            let mut definition = Cli::command();
             let json = Globals::json_on_early_exit(&args, &definition);
             let result = match error.kind() {
-                ErrorKind::DisplayHelp => Ok(help::run(definition, Some(error.render()))),
+                ErrorKind::DisplayHelp => {
+                    definition.build();
+                    help_flag_target(&definition, &args, json)
+                        .map(|command| help::run(command.clone(), Some(error.render())))
+                }
                 ErrorKind::DisplayVersion => Ok(version::run()),
                 _ => Err(CliError::usage(error)),
             };
@@ -71,6 +84,51 @@ pub fn run() -> ExitCode {
             )
         }
     }
+}
+
+fn help_flag_target<'a>(
+    definition: &'a clap::Command,
+    args: &[OsString],
+    json: bool,
+) -> Result<&'a clap::Command, CliError> {
+    if !json {
+        return Ok(definition);
+    }
+    // clap returns the rendered help without the command that produced it.
+    let mut probe = mark_help_paths(definition.clone(), "");
+    match probe.try_get_matches_from_mut(args) {
+        Err(error) if error.kind() == ErrorKind::DisplayHelp => {
+            help_target(definition, error.render().to_string().split_whitespace())
+        }
+        _ => Err(CliError::new(
+            ppn::error::ErrorKind::Failure,
+            "Could not resolve help target.",
+        )),
+    }
+}
+
+fn mark_help_paths(command: clap::Command, path: &str) -> clap::Command {
+    command
+        .override_help(path.to_owned())
+        .mut_subcommands(|child| {
+            let path = format!("{path} {}", child.get_name());
+            mark_help_paths(child, &path)
+        })
+}
+
+fn help_target<'a, 'b>(
+    mut command: &'a clap::Command,
+    path: impl IntoIterator<Item = &'b str>,
+) -> Result<&'a clap::Command, CliError> {
+    for name in path {
+        command = command.find_subcommand(name).ok_or_else(|| {
+            CliError::usage(command.clone().error(
+                ErrorKind::InvalidSubcommand,
+                format!("unrecognized subcommand '{name}'"),
+            ))
+        })?;
+    }
+    Ok(command)
 }
 
 #[cfg(test)]
