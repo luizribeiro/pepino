@@ -36,6 +36,26 @@
                 packages = [ pkgs.git ];
                 languages.rust.enable = true;
 
+                git-hooks.hooks =
+                  let
+                    rustInputs = ''(\.rs$|(^|/)Cargo\.(toml|lock)$|^flake\.(nix|lock)$)'';
+                  in
+                  {
+                    rustfmt = {
+                      enable = true;
+                      files = rustInputs;
+                    };
+                    clippy = {
+                      enable = true;
+                      files = rustInputs;
+                      settings = {
+                        extraArgs = "--all-targets";
+                        denyWarnings = true;
+                      };
+                    };
+                    nixpkgs-fmt.enable = true;
+                  };
+
                 # Pure flake evaluation hides PWD, so use the shell's working directory.
                 devenv = lib.mkIf (builtins.getEnv "PWD" == "") {
                   root = ".";
