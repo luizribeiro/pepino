@@ -1,4 +1,5 @@
 use pepino_core::*;
+use proptest::prelude::*;
 
 #[test]
 fn round_trips_task_creation_with_local_or_external_id() {
@@ -98,4 +99,41 @@ fn rejects_invalid_cbor_and_invalid_known_content() {
         Envelope::decode(&[0x82, 1, 0xf6]),
         Err(DecodeError::InvalidContent)
     ));
+}
+
+proptest! {
+    #[test]
+    fn envelope_order_key_is_a_total_order(raw in any::<[(u64, u32, [u8; 32]); 3]>()) {
+        use std::cmp::Ordering;
+
+        let author = DeviceId::from_bytes([55; 32]);
+        let task = TaskId::from_bytes([19; 32]);
+        for shared_prefix in 0..=3 {
+            let raw_keys = raw.map(|(mut wall_ms, mut counter, mut id)| {
+                if shared_prefix >= 1 { wall_ms = raw[0].0; }
+                if shared_prefix >= 2 { counter = raw[0].1; }
+                if shared_prefix >= 3 { id = raw[0].2; }
+                (wall_ms, counter, id)
+            });
+            let keys = raw_keys.map(|(wall_ms, counter, id)| {
+                Envelope::with_id(
+                    EventId::from_bytes(id), author, Hlc { wall_ms, counter }, Event::TaskDeleted { task }
+                ).order_key()
+            });
+
+            for (i, j, k) in [(0, 1, 2), (1, 2, 0), (2, 0, 1)] {
+                let (a, b, c) = (keys[i], keys[j], keys[k]);
+                let order = a.cmp(&b);
+                prop_assert_eq!(order, raw_keys[i].cmp(&raw_keys[j]));
+                prop_assert_eq!(order, b.cmp(&a).reverse());
+                prop_assert_eq!(order == Ordering::Equal, a == b);
+                if a <= b && b <= c {
+                    prop_assert!(a <= c);
+                }
+                if a >= b && b >= c {
+                    prop_assert!(a >= c);
+                }
+            }
+        }
+    }
 }
