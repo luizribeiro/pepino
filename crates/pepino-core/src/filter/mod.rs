@@ -24,6 +24,7 @@ pub struct Term {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Clause {
     Text(String),
+    View(String),
     Is(Vec<State>),
     Has(Vec<String>),
     Match {
@@ -117,6 +118,8 @@ pub enum ErrorKind {
     UnterminatedQuote,
     #[error("empty term; supply a search term")]
     EmptyTerm,
+    #[error("empty view reference; supply a saved view name after '@'")]
+    EmptyView,
     #[error("empty key; supply a field name before ':'")]
     EmptyKey,
     #[error("empty value; supply a value for each alternative")]
@@ -162,6 +165,9 @@ fn parse_term(raw: &str, position: Position) -> Result<Term, ParseError> {
 }
 
 fn parse_clause(body: &str) -> Result<Clause, ErrorKind> {
+    if let Some(name) = body.strip_prefix('@') {
+        return decode_required(name, ErrorKind::EmptyView).map(Clause::View);
+    }
     if let Some((key, values)) = lex::split_once(body, ':') {
         let key = decode_required(key, ErrorKind::EmptyKey)?;
         return parse_keyed(key, values);
@@ -301,6 +307,21 @@ mod tests {
             parse_argv(&["tag:needs review"]),
             parse(r#"tag:"needs review""#)
         );
+    }
+
+    #[test]
+    fn saved_view_references_stay_symbolic() {
+        let filter = parse(r#"@weekend -@"garden backlog" "@supplier""#).unwrap();
+        assert_eq!(filter.terms()[0].clause, Clause::View("weekend".into()));
+        assert_eq!(
+            filter.terms()[1],
+            Term {
+                negated: true,
+                clause: Clause::View("garden backlog".into())
+            },
+        );
+        assert_eq!(filter.terms()[2].clause, Clause::Text("@supplier".into()));
+        assert_eq!(parse(r#"-@"""#).unwrap_err().kind, ErrorKind::EmptyView);
     }
 
     #[test]
