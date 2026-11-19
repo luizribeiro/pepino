@@ -1,8 +1,7 @@
 use ppn::output::{CommandResult, Render};
 use ppn::terminal::{Context, Terminal};
-use serde::Serialize;
+use serde_json::{Map, Value};
 
-#[derive(Serialize)]
 struct Version {
     version: &'static str,
 }
@@ -10,6 +9,10 @@ struct Version {
 impl Render for Version {
     fn human(&self, _: &Terminal) -> String {
         format!("ppn {}", self.version)
+    }
+
+    fn json_fields(self) -> Map<String, Value> {
+        Map::from_iter([("version".into(), self.version.into())])
     }
 }
 

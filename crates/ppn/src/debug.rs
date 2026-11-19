@@ -4,7 +4,7 @@ use ppn::error::{CliError, ErrorKind};
 use ppn::input::read_text;
 use ppn::output::{CommandResult, Render};
 use ppn::terminal::{Context, Terminal};
-use serde::Serialize;
+use serde_json::{Map, Value, json};
 
 #[derive(clap::Subcommand)]
 pub enum Command {
@@ -45,7 +45,6 @@ pub fn run(context: &Context, command: Command) -> Result<CommandResult, CliErro
     }
 }
 
-#[derive(Serialize)]
 struct Confirmation {
     confirmed: bool,
 }
@@ -59,9 +58,12 @@ impl Render for Confirmation {
         }
         .into()
     }
+
+    fn json_fields(self) -> Map<String, Value> {
+        Map::from_iter([("confirmed".into(), json!(self.confirmed))])
+    }
 }
 
-#[derive(Serialize)]
 struct Text {
     text: String,
 }
@@ -69,5 +71,9 @@ struct Text {
 impl Render for Text {
     fn human(&self, _: &Terminal) -> String {
         self.text.clone()
+    }
+
+    fn json_fields(self) -> Map<String, Value> {
+        Map::from_iter([("text".into(), self.text.into())])
     }
 }

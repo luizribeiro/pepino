@@ -1,17 +1,15 @@
 use clap::{Command, builder::StyledStr};
 use ppn::error::ErrorKind;
-use ppn::help_tree::CommandInfo;
+use ppn::help_tree::command_fields;
 use ppn::output::{CommandResult, Render};
 use ppn::terminal::{Context, Terminal};
 use serde::Serialize;
+use serde_json::{Map, Value, json};
 
-#[derive(Serialize)]
 struct Help {
-    #[serde(flatten)]
-    command: CommandInfo,
+    command: Map<String, Value>,
     exit_codes: Vec<ExitStatus>,
     error_codes: Vec<ErrorCode>,
-    #[serde(skip)]
     text: StyledStr,
 }
 
@@ -50,6 +48,14 @@ impl Render for Help {
             self.text.to_string()
         }
     }
+
+    fn json_fields(mut self) -> Map<String, Value> {
+        self.command
+            .insert("exit_codes".into(), json!(self.exit_codes));
+        self.command
+            .insert("error_codes".into(), json!(self.error_codes));
+        self.command
+    }
 }
 
 pub fn run(_: &Context, mut command: Command, help_text: Option<StyledStr>) -> CommandResult {
@@ -61,7 +67,7 @@ pub fn run(_: &Context, mut command: Command, help_text: Option<StyledStr>) -> C
         }
     });
     CommandResult::document(Help {
-        command: CommandInfo::from_command(&command),
+        command: command_fields(&command),
         exit_codes: exit_codes(),
         error_codes: ErrorKind::all()
             .iter()

@@ -1,16 +1,16 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::error::{CliError, ErrorKind};
 use crate::terminal::Terminal;
 
 pub const SCHEMA_VERSION: u32 = 1;
 
-pub trait Render: Serialize {
+pub trait Render {
     fn human(&self, terminal: &Terminal) -> String;
+    fn json_fields(self) -> Map<String, Value>;
 }
 
 type WriteOutput = dyn FnOnce(bool, &Terminal, &mut dyn Write) -> Result<(), CliError>;
@@ -27,7 +27,7 @@ impl CommandResult {
     ) -> Self {
         Self(Box::new(move |json, terminal, stdout| {
             for row in rows {
-                match write_row(&row?, json, terminal, stdout).and_then(|()| stdout.flush()) {
+                match write_row(row?, json, terminal, stdout).and_then(|()| stdout.flush()) {
                     Ok(()) => {}
                     Err(error) if error.kind() == io::ErrorKind::BrokenPipe => return Ok(()),
                     Err(error) => {
@@ -55,17 +55,17 @@ pub fn finish(
 }
 
 fn write_row(
-    value: &impl Render,
+    value: impl Render,
     json: bool,
     terminal: &Terminal,
     stdout: &mut dyn Write,
 ) -> io::Result<()> {
     if json {
-        let Value::Object(mut object) = serde_json::to_value(value)? else {
-            return Err(io::Error::other(
-                "A command result must serialize as a JSON object",
-            ));
-        };
+        let mut object = value.json_fields();
+        debug_assert!(
+            !object.contains_key("schema"),
+            "The output layer owns the schema field"
+        );
         object.insert("schema".into(), json!(SCHEMA_VERSION));
         serde_json::to_writer(&mut *stdout, &object)?;
         return writeln!(stdout);
@@ -84,7 +84,6 @@ mod tests {
     use super::*;
     use crate::terminal::Color;
 
-    #[derive(Serialize)]
     struct Task {
         title: &'static str,
     }
@@ -92,6 +91,10 @@ mod tests {
     impl Render for Task {
         fn human(&self, _: &Terminal) -> String {
             self.title.to_owned()
+        }
+
+        fn json_fields(self) -> Map<String, Value> {
+            Map::from_iter([("title".into(), json!(self.title))])
         }
     }
 

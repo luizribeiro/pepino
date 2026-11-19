@@ -329,6 +329,22 @@ fn help_lists_every_error_code_and_its_exit_status() {
 }
 
 #[test]
+fn every_command_result_is_a_versioned_object() {
+    for (args, field) in [
+        (&["help"][..], "commands"),
+        (&["version"][..], "version"),
+        (&["debug", "confirm", "--yes"][..], "confirmed"),
+        (&["debug", "input", "Release notes"][..], "text"),
+    ] {
+        let output = run_ppn(&[args, &["--json"]].concat());
+        let value: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let object = value.as_object().unwrap();
+        assert_eq!(object["schema"], 1);
+        assert!(object.contains_key(field), "{args:?}: {object:?}");
+    }
+}
+
+#[test]
 fn noninteractive_confirmation_requires_yes() {
     let output = ppn().args(["debug", "confirm", "--json"]).output().unwrap();
     let diagnostic = assert_json_error(output, 1, "confirmation_required");

@@ -5,40 +5,35 @@ use std::time::Duration;
 
 use clap::{Arg, ArgAction, Command};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
-#[derive(Serialize)]
-pub struct CommandInfo {
-    name: String,
-    summary: String,
-    examples: Vec<String>,
-    flags: Vec<ArgumentInfo>,
-    arguments: Vec<ArgumentInfo>,
-    commands: Vec<CommandInfo>,
-}
-
-impl CommandInfo {
-    pub fn from_command(command: &Command) -> Self {
-        let (arguments, flags): (Vec<_>, Vec<_>) = command
-            .get_arguments()
-            .filter(|arg| !arg.is_hide_set())
-            .partition(|arg| arg.is_positional());
-        Self {
-            name: command.get_name().to_owned(),
-            summary: command
-                .get_about()
-                .map(ToString::to_string)
-                .unwrap_or_default(),
-            examples: examples(command),
-            flags: flags.into_iter().map(ArgumentInfo::from).collect(),
-            arguments: arguments.into_iter().map(ArgumentInfo::from).collect(),
-            commands: command
-                .get_subcommands()
-                .filter(|child| !child.is_hide_set())
-                .map(Self::from_command)
-                .collect(),
-        }
-    }
+pub fn command_fields(command: &Command) -> Map<String, Value> {
+    let (arguments, flags): (Vec<_>, Vec<_>) = command
+        .get_arguments()
+        .filter(|arg| !arg.is_hide_set())
+        .map(|arg| (arg.is_positional(), ArgumentInfo::from(arg)))
+        .partition(|(positional, _)| *positional);
+    let details = |args: Vec<_>| args.into_iter().map(|(_, info)| info).collect::<Vec<_>>();
+    let children = command
+        .get_subcommands()
+        .filter(|child| !child.is_hide_set())
+        .map(|child| Value::Object(command_fields(child)))
+        .collect::<Vec<_>>();
+    let summary = command
+        .get_about()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    Map::from_iter(
+        [
+            ("name", command.get_name().into()),
+            ("summary", summary.into()),
+            ("examples", json!(examples(command))),
+            ("arguments", json!(details(arguments))),
+            ("flags", json!(details(flags))),
+            ("commands", children.into()),
+        ]
+        .map(|(key, value)| (key.into(), value)),
+    )
 }
 
 pub fn examples(command: &Command) -> Vec<String> {
@@ -170,7 +165,7 @@ mod tests {
                     .after_help("Examples:\n  ppn archive releases\n\nNotes:\n  Unpin it first."),
             );
         command.build();
-        let tree = serde_json::to_value(CommandInfo::from_command(&command)).unwrap();
+        let tree = Value::Object(command_fields(&command));
         let commands = tree["commands"].as_array().unwrap();
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0]["examples"], json!(["ppn archive releases"]));
