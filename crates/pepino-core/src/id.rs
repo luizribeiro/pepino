@@ -1,14 +1,32 @@
 use std::{fmt, marker::PhantomData, str::FromStr};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use thiserror::Error;
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(transparent, bound = "")]
-pub struct Id<Kind>(
-    #[serde(with = "serde_bytes")] [u8; 32],
-    #[serde(skip)] PhantomData<Kind>,
-);
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Id<Kind>([u8; 32], PhantomData<Kind>);
+
+impl<Kind> Serialize for Id<Kind> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if serializer.is_human_readable() {
+            serializer.collect_str(self)
+        } else {
+            serializer.serialize_bytes(self.as_bytes())
+        }
+    }
+}
+
+impl<'de, Kind> Deserialize<'de> for Id<Kind> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        if deserializer.is_human_readable() {
+            String::deserialize(deserializer)?
+                .parse()
+                .map_err(de::Error::custom)
+        } else {
+            serde_bytes::deserialize(deserializer).map(Self::from_bytes)
+        }
+    }
+}
 
 impl<Kind> Id<Kind> {
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
@@ -97,8 +115,35 @@ mod tests {
         assert_eq!(identity.to_string(), hex);
         assert_eq!(task.to_string(), hex);
         assert_eq!(hex.parse::<TaskId>().unwrap(), task);
-        let json = serde_json::to_string(&task).unwrap();
-        assert_eq!(serde_json::from_str::<TaskId>(&json).unwrap(), task);
+        let json = format!(r#""{hex}""#);
+        assert_json(&json, device);
+        assert_json(&json, identity);
+        assert_json(&json, task);
+        assert_json(&json, task.0);
+
+        let expected = [&[0x58, 0x20][..], device.as_bytes()].concat();
+        assert_cbor(&expected, device);
+        assert_cbor(&expected, identity);
+        assert_cbor(&expected, task);
+        assert_cbor(&expected, task.0);
+    }
+
+    fn assert_json<T>(expected: &str, id: T)
+    where
+        T: Serialize + for<'de> Deserialize<'de> + fmt::Debug + PartialEq,
+    {
+        assert_eq!(serde_json::to_string(&id).unwrap(), expected);
+        assert_eq!(serde_json::from_str::<T>(expected).unwrap(), id);
+    }
+
+    fn assert_cbor<T>(expected: &[u8], id: T)
+    where
+        T: Serialize + for<'de> Deserialize<'de> + fmt::Debug + PartialEq,
+    {
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&id, &mut bytes).unwrap();
+        assert_eq!(bytes, expected);
+        assert_eq!(ciborium::from_reader::<T, _>(expected).unwrap(), id);
     }
 
     #[test]
@@ -116,5 +161,6 @@ mod tests {
             Err(ParseIdError::InvalidDigit { index: 63 })
         );
         assert!(serde_json::from_str::<IdentityId>("[138,75,80,127]").is_err());
+        assert!(ciborium::from_reader::<EventId, _>(&[0x41, 0x89][..]).is_err());
     }
 }
