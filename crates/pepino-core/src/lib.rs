@@ -5,7 +5,7 @@ mod field;
 mod future_value;
 mod id;
 
-pub use clock::{Clock, ClockExhausted, Hlc};
+pub use clock::{Clock, ClockExhausted, Hlc, MAX_CLOCK_SKEW_MS, ObserveOutcome};
 pub use envelope::{
     DecodeError, DecodeOutcome, EncodeError, Envelope, NewEnvelopeError, encode_content,
 };
