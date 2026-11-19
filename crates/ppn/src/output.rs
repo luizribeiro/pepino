@@ -27,14 +27,16 @@ impl CommandResult {
     ) -> Self {
         Self(Box::new(move |json, terminal, stdout| {
             for row in rows {
-                write_row(&row?, json, terminal, stdout)
-                    .and_then(|()| stdout.flush())
-                    .map_err(|error| {
-                        CliError::new(
+                match write_row(&row?, json, terminal, stdout).and_then(|()| stdout.flush()) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::BrokenPipe => return Ok(()),
+                    Err(error) => {
+                        return Err(CliError::new(
                             ErrorKind::Failure,
                             format!("Could not write output: {error}"),
-                        )
-                    })?;
+                        ));
+                    }
+                }
             }
             Ok(())
         }))

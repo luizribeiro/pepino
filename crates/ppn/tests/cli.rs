@@ -35,6 +35,42 @@ fn prints_help() {
     assert!(help.contains("--version"));
 }
 
+#[cfg(unix)]
+#[test]
+fn help_succeeds_when_the_stdout_reader_is_closed() {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let output = ppn()
+        .args(["help", "--json"])
+        .stdout(writer)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn other_stdout_write_failures_are_reported() {
+    let output = ppn()
+        .args(["help", "--json"])
+        .stdout(
+            std::fs::File::options()
+                .write(true)
+                .open("/dev/full")
+                .unwrap(),
+        )
+        .output()
+        .unwrap();
+    let diagnostic = assert_json_error(output, 1, "failure");
+    assert!(
+        diagnostic["error"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Could not write output:")
+    );
+}
+
 #[test]
 fn no_subcommand_is_a_no_op() {
     assert!(run_ppn(&[]).is_empty());
