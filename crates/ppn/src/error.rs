@@ -15,7 +15,7 @@ pub enum ErrorKind {
 }
 
 impl ErrorKind {
-    pub fn status(self) -> u8 {
+    pub const fn status(self) -> u8 {
         match self {
             Self::Failure | Self::ConfirmationRequired => 1,
             Self::Usage => 2,
@@ -26,7 +26,7 @@ impl ErrorKind {
         }
     }
 
-    pub fn code(self) -> &'static str {
+    pub const fn code(self) -> &'static str {
         match self {
             Self::Failure => "failure",
             Self::Usage => "usage",

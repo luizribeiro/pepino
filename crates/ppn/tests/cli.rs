@@ -104,3 +104,40 @@ fn version_supports_human_output_and_global_json() {
         expected
     );
 }
+
+#[test]
+fn help_describes_the_cli_in_both_formats() {
+    let human = run_ppn(&["help"]);
+    assert_eq!(human, run_ppn(&["--help"]));
+    assert!(human.contains("Print the installed ppn version"));
+    assert!(human.contains("ppn help --json"));
+    assert!(!run_ppn(&["help", "--color", "always"]).contains('\x1b'));
+
+    let help: serde_json::Value = serde_json::from_str(&run_ppn(&["help", "--json"])).unwrap();
+    assert_eq!(help["schema"], 1);
+    assert_eq!(help["name"], "ppn");
+    let commands = help["commands"].as_array().unwrap();
+    assert_eq!(commands[0]["name"], "version");
+    assert_eq!(
+        commands[0]["examples"],
+        serde_json::json!(["ppn version --json"])
+    );
+    assert_eq!(commands[1]["name"], "help");
+
+    let flags = help["flags"].as_array().unwrap();
+    let flag = |name: &str| flags.iter().find(|flag| flag["long"] == name).unwrap();
+    assert_eq!(flag("json")["env"], "PPN_JSON");
+    assert_eq!(flag("json")["type"], "boolean");
+    assert_eq!(flag("yes")["default"], false);
+    assert_eq!(flag("timeout")["type"], "duration");
+    assert_eq!(flag("color")["default"], "auto");
+    assert_eq!(
+        flag("color")["choices"],
+        serde_json::json!(["auto", "always", "never"])
+    );
+    assert_eq!(help["exit_codes"].as_array().unwrap().len(), 7);
+    assert_eq!(
+        help["exit_codes"][6],
+        serde_json::json!({"status": 6, "code": "daemon_unreachable"})
+    );
+}
