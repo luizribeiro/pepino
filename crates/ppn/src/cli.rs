@@ -51,7 +51,7 @@ pub fn run() -> ExitCode {
             let result = match cli.command {
                 Some(Command::Version) => Ok(version::run()),
                 Some(Command::Help) | None => Ok(help::run(Cli::command(), None)),
-                Some(Command::Debug { command }) => debug::run(command),
+                Some(Command::Debug { command }) => debug::run(command, &terminal),
             };
             finish(result, cli.globals.json, &terminal)
         }

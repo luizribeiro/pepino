@@ -196,3 +196,24 @@ fn simulated_errors_keep_their_codes_and_exit_statuses() {
         );
     }
 }
+
+#[test]
+fn noninteractive_confirmation_requires_yes() {
+    let output = ppn().args(["debug", "confirm", "--json"]).output().unwrap();
+    let diagnostic = assert_json_error(output, 1, "confirmation_required");
+    assert_eq!(diagnostic["error"]["message"], "Archive the release board?");
+    assert_eq!(diagnostic["error"]["hint"], "Pass --yes to confirm.");
+
+    let human = ppn().args(["debug", "confirm"]).output().unwrap();
+    assert_eq!(human.status.code(), Some(1));
+    assert!(human.stdout.is_empty());
+    assert_eq!(
+        human.stderr,
+        b"error: Archive the release board?\nhint: Pass --yes to confirm.\n"
+    );
+
+    assert_eq!(run_ppn(&["debug", "confirm", "--yes"]), "Confirmed\n");
+    let json: serde_json::Value =
+        serde_json::from_str(&run_ppn(&["--yes", "debug", "confirm", "--json"])).unwrap();
+    assert_eq!(json, serde_json::json!({"schema": 1, "confirmed": true}));
+}
