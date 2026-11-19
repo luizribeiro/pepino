@@ -1,28 +1,29 @@
 use std::process::Command;
 
-fn run_ppn(flag: &str) -> String {
+fn run_ppn(args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_ppn"))
-        .arg(flag)
+        .env_remove("PPN_JSON")
+        .args(args)
         .output()
-        .unwrap_or_else(|error| panic!("run ppn {flag}: {error}"));
+        .unwrap_or_else(|error| panic!("run ppn {args:?}: {error}"));
 
-    assert!(output.status.success(), "ppn {flag}: {output:?}");
-    assert!(output.stderr.is_empty(), "ppn {flag}: {output:?}");
+    assert!(output.status.success(), "ppn {args:?}: {output:?}");
+    assert!(output.stderr.is_empty(), "ppn {args:?}: {output:?}");
     String::from_utf8(output.stdout)
-        .unwrap_or_else(|error| panic!("ppn {flag} stdout is not UTF-8: {error}"))
+        .unwrap_or_else(|error| panic!("ppn {args:?} stdout is not UTF-8: {error}"))
 }
 
 #[test]
 fn prints_version() {
     assert_eq!(
-        run_ppn("--version"),
+        run_ppn(&["--version"]),
         concat!("ppn ", env!("CARGO_PKG_VERSION"), "\n")
     );
 }
 
 #[test]
 fn prints_help() {
-    let help = run_ppn("--help");
+    let help = run_ppn(&["--help"]);
     assert!(help.contains("An experimental local-first, peer-to-peer task manager"));
     assert!(help.contains("Usage: ppn"));
     assert!(help.contains("--help"));
@@ -32,6 +33,7 @@ fn prints_help() {
 #[test]
 fn unknown_argument_is_a_usage_error() {
     let output = Command::new(env!("CARGO_BIN_EXE_ppn"))
+        .env_remove("PPN_JSON")
         .arg("--unrecognized")
         .output()
         .unwrap();
@@ -72,5 +74,33 @@ fn global_options_are_validated_by_clap() {
             .as_str()
             .unwrap()
             .contains("soon")
+    );
+}
+
+#[test]
+fn version_supports_human_output_and_global_json() {
+    assert_eq!(run_ppn(&["version"]), run_ppn(&["--version"]));
+    let expected = serde_json::json!({"schema": 1, "version": env!("CARGO_PKG_VERSION")});
+    for args in [
+        ["version", "--json"],
+        ["--json", "version"],
+        ["--version", "--json"],
+    ] {
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&run_ppn(&args)).unwrap(),
+            expected
+        );
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ppn"))
+        .env("PPN_JSON", "1")
+        .arg("version")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+        expected
     );
 }
