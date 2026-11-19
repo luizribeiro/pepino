@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use ciborium::Value;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -28,6 +30,8 @@ pub enum DecodeError {
     InvalidContent,
     #[error("invalid event variant tag")]
     InvalidEventTag,
+    #[error("event content is not canonically encoded")]
+    NonCanonical,
     #[error("unexpected bytes after event content")]
     TrailingData,
 }
@@ -118,12 +122,12 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
 
     let Content { author, hlc, event }: Content<Value> = content
         .deserialized()
-        .map_err(|_| DecodeError::InvalidContent)?;
+        .map_err(|_| content_error(content, DecodeError::InvalidContent))?;
     let variant = match &event {
         Value::Text(variant) => variant,
         Value::Map(entries) => match entries.as_slice() {
             [(Value::Text(variant), _)] => variant,
-            _ => return Err(DecodeError::InvalidEventTag),
+            _ => return Err(content_error(&event, DecodeError::InvalidEventTag)),
         },
         _ => return Err(DecodeError::InvalidEventTag),
     };
@@ -134,11 +138,38 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
     }
     let event = event
         .deserialized()
-        .map_err(|_| DecodeError::InvalidContent)?;
+        .map_err(|_| content_error(&event, DecodeError::InvalidContent))?;
+    let canonical = encode_content(author, hlc, &event).map_err(|_| DecodeError::InvalidContent)?;
+    if canonical != bytes {
+        return Err(DecodeError::NonCanonical);
+    }
     let id = id.unwrap_or_else(|| EventId::hash_content_bytes(bytes));
     Ok(DecodeOutcome::Known(Envelope::with_id(
         id, author, hlc, event,
     )))
+}
+
+fn content_error(value: &Value, error: DecodeError) -> DecodeError {
+    if has_duplicate_fields(value) {
+        DecodeError::NonCanonical
+    } else {
+        error
+    }
+}
+
+fn has_duplicate_fields(value: &Value) -> bool {
+    match value {
+        Value::Map(entries) => {
+            let mut names = BTreeSet::new();
+            entries.iter().any(|(key, value)| {
+                matches!(key, Value::Text(name) if !names.insert(name))
+                    || has_duplicate_fields(value)
+            })
+        }
+        Value::Array(items) => items.iter().any(has_duplicate_fields),
+        Value::Tag(_, value) => has_duplicate_fields(value),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
