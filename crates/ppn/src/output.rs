@@ -27,12 +27,14 @@ impl CommandResult {
     ) -> Self {
         Self(Box::new(move |json, terminal, stdout| {
             for row in rows {
-                write_row(&row?, json, terminal, stdout).map_err(|error| {
-                    CliError::new(
-                        ErrorKind::Failure,
-                        format!("Could not write output: {error}"),
-                    )
-                })?;
+                write_row(&row?, json, terminal, stdout)
+                    .and_then(|()| stdout.flush())
+                    .map_err(|error| {
+                        CliError::new(
+                            ErrorKind::Failure,
+                            format!("Could not write output: {error}"),
+                        )
+                    })?;
             }
             Ok(())
         }))
@@ -44,16 +46,7 @@ pub fn finish(
     json: bool,
     terminal: &Terminal,
 ) -> ExitCode {
-    match result.and_then(|output| {
-        let mut stdout = io::stdout().lock();
-        (output.0)(json, terminal, &mut stdout)?;
-        stdout.flush().map_err(|error| {
-            CliError::new(
-                ErrorKind::Failure,
-                format!("Could not flush output: {error}"),
-            )
-        })
-    }) {
+    match result.and_then(|output| (output.0)(json, terminal, &mut io::stdout().lock())) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => error.report(json, io::stderr().lock()),
     }
@@ -112,5 +105,43 @@ mod tests {
             String::from_utf8(stdout).unwrap(),
             "{\"schema\":1,\"title\":\"Ship the release\"}\n{\"schema\":1,\"title\":\"Notify the mailing list\"}\n"
         );
+    }
+
+    #[test]
+    fn preserves_complete_rows_when_the_stream_fails() {
+        #[derive(Default)]
+        struct Sink {
+            buffered: Vec<u8>,
+            flushed: Vec<u8>,
+        }
+
+        impl Write for Sink {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.buffered.write(bytes)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                self.flushed.append(&mut self.buffered);
+                Ok(())
+            }
+        }
+
+        let first = Task {
+            title: "Ship the release",
+        };
+        let interrupted = CliError::new(ErrorKind::DaemonUnreachable, "Lost contact during sync");
+        let later = Task {
+            title: "Notify the mailing list",
+        };
+        let command = CommandResult::stream([Ok(first), Err(interrupted), Ok(later)].into_iter());
+        let mut stdout = Sink::default();
+        let error =
+            (command.0)(true, &Terminal::detect(Color::Never, false), &mut stdout).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::DaemonUnreachable);
+        assert_eq!(
+            stdout.flushed,
+            b"{\"schema\":1,\"title\":\"Ship the release\"}\n"
+        );
+        assert!(stdout.buffered.is_empty());
     }
 }
