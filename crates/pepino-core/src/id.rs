@@ -3,7 +3,7 @@ use std::{fmt, marker::PhantomData, str::FromStr};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use thiserror::Error;
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Id<Kind>([u8; 32], PhantomData<Kind>);
 
 impl<Kind> Serialize for Id<Kind> {
@@ -47,6 +47,12 @@ impl<Kind> fmt::Display for Id<Kind> {
     }
 }
 
+impl<Kind> fmt::Debug for Id<Kind> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum ParseIdError {
     #[error("expected 64 hexadecimal digits")]
@@ -83,9 +89,25 @@ pub type EventId = Id<EventKind>;
 pub type DeviceId = Id<DeviceKind>;
 pub type IdentityId = Id<IdentityKind>;
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct TaskId(pub EventId);
+
+impl TaskId {
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(EventId::from_bytes(bytes))
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        self.0.as_bytes()
+    }
+}
+
+impl fmt::Debug for TaskId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
 
 impl fmt::Display for TaskId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -110,10 +132,15 @@ mod tests {
         let hex = "8a4b507fbdb6c258936a8ebd4f619ada491d4c5a97d38f496b368aca8a67af83";
         let device: DeviceId = hex.to_uppercase().parse().unwrap();
         let identity = IdentityId::from_bytes(*device.as_bytes());
-        let task = TaskId(hex.parse().unwrap());
+        let task = TaskId::from_bytes(*device.as_bytes());
+        assert_eq!(task.as_bytes(), device.as_bytes());
         assert_eq!(device.to_string(), hex);
         assert_eq!(identity.to_string(), hex);
         assert_eq!(task.to_string(), hex);
+        assert_eq!(format!("{device:?}"), hex);
+        assert_eq!(format!("{identity:?}"), hex);
+        assert_eq!(format!("{task:?}"), hex);
+        assert_eq!(format!("{:?}", task.0), hex);
         assert_eq!(hex.parse::<TaskId>().unwrap(), task);
         let json = format!(r#""{hex}""#);
         assert_json(&json, device);
