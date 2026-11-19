@@ -18,16 +18,33 @@
       (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-        in
-        {
-          packages.default = pkgs.rustPlatform.buildRustPackage {
+          packageArgs = {
             pname = "ppn";
             inherit (workspace) version;
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
           };
 
-          checks.default = self.packages.${system}.default;
+          mkCargoCheck = name: tool: command: pkgs.rustPlatform.buildRustPackage (packageArgs // {
+            pname = "ppn-${name}";
+            nativeBuildInputs = [ tool ];
+            buildPhase = ''
+              runHook preBuild
+              ${command}
+              runHook postBuild
+            '';
+            doCheck = false;
+            installPhase = ''touch "$out"'';
+          });
+        in
+        {
+          packages.default = pkgs.rustPlatform.buildRustPackage packageArgs;
+
+          checks = {
+            default = self.packages.${system}.default;
+            fmt = mkCargoCheck "fmt" pkgs.rustfmt "cargo fmt --check";
+            clippy = mkCargoCheck "clippy" pkgs.clippy "cargo clippy --all-targets -- -D warnings";
+          };
 
           devShells.default = devenv.lib.mkShell {
             inherit inputs pkgs;
