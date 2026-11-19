@@ -6,7 +6,7 @@ use ppn::flags::Globals;
 use ppn::output::finish;
 use ppn::terminal::{Color, Terminal};
 
-use crate::{help, version};
+use crate::{debug, help, version};
 
 #[derive(Parser)]
 #[command(
@@ -31,6 +31,16 @@ enum Command {
     /// Show help for ppn.
     #[command(after_help = "Examples:\n  ppn help --json")]
     Help,
+    /// Exercise CLI behavior.
+    #[command(
+        hide = true,
+        disable_help_subcommand = true,
+        after_help = "Examples:\n  ppn debug fail not_found"
+    )]
+    Debug {
+        #[command(subcommand)]
+        command: debug::Command,
+    },
 }
 
 pub fn run() -> ExitCode {
@@ -39,10 +49,11 @@ pub fn run() -> ExitCode {
         Ok(cli) => {
             let terminal = Terminal::detect(cli.globals.color, cli.globals.yes);
             let result = match cli.command {
-                Some(Command::Version) => version::run(),
-                Some(Command::Help) | None => help::run(Cli::command(), None),
+                Some(Command::Version) => Ok(version::run()),
+                Some(Command::Help) | None => Ok(help::run(Cli::command(), None)),
+                Some(Command::Debug { command }) => debug::run(command),
             };
-            finish(Ok(result), cli.globals.json, &terminal)
+            finish(result, cli.globals.json, &terminal)
         }
         Err(error) => {
             let json = Globals::json_on_parse_error(&args, &Cli::command());

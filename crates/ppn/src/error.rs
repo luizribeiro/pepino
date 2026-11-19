@@ -3,7 +3,8 @@ use std::process::ExitCode;
 
 use serde::Serialize;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+#[value(rename_all = "snake_case")]
 pub enum ErrorKind {
     Failure,
     Usage,
