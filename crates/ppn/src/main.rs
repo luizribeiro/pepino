@@ -1,9 +1,9 @@
 #![deny(clippy::print_stdout)]
 
-use std::{io, process::ExitCode};
+use std::{env, io, process::ExitCode};
 
-use clap::{ColorChoice, Parser, error::ErrorKind};
-use ppn::error::CliError;
+use clap::{ColorChoice, CommandFactory, Parser, error::ErrorKind};
+use ppn::{error::CliError, flags::Globals};
 
 #[derive(Parser)]
 #[command(
@@ -11,10 +11,14 @@ use ppn::error::CliError;
     color = ColorChoice::Never,
     about = "An experimental local-first, peer-to-peer task manager"
 )]
-struct Cli {}
+struct Cli {
+    #[command(flatten)]
+    globals: Globals,
+}
 
 fn main() -> ExitCode {
-    match Cli::try_parse() {
+    let args = env::args_os().collect::<Vec<_>>();
+    match Cli::try_parse_from(&args) {
         Ok(_) => ExitCode::SUCCESS,
         Err(error)
             if matches!(
@@ -25,6 +29,9 @@ fn main() -> ExitCode {
             let _ = error.print();
             ExitCode::SUCCESS
         }
-        Err(error) => CliError::usage(error).report(false, io::stderr().lock()),
+        Err(error) => CliError::usage(error).report(
+            Globals::json_on_parse_error(&args, &Cli::command()),
+            io::stderr().lock(),
+        ),
     }
 }

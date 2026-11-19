@@ -41,3 +41,36 @@ fn unknown_argument_is_a_usage_error() {
     assert!(stderr.starts_with("error: unexpected argument '--unrecognized'"));
     assert!(!stderr.contains('\x1b'));
 }
+
+#[test]
+fn global_options_are_validated_by_clap() {
+    for args in [
+        ["--timeout", "2m 10s", "--color", "never", "--yes"],
+        ["--timeout", "500ms", "--color", "always", "--yes"],
+    ] {
+        assert!(
+            Command::new(env!("CARGO_BIN_EXE_ppn"))
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ppn"))
+        .env_remove("PPN_JSON")
+        .args(["--timeout", "soon", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let diagnostic: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(diagnostic["error"]["code"], "usage");
+    assert!(
+        diagnostic["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("soon")
+    );
+}
