@@ -24,10 +24,38 @@ pub struct Term {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Clause {
     Text(String),
+    Is(Vec<State>),
+    Has(Vec<String>),
     Match {
         key: String,
         alternatives: Vec<Comparison>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum State {
+    Blocked,
+    Ready,
+    Open,
+    Closed,
+}
+
+impl State {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Blocked => "blocked",
+            Self::Ready => "ready",
+            Self::Open => "open",
+            Self::Closed => "closed",
+        }
+    }
+
+    fn parse(value: String) -> Result<Self, ErrorKind> {
+        [Self::Blocked, Self::Ready, Self::Open, Self::Closed]
+            .into_iter()
+            .find(|state| state.as_str() == value)
+            .ok_or(ErrorKind::UnknownState { value })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -97,6 +125,10 @@ pub enum ErrorKind {
     UnsupportedComparison { key: String },
     #[error("unknown status {value:?}; use todo, doing, done, or cancelled")]
     UnknownStatus { value: String },
+    #[error("unknown state {value:?}; use blocked, ready, open, or closed")]
+    UnknownState { value: String },
+    #[error("unsupported presence field {field:?}; use due, parent, assignee, or a custom field")]
+    UnsupportedPresence { field: String },
 }
 
 pub fn parse(input: &str) -> Result<Filter, ParseError> {
@@ -132,13 +164,39 @@ fn parse_term(raw: &str, position: Position) -> Result<Term, ParseError> {
 fn parse_clause(body: &str) -> Result<Clause, ErrorKind> {
     if let Some((key, values)) = lex::split_once(body, ':') {
         let key = decode_required(key, ErrorKind::EmptyKey)?;
-        let field = FieldKind::of(&key);
-        let alternatives = lex::split(values, ',')
-            .map(|value| parse_comparison(&key, field, value))
-            .collect::<Result<_, _>>()?;
-        return Ok(Clause::Match { key, alternatives });
+        return parse_keyed(key, values);
     }
     decode_required(body, ErrorKind::EmptyTerm).map(Clause::Text)
+}
+
+fn parse_keyed(key: String, raw: &str) -> Result<Clause, ErrorKind> {
+    let field = FieldKind::of(&key);
+    let operands = lex::split(raw, ',').map(|raw| parse_operand(&key, field, raw));
+    match key.as_str() {
+        "is" => operands
+            .map(|item| State::parse(item?.1))
+            .collect::<Result<_, _>>()
+            .map(Clause::Is),
+        "has" => operands
+            .map(|item| parse_presence(item?.1))
+            .collect::<Result<_, _>>()
+            .map(Clause::Has),
+        _ => {
+            let alternatives = operands
+                .map(|item| item.map(|(operator, value)| Comparison { operator, value }))
+                .collect::<Result<_, _>>()?;
+            Ok(Clause::Match { key, alternatives })
+        }
+    }
+}
+
+fn parse_presence(field: String) -> Result<String, ErrorKind> {
+    if matches!(field.as_str(), "due" | "parent" | "assignee")
+        || FieldKind::of(&field) == FieldKind::Custom
+    {
+        return Ok(field);
+    }
+    Err(ErrorKind::UnsupportedPresence { field })
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -168,7 +226,7 @@ impl FieldKind {
     }
 }
 
-fn parse_comparison(key: &str, field: FieldKind, raw: &str) -> Result<Comparison, ErrorKind> {
+fn parse_operand(key: &str, field: FieldKind, raw: &str) -> Result<(Operator, String), ErrorKind> {
     let (operator, raw) = Operator::split(raw);
     let value = decode_required(raw, ErrorKind::EmptyValue)?;
     if operator != Operator::Eq && !field.supports_comparison() {
@@ -179,7 +237,7 @@ fn parse_comparison(key: &str, field: FieldKind, raw: &str) -> Result<Comparison
     {
         return Err(ErrorKind::UnknownStatus { value });
     }
-    Ok(Comparison { operator, value })
+    Ok((operator, value))
 }
 
 fn decode_required(raw: &str, empty: ErrorKind) -> Result<String, ErrorKind> {
@@ -242,6 +300,47 @@ mod tests {
         assert_eq!(
             parse_argv(&["tag:needs review"]),
             parse(r#"tag:"needs review""#)
+        );
+    }
+
+    #[test]
+    fn predicates_accept_negation_and_alternatives() {
+        let filter = parse(
+            r#"is:blocked,ready -is:open,closed has:due,parent -has:assignee,"plant variety""#,
+        )
+        .unwrap();
+        assert_eq!(
+            filter.terms()[0].clause,
+            Clause::Is(vec![State::Blocked, State::Ready])
+        );
+        assert_eq!(
+            filter.terms()[1].clause,
+            Clause::Is(vec![State::Open, State::Closed])
+        );
+        assert_eq!(
+            filter.terms()[2].clause,
+            Clause::Has(vec!["due".into(), "parent".into()])
+        );
+        assert_eq!(
+            filter.terms()[3].clause,
+            Clause::Has(vec!["assignee".into(), "plant variety".into()])
+        );
+        assert!(filter.terms()[1].negated && filter.terms()[3].negated);
+        assert_eq!(
+            parse("is:stalled").unwrap_err().kind,
+            ErrorKind::UnknownState {
+                value: "stalled".into()
+            }
+        );
+        assert_eq!(
+            parse("has:priority").unwrap_err().kind,
+            ErrorKind::UnsupportedPresence {
+                field: "priority".into()
+            }
+        );
+        assert_eq!(
+            parse("is:>open").unwrap_err().kind,
+            ErrorKind::UnsupportedComparison { key: "is".into() }
         );
     }
 
