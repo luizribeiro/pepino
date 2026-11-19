@@ -19,13 +19,25 @@ pub struct Globals {
     #[arg(long, global = true)]
     pub yes: bool,
 
-    /// Limit the time spent waiting, for example 30s or 2m.
-    #[arg(long, global = true, value_name = "DURATION", value_parser = humantime::parse_duration)]
+    /// Limit the time spent waiting, for example 5 seconds, 500ms, or 2m.
+    #[arg(long, global = true, value_name = "DURATION", value_parser = parse_timeout)]
     pub timeout: Option<Duration>,
 
     /// Control color on a terminal. Honors NO_COLOR.
     #[arg(long, global = true, default_value = "auto", value_enum)]
     pub color: Color,
+}
+
+fn parse_timeout(value: &str) -> Result<Duration, humantime::DurationError> {
+    let value = value.trim();
+    if !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'.')
+    {
+        return humantime::parse_duration(&format!("{value}s"));
+    }
+    humantime::parse_duration(value)
 }
 
 fn parse_json(value: &str) -> Result<bool, &'static str> {

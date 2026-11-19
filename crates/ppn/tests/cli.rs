@@ -88,28 +88,36 @@ fn unknown_argument_is_a_usage_error() {
 }
 
 #[test]
-fn global_options_are_validated_by_clap() {
-    for args in [
-        ["--timeout", "2m 10s", "--color", "never", "--yes"],
-        ["--timeout", "500ms", "--color", "always", "--yes"],
-    ] {
-        assert!(ppn().args(args).output().unwrap().status.success());
+fn timeout_accepts_seconds_and_durations() {
+    for value in ["0", "5", "1.5", "500ms", "2m 10s"] {
+        assert_eq!(
+            run_ppn(&["--timeout", value, "version"]),
+            run_ppn(&["version"])
+        );
     }
+    assert_eq!(run_ppn(&["version", "--timeout=5"]), run_ppn(&["version"]));
+}
 
+#[test]
+fn invalid_or_missing_timeouts_are_usage_errors() {
+    for value in ["", "soon", "-5", "5fortnights", "18446744073709551616"] {
+        let output = ppn()
+            .args(["version", &format!("--timeout={value}"), "--json"])
+            .output()
+            .unwrap();
+        let diagnostic = assert_json_error(output, 2, "usage");
+        assert!(
+            diagnostic["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("--timeout")
+        );
+    }
     let output = ppn()
-        .args(["--timeout", "soon", "--json"])
+        .args(["--json", "version", "--timeout"])
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
-    let diagnostic: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(diagnostic["error"]["code"], "usage");
-    assert!(
-        diagnostic["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("soon")
-    );
+    assert_json_error(output, 2, "usage");
 }
 
 #[test]
