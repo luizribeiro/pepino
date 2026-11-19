@@ -2,8 +2,8 @@ use std::env;
 use std::ffi::OsString;
 use std::time::Duration;
 
-use clap::Args;
 use clap::builder::{BoolishValueParser, TypedValueParser};
+use clap::{Args, ValueEnum};
 
 use crate::terminal::Color;
 
@@ -29,15 +29,34 @@ pub struct Globals {
 }
 
 impl Globals {
-    pub fn json_on_parse_error(args: &[OsString], command: &clap::Command) -> bool {
-        args.iter()
-            .skip(1)
-            .take_while(|arg| *arg != "--")
-            .any(|arg| arg == "--json")
+    pub fn json_on_early_exit(args: &[OsString], command: &clap::Command) -> bool {
+        options(args).iter().any(|arg| arg == "--json")
             || env::var_os(JSON_ENV).is_some_and(|value| {
                 BoolishValueParser::new()
                     .parse_ref(command, None, &value)
                     .is_ok_and(|enabled| enabled)
             })
     }
+}
+
+pub fn color_on_early_exit(args: &[OsString]) -> Color {
+    let args = options(args);
+    args.iter()
+        .enumerate()
+        .filter_map(|(index, arg)| match arg.to_str()? {
+            "--color" => args.get(index + 1)?.to_str(),
+            arg => arg.strip_prefix("--color="),
+        })
+        .filter_map(|value| Color::from_str(value, false).ok())
+        .next_back()
+        .unwrap_or_default()
+}
+
+fn options(args: &[OsString]) -> &[OsString] {
+    let tail = args.get(1..).unwrap_or_default();
+    let end = tail
+        .iter()
+        .position(|arg| arg == "--")
+        .unwrap_or(tail.len());
+    &tail[..end]
 }

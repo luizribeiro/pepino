@@ -2,9 +2,9 @@ use std::{env, process::ExitCode};
 
 use clap::{ColorChoice, CommandFactory, Parser, Subcommand, error::ErrorKind};
 use ppn::error::CliError;
-use ppn::flags::Globals;
+use ppn::flags::{Globals, color_on_early_exit};
 use ppn::output::finish;
-use ppn::terminal::{Color, Terminal};
+use ppn::terminal::Terminal;
 
 use crate::{debug, help, version};
 
@@ -56,13 +56,17 @@ pub fn run() -> ExitCode {
             finish(result, cli.globals.json, &terminal)
         }
         Err(error) => {
-            let json = Globals::json_on_parse_error(&args, &Cli::command());
+            let json = Globals::json_on_early_exit(&args, &Cli::command());
             let result = match error.kind() {
                 ErrorKind::DisplayHelp => Ok(help::run(Cli::command(), Some(error.render()))),
                 ErrorKind::DisplayVersion => Ok(version::run()),
                 _ => Err(CliError::usage(error)),
             };
-            finish(result, json, &Terminal::detect(Color::Auto, false))
+            finish(
+                result,
+                json,
+                &Terminal::detect(color_on_early_exit(&args), false),
+            )
         }
     }
 }

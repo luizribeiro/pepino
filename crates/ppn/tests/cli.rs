@@ -268,3 +268,48 @@ fn reads_text_from_an_argument_stdin_or_a_file() {
         .unwrap();
     assert_json_error(output, 3, "not_found");
 }
+
+#[cfg(unix)]
+#[test]
+fn no_color_disables_ansi_on_an_actual_terminal() {
+    for command in ["help", "--help"] {
+        let colored = tty_output(&[command, "--color", "always"], None);
+        assert!(colored.contains(&0x1b));
+
+        let suppressed = tty_output(&[command, "--color=always"], Some("1"));
+        assert!(!suppressed.contains(&0x1b));
+
+        let plain = tty_output(&[command, "--color", "never"], None);
+        assert_eq!(suppressed, plain);
+    }
+}
+
+#[cfg(unix)]
+fn tty_output(args: &[&str], no_color: Option<&str>) -> Vec<u8> {
+    use nix::{errno::Errno, pty::openpty};
+    use std::{fs::File, io::Read, process::Stdio};
+
+    let pty = openpty(None, None).unwrap();
+    let mut command = ppn();
+    command
+        .args(args)
+        .env("TERM", "xterm")
+        .env_remove("NO_COLOR")
+        .stdout(File::from(pty.slave))
+        .stderr(Stdio::piped());
+    if let Some(value) = no_color {
+        command.env("NO_COLOR", value);
+    }
+    let child = command.spawn().unwrap();
+    drop(command);
+
+    let mut stdout = Vec::new();
+    if let Err(error) = File::from(pty.master).read_to_end(&mut stdout) {
+        // Linux reports EIO when the last slave descriptor closes.
+        assert_eq!(error.raw_os_error(), Some(Errno::EIO as i32));
+    }
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    stdout
+}
