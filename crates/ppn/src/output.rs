@@ -137,7 +137,7 @@ mod tests {
         let mut stdout = Sink::default();
         let error =
             (command.0)(true, &Terminal::detect(Color::Never, false), &mut stdout).unwrap_err();
-        assert_eq!(error.kind, ErrorKind::DaemonUnreachable);
+        assert_eq!(error.kind(), ErrorKind::DaemonUnreachable);
         assert_eq!(
             stdout.flushed,
             b"{\"schema\":1,\"title\":\"Ship the release\"}\n"

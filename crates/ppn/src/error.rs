@@ -40,16 +40,21 @@ impl ErrorKind {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, thiserror::Error)]
+#[error("{message}")]
 pub struct CliError {
     #[serde(skip)]
-    pub kind: ErrorKind,
+    kind: ErrorKind,
     code: &'static str,
     message: String,
     hint: Option<String>,
 }
 
 impl CliError {
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
+    }
+
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
@@ -99,6 +104,7 @@ mod tests {
     fn renders_diagnostics_in_both_formats() {
         let error = CliError::new(ErrorKind::NotFound, "No task named Ship the release")
             .with_hint("Check the release board");
+        assert_eq!(error.to_string(), "No task named Ship the release");
         let mut buffer = Vec::new();
         assert_eq!(error.report(false, &mut buffer), ExitCode::from(3));
         assert_eq!(

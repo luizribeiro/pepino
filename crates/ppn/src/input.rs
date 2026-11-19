@@ -46,14 +46,14 @@ mod tests {
 
     #[test]
     fn rejects_missing_or_conflicting_sources() {
-        assert_eq!(read_text(None, None).unwrap_err().kind, ErrorKind::Usage);
+        assert_eq!(read_text(None, None).unwrap_err().kind(), ErrorKind::Usage);
         assert_eq!(
             read_text(
                 Some("Ship release notes".into()),
                 Some(Path::new("notes.txt"))
             )
             .unwrap_err()
-            .kind,
+            .kind(),
             ErrorKind::Usage
         );
     }
