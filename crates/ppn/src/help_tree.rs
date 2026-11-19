@@ -1,4 +1,5 @@
 use std::any::TypeId;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -86,6 +87,29 @@ impl From<&Arg> for ArgumentInfo {
             _ if !choices.is_empty() => "enum".into(),
             _ if parser == TypeId::of::<Duration>() => "duration".into(),
             _ if parser == TypeId::of::<PathBuf>() => "path".into(),
+            _ if parser == TypeId::of::<String>() || parser == TypeId::of::<OsString>() => {
+                "string".into()
+            }
+            _ if parser == TypeId::of::<f32>() || parser == TypeId::of::<f64>() => "number".into(),
+            _ if [
+                TypeId::of::<i8>(),
+                TypeId::of::<i16>(),
+                TypeId::of::<i32>(),
+                TypeId::of::<i64>(),
+                TypeId::of::<i128>(),
+                TypeId::of::<isize>(),
+                TypeId::of::<u8>(),
+                TypeId::of::<u16>(),
+                TypeId::of::<u32>(),
+                TypeId::of::<u64>(),
+                TypeId::of::<u128>(),
+                TypeId::of::<usize>(),
+            ]
+            .into_iter()
+            .any(|integer| parser == integer) =>
+            {
+                "integer".into()
+            }
             _ => arg
                 .get_value_names()
                 .and_then(|names| names.first())
@@ -136,6 +160,13 @@ mod tests {
                 Command::new("archive")
                     .about("Archive a board.")
                     .arg(Arg::new("board").required(true))
+                    .arg(
+                        Arg::new("days")
+                            .long("older-than")
+                            .value_parser(clap::value_parser!(u32))
+                            .default_value("30")
+                            .env("PPN_ARCHIVE_AGE"),
+                    )
                     .after_help("Examples:\n  ppn archive releases\n\nNotes:\n  Unpin it first."),
             );
         command.build();
@@ -145,5 +176,8 @@ mod tests {
         assert_eq!(commands[0]["examples"], json!(["ppn archive releases"]));
         assert_eq!(commands[0]["arguments"][0]["name"], "board");
         assert_eq!(commands[0]["arguments"][0]["required"], true);
+        assert_eq!(commands[0]["flags"][0]["type"], "integer");
+        assert_eq!(commands[0]["flags"][0]["default"], "30");
+        assert_eq!(commands[0]["flags"][0]["env"], "PPN_ARCHIVE_AGE");
     }
 }
