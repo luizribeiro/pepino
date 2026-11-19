@@ -4,7 +4,7 @@ use ciborium::Value;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
-use crate::{DeviceId, Event, EventId, Hlc};
+use crate::{DeviceId, Event, EventId, Hlc, UnknownValue, future_value::substitute_unknown_values};
 
 const VERSION: u64 = 1;
 
@@ -51,6 +51,14 @@ pub enum DecodeOutcome {
         id: EventId,
         author: DeviceId,
         hlc: Hlc,
+        bytes: Vec<u8>,
+    },
+    UnknownValue {
+        id: EventId,
+        author: DeviceId,
+        hlc: Hlc,
+        variant: String,
+        values: Vec<UnknownValue>,
         bytes: Vec<u8>,
     },
 }
@@ -142,7 +150,11 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
         return Err(DecodeError::InvalidFrame);
     };
 
-    let Content { author, hlc, event }: Content<Value> = content
+    let Content {
+        author,
+        hlc,
+        mut event,
+    }: Content<Value> = content
         .deserialized()
         .map_err(|_| content_error(content, DecodeError::InvalidContent))?;
     let variant = match &event {
@@ -162,9 +174,24 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
             bytes: bytes.to_vec(),
         });
     }
-    let event = event
-        .deserialized()
-        .map_err(|_| content_error(&event, DecodeError::InvalidContent))?;
+    let event = match event.deserialized::<Event>() {
+        Ok(event) => event,
+        Err(_) => {
+            let variant = variant.clone();
+            let values = substitute_unknown_values(&mut event);
+            if values.is_empty() || event.deserialized::<Event>().is_err() {
+                return Err(content_error(&event, DecodeError::InvalidContent));
+            }
+            return Ok(DecodeOutcome::UnknownValue {
+                id,
+                author,
+                hlc,
+                variant,
+                values,
+                bytes: bytes.to_vec(),
+            });
+        }
+    };
     let canonical = encode_content(author, hlc, &event).map_err(|_| DecodeError::InvalidContent)?;
     if canonical != bytes {
         return Err(DecodeError::NonCanonical);
