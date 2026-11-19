@@ -2,9 +2,9 @@ use std::env;
 use std::ffi::OsString;
 use std::time::Duration;
 
-use clap::builder::{BoolishValueParser, TypedValueParser};
 use clap::{Args, ValueEnum};
 
+use crate::error::{CliError, ErrorKind};
 use crate::terminal::Color;
 
 const JSON_ENV: &str = "PPN_JSON";
@@ -12,7 +12,7 @@ const JSON_ENV: &str = "PPN_JSON";
 #[derive(Args)]
 pub struct Globals {
     /// Render output as JSON.
-    #[arg(long, global = true, env = JSON_ENV, value_parser = BoolishValueParser::new())]
+    #[arg(long, global = true, env = JSON_ENV, value_parser = parse_json)]
     pub json: bool,
 
     /// Confirm without prompting.
@@ -28,15 +28,25 @@ pub struct Globals {
     pub color: Color,
 }
 
-impl Globals {
-    pub fn json_on_early_exit(args: &[OsString], command: &clap::Command) -> bool {
-        options(args).iter().any(|arg| arg == "--json")
-            || env::var_os(JSON_ENV).is_some_and(|value| {
-                BoolishValueParser::new()
-                    .parse_ref(command, None, &value)
-                    .is_ok_and(|enabled| enabled)
-            })
+fn parse_json(value: &str) -> Result<bool, &'static str> {
+    match value {
+        "" | "0" | "false" => Ok(false),
+        "1" | "true" => Ok(true),
+        _ => Err("expected 0, false, 1, or true"),
     }
+}
+
+pub fn json_from_env() -> Result<bool, CliError> {
+    let value = env::var_os(JSON_ENV).unwrap_or_default();
+    value
+        .to_str()
+        .ok_or("expected a UTF-8 value")
+        .and_then(parse_json)
+        .map_err(|error| CliError::new(ErrorKind::Usage, format!("Invalid {JSON_ENV}: {error}")))
+}
+
+pub fn json_on_command_line(args: &[OsString]) -> bool {
+    options(args).iter().any(|arg| arg == "--json")
 }
 
 pub fn color_on_early_exit(args: &[OsString]) -> Color {

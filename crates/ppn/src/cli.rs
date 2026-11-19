@@ -3,7 +3,7 @@ use std::{env, process::ExitCode};
 
 use clap::{ColorChoice, CommandFactory, Parser, Subcommand, error::ErrorKind};
 use ppn::error::CliError;
-use ppn::flags::{Globals, color_on_early_exit};
+use ppn::flags::{Globals, color_on_early_exit, json_from_env, json_on_command_line};
 use ppn::output::finish;
 use ppn::terminal::Terminal;
 
@@ -49,6 +49,17 @@ enum Command {
 
 pub fn run() -> ExitCode {
     let args = env::args_os().collect::<Vec<_>>();
+    let json_flag = json_on_command_line(&args);
+    let json_env = match json_from_env() {
+        Ok(json) => json,
+        Err(error) => {
+            return finish(
+                Err(error),
+                json_flag,
+                &Terminal::detect(color_on_early_exit(&args), false),
+            );
+        }
+    };
     match Cli::try_parse_from(&args) {
         Ok(cli) => {
             let terminal = Terminal::detect(cli.globals.color, cli.globals.yes);
@@ -67,7 +78,7 @@ pub fn run() -> ExitCode {
         }
         Err(error) => {
             let mut definition = Cli::command();
-            let json = Globals::json_on_early_exit(&args, &definition);
+            let json = json_flag || json_env;
             let result = match error.kind() {
                 ErrorKind::DisplayHelp => {
                     definition.build();

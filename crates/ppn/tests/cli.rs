@@ -136,6 +136,41 @@ fn version_supports_human_output_and_global_json() {
 }
 
 #[test]
+fn ppn_json_accepts_only_documented_values() {
+    for value in ["", "0", "false", "1", "true"] {
+        for flag in ["version", "--version"] {
+            let output = ppn().env("PPN_JSON", value).arg(flag).output().unwrap();
+            assert!(output.status.success(), "{output:?}");
+            assert!(output.stderr.is_empty(), "{output:?}");
+            assert_eq!(
+                output.stdout.starts_with(b"{"),
+                matches!(value, "1" | "true")
+            );
+        }
+    }
+    for flag in ["version", "--version", "--help"] {
+        let output = ppn().env("PPN_JSON", "yes").arg(flag).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("PPN_JSON"));
+        assert!(!stderr.contains("--json"));
+    }
+    let output = ppn()
+        .env("PPN_JSON", "invalid")
+        .args(["version", "--json"])
+        .output()
+        .unwrap();
+    let diagnostic = assert_json_error(output, 2, "usage");
+    assert!(
+        diagnostic["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("PPN_JSON")
+    );
+}
+
+#[test]
 fn help_describes_the_cli_in_both_formats() {
     let human = run_ppn(&["help"]);
     assert_eq!(human, run_ppn(&["--help"]));
