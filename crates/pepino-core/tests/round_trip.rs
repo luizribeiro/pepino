@@ -148,3 +148,45 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn rejects_declared_lengths_without_data_or_excessive_nesting() {
+    for major in [0x5b, 0x7b, 0x9b, 0xbb] {
+        let bytes = [&[0x82, 1, major][..], &[0xff; 8]].concat();
+        assert!(matches!(Envelope::decode(&bytes), Err(DecodeError::Cbor)));
+    }
+    let deep = [&[0x82, 1][..], &[0x81; 512], &[0xf6]].concat();
+    assert!(matches!(Envelope::decode(&deep), Err(DecodeError::Cbor)));
+}
+
+proptest! {
+    #[test]
+    fn arbitrary_bytes_decode_without_panicking(bytes in prop::collection::vec(any::<u8>(), 0..1024)) {
+        for candidate in [bytes.clone(), [&[0x82, 1], bytes.as_slice()].concat()] {
+            if let Ok(DecodeOutcome::Known(envelope)) = Envelope::decode(&candidate) {
+                prop_assert_eq!(envelope.encode().unwrap(), candidate);
+            }
+        }
+    }
+
+    #[test]
+    fn single_bit_flips_cannot_preserve_the_id_of_a_known_event(
+        events in events(),
+        author in any::<[u8; 32]>(),
+        (wall_ms, counter) in any::<(u64, u32)>(),
+        index in any::<prop::sample::Index>(),
+        bit in 0u8..8,
+    ) {
+        let author = DeviceId::from_bytes(author);
+        for event in events {
+            let envelope = Envelope::new(author, Hlc { wall_ms, counter }, event).unwrap();
+            let mut bytes = envelope.encode().unwrap();
+            let index = index.index(bytes.len());
+            bytes[index] ^= 1 << bit;
+            if let Ok(DecodeOutcome::Known(changed)) = Envelope::decode(&bytes) {
+                prop_assert_ne!(changed.id, envelope.id);
+                prop_assert_eq!(changed.encode().unwrap(), bytes);
+            }
+        }
+    }
+}
