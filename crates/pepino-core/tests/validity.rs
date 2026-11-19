@@ -141,3 +141,42 @@ fn rejects_local_invalid_events_and_preserves_invalid_wire_metadata() {
         Err(DecodeError::NonCanonical)
     ));
 }
+
+#[test]
+fn classifies_invalid_names_in_both_wire_field_positions() {
+    let author = DeviceId::from_bytes([29; 32]);
+    let hlc = Hlc {
+        wall_ms: 780,
+        counter: 0,
+    };
+    let task = TaskId(EventId::from_bytes([67; 32]));
+    for (name, reason) in [
+        ("Garden", InvalidFieldName::Syntax),
+        ("tags", InvalidFieldName::Reserved),
+    ] {
+        for wire_event in [
+            serde_json::json!({"task_field_set": {"task": task, "field": name, "value": "unset"}}),
+            serde_json::json!({"task_created": {
+                "title": "Repair the gate",
+                "fields": {"status": "todo", "tags": [], "assignees": [], "custom": {name: "unset"}}
+            }}),
+        ] {
+            let event: Event = serde_json::from_value(wire_event).unwrap();
+            let reason = InvalidEvent::FieldName {
+                field: name.into(),
+                reason,
+            };
+            assert_eq!(event.validate(), Err(reason.clone()));
+            let bytes = encode_content(author, hlc, &event).unwrap();
+            assert_eq!(
+                Envelope::decode(&bytes).unwrap(),
+                DecodeOutcome::InvalidEvent {
+                    id: EventId::for_content(author, hlc, &event).unwrap(),
+                    author,
+                    hlc,
+                    reason,
+                },
+            );
+        }
+    }
+}

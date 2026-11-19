@@ -43,9 +43,13 @@ pub enum InvalidFieldName {
 
 impl FieldName {
     pub fn new(name: impl Into<String>) -> Result<Self, InvalidFieldName> {
-        let field = Self(name.into());
+        let field = Self::from_event_name(name.into());
         field.validate()?;
         Ok(field)
+    }
+
+    pub(crate) fn from_event_name(name: String) -> Self {
+        Self(name)
     }
 
     pub(crate) fn validate(&self) -> Result<(), InvalidFieldName> {
