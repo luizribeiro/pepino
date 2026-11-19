@@ -1,4 +1,5 @@
-use serde::Serialize;
+use ciborium::Value;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{DeviceId, Event, EventId, Hlc};
@@ -17,7 +18,29 @@ pub struct Envelope {
 #[error("could not encode event content")]
 pub struct EncodeError(#[from] ciborium::ser::Error<std::io::Error>);
 
-#[derive(Serialize)]
+#[derive(Debug, Error)]
+pub enum DecodeError {
+    #[error("invalid event CBOR")]
+    Cbor(#[from] ciborium::de::Error<std::io::Error>),
+    #[error("expected a two-item array with an unsigned format version")]
+    InvalidFrame,
+    #[error("invalid version 1 event content")]
+    InvalidContent(#[from] ciborium::value::Error),
+    #[error("unexpected bytes after event content")]
+    TrailingData,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "keep known envelopes allocation-free"
+)]
+pub enum DecodeOutcome {
+    Known(Envelope),
+    UnknownVersion { version: u64 },
+}
+
+#[derive(Deserialize, Serialize)]
 struct Content<E> {
     author: DeviceId,
     hlc: Hlc,
@@ -61,9 +84,41 @@ impl Envelope {
         encode_content(self.author, self.hlc, &self.event)
     }
 
+    pub fn decode(bytes: &[u8]) -> Result<DecodeOutcome, DecodeError> {
+        decode_content(bytes, None)
+    }
+
+    pub fn decode_with_id(id: EventId, bytes: &[u8]) -> Result<DecodeOutcome, DecodeError> {
+        decode_content(bytes, Some(id))
+    }
+
     pub const fn order_key(&self) -> (Hlc, EventId) {
         (self.hlc, self.id)
     }
+}
+
+fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, DecodeError> {
+    let mut remaining = bytes;
+    let frame: Value = ciborium::from_reader(&mut remaining)?;
+    if !remaining.is_empty() {
+        return Err(DecodeError::TrailingData);
+    }
+    let Value::Array(frame) = frame else {
+        return Err(DecodeError::InvalidFrame);
+    };
+    let [Value::Integer(version), content] = frame.as_slice() else {
+        return Err(DecodeError::InvalidFrame);
+    };
+    let version = u64::try_from(*version).map_err(|_| DecodeError::InvalidFrame)?;
+    if version != VERSION {
+        return Ok(DecodeOutcome::UnknownVersion { version });
+    }
+
+    let Content { author, hlc, event } = content.deserialized()?;
+    let id = id.unwrap_or_else(|| EventId::hash_content_bytes(bytes));
+    Ok(DecodeOutcome::Known(Envelope::with_id(
+        id, author, hlc, event,
+    )))
 }
 
 #[cfg(test)]
