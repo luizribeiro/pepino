@@ -56,7 +56,7 @@ fn joined<T>(
 }
 
 fn atom(f: &mut fmt::Formatter<'_>, value: &str) -> fmt::Result {
-    if !value.starts_with(['-', '@', '<', '>'])
+    if !value.starts_with(['-', '@', '<', '>', '='])
         && !value.contains([':', ',', '"'])
         && !value.contains(char::is_whitespace)
     {

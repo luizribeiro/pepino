@@ -3,6 +3,8 @@
 mod date;
 mod display;
 mod lex;
+#[cfg(test)]
+mod roundtrip;
 
 use std::fmt;
 
