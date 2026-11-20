@@ -102,3 +102,68 @@ async fn a_missing_parent_leaves_the_event_log_unchanged() {
     assert!(store.tasks(board).await.unwrap().is_empty());
     assert_eq!(store.latest_hlc(board).await.unwrap(), None);
 }
+
+#[tokio::test]
+async fn edit_fields_completes_work_and_clears_optional_values() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let id = add(&mut app, "Order a replacement latch").await;
+    let (_, _, tasks) = write(
+        &mut app,
+        json!({
+            "op":"add_task", "title":"Install the latch", "blocked_by":[&id]
+        }),
+    )
+    .await;
+    let child = tasks
+        .iter()
+        .find(|task| task.title == "Install the latch")
+        .unwrap()
+        .id
+        .clone();
+    assert!(get(&mut app, &child).await.blocked);
+
+    let edit = json!({
+        "op":"set_fields", "task":&id[..12], "changes":{
+            "title":{"text":"Order a stainless latch"}, "description":{"text":"Use the local supplier."},
+            "due":{"date":"2026-12-01"}, "priority":{"integer":2},
+            "status":{"status":"done"}, "estimate":{"integer":1}
+        }
+    });
+    let (changed, ids, _) = write(&mut app, edit.clone()).await;
+    assert!(changed && ids.contains(&child));
+    let done = get(&mut app, &id).await;
+    assert_eq!(done.title, "Order a stainless latch");
+    assert_eq!(done.description.as_deref(), Some("Use the local supplier."));
+    assert_eq!(done.priority, Some(2));
+    assert_eq!(done.due.unwrap().to_string(), "2026-12-01");
+    assert_eq!(done.status, pepino_app::Status::Done);
+    assert_eq!(done.fields["estimate"], FieldValue::Integer(1));
+    assert!(get(&mut app, &child).await.ready);
+    assert_eq!(
+        write(&mut app, edit).await,
+        (false, vec![id.clone()], vec![done.clone()])
+    );
+
+    let invalid = json!({
+        "op":"set_fields", "task":&id,
+        "changes":{"description":"unset","title":{"integer":3}}
+    });
+    assert!(
+        matches!(handle(&mut app, invalid).await, Err(AppError::InvalidInput { field, .. }) if field == "title")
+    );
+    assert_eq!(get(&mut app, &id).await, done);
+
+    let clear = json!({
+        "op":"set_fields", "task":&id,
+        "changes":{"description":"unset","due":"unset","estimate":"unset","priority":"unset"}
+    });
+    assert!(write(&mut app, clear.clone()).await.0);
+    let task = get(&mut app, &id).await;
+    assert_eq!(
+        (task.description, task.due, task.priority),
+        (None, None, None)
+    );
+    assert!(task.fields.is_empty());
+    assert!(!write(&mut app, clear).await.0);
+}

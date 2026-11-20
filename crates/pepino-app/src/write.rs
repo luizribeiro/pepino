@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use pepino_core::{Event, FieldName, IdentityId, InitialFields, TaskId};
-use pepino_store::BoardView;
+use pepino_store::{BoardView, TaskRecord};
 
 use crate::app::invalid;
 use crate::batch::Batch;
@@ -71,6 +71,10 @@ impl App {
                     }
                 }
             }
+            Request::SetFields { task, changes } => {
+                let current = self.resolve(view, "task", &task).await?;
+                set_fields(batch, current, changes)?;
+            }
             _ => return Err(invalid("op", "write operation is unavailable")),
         }
         Ok(())
@@ -95,6 +99,40 @@ impl App {
             })
             .collect()
     }
+}
+
+fn set_fields(
+    batch: &mut Batch,
+    current: &TaskRecord,
+    changes: BTreeMap<String, FieldValue>,
+) -> Result<(), AppError> {
+    batch.affected.insert(current.id);
+    for (name, value) in changes {
+        let field = FieldName::new(&name).map_err(|error| invalid(&name, error))?;
+        let changed = current_value(current, &field) != value;
+        batch.stage(
+            Event::TaskFieldSet {
+                task: current.id,
+                field,
+                value,
+            },
+            &name,
+            changed,
+        )?;
+    }
+    Ok(())
+}
+
+fn current_value(task: &TaskRecord, field: &FieldName) -> FieldValue {
+    let value = match field.as_str() {
+        "title" => Some(FieldValue::Text(task.title.clone())),
+        "description" => task.description.clone().map(FieldValue::Text),
+        "status" => Some(FieldValue::Status(task.status)),
+        "due" => task.due.map(FieldValue::Date),
+        "priority" => task.priority.map(FieldValue::Integer),
+        _ => task.custom.get(field).cloned(),
+    };
+    value.unwrap_or(FieldValue::Unset)
 }
 
 fn custom_fields(

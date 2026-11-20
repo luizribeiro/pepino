@@ -18,6 +18,23 @@ pub(super) struct Batch {
 }
 
 impl Batch {
+    pub(super) fn stage(
+        &mut self,
+        event: Event,
+        field: &str,
+        changed: bool,
+    ) -> Result<(), AppError> {
+        if changed {
+            self.push(event, field)?;
+        } else {
+            event
+                .validate()
+                .map_err(|error| invalid_event(field, error))?;
+            self.affected.extend(event.referenced_tasks());
+        }
+        Ok(())
+    }
+
     pub(super) fn push(&mut self, event: Event, field: &str) -> Result<EventId, AppError> {
         let hlc = self
             .clock
@@ -35,7 +52,7 @@ impl Batch {
     }
 }
 
-pub(super) fn invalid_event(field: &str, error: InvalidEvent) -> AppError {
+fn invalid_event(field: &str, error: InvalidEvent) -> AppError {
     let input = match &error {
         InvalidEvent::EmptyTitle => "title",
         InvalidEvent::TextTooLong { kind: "title", .. } => "title",
