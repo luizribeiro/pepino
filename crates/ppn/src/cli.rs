@@ -59,7 +59,7 @@ enum Command {
         "ppn add 'Order screws' --json",
     ]))]
     Add {
-        /// Task title. Use - to read it from stdin.
+        /// Task title. Use - for stdin text or, with --json, a JSON add_task object.
         title: String,
         #[command(flatten)]
         args: Box<TaskWriteArgs>,
@@ -137,7 +137,11 @@ fn execute(inputs: &ProcessInputs) -> (Result<CommandResult, CliError>, bool, Te
         Ok((cli, explicit_color)) => {
             let context = inputs.context(&cli.globals, explicit_color);
             let json = cli.globals.json || json_env;
-            (dispatch(cli, &context, inputs), json, context.terminal)
+            (
+                dispatch(cli, &context, inputs, json),
+                json,
+                context.terminal,
+            )
         }
         Err(error) => {
             let mut definition = Cli::command();
@@ -195,10 +199,11 @@ fn dispatch(
     cli: Cli,
     context: &Context<'_>,
     inputs: &ProcessInputs,
+    json: bool,
 ) -> Result<CommandResult, CliError> {
     match cli.command {
         Some(Command::Show { task }) => show::run(context, task),
-        Some(Command::Add { title, args }) => add::run(context, title, *args),
+        Some(Command::Add { title, args }) => add::run(context, title, *args, json),
         Some(Command::Status) => status::run(context),
         Some(Command::Version) => Ok(version::run(context)),
         Some(Command::Help { path }) => {

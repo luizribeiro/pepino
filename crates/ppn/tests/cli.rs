@@ -1152,3 +1152,27 @@ fn add_reads_title_or_description_from_stdin() {
             .contains("--from-file")
     );
 }
+
+#[test]
+fn add_accepts_protocol_fields_on_json_stdin() {
+    let (sandbox, _) = task_sandbox();
+    let result = task_stdin(
+        &sandbox,
+        &["add", "-", "--json", "--priority", "2", "--tag", "spring"],
+        r#"{"title":"Repair the gate","status":"doing","tags":["hardware"],"priority":1}"#,
+    );
+    let task = &as_json(&success(result))["tasks"][0];
+    assert_eq!(task["title"], "Repair the gate");
+    assert_eq!(task["status"], "doing");
+    assert_eq!(task["priority"], 2);
+    assert_eq!(task["tags"], json!(["hardware", "spring"]));
+    let malformed = task_stdin(
+        &sandbox,
+        &["add", "--json", "-"],
+        r#"{"title":"Check the board","typo":true}"#,
+    );
+    assert_eq!(malformed.status.code(), Some(2));
+    let error = serde_json::from_slice::<Value>(&malformed.stderr).unwrap();
+    assert_eq!(error["error"]["field"], "stdin");
+    assert_eq!(error["error"]["code"], "invalid_input");
+}

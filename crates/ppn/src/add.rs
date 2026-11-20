@@ -13,6 +13,7 @@ pub fn run(
     context: &Context<'_>,
     title: String,
     args: TaskWriteArgs,
+    json: bool,
 ) -> Result<CommandResult, CliError> {
     let from_stdin = title == "-";
     if from_stdin && args.description.reads_stdin() {
@@ -22,13 +23,13 @@ pub fn run(
         )
         .with_hint("Pass the description as text or use --from-file."));
     }
-    let title = read_text(Some(title), None)?;
-    let title = if from_stdin {
-        title.trim_end_matches(['\r', '\n']).to_owned()
+    let input = read_text(Some(title), None)?;
+    let request = if from_stdin {
+        crate::task_stdin::request(&input, json)?
     } else {
-        title
+        new_task(input)
     };
-    let request = args.apply_to_add(new_task(title), context.time.today)?;
+    let request = args.apply_to_add(request, context.time.today)?;
     let response = AppClient::open(context)?.call(Request::Write(request))?;
     let color = context.config()?.config.ui.color.value;
 
