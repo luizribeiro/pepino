@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use pepino_app::{AppError, AppErrorKind};
+use pepino_app::{AppError, AppErrorKind, FilterPosition};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -127,6 +127,33 @@ impl CliError {
         {
             self.details
                 .insert("input".into(), Value::String(input.into()));
+        }
+        self
+    }
+
+    pub fn remap_filter_position(
+        mut self,
+        view: Option<&str>,
+        remap: impl FnOnce(FilterPosition) -> Option<FilterPosition>,
+    ) -> Self {
+        let local = self
+            .details
+            .get("view_chain")
+            .is_none_or(|chain| view.is_some_and(|name| *chain == serde_json::json!([name])));
+        if local
+            && let Some(position) = self.details.get("position")
+            && let Ok(position) = serde_json::from_value(position.clone())
+        {
+            let mapped = remap(position).unwrap_or(position);
+            if let Ok(value) = serde_json::to_value(mapped) {
+                self.details.insert("position".into(), value);
+                let input = if matches!(mapped, FilterPosition::Byte { .. }) {
+                    "--filter"
+                } else {
+                    "filter term"
+                };
+                self = self.map_input("filter", input);
+            }
         }
         self
     }

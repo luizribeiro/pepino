@@ -481,3 +481,28 @@ fn forced_listing_color_applies_to_pipes_and_keeps_json_plain() {
     let json = sandbox.run(&["ls", "--color", "always", "--json"]);
     assert_eq!(as_json(&json)["kind"], "tasks");
 }
+
+#[test]
+fn mixed_filter_errors_preserve_their_cli_source_and_position() {
+    let (sandbox, _) = task_sandbox();
+    let check = |text, term| {
+        task_error(
+            sandbox
+                .command()
+                .args(["ls", "--json", "", term, "--filter", text])
+                .output()
+                .unwrap(),
+            2,
+            "invalid_input",
+        )
+    };
+    let flagged = check("  @missing", "tag:hardware");
+    assert_eq!(flagged["input"], "--filter");
+    assert_eq!(flagged["position"]["byte"], 2);
+    let positional = check("tag:hardware", "  @missing");
+    assert_eq!(positional["input"], "filter term");
+    assert_eq!(
+        positional["position"],
+        serde_json::json!({"kind":"argument","index":1,"byte":2})
+    );
+}
