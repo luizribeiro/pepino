@@ -1,4 +1,8 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::Path,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use pepino_core::DeviceId;
 use pepino_node::{MemberInfo, Node, NodeSettings};
@@ -12,6 +16,7 @@ use crate::{
 };
 
 pub(super) const REQUEST: &str = "device-request.json";
+const REFRESH_MARGIN: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -36,8 +41,7 @@ impl DeviceRequest {
     }
 
     pub fn member_info(&self) -> Result<MemberInfo, AppError> {
-        let info = MemberInfo::from_base32(&self.member_info)
-            .map_err(|_| invalid("request", "invalid or expired device member info"))?;
+        let info = MemberInfo::from_base32(&self.member_info).map_err(request_info_error)?;
         if info.device_id().ok() != Some(self.id) || self.name.trim().is_empty() {
             return Err(invalid(
                 "request",
@@ -45,6 +49,18 @@ impl DeviceRequest {
             ));
         }
         Ok(info)
+    }
+
+    pub fn expires_at(&self) -> Result<u64, AppError> {
+        self.member_info()?.expires_at().map_err(request_info_error)
+    }
+
+    fn reusable(&self, now: SystemTime) -> bool {
+        self.secret.is_some()
+            && now.duration_since(UNIX_EPOCH).is_ok_and(|age| {
+                self.expires_at()
+                    .is_ok_and(|expiry| age.saturating_add(REFRESH_MARGIN).as_secs() < expiry)
+            })
     }
 
     pub fn binding(&self) -> String {
@@ -58,6 +74,16 @@ impl DeviceRequest {
         }
         digest.finalize().to_hex().to_string()
     }
+}
+
+pub(crate) fn request_info_error(error: pepino_node::Error) -> AppError {
+    let reason = match error {
+        pepino_node::Error::MemberExpired => {
+            "The device request has expired. Run `ppn device request` again on the requesting host."
+        }
+        _ => "invalid device member info",
+    };
+    invalid("request", reason)
 }
 
 #[cfg(test)]
@@ -96,7 +122,7 @@ impl App {
         let path = directory.join(REQUEST);
         if exists(&path)? {
             let saved = DeviceRequest::read(&path)?;
-            if saved.secret.is_some() {
+            if saved.reusable(SystemTime::now()) {
                 return Ok(saved);
             }
         }
@@ -165,6 +191,18 @@ async fn persists_a_request_without_creating_an_identity() {
         .unwrap();
     assert_eq!(first.binding(), reused.binding());
     assert_eq!(reused.member_info().unwrap().device_id().unwrap(), first.id);
+    let near_expiry =
+        UNIX_EPOCH + Duration::from_secs(first.expires_at().unwrap()) - REFRESH_MARGIN;
+    assert!(!first.reusable(near_expiry));
+    let mut invalid = first.clone();
+    invalid.member_info.truncate(24);
+    write_json(&path.join(REQUEST), &invalid).unwrap();
+    let renewed = App::request_device(path, OpenOptions::default())
+        .await
+        .unwrap();
+    assert_ne!(renewed.secret, first.secret);
+    assert_ne!(renewed.binding(), first.binding());
+    assert_eq!(renewed.id, first.id);
     assert!(!path.join(FILE_NAME).exists());
     assert!(!path.join(DATABASE).exists());
 }

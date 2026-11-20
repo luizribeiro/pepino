@@ -1,4 +1,8 @@
-use std::{fmt, str::FromStr};
+use std::{
+    fmt,
+    str::FromStr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use data_encoding::{BASE32_NOPAD_NOCASE, HEXLOWER_PERMISSIVE};
 use p2panda::spaces::Member;
@@ -19,6 +23,13 @@ impl MemberInfo {
 
     pub fn device_id(&self) -> Result<DeviceId, Error> {
         Ok(DeviceId::from_bytes(*self.member()?.id().as_bytes()))
+    }
+
+    pub fn expires_at(&self) -> Result<u64, Error> {
+        Ok(Member::from_bytes(&self.0)
+            .map_err(invalid)?
+            .lifetime()
+            .not_after())
     }
 
     pub fn as_bytes(&self) -> &[u8; 305] {
@@ -51,6 +62,12 @@ impl MemberInfo {
 
     pub(crate) fn member(&self) -> Result<Member, Error> {
         let member = Member::from_bytes(&self.0).map_err(invalid)?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(invalid)?;
+        if now.as_secs() >= member.lifetime().not_after() {
+            return Err(Error::MemberExpired);
+        }
         member.verify().map_err(invalid)?;
         Ok(member)
     }
