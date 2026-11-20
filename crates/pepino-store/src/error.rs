@@ -4,7 +4,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
-    #[error("expected a prefix of 1 to 64 hexadecimal digits")]
+    #[error("expected a prefix of 4 to 64 hexadecimal digits")]
     InvalidPrefix,
     #[error("invalid event bytes: {0}")]
     Decode(#[from] DecodeError),
