@@ -56,7 +56,7 @@ impl Host {
     }
 
     pub fn add(&self, request: &str, options: &[&str]) -> String {
-        let args = [&["device", "add", request][..], options].concat();
+        let args = [&["device", "add", request, "--yes"][..], options].concat();
         let grant = self.json(&args);
         assert_eq!(grant["schema"], 1);
         assert_eq!(grant["grant"]["secret"], true);

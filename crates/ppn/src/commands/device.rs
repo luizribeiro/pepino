@@ -43,10 +43,13 @@ enum Action {
     },
 
     /// Grant a requested device manager access to your boards and print a secret code.
-    #[command(after_help = example_help(&["ppn device add - --yes < request.txt", "ppn device add --from-file request.txt --yes"]))]
+    #[command(after_help = example_help(&["ppn device add - --fingerprint 9XF5-HK7M-QS6V-RY24 < request.txt", "ppn device add --from-file request.txt --yes"]))]
     Add {
         #[command(flatten)]
         input: code_input::CodeInput,
+        /// Confirm the fingerprint shown on the requesting device.
+        #[arg(long, value_name = "FP")]
+        fingerprint: Option<String>,
         /// Override the requesting device's name.
         #[arg(long, value_name = "NAME")]
         name: Option<String>,
@@ -70,9 +73,18 @@ pub fn run(
     match args.action {
         Action::Ls => ls::run(context),
         Action::Join { input } => join::run(context, &input.read(context)?, selection),
-        Action::Add { input, name } => {
-            add::run(context, &input.read(context)?, name, selection, allow_start)
-        }
+        Action::Add {
+            input,
+            name,
+            fingerprint,
+        } => add::run(
+            context,
+            &input.read(context)?,
+            name,
+            fingerprint.as_deref(),
+            selection,
+            allow_start,
+        ),
         Action::Request { name } => {
             let (directory, options) = local_options(context, name)?;
             let request = runtime()?.block_on(App::request_device(directory, options))?;

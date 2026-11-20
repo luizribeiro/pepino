@@ -68,7 +68,38 @@ fn linked_devices_share_tasks_and_late_members_get_history() {
         ferrum.json(&["device", "ls"])["devices"][0]["state"],
         "pending"
     );
-    let human = titanium.output(&["device", "add", &request, "--name", "Ferrum"]);
+    let result = ferrum.json(&["device", "request"]);
+    let fingerprint = result["fingerprint"].as_str().unwrap();
+    task_error(
+        titanium.output(&["device", "add", &request, "--json"]),
+        1,
+        "confirmation_required",
+    );
+    task_error(
+        titanium.output(&[
+            "device",
+            "add",
+            &request,
+            "--json",
+            "--fingerprint",
+            "0000-0000-0000-0000",
+        ]),
+        2,
+        "invalid_input",
+    );
+    let human = titanium.output(&[
+        "device",
+        "add",
+        &request,
+        "--name",
+        "Ferrum",
+        "--fingerprint",
+        fingerprint,
+    ]);
+    assert!(
+        String::from_utf8_lossy(&human.stderr)
+            .contains(&format!("Adding tablet, fingerprint {fingerprint}"))
+    );
     assert!(human.status.success());
     assert!(String::from_utf8_lossy(&human.stderr).contains("grant code is secret"));
     let grant = titanium.add(&request, &[]);

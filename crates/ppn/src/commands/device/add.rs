@@ -18,6 +18,7 @@ pub(super) fn run(
     context: &Context<'_>,
     code: &str,
     name: Option<String>,
+    expected_fingerprint: Option<&str>,
     selection: Option<&Path>,
     allow_start: bool,
 ) -> Result<CommandResult, CliError> {
@@ -35,6 +36,12 @@ pub(super) fn run(
             "The device name must contain a non-whitespace character.",
         ));
     }
+    let fingerprint = device.fingerprint();
+    let notice = format!(
+        "Adding {}, fingerprint {fingerprint}",
+        single_line(&device.name)
+    );
+    confirm(context, expected_fingerprint, &fingerprint, &notice)?;
     let config = &context.config()?.config;
     let app = AppClient::open(context)?;
     if app.local_state().device_id == device.id {
@@ -96,21 +103,60 @@ pub(super) fn run(
     };
     let signed = SignedGrant::issue(&grant, &device, &keys)?;
     let code = Kind::Grant.encode(&signed).map_err(invalid_code)?;
-    let note = "This grant code is secret. It contains your board IDs.";
-    Ok(CommandResult::document(GrantCode(code)).with_human_note(Some(note.into())))
+    let note = format!("{notice}\nThis grant code is secret. It contains your board IDs.");
+    Ok(CommandResult::document(GrantCode {
+        code,
+        fingerprint,
+        id: recipient,
+    })
+    .with_human_note(Some(note)))
 }
 
-struct GrantCode(String);
+fn confirm(
+    context: &Context<'_>,
+    expected: Option<&str>,
+    actual: &str,
+    notice: &str,
+) -> Result<(), CliError> {
+    if let Some(expected) = expected {
+        if expected.eq_ignore_ascii_case(actual) {
+            return Ok(());
+        }
+        return Err(CliError::new(
+            ErrorKind::InvalidInput,
+            format!("{notice}. The supplied fingerprint does not match."),
+        ));
+    }
+    if !context.yes && !context.terminal.stdin_is_tty {
+        return Err(CliError::new(ErrorKind::ConfirmationRequired, notice)
+            .with_hint("Compare the fingerprint on the requesting device, then pass --fingerprint <FP> or --yes."));
+    }
+    if !context.confirm(notice)? {
+        return Err(CliError::new(
+            ErrorKind::ConfirmationRequired,
+            "Device addition cancelled.",
+        ));
+    }
+    Ok(())
+}
+
+struct GrantCode {
+    code: String,
+    fingerprint: String,
+    id: DeviceId,
+}
 
 impl Render for GrantCode {
     fn human(&self, _: &Terminal) -> String {
-        self.0.clone()
+        self.code.clone()
     }
 
     fn json_fields(self) -> Map<String, Value> {
         Map::from_iter([
             ("kind".into(), json!("device_grant")),
-            ("grant".into(), json!({"code": self.0, "secret": true})),
+            ("grant".into(), json!({"code": self.code, "secret": true})),
+            ("fingerprint".into(), json!(self.fingerprint)),
+            ("device_id".into(), json!(self.id)),
         ])
     }
 }
