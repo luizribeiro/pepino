@@ -8,6 +8,7 @@
 
 mod app;
 mod batch;
+mod filter;
 mod hlc;
 mod log;
 mod projection;
@@ -21,6 +22,7 @@ mod wire;
 mod write;
 
 pub use app::App;
+pub use filter::{FilterDiagnostic, FilterInput, FilterPosition};
 pub use hlc::Hlc;
 pub use log::{EventChange, EventClassification, EventRecord, InitialTaskFields};
 pub use state::{LocalState, OpenOptions};
