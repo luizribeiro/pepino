@@ -1,25 +1,30 @@
-#[cfg(test)]
 mod ack;
-#[cfg(test)]
+mod board;
 mod board_lease;
-#[cfg(test)]
 mod board_task;
 mod credentials;
-#[cfg(test)]
 mod events;
 mod node;
-#[cfg(test)]
 mod receipt;
 mod settings;
 mod worker;
 
+pub use ack::Ack;
+pub use board::{BoardHandle, OpenBoardOptions};
 pub use credentials::DeviceCredentials;
+pub use events::{BoardEvent, BoardEvents};
 pub use node::Node;
 pub use settings::{BootstrapNode, MdnsMode, NodeSettings};
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    #[error("the board's event stream has already been taken")]
+    EventsTaken,
+    #[error("waiting for board membership timed out")]
+    JoinTimeout,
+    #[error("the local operation was submitted without a processed receipt")]
+    PublishReceipt,
     #[error("this device has not joined the board")]
     NotJoined,
     #[error("processing board operation {id}: {details}")]

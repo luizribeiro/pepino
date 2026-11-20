@@ -6,19 +6,21 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
-use crate::{Error, NodeSettings, worker::Worker};
+use crate::{Error, NodeSettings, ack::AckStore, board_lease::OpenBoards, worker::Worker};
 
 pub struct Node {
     pub(crate) inner: Arc<p2panda::Node>,
     pub(crate) pool: SqlitePool,
     pub(crate) worker: Worker,
+    pub(crate) acks: AckStore,
+    pub(crate) boards: OpenBoards,
 }
 
 impl Node {
     pub async fn spawn(settings: NodeSettings) -> Result<Self, Error> {
         let builder = settings.builder()?;
         let worker = Worker::start().await?;
-        let (inner, pool) = worker
+        let (inner, pool, acks) = worker
             .run(async move {
                 let options = SqliteConnectOptions::new()
                     .filename(settings.database_path)
@@ -33,18 +35,21 @@ impl Node {
                 p2panda_store::sqlite::run_pending_migrations(&pool)
                     .await
                     .map_err(Error::storage)?;
+                let acks = AckStore::create(pool.clone()).await?;
                 let inner = builder
                     .database_pool(pool.clone())
                     .spawn()
                     .await
                     .map_err(Error::node)?;
-                Ok((Arc::new(inner), pool))
+                Ok((Arc::new(inner), pool, acks))
             })
             .await?;
         Ok(Self {
             inner,
             pool,
             worker,
+            acks,
+            boards: OpenBoards::default(),
         })
     }
 
@@ -57,6 +62,7 @@ impl Node {
             inner,
             pool,
             worker,
+            ..
         } = self;
         drop(inner);
         worker.shutdown().await?;
