@@ -107,10 +107,49 @@ On upgrade, each device publishes the additions it recorded on that host
 once its own admission is in the synced roster. The originating device
 creates the initial record. Older additions keep an unknown add time.
 
-The manual flow covers adding a device to one existing identity.
-Removing or revoking devices, one-code linking, merging a host that
-already has its own tasks, and managing board relays are outside this
-version.
+## Removing a device
+
+From another active device, run `ppn device revoke 'Greenhouse tablet'`.
+The confirmation shows the key fingerprint and boards affected. Pass
+`--yes` when running without a terminal. Use `--json` for per-board
+results. The signed revocation stays in the roster, and linked managers'
+daemons retry any board they could not update. You can also rerun the
+command. If membership is unavailable locally, sync the board and retry.
+Grant another device Manage on any board where the target is the only
+manager before revoking it. The node API exposes `BoardHandle::set_role`
+to promote a member on a particular board. Avoid revoking another manager
+while that manager is revoking you. Concurrent removals can leave the
+board without a manager.
+
+To retire the device you're using, run `ppn device leave` (or
+`ppn device leave --yes` in a script). The daemon publishes a signed
+request, and the host pauses task sync. Another active device's daemon
+must process the request. Until it does, `ppn status` and `ppn device ls`
+show the pending leave. The last active device must link another device
+before it can leave. To wipe the retired host, wait for removal, stop its
+daemon, and delete the data directory and credentials file listed by the
+command. Delete copies in backups separately if you want them wiped too.
+
+Removal rotates board keys. The removed device cannot read new data even
+if it still receives encrypted traffic. It keeps everything it already
+had, and its old tasks still display with the identity's name. A device
+that receives the removal can read its local history, and write commands
+fail with exit code 5. A device removed while offline may never receive
+the notice because peers reject its new sync connections. It can still
+show stale data and accept local edits that cannot sync. `ppn status`
+shows how long it has had no contact with another device when that
+information is available. `ppn device ls --active` hides revoked devices.
+
+Readmission restores access to the full board history, including the
+interval when the device was removed. To re-link the same device key,
+stop its daemon and move its data directory aside. In the fresh data
+directory, restore the credentials and a clean `node.sqlite` backup
+from before retirement. Keep the old task database and local state in
+the archive. If the only copy of `node.sqlite` may contain offline
+drafts written after removal, use fresh credentials and link it as a
+new device. Run `ppn device request`
+in the fresh directory and complete `device add` and `device join` as
+above. The daemon rebuilds the task cache from the boards.
 
 ## Back up the node database
 
