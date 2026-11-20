@@ -107,7 +107,7 @@ pub struct Comparison<T> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CustomValue {
     Integer(i64),
-    Date(Date),
+    Date(DateOperand),
     Text(String),
 }
 

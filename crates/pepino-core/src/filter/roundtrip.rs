@@ -89,7 +89,9 @@ fn clause() -> impl Strategy<Value = Clause> {
     ];
     let custom_operand = prop_oneof![
         any::<i64>().prop_map(CustomValue::Integer),
-        dates().prop_map(CustomValue::Date),
+        dates()
+            .prop_map(DateOperand::Absolute)
+            .prop_map(CustomValue::Date),
         atom().prop_map(CustomValue::Text),
     ];
     prop_oneof![

@@ -4,8 +4,8 @@ use super::ast::ME;
 use super::keywords::{self, Builtin};
 
 use super::{
-    Assignee, Clause, Comparison, CustomValue, Date, ErrorKind, Filter, Operator, ParseError,
-    Position, PresenceField, State, Term, date, lex,
+    Assignee, Clause, Comparison, CustomValue, Date, DateOperand, ErrorKind, Filter, Operator,
+    ParseError, Position, PresenceField, State, Term, date, lex,
 };
 
 /// Parse whitespace-separated terms using the supplied calendar date.
@@ -208,7 +208,7 @@ fn parse_custom(operand: Operand, today: Date) -> Result<Comparison<CustomValue>
         CustomValue::Integer(parse_integer(value)?)
     } else {
         match date::resolve(&value, today) {
-            Ok(date) => CustomValue::Date(date),
+            Ok(date) => CustomValue::Date(DateOperand::Absolute(date)),
             Err(error @ ErrorKind::DateOutOfRange { .. }) => return Err(error),
             Err(_) => CustomValue::Text(value),
         }

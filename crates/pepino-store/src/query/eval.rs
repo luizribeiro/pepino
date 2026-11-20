@@ -280,7 +280,7 @@ fn prepare_clause(
                 Ok(match value {
                     CustomValue::Integer(value) => FieldValue::Integer(value),
                     CustomValue::Text(value) => FieldValue::Text(value),
-                    CustomValue::Date(value) => FieldValue::Date(value),
+                    CustomValue::Date(value) => FieldValue::Date(operands.date(&value)?),
                 })
             })?;
             Box::new(move |task| {
