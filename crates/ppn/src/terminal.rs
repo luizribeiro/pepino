@@ -70,13 +70,11 @@ impl Context {
 }
 
 fn use_color(color: Color, stdout_is_tty: bool, no_color: bool, dumb: bool) -> bool {
-    stdout_is_tty
-        && !no_color
-        && match color {
-            Color::Auto => !dumb,
-            Color::Always => true,
-            Color::Never => false,
-        }
+    match color {
+        Color::Auto => stdout_is_tty && !no_color && !dumb,
+        Color::Always => true,
+        Color::Never => false,
+    }
 }
 
 fn ask(prompt: &str, mut stdin: impl BufRead, mut stderr: impl Write) -> io::Result<bool> {
@@ -95,9 +93,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn color_requires_a_tty_and_honors_no_color() {
-        assert!(!use_color(Color::Always, false, false, false));
-        assert!(!use_color(Color::Always, true, true, false));
+    fn only_automatic_color_depends_on_the_terminal_and_environment() {
+        assert!(use_color(Color::Always, false, false, false));
+        assert!(use_color(Color::Always, false, true, true));
+        assert!(!use_color(Color::Auto, false, false, false));
+        assert!(!use_color(Color::Auto, true, true, false));
         assert!(!use_color(Color::Auto, true, false, true));
         assert!(use_color(Color::Auto, true, false, false));
         assert!(use_color(Color::Always, true, false, true));

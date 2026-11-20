@@ -23,7 +23,7 @@ pub struct Globals {
     #[arg(long, global = true, value_name = "DURATION", value_parser = parse_timeout)]
     pub timeout: Option<Duration>,
 
-    /// Control color on a terminal. Honors NO_COLOR.
+    /// Control color. Auto honors NO_COLOR and the terminal.
     #[arg(long, global = true, default_value = "auto", value_enum)]
     pub color: Color,
 }

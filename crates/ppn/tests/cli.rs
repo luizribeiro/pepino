@@ -3,7 +3,7 @@ use std::process::Command;
 
 fn ppn() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ppn"));
-    command.env_remove("PPN_JSON");
+    command.env_remove("PPN_JSON").env_remove("NO_COLOR");
     command
 }
 
@@ -186,7 +186,7 @@ fn help_describes_the_cli_in_both_formats() {
     assert_eq!(human, run_ppn(&["--help"]));
     assert!(human.contains("Print the installed ppn version"));
     assert!(human.contains("ppn help --json"));
-    assert!(!run_ppn(&["help", "--color", "always"]).contains('\x1b'));
+    assert!(!human.contains('\x1b'));
 
     let help: serde_json::Value = serde_json::from_str(&run_ppn(&["help", "--json"])).unwrap();
     assert_eq!(
@@ -419,13 +419,31 @@ fn reads_text_from_an_argument_stdin_or_a_file() {
 
 #[cfg(unix)]
 #[test]
-fn no_color_disables_ansi_on_an_actual_terminal() {
+fn forced_color_works_on_pipes_even_with_no_color() {
     for command in ["help", "--help"] {
-        let colored = tty_output(&[command, "--color", "always"], None);
-        assert!(colored.contains(&0x1b));
+        let output = ppn()
+            .env("NO_COLOR", "1")
+            .args([command, "--color=always"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+        assert!(output.stdout.contains(&0x1b));
+        assert!(!run_ppn(&[command, "--color=never"]).contains('\x1b'));
+    }
+}
 
-        let suppressed = tty_output(&[command, "--color=always"], Some("1"));
+#[cfg(unix)]
+#[test]
+fn no_color_disables_automatic_color_on_a_terminal() {
+    for command in ["help", "--help"] {
+        let colored = tty_output(&[command], None);
+        assert!(colored.contains(&0x1b));
+        assert_eq!(tty_output(&[command], Some("")), colored);
+
+        let suppressed = tty_output(&[command], Some("1"));
         assert!(!suppressed.contains(&0x1b));
+        assert_eq!(tty_output(&[command, "--color=always"], Some("1")), colored);
 
         let plain = tty_output(&[command, "--color", "never"], None);
         assert_eq!(suppressed, plain);
@@ -442,7 +460,6 @@ fn tty_output(args: &[&str], no_color: Option<&str>) -> Vec<u8> {
     command
         .args(args)
         .env("TERM", "xterm")
-        .env_remove("NO_COLOR")
         .stdout(File::from(pty.slave))
         .stderr(Stdio::piped());
     if let Some(value) = no_color {
