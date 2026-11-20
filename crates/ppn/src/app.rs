@@ -14,6 +14,7 @@ pub struct InvocationTime {
 
 pub struct AppClient {
     app: App,
+    wrote: std::rc::Rc<std::cell::Cell<bool>>,
     runtime: Runtime,
     now_ms: u64,
 }
@@ -55,8 +56,12 @@ impl AppClient {
                 App::open_with_options(directory, now_ms, options).await
             }
         })?;
+        if initialize {
+            context.wrote.set(true);
+        }
         Ok(Self {
             app,
+            wrote: context.wrote.clone(),
             runtime,
             now_ms,
         })
@@ -85,9 +90,14 @@ impl AppClient {
     }
 
     pub fn call(&mut self, request: Request) -> Result<Response, CliError> {
-        self.runtime
-            .block_on(self.app.handle(request, self.now_ms))
-            .map_err(Into::into)
+        let write = matches!(&request, Request::Write(_));
+        let response = self
+            .runtime
+            .block_on(self.app.handle(request, self.now_ms))?;
+        if write {
+            self.wrote.set(true);
+        }
+        Ok(response)
     }
 
     pub fn task(&mut self, reference: &str) -> Result<TaskSummary, CliError> {

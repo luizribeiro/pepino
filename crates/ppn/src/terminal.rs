@@ -99,6 +99,7 @@ impl RenderSettings {
 
 pub struct Context<'a> {
     pub terminal: Terminal,
+    pub(crate) wrote: std::rc::Rc<std::cell::Cell<bool>>,
     config: OnceCell<Result<LoadedConfig, CliError>>,
     load_config: Box<dyn Fn() -> Result<LoadedConfig, CliError> + 'a>,
     pub yes: bool,
@@ -117,11 +118,16 @@ impl<'a> Context<'a> {
         Self {
             terminal,
             config: OnceCell::new(),
+            wrote: Default::default(),
             load_config: Box::new(load_config),
             yes,
             timeout,
             time,
         }
+    }
+
+    pub fn wrote(&self) -> bool {
+        self.wrote.get()
     }
 
     pub fn config(&self) -> Result<&LoadedConfig, CliError> {

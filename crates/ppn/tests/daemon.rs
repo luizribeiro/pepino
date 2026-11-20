@@ -202,3 +202,75 @@ fn status_combines_daemon_activity_with_local_counts() {
     success(fixture.wait_foreground());
     fixture.assert_stopped();
 }
+#[test]
+fn writes_stay_successful_and_fast_with_an_unreachable_socket() {
+    let (sandbox, data) = task_sandbox();
+    let absent = sandbox.home.path().join("absent/control.sock");
+    let start = std::time::Instant::now();
+    let mut command = sandbox.command();
+    command
+        .env_remove("PPN_NO_DAEMON")
+        .env("PPN_DAEMON_SOCKET_PATH", &absent);
+    let output = command
+        .args(["add", "Order the new greenhouse latch", "--json"])
+        .output()
+        .unwrap();
+    assert!(as_json(&success(output))["created"].is_string());
+    assert!(start.elapsed() < std::time::Duration::from_secs(2));
+    assert!(!absent.exists());
+    assert!(!data.join("daemon.log").exists());
+}
+
+#[cfg(pepino_network_tests)]
+#[test]
+fn a_write_autostarts_and_subsequent_writes_notify_the_engine() {
+    use std::time::{Duration, Instant};
+    let fixture = support::Fixture::new("");
+    fixture.run(&["add", "Install a rain barrel"]);
+    fixture.assert_stopped();
+    let add = |title| {
+        let output = fixture
+            .command()
+            .env_remove("PPN_NO_DAEMON")
+            .args(["add", title])
+            .output()
+            .unwrap();
+        success(output);
+    };
+    let check_publications = |expected, limit| {
+        let start = Instant::now();
+        loop {
+            let reply = fixture.raw(&serde_json::json!({"v":1,"request":{"op":"status"}}));
+            let boards = reply["result"]["status"]["network"]["boards"]
+                .as_object()
+                .unwrap();
+            if boards.values().next().unwrap()["published"] == expected {
+                break;
+            }
+            assert!(start.elapsed() < limit, "{reply}");
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    };
+    add("Fix the greenhouse latch");
+    fixture.ready();
+    check_publications(2, Duration::from_secs(5));
+    add("Paint the greenhouse door");
+    check_publications(3, Duration::from_millis(1500));
+    fixture.run(&["daemon", "stop"]);
+    fixture.assert_stopped();
+}
+
+#[cfg(pepino_network_tests)]
+#[test]
+fn disabling_autostart_in_config_also_prevents_write_notifications() {
+    let fixture = support::Fixture::new("[daemon]\nautostart = false\n");
+    let output = fixture
+        .command()
+        .env_remove("PPN_NO_DAEMON")
+        .args(["add", "Seed the vegetable bed"])
+        .output()
+        .unwrap();
+    success(output);
+    fixture.assert_stopped();
+    assert!(!fixture.data.join("daemon.log").exists());
+}

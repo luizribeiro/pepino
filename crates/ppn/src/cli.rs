@@ -147,11 +147,13 @@ fn execute(inputs: &ProcessInputs) -> (Result<CommandResult, CliError>, bool, Te
         Ok((cli, explicit_color)) => {
             let context = inputs.context(&cli.globals, explicit_color);
             let json = cli.globals.json || json_env;
-            (
-                dispatch(cli, &context, inputs, json),
-                json,
-                context.terminal,
-            )
+            let verbose = cli.globals.verbose;
+            let selection = cli.globals.config.clone();
+            let result = dispatch(cli, &context, inputs, json);
+            if result.is_ok() && context.wrote() && inputs.daemon_enabled() {
+                commands::daemon::notify_write(&context, selection.as_deref(), verbose);
+            }
+            (result, json, context.terminal)
         }
         Err(error) => {
             let mut definition = definition();

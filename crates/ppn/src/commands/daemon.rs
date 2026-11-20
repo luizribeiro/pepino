@@ -119,3 +119,36 @@ pub fn unreachable(error: std::io::Error) -> CliError {
         format!("Could not reach the daemon. {error}"),
     )
 }
+
+pub fn notify_write(context: &Context<'_>, selection: Option<&Path>, verbose: bool) {
+    use ppn::daemon::{
+        client::unavailable,
+        protocol::{Operation, Outcome},
+    };
+    use std::io::Write as _;
+
+    let Ok(loaded) = context.config() else { return };
+    let config = &loaded.config;
+    if !config.daemon.autostart.value {
+        return;
+    }
+    let client = Client {
+        path: socket_path(config),
+    };
+    let result = match client.call(Operation::Nudge) {
+        Ok(Outcome::Nudged) => Ok(()),
+        Ok(_) => Err(std::io::Error::other("Unexpected daemon response")),
+        Err(error) if unavailable(&error) => {
+            process::spawn(config, selection, config.log_level.value).map(|_| ())
+        }
+        Err(error) => Err(error),
+    };
+    if let Err(error) = result
+        && verbose
+    {
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "Could not notify the daemon. {error}"
+        );
+    }
+}
