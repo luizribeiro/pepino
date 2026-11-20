@@ -35,6 +35,11 @@ enum Operation {
         #[arg(value_name = "BOARD")]
         reference: String,
     },
+    #[command(about = "Create an encrypted board.", after_help = example_help(&["ppn board new Workshop"]))]
+    New {
+        /// Name for the new board.
+        name: String,
+    },
     #[command(about = "Rename a board on all linked devices.", after_help = example_help(&["ppn board rename Workshop 'Tool Shed'"]))]
     Rename {
         /// Board name or unambiguous ID prefix.
@@ -48,8 +53,8 @@ enum Operation {
 pub fn run(
     context: &Context<'_>,
     args: Args,
-    _: Option<&Path>,
-    _: bool,
+    config_path: Option<&Path>,
+    allow_start: bool,
 ) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
     let using = matches!(args.operation, Operation::Use { .. });
@@ -63,6 +68,15 @@ pub fn run(
             client.call_unscoped(Request::Write(WriteRequest::BoardUse { board }))?,
             false,
         ),
+        Operation::New { name } => {
+            let board = create(context, &name, config_path, allow_start)?;
+            client = AppClient::open(context)?;
+            (
+                client
+                    .call_unscoped(Request::Read(ReadRequest::BoardShow { board: Some(board) }))?,
+                false,
+            )
+        }
         Operation::Rename {
             reference: board,
             name,
@@ -184,4 +198,38 @@ pub(super) fn board_activity(
         None => "offline",
     };
     (state, sync)
+}
+
+fn create(
+    context: &Context<'_>,
+    name: &str,
+    config_path: Option<&Path>,
+    allow_start: bool,
+) -> Result<String, CliError> {
+    use ppn::daemon::protocol::{Operation, Outcome};
+
+    pepino_app::App::validate_board_name(name)?;
+    let config = &context.config()?.config;
+    let client = Client {
+        path: socket_path(config),
+    };
+    super::daemon::ensure_running(
+        &client,
+        context,
+        config_path,
+        allow_start && config.daemon.autostart.value,
+    )?;
+    let wait = context
+        .timeout
+        .unwrap_or(std::time::Duration::from_secs(35));
+    match client
+        .call_with(Operation::CreateBoard { name: name.into() }, wait)
+        .map_err(super::daemon::unreachable)?
+    {
+        Outcome::BoardCreated { board } => Ok(board.to_string()),
+        _ => Err(CliError::new(
+            ErrorKind::Failure,
+            "Could not create the board.",
+        )),
+    }
 }
