@@ -1,6 +1,7 @@
 mod directory;
 mod ingest;
 mod publish;
+mod simulation;
 mod stub;
 
 #[tokio::test]
