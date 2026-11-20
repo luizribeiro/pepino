@@ -1,9 +1,7 @@
+use crate::{Dependencies, Dependency, EdgeExclusion, EdgeRecord, IdSource, Store, SubtreeEntry};
 use pepino_core::{
     BoardId, DeviceId, EdgeKind, Envelope, Event, EventId, FieldName, FieldValue, Hlc,
     InitialFields, Status, TaskId,
-};
-use pepino_store::{
-    Dependencies, Dependency, EdgeExclusion, EdgeRecord, IdSource, Store, SubtreeEntry,
 };
 
 const BOARD: BoardId = BoardId::from_bytes([29; 32]);

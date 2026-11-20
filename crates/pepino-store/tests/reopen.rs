@@ -1,5 +1,5 @@
-use pepino_core::{BoardId, DeviceId, Envelope, Event, Hlc, InitialFields};
-use pepino_store::{AppendOutcome, IdSource, PrefixResolution, Store};
+use pepino_core::{BoardId, DeviceId, EdgeKind, Envelope, Event, Hlc, InitialFields};
+use pepino_store::{AppendOutcome, EdgeExclusion, IdSource, PrefixResolution, Store};
 
 #[tokio::test]
 async fn file_reopen_preserves_the_view_clock_and_log() {
@@ -39,8 +39,36 @@ async fn file_reopen_preserves_the_view_clock_and_log() {
         },
     )
     .unwrap();
-    let (tasks, comments, history) = {
+    let sweeping = Envelope::new(
+        author,
+        clock,
+        Event::TaskCreated {
+            title: "Sweep the chimney".into(),
+            fields: InitialFields::default(),
+        },
+    )
+    .unwrap();
+    let follow_up = sweeping.created_task().unwrap();
+    let blocks = Envelope::new(
+        author,
+        newer,
+        Event::EdgeAdded {
+            from: task,
+            kind: EdgeKind::Blocks,
+            to: follow_up,
+        },
+    )
+    .unwrap();
+    let (tasks, comments, history, edges) = {
         let store = Store::open(&path).await.unwrap();
+        store
+            .append(board, &blocks.encode().unwrap(), IdSource::Content)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.edges(board, follow_up).await.unwrap()[0].exclusion,
+            Some(EdgeExclusion::MissingEndpoint)
+        );
         store
             .append(board, &creation_bytes, IdSource::Content)
             .await
@@ -49,16 +77,28 @@ async fn file_reopen_preserves_the_view_clock_and_log() {
             .append(board, &comment.encode().unwrap(), IdSource::Content)
             .await
             .unwrap();
+        store
+            .append(board, &sweeping.encode().unwrap(), IdSource::Content)
+            .await
+            .unwrap();
+        let edges = store.edges(board, follow_up).await.unwrap();
+        assert_eq!(edges.len(), 1);
+        assert!(edges[0].is_effective());
+        let blocked = store.task(board, follow_up).await.unwrap().unwrap();
+        assert_eq!(blocked.blocked_by, [task].into());
+        assert!(blocked.blocked);
         (
             store.tasks(board).await.unwrap(),
             store.comments(board, task).await.unwrap(),
             store.events(board, task).await.unwrap(),
+            edges,
         )
     };
     let reopened = Store::open(&path).await.unwrap();
     assert_eq!(reopened.tasks(board).await.unwrap(), tasks);
     assert_eq!(reopened.comments(board, task).await.unwrap(), comments);
     assert_eq!(reopened.events(board, task).await.unwrap(), history);
+    assert_eq!(reopened.edges(board, follow_up).await.unwrap(), edges);
     assert_eq!(reopened.latest_hlc(board).await.unwrap(), Some(newer));
     assert_eq!(
         reopened

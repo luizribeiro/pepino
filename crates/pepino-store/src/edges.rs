@@ -5,6 +5,9 @@ use sqlx::{FromRow, SqliteConnection};
 
 use crate::{BoardKey, Store, StoreError, edge_key};
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EdgeExclusion {
     MissingEndpoint,
