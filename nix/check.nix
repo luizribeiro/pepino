@@ -46,7 +46,11 @@ let
 
   verify = evaluate: full:
     lib.all (settings: let config = evaluate settings; in passes config && config.warnings == [ ])
-      [ fixtures.empty fixtures.outsideStore fixtures.cleared fixtures.typical full ]
+      [ fixtures.empty fixtures.outsideStore fixtures.cleared fixtures.typical ]
+    && passes (evaluate full)
+    && (evaluate full).warnings == [
+      "services.pepino.port only drives the NixOS firewall rule. The node does not bind this port."
+    ]
     && (evaluate fixtures.untrusted).warnings != [ ]
     && lib.all (rejects evaluate) fixtures.invalid;
 

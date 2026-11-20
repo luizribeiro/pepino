@@ -65,7 +65,7 @@ in
       group = mkOption { type = types.nonEmptyStr; default = "pepino"; description = "Node primary group."; };
       dataDir = nodeOptions.dataDir // { type = absolutePath; default = "/var/lib/pepino"; };
       openFirewall = mkEnableOption "opening the node's fixed UDP port";
-      port = optional (types.ints.between 1 65535) "Fixed UDP port for the node.";
+      port = optional (types.ints.between 1 65535) "UDP port for the NixOS firewall rule.";
       configFile = mkOption {
         type = types.nullOr types.path;
         readOnly = true;
@@ -99,7 +99,9 @@ in
       assertions = validateNode "programs.pepino" config.programs.pepino
         ++ validateNode "services.pepino" service;
       warnings = lib.optional (service.enable && nullableList service.trustedDevices == [ ])
-        "services.pepino.enable is set with no trusted devices, so the node will accept boards from nobody.";
+        "services.pepino.enable is set with no trusted devices, so the node will accept boards from nobody."
+      ++ lib.optional (service.port != null)
+        "services.pepino.port only drives the NixOS firewall rule. The node does not bind this port.";
     };
 
   render = pkgs: name: node:
