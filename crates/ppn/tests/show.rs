@@ -160,7 +160,7 @@ fn validation_and_lookup_errors_have_one_message() {
         (
             &["ls", "--board", "Workshop"],
             3,
-            "error: board Workshop was not found\n  input filter term\n",
+            "error: board Workshop was not found\n  input --board\n",
         ),
         (
             &["view", "rm", "weekend"],

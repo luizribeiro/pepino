@@ -345,3 +345,18 @@ fn summaries_and_option_headings_follow_the_cli_help_conventions() {
     }
     check(&as_json(&run_ppn(&["help", "--json"])));
 }
+
+#[test]
+fn the_board_option_is_hidden_from_listing_help() {
+    for name in ["ls", "ready"] {
+        assert!(!run_ppn(&[name, "--help"]).contains("--board"));
+        let help = as_json(&run_ppn(&["help", name, "--json"]));
+        assert!(
+            help["flags"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|flag| flag["long"] != "board")
+        );
+    }
+}

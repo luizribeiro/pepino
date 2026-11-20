@@ -49,7 +49,7 @@ pub(super) struct ListingArgs {
     limit: Option<usize>,
 
     /// Select a board by name or full ID.
-    #[arg(long, value_name = "BOARD")]
+    #[arg(long, value_name = "BOARD", hide = true)]
     board: Option<String>,
 }
 
@@ -62,6 +62,7 @@ pub(super) fn list(
     mut args: ListingArgs,
     all: bool,
 ) -> Result<CommandResult, CliError> {
+    let board_option = args.board.is_some();
     if let Some(board) = args.board {
         let board = board.replace('\\', "\\\\").replace('"', "\\\"");
         args.filter.push(format!("board:\"{board}\""));
@@ -84,7 +85,13 @@ pub(super) fn list(
             today,
         }
     };
-    let response = client.call(Request::Read(request))?;
+    let response = client.call(Request::Read(request)).map_err(|error| {
+        if board_option && error.kind() == ppn::error::ErrorKind::NotFound {
+            error.map_input("filter", "--board")
+        } else {
+            error
+        }
+    })?;
 
     let result = response.tasks()?;
     let warnings: Vec<_> = result
