@@ -2,9 +2,54 @@ use pepino_core::{
     BoardId, DeviceId, EdgeKind, Envelope, Event, EventId, FieldName, FieldValue, Hlc,
     InitialFields, Status, TaskId,
 };
-use pepino_store::{EdgeExclusion, EdgeRecord, IdSource, Store, SubtreeEntry};
+use pepino_store::{
+    Dependencies, Dependency, EdgeExclusion, EdgeRecord, IdSource, Store, SubtreeEntry,
+};
 
 const BOARD: BoardId = BoardId::from_bytes([29; 32]);
+
+#[tokio::test]
+async fn dependencies_use_shortest_distances_in_both_directions() {
+    let (store, [greenhouse, door, hinges, frame]) = setup().await;
+    for (id, from, to) in [
+        (11, hinges, door),
+        (12, hinges, frame),
+        (13, door, frame),
+        (14, frame, greenhouse),
+    ] {
+        add(&store, id, u32::from(id), from, EdgeKind::Blocks, to).await;
+    }
+    add(&store, 15, 15, greenhouse, EdgeKind::Blocks, hinges).await;
+    let at = |task, distance| Dependency { task, distance };
+    assert_eq!(
+        store.dependencies(BOARD, frame).await.unwrap(),
+        Dependencies {
+            blocked_by: vec![at(door, 1), at(hinges, 1)],
+            blocks: vec![at(greenhouse, 1)],
+        }
+    );
+    assert_eq!(
+        store.dependencies(BOARD, hinges).await.unwrap(),
+        Dependencies {
+            blocked_by: vec![],
+            blocks: vec![at(door, 1), at(frame, 1), at(greenhouse, 2)],
+        }
+    );
+    assert_eq!(
+        store.dependencies(BOARD, greenhouse).await.unwrap(),
+        Dependencies {
+            blocked_by: vec![at(frame, 1), at(door, 2), at(hinges, 2)],
+            blocks: vec![],
+        }
+    );
+    assert_eq!(
+        store
+            .dependencies(BOARD, TaskId::from_bytes([99; 32]))
+            .await
+            .unwrap(),
+        Dependencies::default()
+    );
+}
 
 #[tokio::test]
 async fn subtree_lists_effective_descendants_in_stable_preorder() {

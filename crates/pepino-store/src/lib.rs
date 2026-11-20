@@ -30,7 +30,7 @@ pub use history::EventRecord;
 pub use log::{AppendOutcome, IdSource, RebuildReport, SkipReason};
 pub use prefix::PrefixResolution;
 pub use task::TaskRecord;
-pub use traversal::SubtreeEntry;
+pub use traversal::{Dependencies, Dependency, SubtreeEntry};
 
 const FOLD_VERSION: i64 = 2;
 

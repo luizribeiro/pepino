@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use pepino_core::{BoardId, EdgeKind, TaskId};
 use sqlx::Connection;
@@ -9,6 +9,18 @@ use crate::{BoardKey, Store, StoreError, edges};
 pub struct SubtreeEntry {
     pub task: TaskId,
     pub depth: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Dependency {
+    pub task: TaskId,
+    pub distance: usize,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Dependencies {
+    pub blocked_by: Vec<Dependency>,
+    pub blocks: Vec<Dependency>,
 }
 
 type Adjacency = HashMap<TaskId, Vec<TaskId>>;
@@ -65,4 +77,47 @@ impl Store {
         }
         Ok(result)
     }
+
+    /// Returns both transitive closures, ordered by shortest distance and then task ID.
+    /// A missing or deleted task has empty closures.
+    pub async fn dependencies(
+        &self,
+        board: BoardId,
+        task: TaskId,
+    ) -> Result<Dependencies, StoreError> {
+        let rows = self
+            .read(async |connection| edges::edge_rows(connection, board).await)
+            .await?;
+        let mut upstream = Adjacency::new();
+        let mut downstream = Adjacency::new();
+        for edge in edges::project(&rows)? {
+            if edge.is_effective() && edge.kind == EdgeKind::Blocks {
+                upstream.entry(edge.to).or_default().push(edge.from);
+                downstream.entry(edge.from).or_default().push(edge.to);
+            }
+        }
+        Ok(Dependencies {
+            blocked_by: closure(&upstream, task),
+            blocks: closure(&downstream, task),
+        })
+    }
+}
+
+fn closure(adjacency: &Adjacency, task: TaskId) -> Vec<Dependency> {
+    let mut seen = HashSet::from([task]);
+    let mut pending = VecDeque::from([(task, 0)]);
+    let mut result = Vec::new();
+    while let Some((task, distance)) = pending.pop_front() {
+        for &next in adjacency.get(&task).into_iter().flatten() {
+            if seen.insert(next) {
+                pending.push_back((next, distance + 1));
+                result.push(Dependency {
+                    task: next,
+                    distance: distance + 1,
+                });
+            }
+        }
+    }
+    result.sort_unstable_by_key(|entry| (entry.distance, entry.task));
+    result
 }
