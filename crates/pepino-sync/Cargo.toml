@@ -19,6 +19,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 workspace = true
 
 [dev-dependencies]
+sqlx = { version = "0.9", default-features = false, features = ["sqlite", "runtime-tokio"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3"

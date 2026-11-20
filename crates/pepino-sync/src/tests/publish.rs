@@ -275,3 +275,54 @@ async fn publishes_a_smaller_local_event_written_after_the_first_scan() {
     assert_eq!(node.published(), [first[0].clone(), bytes]);
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn retries_a_failed_outbox_read_without_a_nudge_or_periodic_scan() {
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([57; 32]);
+    let device = DeviceId::from_bytes([58; 32]);
+    let mut app = directory::prepare(dir.path(), board, device).await;
+    let node = Arc::new(Stub::new(device));
+    let settings = crate::Settings {
+        poll_interval: Duration::from_secs(600),
+        ..Default::default()
+    };
+    let engine = SyncEngine::start(settings, node.clone(), dir.path())
+        .await
+        .unwrap();
+    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+
+    let options = SqliteConnectOptions::new().filename(dir.path().join("pepino.sqlite"));
+    let mut db = SqliteConnection::connect_with(&options).await.unwrap();
+    sqlx::query("ALTER TABLE publication RENAME TO hidden_publication")
+        .execute(&mut db)
+        .await
+        .unwrap();
+    directory::write(
+        &mut app,
+        json!({"op":"add_task","title":"Order replacement irrigation valves"}),
+    )
+    .await;
+    let started = tokio::time::Instant::now();
+    engine.nudge();
+    until(&engine, |status| {
+        status.boards[&board].outbox_pending.is_none()
+            && status.boards[&board]
+                .last_error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("read outbox"))
+    })
+    .await;
+    assert!(!engine.status().is_idle());
+    assert!(node.published().is_empty());
+    sqlx::query("ALTER TABLE hidden_publication RENAME TO publication")
+        .execute(&mut db)
+        .await
+        .unwrap();
+    until(&engine, Status::is_idle).await;
+    assert!(started.elapsed() >= Duration::from_millis(25));
+    assert_eq!(node.published().len(), 1);
+    engine.shutdown().await.unwrap();
+}
