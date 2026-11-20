@@ -57,6 +57,13 @@ mod tracking {
     }
 
     impl Status {
+        pub(crate) fn snapshot(&self) -> NodeStatus {
+            self.state
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+
         pub(crate) fn subscribe(&self) -> NodeEvents {
             let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             let initial = NodeEvent::Snapshot(state.clone());
@@ -167,6 +174,10 @@ mod tracking {
             panic!("first event must be the snapshot");
         };
         assert!(snapshot.connected_peers.contains(&peer));
+        let current = status.snapshot();
+        assert!(current.connected_peers.contains(&peer));
+        assert!(!current.boards[&board].replaying);
+        assert_eq!(current.boards[&board].pending_deliveries, 1);
         assert!(snapshot.boards[&board].replaying);
         assert_eq!(snapshot.boards[&board].pending_deliveries, 1);
         assert_eq!(

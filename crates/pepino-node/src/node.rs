@@ -72,6 +72,11 @@ impl Node {
         DeviceId::from_bytes(*self.inner.id().as_bytes())
     }
 
+    /// Returns the current peer and board signals without consuming status events.
+    pub fn status(&self) -> crate::NodeStatus {
+        self.status.snapshot()
+    }
+
     pub fn events(&self) -> NodeEvents {
         self.status.subscribe()
     }
