@@ -36,3 +36,30 @@ fn done_resolves_all_arguments_before_changing_status() {
     });
     assert_eq!(show_task(&sandbox, &project.parent)["status"], "todo");
 }
+
+#[test]
+fn done_applies_one_change_per_resolved_task() {
+    let (sandbox, _) = task_sandbox();
+    let project = small_project(&sandbox);
+    let args = [
+        "done",
+        &project.parent[..8],
+        &project.blocker,
+        &project.parent,
+    ];
+    let human = sandbox.run(&args);
+    assert_eq!(
+        human,
+        format!(
+            "Done {}  Renovate the greenhouse\nDone {}  Order stainless fittings\n",
+            &project.parent[..6],
+            &project.blocker[..6]
+        )
+    );
+    let output = as_json(&sandbox.run(&[args.as_slice(), &["--json"]].concat()));
+    assert_write(&output, false);
+    assert_eq!(
+        output["targets"],
+        serde_json::json!([project.parent, project.blocker])
+    );
+}

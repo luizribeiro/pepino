@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use pepino_app::{EdgeKind, Response};
+use pepino_app::{EdgeKind, Response, TaskSummary};
 use serde_json::{Map, json};
 
 use super::{ShortIds, edge_reason, single_line};
@@ -18,6 +18,56 @@ pub fn write_document(
     Ok(
         CommandResult::app_document(context, response, move |_, _| Ok(message))?
             .with_warnings(warnings),
+    )
+}
+
+pub fn batch_write_document(
+    context: &Context<'_>,
+    response: Response,
+    verb: &str,
+) -> Result<CommandResult, CliError> {
+    let Response::BatchWrite {
+        outcome,
+        changed_targets,
+    } = response
+    else {
+        return Err(CliError::new(
+            ErrorKind::Failure,
+            "Expected the app to return a batch write.",
+        ));
+    };
+    let write = outcome.write()?;
+    let ids = ShortIds::new(write.targets.iter().map(String::as_str));
+    let changed: BTreeSet<_> = changed_targets.iter().map(String::as_str).collect();
+    let tasks: BTreeMap<_, _> = write
+        .tasks
+        .iter()
+        .chain(write.deleted)
+        .map(|task| (task.id.as_str(), task))
+        .collect();
+    let message = write
+        .targets
+        .iter()
+        .map(|id| {
+            let task = tasks.get(id.as_str()).ok_or_else(|| {
+                CliError::new(
+                    ErrorKind::Failure,
+                    "The app omitted a task from the batch outcome.",
+                )
+            })?;
+            let label = write_label(changed.contains(id.as_str()), verb);
+            Ok(task_write_line(task, &ids, &label))
+        })
+        .collect::<Result<Vec<_>, CliError>>()?
+        .join("\n");
+    CommandResult::app_document(context, *outcome, move |_, _| Ok(message))
+}
+
+fn task_write_line(task: &TaskSummary, ids: &ShortIds<'_>, label: &str) -> String {
+    format!(
+        "{label} {}  {}",
+        ids.get(&task.id),
+        single_line(&task.title)
     )
 }
 
@@ -235,13 +285,7 @@ fn write_output_with_ids(
     let label = write_label(*write.changed, verb);
     let message = targets
         .iter()
-        .map(|task| {
-            format!(
-                "{label} {}  {}",
-                ids.get(&task.id),
-                single_line(&task.title)
-            )
-        })
+        .map(|task| task_write_line(task, ids, &label))
         .collect::<Vec<_>>()
         .join("\n");
     let warnings = excluded

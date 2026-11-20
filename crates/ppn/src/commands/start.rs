@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
-use pepino_app::{FieldValue, Request, Status, WriteRequest};
+use pepino_app::{FieldValue, Request, Status, TaskChange, WriteRequest};
 use ppn::app::AppClient;
 use ppn::error::CliError;
 use ppn::help_tree::example_help;
 use ppn::output::CommandResult;
-use ppn::render::write_documents;
+use ppn::render::batch_write_document;
 use ppn::terminal::Context;
 
 #[derive(clap::Args)]
@@ -26,18 +26,13 @@ pub(super) fn set_status(
     status: Status,
     verb: &str,
 ) -> Result<CommandResult, CliError> {
-    let mut client = AppClient::open(context)?;
-    let tasks = client.resolve_tasks(tasks)?;
-    let responses = tasks
-        .into_iter()
-        .map(|task| {
-            client.call(Request::Write(WriteRequest::SetFields {
-                task: task.id,
-                changes: BTreeMap::from([("status".into(), FieldValue::Status(status))]),
-            }))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    write_documents(context, &responses, verb)
+    let response = AppClient::open(context)?.call(Request::Write(WriteRequest::ApplyToTasks {
+        tasks,
+        change: TaskChange::SetFields {
+            changes: BTreeMap::from([("status".into(), FieldValue::Status(status))]),
+        },
+    }))?;
+    batch_write_document(context, response, verb)
 }
 
 #[derive(clap::Args)]
