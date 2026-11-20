@@ -73,14 +73,26 @@ impl Node {
         let acks = self.acks.clone();
         let status = self.status.clone();
         let confirmation_timeout = self.publish_confirmation_timeout;
-        let boards = self.boards.clone();
+        let creation = self.boards.begin_creation()?;
         self.worker
             .run(async move {
+                creation.check_open()?;
                 let (space, subscription) =
                     node.create_space::<Payload>().await.map_err(Error::node)?;
                 let id = BoardId::from_bytes(*space.id().as_bytes());
-                let lease = boards.reserve(id)?;
-                let membership = read_members(acks.pool.clone(), id).await?;
+                let membership = async {
+                    let lease = creation.register(id)?;
+                    let membership = read_members(acks.pool.clone(), id).await?;
+                    Ok::<_, Error>((lease, membership))
+                }
+                .await;
+                let (lease, membership) = match membership {
+                    Ok(board) => board,
+                    Err(error) => {
+                        creation.retain_upstream((space, subscription));
+                        return Err(error);
+                    }
+                };
                 let board = BoardHandle::attach(
                     &node,
                     lease,
@@ -94,6 +106,8 @@ impl Node {
                     subscription,
                     async { Ok(space) },
                 );
+                drop(node);
+                drop(creation);
                 board.wait_until_joined(Duration::from_secs(30)).await?;
                 Ok(board)
             })

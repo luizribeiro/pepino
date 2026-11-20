@@ -113,6 +113,7 @@ async fn cycle(
         Some(Ok(Ok(engine))) => {
             log(level, LogLevel::Info, "daemon ready");
             let end = tokio::select! {
+                biased;
                 _ = terminate.recv() => Ok(End::Stopped),
                 _ = interrupt.recv() => Ok(End::Stopped),
                 result = server::serve(listener, &engine, started) => result.map_err(socket_error),
