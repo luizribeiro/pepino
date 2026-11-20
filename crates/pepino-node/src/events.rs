@@ -1,8 +1,10 @@
-use futures_util::{StreamExt, stream::BoxStream};
+use futures_util::{
+    StreamExt,
+    stream::{self, BoxStream},
+};
 use p2panda::streams::StreamEvent;
 use pepino_core::{BoardId, DeviceId, EventId};
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
     Error,
@@ -47,26 +49,29 @@ pub(crate) fn subscribe(
     rx: mpsc::Receiver<Result<BoardEvent, Error>>,
     on_delivery: impl Fn() + Send + Sync + 'static,
 ) -> BoardEvents {
-    let on_delivery = std::sync::Arc::new(on_delivery);
-    ReceiverStream::new(rx)
-        .filter_map(move |event| {
-            let on_delivery = on_delivery.clone();
-            async move {
-                match event {
-                    Ok(event) => {
-                        let acknowledged = event.ack.acknowledged().await;
-                        on_delivery();
-                        match acknowledged {
-                            Ok(true) => None,
-                            Ok(false) => Some(Ok(event)),
-                            Err(error) => Some(Err(error)),
-                        }
+    stream::unfold(
+        (rx, None, on_delivery),
+        |(mut rx, mut held, on_delivery)| async move {
+            loop {
+                if held.is_none() {
+                    match rx.recv().await? {
+                        Ok(event) => held = Some(event),
+                        Err(error) => return Some((Err(error), (rx, None, on_delivery))),
                     }
-                    Err(error) => Some(Err(error)),
+                }
+                let event: BoardEvent = held.take()?;
+                match event.ack.acknowledged().await {
+                    Ok(true) => on_delivery(),
+                    Ok(false) => {
+                        on_delivery();
+                        return Some((Ok(event), (rx, None, on_delivery)));
+                    }
+                    Err(error) => return Some((Err(error), (rx, Some(event), on_delivery))),
                 }
             }
-        })
-        .boxed()
+        },
+    )
+    .boxed()
 }
 
 pub(crate) fn pipeline_error(event: &StreamEvent<Payload>) -> Option<Delivery> {
@@ -88,6 +93,47 @@ pub(crate) fn pipeline_error(event: &StreamEvent<Payload>) -> Option<Delivery> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn failed_ack_lookup_keeps_the_delivery_pending_for_the_next_poll() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        p2panda_store::sqlite::run_pending_migrations(&pool)
+            .await
+            .unwrap();
+        let acks = AckStore::create(pool.clone()).await.unwrap();
+        let position = Position {
+            author: p2panda::Credentials::generate().verifying_key(),
+            log: p2panda::operation::LogId::digest(b"release board"),
+            seq: 0,
+        };
+        let board = BoardId::from_bytes([40; 32]);
+        let id = EventId::from_bytes([41; 32]);
+        let event = BoardEvent::new(
+            board,
+            DeviceId::from_bytes([42; 32]),
+            id,
+            b"Inspect the starter trays".to_vec(),
+            &acks,
+            position,
+        );
+        let (tx, rx) = mpsc::channel(1);
+        tx.send(Ok(event)).await.unwrap();
+        drop(tx);
+        let (delivered, count) = tokio::sync::watch::channel(0);
+        let mut stream = subscribe(rx, move || {
+            delivered.send_modify(|n| *n += 1);
+        });
+        sqlx::query("DROP TABLE pepino_ack_position")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(matches!(stream.next().await, Some(Err(Error::Storage(_)))));
+        assert_eq!(*count.borrow(), 0);
+        AckStore::create(pool).await.unwrap();
+        assert_eq!(stream.next().await.unwrap().unwrap().id, id);
+        assert_eq!(*count.borrow(), 1);
+        assert!(stream.next().await.is_none());
+    }
 
     #[tokio::test]
     async fn skips_receipts_and_continues_after_an_error() {
