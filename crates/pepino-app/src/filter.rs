@@ -102,14 +102,12 @@ fn term_starts(text: &str) -> impl Iterator<Item = usize> {
 
 type ParsedViews = BTreeMap<String, (FilterInput, Result<Filter, AppError>)>;
 
-#[allow(dead_code)]
 pub(super) struct ViewFilters<'a> {
     saved: &'a SavedViews,
     today: Date,
     parsed: Mutex<ParsedViews>,
 }
 
-#[allow(dead_code)]
 impl<'a> ViewFilters<'a> {
     pub(super) fn new(saved: &'a SavedViews, today: Date) -> Self {
         Self {

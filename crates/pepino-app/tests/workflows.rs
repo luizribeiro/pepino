@@ -1168,3 +1168,23 @@ async fn an_edge_change_identifies_its_source_task() {
     assert_eq!(change["to"], to);
     assert_eq!(change["action"], "added");
 }
+
+#[tokio::test]
+async fn lists_only_parse_reachable_saved_filters() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::open(dir.path(), NOW).await.unwrap();
+    let path = dir.path().join("local.json");
+    let mut local: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    local["saved_views"] =
+        json!({"weekend":"tag:hardware","broken":"tags:hardware","nested":"@broken"});
+    std::fs::write(path, serde_json::to_vec(&local).unwrap()).unwrap();
+    list_golden(
+        &mut app,
+        json!("@weekend"),
+        None,
+        None,
+        json!({"ok":{"kind":"tasks","tasks":[],"total":0,"filter":"@weekend","sort":"default"}}),
+    )
+    .await;
+    list_golden(&mut app, json!("@nested"), None, None, json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown filter key \"tags\"","term":"tags:hardware","position":{"kind":"byte","byte":0},"view_chain":["nested","broken"],"hint":"Use \"tag\""}})).await;
+}

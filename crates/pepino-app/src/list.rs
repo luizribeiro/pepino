@@ -1,17 +1,13 @@
-use std::collections::{BTreeMap, BTreeSet};
-
 use pepino_core::{
     BoardId,
-    filter::{Clause, Filter, Term},
+    filter::{Clause, Term},
 };
 use pepino_store::query::{self, Context, Query, QueryError, QueryErrorKind, Sort};
 
 use crate::app::{invalid, store_error};
+use crate::filter::ViewFilters;
 use crate::projection::project_summary;
-use crate::state::storage;
 use crate::{App, AppError, Date, FilterDiagnostic, FilterInput, MissingReference, Response};
-
-type ViewFilters<'a> = BTreeMap<&'a str, (FilterInput, Filter)>;
 
 impl App {
     pub(super) async fn list_tasks(
@@ -27,19 +23,8 @@ impl App {
             .parse()
             .map_err(|error| invalid("sort", error))?;
         self.reload_state().await?;
-        let views = self
-            .local
-            .saved_views
-            .iter()
-            .map(|(name, text)| {
-                let input = FilterInput::Text(text.into());
-                let parsed = input
-                    .parse(today)
-                    .map_err(|error| storage("decode saved filter", error, false))?;
-                Ok((name, (input, parsed)))
-            })
-            .collect::<Result<ViewFilters<'_>, AppError>>()?;
-        let saved = |name: &str| views.get(name).map(|(_, filter)| filter.clone());
+        let views = ViewFilters::new(&self.local.saved_views, today);
+        let saved = |name: &str| views.resolve(name);
         let people = |name: &str| {
             (name == self.local.display_name)
                 .then_some(self.local.identity_id)
@@ -62,7 +47,7 @@ impl App {
         };
         let boards = select_boards(&[local_board], &terms)?;
         let (tasks, total) = if let Some(&board) = boards.first() {
-            let view = if needs_comments(&filter, &views) {
+            let view = if views.needs_comments(&filter) {
                 self.store.board_with_comments(board).await
             } else {
                 self.store.board(board).await
@@ -87,25 +72,6 @@ impl App {
             sort: sort.to_string(),
         })
     }
-}
-
-fn needs_comments<'a>(filter: &'a Filter, views: &'a ViewFilters<'_>) -> bool {
-    let mut pending = vec![filter];
-    let mut seen = BTreeSet::new();
-    while let Some(filter) = pending.pop() {
-        for term in filter.terms() {
-            match &term.clause {
-                Clause::Text(_) => return true,
-                Clause::View(name) if seen.insert(name.as_str()) => {
-                    if let Some((_, nested)) = views.get(name.as_str()) {
-                        pending.push(nested);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    false
 }
 
 #[derive(Clone, Copy)]
@@ -137,10 +103,25 @@ fn select_boards(boards: &[Board<'_>], terms: &[Term]) -> Result<Vec<BoardId>, A
 }
 
 fn query_error(error: QueryError, source: &FilterInput, views: &ViewFilters<'_>) -> AppError {
+    let parsed = views.parsed();
+    if let QueryErrorKind::UnknownView { name } = &error.kind
+        && let Some((_, Err(error_from_view))) = parsed.get(name)
+    {
+        let mut error_from_view = error_from_view.clone();
+        if let AppError::InvalidInput {
+            diagnostic: Some(diagnostic),
+            ..
+        } = &mut error_from_view
+        {
+            diagnostic.view_chain = error.view_chain;
+            diagnostic.view_chain.push(name.clone());
+        }
+        return error_from_view;
+    }
     let source = error
         .view_chain
         .last()
-        .and_then(|name| views.get(name.as_str()))
+        .and_then(|name| parsed.get(name.as_str()))
         .map_or(source, |(source, _)| source);
     let position = source.position_at(error.term_index);
     let reason = error.kind.to_string();

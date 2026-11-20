@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct SavedViews(BTreeMap<String, String>);
 
 impl SavedViews {
-    #[allow(dead_code)]
     pub(crate) fn get(&self, name: &str) -> Option<&str> {
         self.0.get(name).map(String::as_str)
     }
