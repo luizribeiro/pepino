@@ -1088,9 +1088,13 @@ fn show_renders_the_protocol_task_and_configured_due_date() {
     ]));
     let id = write["created"].as_str().unwrap();
     let human = sandbox.run(&["show", &id[..6], "--color", "always"]);
-    assert!(human.starts_with(&format!("{}  Check the greenhouse hinges\n", &id[..6])));
+    assert!(human.starts_with(&format!(
+        "{}  Check the greenhouse hinges  todo\n",
+        &id[..6]
+    )));
     assert!(human.contains("due 01 Dec 2026\n"));
-    assert!(human.contains("Comments (0):\n"));
+    assert!(!human.contains("Comments"));
+    assert!(!human.contains(" UTC #"));
     let mut detail = as_json(&sandbox.run(&["show", id, "--json"]));
     let names = detail.as_object_mut().unwrap().remove("names").unwrap();
     assert_eq!(names, write["names"]);

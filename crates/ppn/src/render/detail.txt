@@ -1,12 +1,13 @@
-97ad97a  Replace the greenhouse latch
+97ad97a  Replace the greenhouse latch  todo · blocked
 Use stainless hardware.
 
 #hardware  @Ada Gardener  due tomorrow  p2
 estimate: 3
 blocked by: 97ad97f  Order a replacement screw
 not effective: blocks 97ad97f (it would create a cycle)
-created 19/11/2026 by 6b376b · updated 2 hours ago
-Comments (1):
-  c201ef by 6b376b at 20/11/2026 04:45:00.000 UTC #2
+created 19/11/2026 by Ada · updated 2 hours ago
+
+Comments (1)
+  Ada · 2 hours ago
     The new latch arrived.
     Use the spare screw.
