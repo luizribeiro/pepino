@@ -10,7 +10,7 @@ use crate::{
 pub(crate) struct JoinedShare {
     peer_id: pepino_core::DeviceId,
     relay_url: Option<String>,
-    binding: String,
+    pub(crate) binding: String,
 }
 
 impl LocalState {
@@ -88,6 +88,7 @@ impl App {
         &self,
         signed: SignedGrant,
     ) -> Result<(BoardId, PeerHint, BoardJoinState), AppError> {
+        self.identity_credentials()?;
         let before = self.fresh_local_state().await?;
         let request = before
             .catalog

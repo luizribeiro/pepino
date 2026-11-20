@@ -17,7 +17,7 @@ impl SyncEngine {
         request: BoardRequest,
         role: BoardRole,
     ) -> Result<(IdentityCard, Option<BoardId>), Error> {
-        let member = request.device.member_info()?;
+        let member = request.member_info()?;
         request.name()?;
         let mut workers = self.boards.lock().await;
         let local = self.app.fresh_local_state().await?;

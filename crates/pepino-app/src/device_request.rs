@@ -62,8 +62,15 @@ impl DeviceRequest {
     }
 
     pub fn member_info(&self) -> Result<MemberInfo, AppError> {
-        let info = MemberInfo::from_base32(&self.member_info).map_err(request_info_error)?;
-        if info.device_id().ok() != Some(self.id) || self.name.trim().is_empty() {
+        self.member_info_with(request_info_error)
+    }
+
+    pub(crate) fn member_info_with(
+        &self,
+        error: impl Fn(pepino_node::Error) -> AppError,
+    ) -> Result<MemberInfo, AppError> {
+        let info = MemberInfo::from_base32(&self.member_info).map_err(&error)?;
+        if info.device_id().map_err(error)? != self.id || self.name.trim().is_empty() {
             return Err(invalid(
                 "request",
                 "device name or node ID does not match the request",

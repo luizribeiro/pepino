@@ -16,8 +16,18 @@ impl std::fmt::Debug for BoardRequest {
 }
 
 impl BoardRequest {
+    pub fn member_info(&self) -> Result<pepino_node::MemberInfo, AppError> {
+        self.device.member_info_with(|error| match error {
+            pepino_node::Error::MemberExpired => invalid(
+                "request",
+                "The board request has expired. Run ppn board request again.",
+            ),
+            other => crate::device_request::request_info_error(other),
+        })
+    }
+
     pub fn name(&self) -> Result<String, AppError> {
-        self.device.member_info()?;
+        self.member_info()?;
         self.identity.name_for(self.device.id)
     }
 
@@ -103,12 +113,27 @@ impl crate::App {
                 }
                 let identity = local.identity_card()?;
                 let name = name.as_deref().unwrap_or_else(|| local.device_name());
-                if local.catalog.board_request.as_ref().is_some_and(|saved| {
-                    saved.identity == identity
-                        && saved.device.id == local.device_id
-                        && saved.device.name == name
-                        && saved.device.reusable(std::time::SystemTime::now())
-                }) {
+                let saved_binding = local
+                    .catalog
+                    .board_request
+                    .as_ref()
+                    .map(BoardRequest::binding)
+                    .transpose()?;
+                let available = saved_binding.as_ref().is_some_and(|binding| {
+                    !local
+                        .catalog
+                        .joined_shares
+                        .values()
+                        .any(|share| share.binding == *binding)
+                });
+                if available
+                    && local.catalog.board_request.as_ref().is_some_and(|saved| {
+                        saved.identity == identity
+                            && saved.device.id == local.device_id
+                            && saved.device.name == name
+                            && saved.device.reusable(std::time::SystemTime::now())
+                    })
+                {
                     return Ok(());
                 }
                 let mut secret = [0; 32];
@@ -143,6 +168,9 @@ async fn board_requests_are_reused_without_replacing_the_existing_identity() {
     ))
     .await
     .unwrap();
+    app.reconcile_identity(node.device_id(), &app.identity_credentials().unwrap())
+        .await
+        .unwrap();
     let info = node.member_info().await.unwrap();
     let first = app.request_board(&info, Some("Workshop")).await.unwrap();
     let second = app.request_board(&info, Some("Workshop")).await.unwrap();
