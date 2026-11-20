@@ -2,7 +2,7 @@
 
 mod sort;
 
-pub use sort::Sort;
+pub use sort::{Direction, Sort, SortKey};
 
 use pepino_core::filter::{Clause, Filter, Term};
 
