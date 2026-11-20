@@ -360,3 +360,78 @@ fn write_date_and_field_operands_match_the_app_filter() {
     assert_eq!(tasks[0].id, id);
     assert_eq!(resolved_dates["-2w"], tasks[0].due.unwrap());
 }
+
+#[test]
+fn add_emits_json_edge_warnings_on_stderr() {
+    let (sandbox, _) = task_sandbox();
+    let end = create_task(&sandbox, "Seal the frame", &[]);
+    let start = create_task(&sandbox, "Sand the rough edges", &["--blocks", &end]);
+    let output = sandbox
+        .command()
+        .args([
+            "add",
+            "Paint the frame",
+            "--blocks",
+            &start,
+            "--blocked-by",
+            &end,
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let write = as_json(std::str::from_utf8(&output.stdout).unwrap());
+    let warnings: Vec<_> = std::str::from_utf8(&output.stderr)
+        .unwrap()
+        .lines()
+        .map(as_json)
+        .collect();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0]["warning"]["code"], "edge_not_effective");
+    let edge = write["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|edge| edge["reason"] == "cycle")
+        .unwrap();
+    assert_eq!(&warnings[0]["warning"]["edge"], edge);
+}
+
+#[test]
+fn add_clears_stdin_due_dates_with_unset() {
+    let (sandbox, _) = task_sandbox();
+    let output = task_stdin(
+        &sandbox,
+        &["add", "-", "--unset", "due", "--json"],
+        r#"{"title":"Inspect the latch","due":"2026-12-01"}"#,
+    );
+    assert_eq!(as_json(&success(output))["tasks"][0]["due"], Value::Null);
+}
+
+#[test]
+fn add_rejects_empty_and_multiline_titles() {
+    let (sandbox, _) = task_sandbox();
+    for title in ["  ", "Inspect the latch\nOrder another hinge"] {
+        let error = task_error(
+            sandbox
+                .command()
+                .args(["add", title, "--json"])
+                .output()
+                .unwrap(),
+            2,
+            "invalid_input",
+        );
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("{title:?}"))
+        );
+        assert!(error["hint"].is_null());
+    }
+    assert!(
+        sandbox
+            .run(&["add", "  Inspect the latch  "])
+            .ends_with("  Inspect the latch\n")
+    );
+}
