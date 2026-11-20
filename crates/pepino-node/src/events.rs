@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex, PoisonError};
+
 use futures_util::{
     StreamExt,
     stream::{self, BoxStream},
@@ -45,18 +47,47 @@ impl BoardEvent {
     }
 }
 
-pub(crate) fn subscribe(
-    rx: mpsc::Receiver<Result<BoardEvent, Error>>,
+type Receiver = mpsc::Receiver<Result<BoardEvent, Error>>;
+
+#[derive(Clone)]
+pub(crate) struct DeliveryInbox(Arc<Mutex<Option<Receiver>>>);
+
+impl DeliveryInbox {
+    pub(crate) fn new(rx: Receiver) -> Self {
+        Self(Arc::new(Mutex::new(Some(rx))))
+    }
+
+    pub(crate) fn subscribe(
+        &self,
+        on_delivery: impl Fn() + Send + Sync + 'static,
+    ) -> Result<BoardEvents, Error> {
+        let rx = self
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .ok_or(Error::EventsTaken)?;
+        Ok(subscribe(rx, on_delivery, self.clone()))
+    }
+}
+
+fn subscribe(
+    rx: Receiver,
     on_delivery: impl Fn() + Send + Sync + 'static,
+    inbox: DeliveryInbox,
 ) -> BoardEvents {
     stream::unfold(
-        (rx, None, on_delivery),
-        |(mut rx, mut held, on_delivery)| async move {
+        (Some(rx), None, on_delivery, inbox),
+        |(mut rx, mut held, on_delivery, inbox)| async move {
             loop {
                 if held.is_none() {
-                    match rx.recv().await? {
+                    match rx.as_mut()?.recv().await? {
                         Ok(event) => held = Some(event),
-                        Err(error) => return Some((Err(error), (rx, None, on_delivery))),
+                        Err(Error::Removed) => {
+                            *inbox.0.lock().unwrap_or_else(PoisonError::into_inner) = rx.take();
+                            return Some((Err(Error::Removed), (rx, None, on_delivery, inbox)));
+                        }
+                        Err(error) => return Some((Err(error), (rx, None, on_delivery, inbox))),
                     }
                 }
                 let event: BoardEvent = held.take()?;
@@ -64,13 +95,14 @@ pub(crate) fn subscribe(
                     Ok(true) => on_delivery(),
                     Ok(false) => {
                         on_delivery();
-                        return Some((Ok(event), (rx, None, on_delivery)));
+                        return Some((Ok(event), (rx, None, on_delivery, inbox)));
                     }
-                    Err(error) => return Some((Err(error), (rx, Some(event), on_delivery))),
+                    Err(error) => return Some((Err(error), (rx, Some(event), on_delivery, inbox))),
                 }
             }
         },
     )
+    .fuse()
     .boxed()
 }
 
@@ -93,6 +125,30 @@ pub(crate) fn pipeline_error(event: &StreamEvent<Payload>) -> Option<Delivery> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn removal_ends_the_stream_and_releases_the_receiver() {
+        let (tx, rx) = mpsc::channel(2);
+        let inbox = DeliveryInbox::new(rx);
+        let mut first = inbox.subscribe(|| {}).unwrap();
+        assert!(matches!(inbox.subscribe(|| {}), Err(Error::EventsTaken)));
+        tx.send(Err(Error::Removed)).await.unwrap();
+        tx.send(Err(Error::Decode {
+            id: EventId::from_bytes([1; 32]),
+            details: "bad payload".into(),
+        }))
+        .await
+        .unwrap();
+        drop(tx);
+        assert!(matches!(first.next().await, Some(Err(Error::Removed))));
+        assert!(first.next().await.is_none());
+        let mut resumed = inbox.subscribe(|| {}).unwrap();
+        assert!(matches!(
+            resumed.next().await,
+            Some(Err(Error::Decode { .. }))
+        ));
+        assert!(resumed.next().await.is_none());
+    }
 
     #[tokio::test]
     async fn failed_ack_lookup_keeps_the_delivery_pending_for_the_next_poll() {
@@ -120,9 +176,11 @@ mod tests {
         tx.send(Ok(event)).await.unwrap();
         drop(tx);
         let (delivered, count) = tokio::sync::watch::channel(0);
-        let mut stream = subscribe(rx, move || {
-            delivered.send_modify(|n| *n += 1);
-        });
+        let mut stream = DeliveryInbox::new(rx)
+            .subscribe(move || {
+                delivered.send_modify(|n| *n += 1);
+            })
+            .unwrap();
         sqlx::query("DROP TABLE pepino_ack_position")
             .execute(&pool)
             .await
@@ -178,9 +236,11 @@ mod tests {
         drop(tx);
         let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let count_delivered = count.clone();
-        let mut events = subscribe(rx, move || {
-            count_delivered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        });
+        let mut events = DeliveryInbox::new(rx)
+            .subscribe(move || {
+                count_delivered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            })
+            .unwrap();
         assert!(matches!(events.next().await, Some(Err(Error::Replay(_)))));
         let delivered = events.next().await.unwrap().unwrap();
         assert_eq!(

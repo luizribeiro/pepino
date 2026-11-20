@@ -13,19 +13,19 @@ use p2panda_auth::validation::WriteError;
 use pepino_core::{BoardId, EventId};
 use tokio::{
     runtime::Handle,
-    sync::{Mutex, broadcast, mpsc, oneshot, watch},
+    sync::{Mutex, broadcast, oneshot, watch},
     task::JoinHandle,
     time::timeout,
 };
 
 use crate::{
-    BoardEvent, BoardEvents, Error, MemberState, MemberStates, MembershipEvent, Node, NodeEvent,
+    BoardEvents, Error, MemberState, MemberStates, MembershipEvent, Node, NodeEvent,
     ack::AckStore,
     board_lease::BoardLease,
     board_task::{BoardTask, JoinState},
     cursor,
     delivery::DeliveryWriter,
-    events::subscribe,
+    events::DeliveryInbox,
     membership::read_members,
     membership_watch::MembershipMonitor,
     receipt::{Payload, Receipts},
@@ -61,7 +61,7 @@ pub struct BoardHandle {
     status: WeakStatus,
     receipts: Receipts,
     confirmation_timeout: Duration,
-    events: Option<mpsc::Receiver<Result<BoardEvent, Error>>>,
+    events: DeliveryInbox,
     stop: oneshot::Sender<()>,
     done: JoinHandle<Result<(), Error>>,
 }
@@ -229,7 +229,7 @@ impl BoardHandle {
             status: delivery_status,
             receipts,
             confirmation_timeout,
-            events: Some(events),
+            events: DeliveryInbox::new(events),
             stop,
             done: tokio::spawn(task.drive(subscription, joined)),
         }
@@ -241,10 +241,9 @@ impl BoardHandle {
 
     /// Take this board's single consumer stream. An event ID identifies every redelivery of that event.
     pub fn events(&mut self) -> Result<BoardEvents, Error> {
-        let events = self.events.take().ok_or(Error::EventsTaken)?;
         let board = self.id;
         let status = self.status.clone();
-        Ok(subscribe(events, move || status.delivered(board)))
+        self.events.subscribe(move || status.delivered(board))
     }
 
     pub async fn wait_until_joined(&self, limit: Duration) -> Result<(), Error> {
