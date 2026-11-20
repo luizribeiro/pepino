@@ -3,7 +3,7 @@ use sqlx::{FromRow, SqliteConnection};
 
 use crate::{BoardKey, Store, StoreError};
 
-mod metadata;
+pub(crate) mod metadata;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventRecord {
@@ -41,14 +41,27 @@ pub(crate) async fn index(
         .created_task()
         .into_iter()
         .chain(envelope.event().referenced_tasks());
+    index_tasks(connection, board, envelope.id(), envelope.hlc(), tasks).await
+}
+
+pub(crate) async fn index_tasks(
+    connection: &mut SqliteConnection,
+    board: BoardId,
+    id: EventId,
+    hlc: Hlc,
+    tasks: impl IntoIterator<Item = TaskId>,
+) -> Result<(), StoreError> {
     for task in tasks {
-        sqlx::query("INSERT INTO event_task (board, task, hlc, id) VALUES (?, ?, ?, ?)")
-            .bind(BoardKey(board))
-            .bind(task.as_bytes().as_slice())
-            .bind(envelope.hlc().to_key())
-            .bind(envelope.id().as_bytes().as_slice())
-            .execute(&mut *connection)
-            .await?;
+        sqlx::query(
+            "INSERT INTO event_task (board, task, hlc, id) VALUES (?, ?, ?, ?)
+             ON CONFLICT (board, task, hlc, id) DO NOTHING",
+        )
+        .bind(BoardKey(board))
+        .bind(task.as_bytes().as_slice())
+        .bind(hlc.to_key())
+        .bind(id.as_bytes().as_slice())
+        .execute(&mut *connection)
+        .await?;
     }
     Ok(())
 }

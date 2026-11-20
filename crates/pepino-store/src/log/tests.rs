@@ -330,7 +330,7 @@ async fn reopening_projects_legacy_edges_on_every_board() {
         .fetch_one(&mut *connection)
         .await
         .unwrap();
-    assert_eq!(current, 2);
+    assert_eq!(current, 3);
 
     sqlx::query("DELETE FROM task_state WHERE board = ?")
         .bind(BoardKey(boards[0]))
@@ -542,4 +542,65 @@ async fn file_reader_cannot_observe_a_partial_batch() {
             .tags
             .contains("greenhouse")
     );
+}
+
+#[tokio::test]
+async fn upgrading_a_file_reindexes_skips_without_replaying_them_as_applied() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pepino.sqlite");
+    let board = BoardId::from_bytes([19; 32]);
+    let task = TaskId::from_bytes([44; 32]);
+    let event = Envelope::new(
+        DeviceId::from_bytes([31; 32]),
+        Hlc {
+            wall_ms: 100,
+            counter: 3,
+        },
+        Event::CommentAdded {
+            task,
+            text: "Use stainless screws".into(),
+        },
+    )
+    .unwrap();
+    let mut bytes = event.encode().unwrap();
+    let offset = bytes
+        .windows("comment_added".len())
+        .position(|part| part == b"comment_added")
+        .unwrap();
+    bytes[offset..offset + "comment_added".len()].copy_from_slice(b"reminder_sent");
+    let store = Store::open_file(&path, 2).await.unwrap();
+    assert!(matches!(
+        store
+            .append(board, &bytes, IdSource::Content)
+            .await
+            .unwrap(),
+        AppendOutcome::Skipped { .. }
+    ));
+    let mut connection = store.connection.lock().await;
+    let count = |query| sqlx::query_scalar::<_, i64>(query);
+    assert_eq!(
+        count("SELECT count(*) FROM event_task")
+            .fetch_one(&mut *connection)
+            .await
+            .unwrap(),
+        1
+    );
+    sqlx::query("DELETE FROM event_task")
+        .execute(&mut *connection)
+        .await
+        .unwrap();
+    drop(connection);
+    drop(store);
+
+    let reopened = Store::open(&path).await.unwrap();
+    let mut connection = reopened.connection.lock().await;
+    assert_eq!(
+        count("SELECT count(*) FROM event_task")
+            .fetch_one(&mut *connection)
+            .await
+            .unwrap(),
+        1
+    );
+    drop(connection);
+    assert!(reopened.events(board, task).await.unwrap().is_empty());
 }

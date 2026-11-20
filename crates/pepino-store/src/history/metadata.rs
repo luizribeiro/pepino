@@ -1,7 +1,7 @@
 use ciborium::Value;
 use pepino_core::{Event, TaskId};
 
-pub(super) fn skipped(bytes: &[u8]) -> (Option<Event>, Vec<TaskId>) {
+pub(crate) fn skipped(bytes: &[u8]) -> (Option<Event>, Vec<TaskId>) {
     let Ok((_, content)) = ciborium::from_reader::<(u64, Value), _>(bytes) else {
         return (None, Vec::new());
     };

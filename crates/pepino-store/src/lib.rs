@@ -37,7 +37,7 @@ pub use statistics::BoardStatistics;
 pub use task::TaskRecord;
 pub use traversal::{Dependencies, Dependency, SubtreeEntry};
 
-const FOLD_VERSION: i64 = 2;
+const FOLD_VERSION: i64 = 3;
 
 static MIGRATOR: Migrator = sqlx::migrate!();
 

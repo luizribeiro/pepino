@@ -115,6 +115,7 @@ impl Decoded {
         self,
         connection: &mut SqliteConnection,
         board: BoardId,
+        bytes: &[u8],
     ) -> Result<AppendOutcome, StoreError> {
         let id = self.id;
         Ok(match self.event {
@@ -123,7 +124,13 @@ impl Decoded {
                 fold::fold(connection, board, task, &envelope).await?;
                 AppendOutcome::Applied { id, task }
             }
-            Err(reason) => AppendOutcome::Skipped { id, reason },
+            Err(reason) => {
+                if let Some(hlc) = self.hlc {
+                    let (_, tasks) = history::metadata::skipped(bytes);
+                    history::index_tasks(connection, board, id, hlc, tasks).await?;
+                }
+                AppendOutcome::Skipped { id, reason }
+            }
         })
     }
 
@@ -177,7 +184,7 @@ impl Store {
         for &(bytes, id_source) in events {
             let decoded = Decoded::new(bytes, id_source)?;
             let outcome = if decoded.insert(&mut tx, board, bytes).await? {
-                decoded.project(&mut tx, board).await?
+                decoded.project(&mut tx, board, bytes).await?
             } else {
                 AppendOutcome::Duplicate { id: decoded.id }
             };
@@ -231,7 +238,7 @@ pub(crate) async fn rebuild(
             let decoded = Decoded::new(&bytes, IdSource::Trusted(EventId::from_bytes(id)))?;
             decoded.refresh_metadata(connection, board).await?;
             if matches!(
-                decoded.project(connection, board).await?,
+                decoded.project(connection, board, &bytes).await?,
                 AppendOutcome::Skipped { .. }
             ) {
                 report.skipped += 1;
