@@ -4,45 +4,69 @@ Use these commands to work on the same boards from two hosts. Start on a
 host that has no Pepino identity. The other host must already have run
 `ppn init` or joined the identity.
 
-On the new host, prepare the device and copy the request code from stdout.
+On the new host, prepare the device. Pepino writes the request code to
+stdout and shows the device name, fingerprint, and expiry on stderr.
 
 ```sh
-ppn device request --name ferrum
+umask 077
+ppn device request --name ferrum > request.txt
 ```
 
-The name defaults to the hostname. Repeating the command prints the same
-code. The request contains the device name, public node ID, and signed
-member information. The private credentials stay on the new host.
+**Keep both the request and grant codes secret.** Transfer them through a
+private channel. The request contains the device name, signed member
+information with a 90-day lifetime, and a random secret. The device's
+private key stays on the new host. Repeating the request prints the same
+code until it needs to be refreshed. Pepino refreshes codes with less than
+a day left or with invalid member information. Use the new fingerprint
+when a code is refreshed.
 
-On an existing device, paste the request as one argument.
+On an existing device, compare the name and fingerprint shown on the new
+host before enrolling it. From a terminal, run `ppn device add`, paste the
+code at the hidden prompt, and confirm only if the displayed fingerprint
+matches. With input from a pipe or file, pass the fingerprint you verified.
 
 ```sh
-ppn device add REQUEST
+ppn device add - --fingerprint 9XF5-HK7M-QS6V-RY24 < request.txt > grant.txt
+ppn device add --from-file request.txt --fingerprint 9XF5-HK7M-QS6V-RY24
 ```
 
-This gives the new device direct manager access to every board in the
-identity. Use `--name NAME` to override the requested name. Repeating the
-command for the same request succeeds.
+Substitute the fingerprint shown on the requesting device. You can omit
+`-` when piping the code in. A positional code remains supported and
+will be visible in process listings. `--yes` confirms the addition without
+a fingerprint check. Use `--name NAME` to set the enrolled device's name.
 
-**Keep the grant code secret.** It contains the identity ID and display
-name, board IDs and names, known device IDs and names, and the granting
-device's node ID and relay URL if configured. It also binds the grant to
-the original request. Both codes carry a version and checksum to detect
-copy errors. With `--json`, the request is in `request` and the grant is
-in `grant.code`, with `grant.secret` set to `true`.
+The existing device needs manage access to every board. The new device
+receives its role on each board. If some boards fail, Pepino reports the
+outcomes and you can retry with the same request.
 
-Back on the new host, paste the grant as one argument.
+The grant contains the granting device's signature, a MAC tied to the
+request secret, the identity and device roster, board IDs and names, and
+the granting device's connection hint. Back on the new host, read the
+grant from stdin or a file. With terminal input, `ppn device join` prompts
+for the code without echoing it.
 
 ```sh
-ppn device join GRANT --timeout 30s
+ppn device join - --timeout 30s < grant.txt
+ppn device join --from-file grant.txt
 ```
 
-Keep the granting device's daemon running and reachable while the new
-device joins, either on the same LAN with mDNS enabled or via a common
-configured relay. Both hosts need the same network name. If the wait
-times out, Pepino keeps the join and
-completes it when the granting device becomes reachable. You can safely
-repeat the join with the same grant.
+Join verifies the code against the saved request and shows the signing
+device. Keep that device's daemon running and reachable, either on the
+same LAN with mDNS or through a common relay. Both hosts need the same
+network name.
+
+If the wait expires, `ppn device join` exits 7 with error code `pending`.
+The daemon keeps the join and will complete it when the granting device
+becomes reachable. JSON errors include the grantor and the per-board
+states. You can safely repeat the join with the same grant. Sync and join
+waits accept a maximum of five minutes.
+
+Before installing a grant, use `ppn device request --cancel` to remove a
+pending request and its node database so you can run `ppn init`.
+
+With `--json`, the request code is in `request` and the grant code is in
+`grant.code`. Both results identify the code as secret and include the
+request fingerprint and device ID.
 
 ## Check the join
 
@@ -52,7 +76,9 @@ check progress and `ppn ls` to see the replicated tasks. `ppn device ls`
 shows devices known to this host, identifies the current device, and
 includes observation times when the daemon has seen a device. The
 current device shows pending until its board membership and first sync
-complete.
+complete. Remote devices are marked as added and awaiting their first
+observation, or seen on the board. Each host has its own roster until
+identity records can sync.
 
 The manual flow covers adding a device to one existing identity.
 Removing or revoking devices, one-code linking, merging a host that
