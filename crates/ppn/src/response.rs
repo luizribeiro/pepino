@@ -35,7 +35,7 @@ type Names = BTreeMap<String, String>;
 response_views! {
     write => Write {
         changed: &'a bool, created: &'a Option<String>, tasks: &'a [TaskSummary],
-        edges: &'a [EdgeEffect], names: &'a Names, deleted: &'a [TaskSummary],
+        edges: &'a [EdgeEffect], activated: &'a [EdgeEffect], names: &'a Names, deleted: &'a [TaskSummary],
         targets: &'a [String],
     },
     task => Task {

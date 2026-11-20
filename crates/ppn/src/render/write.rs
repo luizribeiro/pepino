@@ -200,6 +200,7 @@ fn combine_responses(
         tasks,
         deleted,
         edges,
+        activated,
         names,
         ..
     } = &mut result
@@ -233,6 +234,10 @@ fn combine_responses(
         *edges = writes
             .iter()
             .flat_map(|write| write.edges.iter().cloned())
+            .collect();
+        *activated = writes
+            .iter()
+            .flat_map(|write| write.activated.iter().cloned())
             .collect();
         *names = writes
             .iter()

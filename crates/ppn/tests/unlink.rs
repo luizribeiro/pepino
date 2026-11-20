@@ -90,3 +90,39 @@ fn unlink_cleans_up_a_link_to_a_deleted_task() {
         serde_json::json!([])
     );
 }
+
+#[test]
+fn unlink_reports_a_link_activated_by_the_write() {
+    for json in [false, true] {
+        let (sandbox, data) = task_sandbox();
+        let p = small_project(&sandbox);
+        append_remote(
+            &data,
+            pepino_core::Event::EdgeAdded {
+                from: p.downstream.parse().unwrap(),
+                kind: pepino_core::EdgeKind::Blocks,
+                to: p.blocker.parse().unwrap(),
+            },
+        );
+        let mut args = vec!["unlink", &p.blocker, "blocks", &p.downstream];
+        if json {
+            args.push("--json");
+        }
+        let output = sandbox.run(&args);
+        if json {
+            let output = as_json(&output);
+            assert_eq!(
+                output["activated"],
+                serde_json::json!([{
+                    "from": &p.downstream, "kind": "blocks", "to": &p.blocker, "effective": true
+                }])
+            );
+        } else {
+            assert!(output.contains(&format!(
+                "Activated {} blocks {}",
+                &p.downstream[..6],
+                &p.blocker[..6]
+            )));
+        }
+    }
+}

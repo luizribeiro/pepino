@@ -71,7 +71,10 @@ impl CommandResult {
                         Err(error) => Err(error.into()),
                     }
                 } else {
-                    let text = human(&response, &settings)?;
+                    let mut text = human(&response, &settings)?;
+                    if let Response::Write { activated, .. } = &response {
+                        append_activations(&mut text, activated);
+                    }
                     if text.is_empty() {
                         Ok(())
                     } else {
@@ -92,6 +95,33 @@ impl CommandResult {
     pub fn with_human_note(mut self, note: Option<String>) -> Self {
         self.2 = note;
         self
+    }
+}
+
+fn append_activations(text: &mut String, edges: &[pepino_app::EdgeEffect]) {
+    use std::fmt::Write as _;
+
+    let ids = crate::render::ShortIds::new(
+        edges
+            .iter()
+            .flat_map(|edge| [edge.from.as_str(), edge.to.as_str()]),
+    );
+    for edge in edges {
+        let relation = match edge.kind {
+            pepino_app::EdgeKind::Parent => "has parent",
+            pepino_app::EdgeKind::Blocks => "blocks",
+            pepino_app::EdgeKind::Relates => "relates to",
+            _ => "links to",
+        };
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        let _ = writeln!(
+            text,
+            "Activated {} {relation} {}",
+            ids.get(&edge.from),
+            ids.get(&edge.to)
+        );
     }
 }
 
