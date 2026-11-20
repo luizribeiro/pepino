@@ -16,7 +16,7 @@ pub fn example_help(examples: &[&str]) -> String {
 pub fn command_fields(command: &Command) -> Map<String, Value> {
     let (arguments, flags): (Vec<_>, Vec<_>) = command
         .get_arguments()
-        .filter(|arg| !arg.is_hide_set())
+        .filter(|arg| !arg.is_hide_set() && (!arg.is_global_set() || command.get_name() == "ppn"))
         .map(|arg| (arg.is_positional(), ArgumentInfo::from(arg)))
         .partition(|(positional, _)| *positional);
     let details = |args: Vec<_>| args.into_iter().map(|(_, info)| info).collect::<Vec<_>>();
@@ -82,6 +82,9 @@ struct ArgumentInfo {
     choices: Vec<String>,
     global: bool,
     required: bool,
+    multiple: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    syntax: Option<&'static str>,
 }
 
 macro_rules! parser_is {
@@ -140,16 +143,37 @@ impl From<&Arg> for ArgumentInfo {
             summary: argument_summary(arg),
             value_type,
             default,
-            env: if arg.is_global_set() && arg.get_id() == "json" {
-                Some(crate::flags::JSON_ENV.into())
-            } else {
-                arg.get_env()
-                    .map(|name| name.to_string_lossy().into_owned())
+            env: match arg.get_id().as_str() {
+                "json" if arg.is_global_set() => Some(crate::flags::JSON_ENV.into()),
+                "config" if arg.is_global_set() => Some(crate::config::CONFIG_ENV.into()),
+                _ => arg
+                    .get_env()
+                    .map(|name| name.to_string_lossy().into_owned()),
             },
             choices,
             global: arg.is_global_set(),
             required: arg.is_required_set(),
+            multiple: matches!(arg.get_action(), ArgAction::Append | ArgAction::Count)
+                || arg
+                    .get_num_args()
+                    .is_some_and(|range| range.max_values() > 1),
+            syntax: value_syntax(arg),
         }
+    }
+}
+
+fn value_syntax(arg: &Arg) -> Option<&'static str> {
+    match arg.get_long()? {
+        "due" => Some(
+            "Use YYYY-MM-DD, today, tomorrow, yesterday, a full or three-letter weekday, or a signed offset with d (days) or w (weeks).",
+        ),
+        "set" => Some(
+            "Use KEY=VALUE. An unquoted decimal without a plus sign or redundant leading zeros is a signed 64-bit integer. Date operands become dates. Other values and values with double quotes are text.",
+        ),
+        "sort" => Some(
+            "Use default or comma-separated keys: created, updated, due, priority, status, title. Prefix a key with - for descending. The default groups open tasks first, then descending priority (missing is zero), ascending due date, creation time and ID. An empty sort orders by ID.",
+        ),
+        _ => None,
     }
 }
 

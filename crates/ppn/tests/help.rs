@@ -219,3 +219,64 @@ fn commands_that_accept_filters_link_to_the_grammar() {
         assert!(run_ppn(&invocation).contains("ppn help filters"));
     }
 }
+
+#[test]
+fn json_help_describes_repeatability_value_syntax_and_root_globals() {
+    let root = as_json(&run_ppn(&["help", "--json"]));
+    let find = |name| {
+        root["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["name"] == name)
+            .unwrap()
+    };
+    let flag = |node: &serde_json::Value, name: &str| {
+        node["flags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|flag| flag["long"] == name)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(flag(&root, "config")["env"], "PPN_CONFIG");
+    let add = find("add");
+    assert_eq!(flag(add, "tag")["multiple"], true);
+    assert_eq!(flag(add, "due")["multiple"], false);
+    assert!(
+        flag(add, "due")["syntax"]
+            .as_str()
+            .unwrap()
+            .contains("weeks")
+    );
+    assert!(
+        flag(add, "set")["syntax"]
+            .as_str()
+            .unwrap()
+            .contains("leading zeros")
+    );
+    let ls = find("ls");
+    assert_eq!(ls["arguments"][0]["multiple"], true);
+    assert!(
+        flag(ls, "sort")["syntax"]
+            .as_str()
+            .unwrap()
+            .contains("creation time")
+    );
+    fn no_globals(node: &serde_json::Value) {
+        assert!(
+            node["flags"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|flag| flag["global"] == false)
+        );
+        for child in node["commands"].as_array().unwrap() {
+            no_globals(child);
+        }
+    }
+    for child in root["commands"].as_array().unwrap() {
+        no_globals(child);
+    }
+}
