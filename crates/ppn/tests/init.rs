@@ -122,3 +122,39 @@ fn an_unreadable_config_file_reports_permission_denied_and_its_path() {
         assert!(!data.exists());
     }
 }
+
+#[test]
+fn old_local_state_is_rejected_without_touching_the_directory() {
+    let (sandbox, data) = uninitialized_task_sandbox();
+    std::fs::create_dir(&data).unwrap();
+    let bytes = br#"{"version":2}"#;
+    std::fs::write(data.join("local.json"), bytes).unwrap();
+    std::fs::write(data.join("pepino.sqlite"), b"old database").unwrap();
+    for command in ["status", "init"] {
+        let human = sandbox.command().arg(command).output().unwrap();
+        assert_eq!(human.status.code(), Some(1));
+        assert!(human.stdout.is_empty());
+        let diagnostic = String::from_utf8(human.stderr).unwrap();
+        assert!(diagnostic.contains("cannot be upgraded"));
+        assert!(diagnostic.contains("Move the directory aside and run `ppn init`."));
+        let error = task_error(
+            sandbox
+                .command()
+                .args([command, "--json"])
+                .output()
+                .unwrap(),
+            1,
+            "failure",
+        );
+        assert_eq!(
+            error["hint"],
+            "Move the directory aside and run `ppn init`."
+        );
+        assert_eq!(std::fs::read(data.join("local.json")).unwrap(), bytes);
+        assert_eq!(
+            std::fs::read(data.join("pepino.sqlite")).unwrap(),
+            b"old database"
+        );
+        assert_eq!(std::fs::read_dir(&data).unwrap().count(), 2);
+    }
+}

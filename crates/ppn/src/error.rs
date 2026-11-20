@@ -282,6 +282,12 @@ impl From<AppError> for CliError {
         };
         let mut diagnostic = Self::new(kind, error.to_string());
         match &error {
+            AppError::IncompatibleLocalState { version, directory } => {
+                diagnostic.message = format!(
+                    "Local state version {version} in {directory} cannot be upgraded because its device and board IDs are not real keys and spaces."
+                );
+                diagnostic.hint = Some("Move the directory aside and run `ppn init`.".into());
+            }
             AppError::NotInitialized { directory } => {
                 diagnostic.message = format!("Data directory {directory} is not initialized.");
                 diagnostic.hint = Some("Run `ppn init`.".into());
