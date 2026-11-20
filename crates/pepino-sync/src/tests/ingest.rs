@@ -229,3 +229,59 @@ async fn waits_for_a_connected_peers_first_pull_and_ingests_its_events() {
     );
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn stream_errors_back_off_and_keep_the_board_non_idle_until_repoll() {
+    use futures_util::{StreamExt, stream};
+    use std::time::Duration;
+    use tokio::{sync::watch, time::Instant};
+
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([65; 32]);
+    let app = directory::prepare(dir.path(), board, DeviceId::from_bytes([66; 32])).await;
+    tokio::time::pause();
+    let mut idle = crate::Status::default();
+    idle.boards.entry(board).or_default().outbox_pending = Some(0);
+    idle.node.boards.insert(board, Default::default());
+    let (status, _) = watch::channel(idle);
+    let (polled, mut poll_times) = tokio::sync::mpsc::unbounded_channel();
+    let attempt = |error: &str| {
+        Err::<crate::Delivery<super::stub::Receipt>, _>(pepino_node::Error::Node(error.into()))
+    };
+    let stream = stream::iter([attempt("interrupted"), attempt("still interrupted")])
+        .map(move |item| {
+            polled.send(Instant::now()).unwrap();
+            item
+        })
+        .chain(stream::pending())
+        .boxed();
+    let (started, mut states) = watch::channel(false);
+    let observe = async {
+        let first = poll_times.recv().await.unwrap();
+        started.send_replace(true);
+        let second = poll_times.recv().await.unwrap();
+        assert!(second - first >= Duration::from_millis(25));
+    };
+    let mut updates = status.subscribe();
+    let seq = async {
+        states.wait_for(|started| *started).await.unwrap();
+        let retrying = updates
+            .wait_for(|status| status.boards[&board].stream_retrying)
+            .await
+            .unwrap();
+        assert!(!retrying.is_idle());
+        drop(retrying);
+        let idle = updates.wait_for(crate::Status::is_idle).await.unwrap();
+        assert!(
+            idle.boards[&board]
+                .last_error
+                .as_deref()
+                .unwrap()
+                .contains("still interrupted")
+        );
+    };
+    tokio::select! {
+        result = crate::inbox::run(&app, board, stream, &status) => panic!("{result:?}"),
+        _ = async { tokio::join!(observe, seq); } => (),
+    }
+}

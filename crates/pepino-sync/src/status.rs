@@ -16,6 +16,7 @@ pub struct BoardStatus {
     /// Unknown until the first successful scan.
     pub outbox_pending: Option<u64>,
     pub ingest_pending: bool,
+    pub stream_retrying: bool,
     pub last_published: Option<EventId>,
     pub last_ingested: Option<EventId>,
     pub last_error: Option<String>,
@@ -35,6 +36,7 @@ impl Status {
             !board.closed
                 && board.outbox_pending == Some(0)
                 && !board.ingest_pending
+                && !board.stream_retrying
                 && node.boards.get(id).is_some_and(|signals| {
                     !signals.replaying
                         && signals.active_syncs.is_empty()

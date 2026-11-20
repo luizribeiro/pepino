@@ -15,17 +15,20 @@ pub(crate) async fn run<A: Acknowledgement>(
     mut deliveries: DeliveryStream<A>,
     status: &watch::Sender<Status>,
 ) -> Result<(), Error> {
+    let mut stream_retry = Retry::new();
     loop {
         // A concurrent idle check must see the node queue or the item now owned by us.
         let item = poll_fn(|cx| {
             let mut item = Poll::Pending;
             status.send_if_modified(|status| {
                 item = deliveries.as_mut().poll_next(cx);
-                if matches!(item, Poll::Ready(Some(_))) {
-                    status.boards.entry(id).or_default().ingest_pending = true;
-                    return true;
-                }
-                false
+                let board = status.boards.entry(id).or_default();
+                let retrying = matches!(item, Poll::Ready(Some(Err(_))));
+                let ingest = matches!(item, Poll::Ready(Some(Ok(_)) | None));
+                let changed = (board.stream_retrying, board.ingest_pending) != (retrying, ingest);
+                board.stream_retrying = retrying;
+                board.ingest_pending = ingest;
+                changed
             });
             item
         })
@@ -34,6 +37,7 @@ pub(crate) async fn run<A: Acknowledgement>(
 
         match item {
             Ok(delivery) => {
+                stream_retry = Retry::new();
                 ingest(app, id, &delivery, status).await;
                 let mut retry = Retry::new();
                 while let Err(error) = delivery.ack.ack().await {
@@ -44,12 +48,15 @@ pub(crate) async fn run<A: Acknowledgement>(
                     );
                     retry.wait().await;
                 }
+                status.send_modify(|state| {
+                    state.boards.entry(id).or_default().ingest_pending = false
+                });
             }
             Err(error) => {
                 record_error(status, id, error.to_string());
+                stream_retry.wait().await;
             }
         }
-        status.send_modify(|state| state.boards.entry(id).or_default().ingest_pending = false);
     }
 }
 
