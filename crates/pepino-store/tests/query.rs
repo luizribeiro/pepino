@@ -7,6 +7,8 @@ mod semantics;
 #[path = "query/sort.rs"]
 mod sort;
 
+use std::{collections::BTreeMap, sync::OnceLock};
+
 use pepino_core::{
     IdentityId,
     filter::{Filter, parse},
@@ -41,8 +43,26 @@ fn people(text: &str) -> Vec<IdentityId> {
 }
 
 struct TestViews;
+
 impl ViewResolver for TestViews {
-    fn resolve(&self, _: &str) -> Option<&Filter> {
-        None
+    fn resolve(&self, name: &str) -> Option<&Filter> {
+        static VIEWS: OnceLock<BTreeMap<&str, Filter>> = OnceLock::new();
+        VIEWS
+            .get_or_init(|| {
+                [
+                    ("garden-open", "tag:garden is:open"),
+                    ("weekend", "@garden-open due:2026-11-20"),
+                    ("empty", ""),
+                    ("self", "@self"),
+                    ("entry", "@cycle-a"),
+                    ("cycle-a", "@cycle-b"),
+                    ("cycle-b", "-@cycle-a"),
+                    ("unknown", "@missing"),
+                ]
+                .into_iter()
+                .map(|(name, input)| (name, filter(input)))
+                .collect()
+            })
+            .get(name)
     }
 }

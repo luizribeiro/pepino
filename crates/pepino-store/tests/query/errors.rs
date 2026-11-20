@@ -104,3 +104,31 @@ fn ambiguous_task_prefix_lists_candidates_and_total() {
         },
     );
 }
+
+#[test]
+fn unknown_saved_view_names_the_failing_reference() {
+    check(
+        &query(&filter("@unknown")),
+        "@missing",
+        QueryErrorKind::UnknownView {
+            name: "missing".into(),
+        },
+    );
+}
+
+#[test]
+fn direct_and_indirect_view_cycles_report_the_chain_and_closing_term() {
+    for (input, term, chain) in [
+        ("@self", "@self", vec!["self", "self"]),
+        (
+            "@entry",
+            "-@cycle-a",
+            vec!["entry", "cycle-a", "cycle-b", "cycle-a"],
+        ),
+    ] {
+        let kind = QueryErrorKind::ViewCycle {
+            chain: chain.into_iter().map(str::to_owned).collect(),
+        };
+        check(&query(&filter(input)), term, kind);
+    }
+}

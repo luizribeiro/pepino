@@ -30,4 +30,8 @@ pub enum QueryErrorKind {
         count: u64,
         candidates: Vec<TaskId>,
     },
+    #[error("unknown saved view {name:?}")]
+    UnknownView { name: String },
+    #[error("saved view cycle: {}", .chain.join(" -> "))]
+    ViewCycle { chain: Vec<String> },
 }

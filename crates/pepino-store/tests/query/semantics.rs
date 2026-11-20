@@ -1,4 +1,4 @@
-use pepino_store::query::select;
+use pepino_store::query::{matches, select};
 
 use super::{
     filter,
@@ -126,4 +126,15 @@ fn free_text_searches_each_body_with_unicode_simple_case_folding() {
     check("fence -bolts", &[]);
     check(r#""fence use""#, &[]);
     check("greenhouse", &[]);
+}
+
+#[test]
+fn views_expand_recursively_and_negate_the_entire_saved_filter() {
+    check("@weekend", &[0, 7, 11]);
+    check("tag:garden -@weekend", &[2]);
+    check("@weekend @garden-open @weekend", &[0, 7, 11]);
+    check("-@empty", &[]);
+    let filter = filter("@empty -tag:garden");
+    let task = board().task(id(1)).unwrap();
+    assert!(matches(board(), task, &query(&filter)).unwrap());
 }

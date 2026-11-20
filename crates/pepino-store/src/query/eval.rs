@@ -59,7 +59,7 @@ fn prepare<'a>(
     view: &'a BoardView,
     filter: &'a Filter,
     context: &Context<'a>,
-    _chain: &mut Vec<&'a str>,
+    chain: &mut Vec<&'a str>,
 ) -> Result<Vec<Predicate<'a>>, QueryError> {
     let mut predicates = Vec::<Predicate<'a>>::new();
     for term in filter.terms() {
@@ -67,8 +67,16 @@ fn prepare<'a>(
             term: term.to_string(),
             kind,
         };
-        let Some(predicate) = prepare_clause(view, &term.clause, context).map_err(at_term)? else {
-            continue;
+        let predicate = match &term.clause {
+            Clause::Board(_) => continue,
+            Clause::View(name) => {
+                let nested = resolve_view(context, chain, name).map_err(at_term)?;
+                chain.push(name);
+                let nested = prepare(view, nested, context, chain)?;
+                chain.pop();
+                Box::new(move |task: &TaskRecord| all_match(&nested, task)) as Predicate<'a>
+            }
+            clause => prepare_clause(view, clause, context).map_err(at_term)?,
         };
         if term.negated {
             predicates.push(Box::new(move |task| !predicate(task)));
@@ -79,11 +87,32 @@ fn prepare<'a>(
     Ok(predicates)
 }
 
+fn resolve_view<'a>(
+    context: &Context<'a>,
+    chain: &[&str],
+    name: &str,
+) -> Result<&'a Filter, QueryErrorKind> {
+    if chain.contains(&name) {
+        return Err(QueryErrorKind::ViewCycle {
+            chain: chain
+                .iter()
+                .copied()
+                .chain([name])
+                .map(str::to_owned)
+                .collect(),
+        });
+    }
+    context
+        .views
+        .resolve(name)
+        .ok_or_else(|| QueryErrorKind::UnknownView { name: name.into() })
+}
+
 fn prepare_clause<'a>(
     view: &'a BoardView,
     clause: &'a Clause,
     context: &Context<'a>,
-) -> Result<Option<Predicate<'a>>, QueryErrorKind> {
+) -> Result<Predicate<'a>, QueryErrorKind> {
     let predicate: Predicate<'a> = match clause {
         Clause::Text(text) => {
             let needle = fold(text);
@@ -126,9 +155,9 @@ fn prepare_clause<'a>(
                 .get(field)
                 .is_some_and(|value| custom(value, alternatives))
         }),
-        _ => return Ok(None),
+        Clause::Board(_) | Clause::View(_) => unreachable!("handled during filter preparation"),
     };
-    Ok(Some(predicate))
+    Ok(predicate)
 }
 
 fn resolve_person(
