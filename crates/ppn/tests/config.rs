@@ -36,12 +36,12 @@ fn config_show_reports_effective_values_and_sources() {
             .lines()
             .any(|line| line.starts_with("network") && line.ends_with("release-team"))
     );
-    assert_eq!(human.lines().count(), 11);
+    assert_eq!(human.lines().count(), 13);
 
     let data = as_json(&sandbox.run(&["config", "show", "--json"]));
     assert_eq!(data["kind"], "config");
     let values = data["values"].as_object().unwrap();
-    assert_eq!(values.len(), 10);
+    assert_eq!(values.len(), 12);
     assert_eq!(
         values["network"],
         json!({
@@ -115,6 +115,7 @@ fn config_show_applies_environment_then_global_flags() {
         .command()
         .env("PPN_NETWORK", "from-env")
         .env("PPN_PORT", "44123")
+        .env("PPN_DAEMON_AUTOSTART", "0")
         .env("PPN_COLOR", "always")
         .args(["config", "show", "--color=auto", "--json"])
         .output()
@@ -123,6 +124,10 @@ fn config_show_applies_environment_then_global_flags() {
     assert_eq!(
         data["values"]["network"],
         json!({"value": "from-env", "source": "env"})
+    );
+    assert_eq!(
+        data["values"]["daemon.autostart"],
+        json!({"value": false, "source": "env"})
     );
     assert_eq!(
         data["values"]["port"],

@@ -5,7 +5,7 @@ use toml::de::{DeTable, DeValue};
 
 use super::diagnostics::invalid_config;
 use super::document::{Input, Validator};
-use super::model::{Draft, ROOT_KEYS, UI_KEYS};
+use super::model::{Draft, keys};
 use super::{Env, Source, ValueError};
 use crate::error::CliError;
 
@@ -18,7 +18,7 @@ pub fn env_value<'a>(env: &'a Env, name: &str) -> Result<Option<&'a str>, ValueE
 
 pub(crate) fn apply(draft: &mut Draft<'_>, env: &Env) -> Result<(), CliError> {
     let mut problems = Vec::new();
-    for entry in ROOT_KEYS.iter().chain(UI_KEYS) {
+    for entry in keys() {
         let variable = entry.environment.variable;
         let key = entry.environment.key;
         let raw = match env_value(env, variable) {
@@ -52,6 +52,7 @@ pub(crate) fn scalar(raw: &str) -> DeValue<'_> {
 
 pub(crate) use scalar as color;
 pub(crate) use scalar as path;
+pub(crate) use scalar as optional_path;
 
 pub(crate) fn boolean(raw: &str) -> DeValue<'_> {
     match raw {
@@ -125,6 +126,8 @@ mod tests {
                 ),
                 ("PPN_MDNS", "0"),
                 ("PPN_PORT", "44123"),
+                ("PPN_DAEMON_AUTOSTART", "false"),
+                ("PPN_DAEMON_SOCKET_PATH", "~/release.sock"),
                 ("PPN_CREDENTIALS_FILE", "~/keys/device.cbor"),
                 ("PPN_TRUSTED_DEVICES", id),
                 ("PPN_BOOTSTRAP_NODES", &bootstrap),

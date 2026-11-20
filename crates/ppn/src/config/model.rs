@@ -82,7 +82,13 @@ pub fn environment_variables() -> impl Iterator<Item = EnvironmentVariable> {
         key: "File selection",
         value: "Path to one required TOML file. --config takes precedence.",
     })
-    .chain(ROOT_KEYS.iter().chain(UI_KEYS).map(|key| key.environment))
+    .chain(keys().map(|key| key.environment))
+}
+
+pub(crate) fn keys() -> impl Iterator<Item = &'static Key> {
+    ROOT_KEYS
+        .iter()
+        .chain(TABLES.iter().flat_map(|(_, keys)| *keys))
 }
 
 impl<T> Setting<Option<T>> {
@@ -100,6 +106,9 @@ impl<T> Setting<Option<T>> {
 macro_rules! parse_setting {
     (path, $draft:ident, $validator:ident, $key:expr, $input:ident) => {
         validate::path($validator, $key, $input, $draft.dirs)
+    };
+    (optional_path, $draft:ident, $validator:ident, $key:expr, $input:ident) => {
+        validate::path($validator, $key, $input, $draft.dirs).map(Some)
     };
     ($parser:ident, $draft:ident, $validator:ident, $key:expr, $input:ident) => {
         validate::$parser($validator, $key, $input).map(Some)
@@ -123,35 +132,41 @@ macro_rules! key {
 macro_rules! settings {
     ($dirs:ident;
      root { $($field:ident: $ty:ty = $parser:ident($variable:literal, $description:literal, $default:expr);)* }
-     ui { $($ui:ident: $ui_ty:ty = $ui_parser:ident($ui_variable:literal, $ui_description:literal, $ui_default:expr);)* }
+     $($table:ident ($config:ident, $draft:ident, $keys:ident) {
+         $($field_name:ident: $value:ty = $parse:ident($variable_name:literal, $help:literal, $fallback:expr);)*
+     })*
     ) => {
         #[derive(Clone, Debug)]
         pub struct Config {
             $(pub $field: Setting<$ty>,)*
-            pub ui: UiConfig,
+            $(pub $table: $config,)*
         }
 
-        #[derive(Clone, Debug)]
-        pub struct UiConfig {
-            $(pub $ui: Setting<$ui_ty>,)*
-        }
+        $(
+            #[derive(Clone, Debug)]
+            pub struct $config {
+                $(pub $field_name: Setting<$value>,)*
+            }
+        )*
 
         pub(crate) struct Draft<'a> {
             pub dirs: &'a PlatformDirs,
             $($field: Setting<Option<$ty>>,)*
-            pub ui: DraftUi,
+            $(pub $table: $draft,)*
         }
 
-        pub(crate) struct DraftUi {
-            $(pub $ui: Setting<Option<$ui_ty>>,)*
-        }
+        $(
+            pub(crate) struct $draft {
+                $(pub $field_name: Setting<Option<$value>>,)*
+            }
+        )*
 
         impl<'a> Draft<'a> {
             pub fn new(dirs: &'a PlatformDirs) -> Self {
                 Self {
                     dirs,
                     $($field: Setting::<$ty>::pending(),)*
-                    ui: DraftUi { $($ui: Setting::<$ui_ty>::pending(),)* },
+                    $($table: $draft { $($field_name: Setting::<$value>::pending(),)* },)*
                 }
             }
 
@@ -160,7 +175,7 @@ macro_rules! settings {
                 $(let $field = self.$field.resolve(|| $default)?;)*
                 Ok(Config {
                     $($field,)*
-                    ui: UiConfig { $($ui: self.ui.$ui.resolve(|| $ui_default)?,)* },
+                    $($table: $config { $($field_name: self.$table.$field_name.resolve(|| $fallback)?,)* },)*
                 })
             }
         }
@@ -173,7 +188,7 @@ macro_rules! settings {
             pub fn values(&self) -> BTreeMap<&'static str, Value> {
                 BTreeMap::from([
                     $((stringify!($field), json!(self.$field)),)*
-                    $((concat!("ui.", stringify!($ui)), json!(self.ui.$ui)),)*
+                    $($((concat!(stringify!($table), ".", stringify!($field_name)), json!(self.$table.$field_name)),)*)*
                 ])
             }
         }
@@ -181,9 +196,12 @@ macro_rules! settings {
         pub(crate) const ROOT_KEYS: &[Key] = &[
             $(key!(stringify!($field), $variable, $description, $parser, $field),)*
         ];
-        pub(crate) const UI_KEYS: &[Key] = &[
-            $(key!(concat!("ui.", stringify!($ui)), $ui_variable, $ui_description, $ui_parser, ui.$ui),)*
-        ];
+        $(
+            const $keys: &[Key] = &[
+                $(key!(concat!(stringify!($table), ".", stringify!($field_name)), $variable_name, $help, $parse, $table.$field_name),)*
+            ];
+        )*
+        pub(crate) const TABLES: &[(&str, &[Key])] = &[$((stringify!($table), $keys),)*];
     };
 }
 
@@ -202,7 +220,11 @@ settings! {
         bootstrap_nodes: Vec<BootstrapNode> = bootstrap_list("PPN_BOOTSTRAP_NODES",
             "Comma-separated node_id=https://relay.example pairs with 64-digit hex node IDs.", Ok(Vec::new()));
     }
-    ui {
+    daemon (DaemonConfig, DraftDaemon, DAEMON_KEYS) {
+        autostart: bool = boolean("PPN_DAEMON_AUTOSTART", "true, false, 1, or 0.", Ok(true));
+        socket_path: Option<AbsolutePath> = optional_path("PPN_DAEMON_SOCKET_PATH", "Absolute path or a path beginning with ~/.", Ok(None));
+    }
+    ui (UiConfig, DraftUi, UI_KEYS) {
         color: Color = color("PPN_COLOR", "auto, always, or never. --color takes precedence.", Ok(Color::Auto));
         date_format: DateFormat = scalar("PPN_DATE_FORMAT", "Strftime format.", "%Y-%m-%d".parse());
     }
@@ -243,6 +265,8 @@ mod tests {
             values["data_dir"]["value"],
             "/home/release/.local/state/pepino"
         );
+        assert_eq!(values["daemon.autostart"]["value"], true);
+        assert!(values["daemon.socket_path"]["value"].is_null());
         assert_eq!(values["ui.color"]["value"], "auto");
         assert_eq!(values["ui.date_format"]["value"], "%Y-%m-%d");
     }

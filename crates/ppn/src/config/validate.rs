@@ -5,7 +5,7 @@ use clap::ValueEnum;
 
 use super::diagnostics::invalid_config;
 use super::document::{Input, Validator, text};
-use super::model::{Draft, Key, ROOT_KEYS, UI_KEYS};
+use super::model::{Draft, Key, ROOT_KEYS, TABLES};
 use super::{AbsolutePath, BootstrapNode, Config, PlatformDirs, Source, ValueError};
 use crate::error::CliError;
 use crate::terminal::Color;
@@ -26,27 +26,30 @@ impl Draft<'_> {
     pub fn apply_file(&mut self, path: &Path, text: &str, source: &Source) -> Result<(), CliError> {
         let mut validator = Validator::new(Some((path, text)));
         for (key, value) in validator.document(text) {
-            match key.get_ref().as_ref() {
-                "ui" => {
-                    let table = value
-                        .get_ref()
-                        .as_table()
-                        .ok_or(ValueError("expected a table"));
-                    if let Some(table) = validator.require("ui", &value, table) {
-                        for (key, value) in table {
-                            let name = format!("ui.{}", key.get_ref());
-                            if let Some(entry) = find_key(UI_KEYS, &name) {
-                                (entry.apply)(self, value, source, &mut validator);
-                            } else {
-                                validator.unknown(&name, key.span(), names(UI_KEYS));
-                            }
+            let name = key.get_ref().as_ref();
+            if let Some((_, keys)) = TABLES.iter().find(|(table, _)| *table == name) {
+                let table = value
+                    .get_ref()
+                    .as_table()
+                    .ok_or(ValueError("expected a table"));
+                if let Some(table) = validator.require(name, &value, table) {
+                    for (key, value) in table {
+                        let name = format!("{name}.{}", key.get_ref());
+                        if let Some(entry) = find_key(keys, &name) {
+                            (entry.apply)(self, value, source, &mut validator);
+                        } else {
+                            validator.unknown(&name, key.span(), names(keys));
                         }
                     }
                 }
-                name => match find_key(ROOT_KEYS, name) {
-                    Some(entry) => (entry.apply)(self, &value, source, &mut validator),
-                    None => validator.unknown(name, key.span(), names(ROOT_KEYS).chain(["ui"])),
-                },
+            } else if let Some(entry) = find_key(ROOT_KEYS, name) {
+                (entry.apply)(self, &value, source, &mut validator);
+            } else {
+                validator.unknown(
+                    name,
+                    key.span(),
+                    names(ROOT_KEYS).chain(TABLES.iter().map(|(table, _)| *table)),
+                );
             }
         }
         invalid_config(validator.problems)
@@ -184,6 +187,23 @@ mod tests {
         let home = Path::new("/home/release");
         let dirs = PlatformDirs::new(Platform::Linux, home, None, None);
         validate_file(&home.join("config.toml"), text, &dirs)
+    }
+
+    #[test]
+    fn validates_the_daemon_table() {
+        let config =
+            validate("[daemon]\nautostart = false\nsocket_path = '~/release.sock'").unwrap();
+        assert!(!config.daemon.autostart.value);
+        assert_eq!(
+            config.daemon.socket_path.value.unwrap().as_path(),
+            Path::new("/home/release/release.sock")
+        );
+        assert!(
+            validate("[daemon]\nautostrat = true")
+                .unwrap_err()
+                .to_string()
+                .contains("`daemon.autostart`")
+        );
     }
 
     #[test]
