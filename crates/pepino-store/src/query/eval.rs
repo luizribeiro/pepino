@@ -7,7 +7,7 @@ use crate::{BoardView, TaskRecord};
 
 use super::{
     QueryError, QueryErrorKind,
-    predicates::{compare, utc_days},
+    predicates::{compare, has, is, utc_days},
 };
 
 /// Resolves decoded person text to candidate identities.
@@ -85,6 +85,8 @@ fn prepare_clause<'a>(
     _context: &Context<'a>,
 ) -> Result<Option<Predicate<'a>>, QueryErrorKind> {
     let predicate: Predicate<'a> = match clause {
+        Clause::Is(values) => Box::new(move |task| values.iter().any(|value| is(task, *value))),
+        Clause::Has(values) => Box::new(move |task| values.iter().any(|value| has(task, value))),
         Clause::Tag(values) => {
             Box::new(move |task| values.iter().any(|tag| task.tags.contains(tag)))
         }

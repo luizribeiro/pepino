@@ -1,9 +1,32 @@
 use std::cmp::Ordering;
 
+use crate::TaskRecord;
+
 use pepino_core::{
     Date, Hlc,
-    filter::{Comparison, Operator},
+    filter::{Comparison, Operator, PresenceField, State},
 };
+pub(super) fn is(task: &TaskRecord, state: State) -> bool {
+    match state {
+        State::Blocked => task.blocked,
+        State::Ready => task.ready,
+        State::Open => task.status.is_open(),
+        State::Closed => !task.status.is_open(),
+    }
+}
+
+pub(super) fn has(task: &TaskRecord, field: &PresenceField) -> bool {
+    match field {
+        PresenceField::Due => task.due.is_some(),
+        PresenceField::Parent => task.parent.is_some(),
+        PresenceField::Assignee => !task.assignees.is_empty(),
+        PresenceField::Priority => task.priority.is_some(),
+        PresenceField::Tag => !task.tags.is_empty(),
+        PresenceField::Description => task.description.is_some(),
+        PresenceField::Custom(field) => task.custom.contains_key(field),
+    }
+}
+
 pub(super) fn compare<T: Ord>(actual: Option<T>, alternatives: &[Comparison<T>]) -> bool {
     actual.is_some_and(|actual| {
         alternatives

@@ -54,3 +54,12 @@ fn creation_and_updates_compare_by_utc_wall_date_at_midnight() {
     check("created:>2026-11-20 updated:>2026-11-20", &[13]);
     check("created:<1970-01-01", &[]);
 }
+
+#[test]
+fn state_predicates_use_status_and_effective_blockers() {
+    check("is:open", &[0, 1, 4, 6, 7, 8, 9, 11, 12, 13]);
+    check("is:closed", &[2, 3, 5, 10]);
+    check("is:blocked", &[0, 6]);
+    check("is:ready", &[1, 4, 7, 8, 9, 11, 12, 13]);
+    check("is:blocked,closed", &[0, 2, 3, 5, 6, 10]);
+}
