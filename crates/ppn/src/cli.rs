@@ -13,7 +13,7 @@ use ppn::help_tree::example_help;
 use ppn::output::{CommandResult, finish};
 use ppn::terminal::Context;
 
-use crate::{debug, help, version};
+use crate::{config_command, debug, help, version};
 
 #[derive(Parser)]
 #[command(
@@ -40,6 +40,12 @@ enum Command {
     Help {
         /// Command and optional subcommands to describe.
         path: Vec<String>,
+    },
+    /// Inspect ppn configuration.
+    #[command(disable_help_subcommand = true, after_help = example_help(&["ppn config show --json"]))]
+    Config {
+        #[command(subcommand)]
+        command: config_command::Command,
     },
     /// Exercise CLI behavior.
     #[command(
@@ -116,6 +122,9 @@ fn dispatch(
             help_target(&definition, path.iter().map(String::as_str))
                 .map(|command| help::run(context, command.clone(), None))
         }
+        Some(Command::Config {
+            command: config_command::Command::Show { key },
+        }) => config_command::show(context, key.as_deref(), loaded.files),
         Some(Command::Debug { command }) => debug::run(context, command),
         None => Ok(help::run(context, Cli::command(), None)),
     }

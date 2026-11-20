@@ -1,4 +1,5 @@
 mod cli;
+mod config_command;
 mod debug;
 mod help;
 mod version;

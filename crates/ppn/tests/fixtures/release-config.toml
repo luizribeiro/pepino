@@ -1,0 +1,17 @@
+network = "release-team"
+relay_urls = ["https://east.release.example", "https://west.release.example"]
+mdns = false
+trusted_devices = ["00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"]
+credentials_file = "~/secrets/release.cbor"
+
+[[bootstrap_nodes]]
+node_id = "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+relay_url = "https://east.release.example"
+
+[[bootstrap_nodes]]
+node_id = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+relay_url = "https://west.release.example"
+
+[ui]
+color = "never"
+date_format = "%d %b %Y"

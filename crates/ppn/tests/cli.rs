@@ -1,5 +1,8 @@
 use ppn::error::ErrorKind;
-use std::process::Command;
+use std::path::PathBuf;
+use std::process::{Command, Output};
+
+use serde_json::{Value, json};
 
 fn ppn() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ppn"));
@@ -235,7 +238,7 @@ fn help_describes_the_cli_in_both_formats() {
     assert_eq!(help["schema"], 1);
     assert_eq!(help["name"], "ppn");
     let commands = help["commands"].as_array().unwrap();
-    assert_eq!(commands.len(), 2);
+    assert_eq!(commands.len(), 3);
     assert!(!human.contains("debug"));
     assert_eq!(commands[0]["name"], "version");
     assert_eq!(
@@ -243,6 +246,8 @@ fn help_describes_the_cli_in_both_formats() {
         serde_json::json!(["ppn version --json"])
     );
     assert_eq!(commands[1]["name"], "help");
+    assert_eq!(commands[2]["name"], "config");
+    assert_eq!(commands[2]["commands"][0]["name"], "show");
 
     let flags = help["flags"].as_array().unwrap();
     let flag = |name: &str| flags.iter().find(|flag| flag["long"] == name).unwrap();
@@ -379,6 +384,7 @@ fn help_lists_every_error_code_and_its_exit_status() {
 fn every_command_result_is_a_versioned_object() {
     for (args, field) in [
         (&["help"][..], "commands"),
+        (&["config", "show"][..], "values"),
         (&["version"][..], "version"),
         (&["debug", "confirm", "--yes"][..], "confirmed"),
         (&["debug", "input", "Release notes"][..], "text"),
@@ -551,4 +557,151 @@ fn tty_output(args: &[&str], no_color: Option<&str>) -> Vec<u8> {
     assert!(output.status.success(), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
     stdout
+}
+
+struct ConfigSandbox {
+    home: tempfile::TempDir,
+    config: PathBuf,
+}
+
+impl ConfigSandbox {
+    fn new() -> Self {
+        let home = tempfile::tempdir().unwrap();
+        let config_dir = if cfg!(target_os = "macos") {
+            home.path().join("Library/Application Support/pepino")
+        } else {
+            home.path().join("xdg-config/pepino")
+        };
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let config = config_dir.join("config.toml");
+        std::fs::write(&config, include_str!("fixtures/release-config.toml")).unwrap();
+        Self { home, config }
+    }
+
+    fn command(&self) -> Command {
+        let mut command = ppn();
+        command
+            .env("HOME", self.home.path())
+            .env("XDG_CONFIG_HOME", self.home.path().join("xdg-config"))
+            .env("XDG_STATE_HOME", self.home.path().join("xdg-state"))
+            .env("PPN_CONFIG", &self.config);
+        command
+    }
+
+    fn run(&self, args: &[&str]) -> String {
+        success(self.command().args(args).output().unwrap())
+    }
+}
+
+fn success(output: Output) -> String {
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains('\x1b'));
+    stdout
+}
+
+fn as_json(text: &str) -> Value {
+    serde_json::from_str(text).unwrap()
+}
+
+#[test]
+fn config_show_reports_effective_values_and_sources() {
+    let sandbox = ConfigSandbox::new();
+    let human = sandbox.run(&["config", "show"]);
+    assert!(human.starts_with("KEY"));
+    assert!(human.contains("release-team"));
+    assert!(human.contains("https://east.release.example"));
+    assert!(human.contains("explicit_file"));
+    assert!(human.contains("ui.date_format"));
+    assert_eq!(human.lines().count(), 10);
+
+    let data = as_json(&sandbox.run(&["config", "show", "--json"]));
+    let values = data["values"].as_object().unwrap();
+    assert_eq!(values.len(), 9);
+    assert_eq!(
+        values["network"],
+        json!({
+            "value": "release-team", "source": "explicit_file", "path": sandbox.config,
+        })
+    );
+    assert_eq!(values["relay_urls"]["value"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        values["bootstrap_nodes"]["value"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(
+        values["trusted_devices"]["value"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        values["credentials_file"]["value"],
+        json!(sandbox.home.path().join("secrets/release.cbor"))
+    );
+    let data_dir = if cfg!(target_os = "macos") {
+        sandbox
+            .home
+            .path()
+            .join("Library/Application Support/pepino")
+    } else {
+        sandbox.home.path().join("xdg-state/pepino")
+    };
+    assert_eq!(values["data_dir"]["value"], json!(data_dir));
+    assert_eq!(
+        data["files"],
+        json!([{ "path": sandbox.config, "exists": true }])
+    );
+}
+
+#[test]
+fn config_show_filters_one_key_and_suggests_known_keys() {
+    let sandbox = ConfigSandbox::new();
+    let single = sandbox.run(&["config", "show", "network"]);
+    assert_eq!(single.lines().count(), 2);
+    assert!(single.contains("release-team"));
+    assert!(!single.contains("mdns"));
+
+    let data = as_json(&sandbox.run(&["config", "show", "ui.date_format", "--json"]));
+    assert_eq!(data["values"].as_object().unwrap().len(), 1);
+    assert_eq!(data["values"]["ui.date_format"]["value"], "%d %b %Y");
+
+    let unknown = ["config", "show", "netwrok"];
+    let output = sandbox.command().args(unknown).output().unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("Did you mean `network`?")
+    );
+
+    let output = sandbox
+        .command()
+        .args(unknown)
+        .arg("--json")
+        .output()
+        .unwrap();
+    let diagnostic = assert_json_error(output, 3, "not_found");
+    assert_eq!(diagnostic["error"]["hint"], "Did you mean `network`?");
+}
+
+#[test]
+fn config_show_applies_environment_then_global_flags() {
+    let sandbox = ConfigSandbox::new();
+    let output = sandbox
+        .command()
+        .env("PPN_NETWORK", "from-env")
+        .env("PPN_COLOR", "always")
+        .args(["config", "show", "--color=auto", "--json"])
+        .output()
+        .unwrap();
+    let data = as_json(&success(output));
+    assert_eq!(
+        data["values"]["network"],
+        json!({"value": "from-env", "source": "env"})
+    );
+    assert_eq!(
+        data["values"]["ui.color"],
+        json!({"value": "auto", "source": "flag"})
+    );
 }
