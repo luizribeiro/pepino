@@ -157,12 +157,23 @@ fn sync_drains_the_local_outbox_without_peers() {
     assert_eq!(result["idle"], true);
     assert_eq!(result["network"]["peers_connected"], serde_json::json!([]));
     let boards = result["network"]["boards"].as_object().unwrap();
-    let board = boards.values().next().unwrap();
+    let (board_id, board) = boards.iter().next().unwrap();
     assert_eq!(board["events_waiting"], 0);
     assert_eq!(board["published"], 1);
-    fixture.run(&["add", "Test the latch in wet weather"]);
     let lock = std::fs::File::open(fixture.data.join("local.lock")).unwrap();
     lock.lock().unwrap();
+    append_task_with_directory_locked(&fixture.data);
+    let nudge = fixture.raw(&serde_json::json!({"v":1,"request":{"op":"nudge"}}));
+    assert_eq!(nudge["result"]["kind"], "nudged");
+    crate::wait::until(
+        || fixture.raw(&serde_json::json!({"v":1,"request":{"op":"status"}})),
+        |reply| {
+            reply["result"]["status"]["network"]["boards"]
+                .get(board_id)
+                .is_some_and(|board| board["events_waiting"] == 1)
+        },
+        crate::wait::WAIT,
+    );
     let output = fixture
         .command()
         .args(["sync", "--timeout", "500ms", "--json"])
@@ -180,6 +191,42 @@ fn sync_drains_the_local_outbox_without_peers() {
     fixture.run(&["daemon", "stop"]);
     fixture.assert_stopped();
 }
+#[cfg(pepino_network_tests)]
+fn append_task_with_directory_locked(data: &std::path::Path) {
+    use pepino_core::{Envelope, Event, Hlc, InitialFields};
+
+    let local = pepino_app::LocalState::load(data).unwrap();
+    let event = Envelope::new(
+        local.device_id,
+        Hlc {
+            wall_ms: 1_795_144_800_000,
+            counter: 0,
+        },
+        Event::TaskCreated {
+            title: "Test the latch in wet weather".into(),
+            fields: InitialFields::default(),
+        },
+    )
+    .unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let store = pepino_store::Store::open(data.join("pepino.sqlite"))
+                .await
+                .unwrap();
+            store
+                .append(
+                    local.board_id(),
+                    &event.encode().unwrap(),
+                    Some(local.device_id),
+                )
+                .await
+                .unwrap();
+        });
+}
+
 #[cfg(pepino_network_tests)]
 #[test]
 fn status_combines_daemon_activity_with_local_counts() {
