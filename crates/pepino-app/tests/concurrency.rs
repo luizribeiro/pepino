@@ -46,7 +46,7 @@ async fn concurrent_apps_open_and_write_to_the_same_directory() {
         "Clean the gutters",
         "Bring the seedlings inside",
     ];
-    fixture::copy(&path);
+    fixture::prepare(&path).await;
     let start = Arc::new(Barrier::new(titles.len()));
     let opened = Arc::new(Barrier::new(titles.len()));
     let options = OpenOptions {

@@ -59,7 +59,8 @@ async fn exchange(order: [u8; 8]) -> ([TaskRecord; 2], [TaskRecord; 2]) {
     let mut left = fixture::open(left_dir.path(), NOW + 3 * 86_400_000)
         .await
         .unwrap();
-    fixture::copy_peer(right_dir.path());
+    let left_board = left.local_state().board_id();
+    fixture::prepare_board(right_dir.path(), left_board).await;
     let mut right = App::open(right_dir.path(), NOW).await.unwrap();
     let left_store = Store::open(left_dir.path().join("pepino.sqlite"))
         .await
@@ -67,7 +68,6 @@ async fn exchange(order: [u8; 8]) -> ([TaskRecord; 2], [TaskRecord; 2]) {
     let right_store = Store::open(right_dir.path().join("pepino.sqlite"))
         .await
         .unwrap();
-    let left_board = left.local_state().board_id();
     let right_board = right.local_state().board_id();
     assert_ne!(left.local_state().device_id, right.local_state().device_id);
 

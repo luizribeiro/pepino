@@ -167,7 +167,7 @@ pub fn as_json(text: &str) -> Value {
 
 pub fn task_sandbox() -> (ConfigSandbox, PathBuf) {
     let (sandbox, data) = uninitialized_task_sandbox();
-    fixture::copy(&data);
+    fixture::prepare_blocking(&data);
     (sandbox, data)
 }
 

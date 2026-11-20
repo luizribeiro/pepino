@@ -85,7 +85,7 @@ fn task_commands_require_init_and_do_not_create_local_state() {
         assert_eq!(error["hint"], "Run `ppn init`.");
         assert!(!data.exists());
     }
-    fixture::copy(&data);
+    fixture::prepare_blocking(&data);
     let state = data.join("local.json");
     std::fs::remove_file(&state).unwrap();
     for command in ["ls", "init"] {

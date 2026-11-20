@@ -215,7 +215,7 @@ mod tests {
                 })
             },
         );
-        fixture::copy(&directory);
+        fixture::prepare_blocking(&directory);
         let mut client = AppClient::open(&context).unwrap();
         assert_eq!(client.now_ms, context.time.now_ms);
         let Response::Status {

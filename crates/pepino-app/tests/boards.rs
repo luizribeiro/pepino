@@ -11,7 +11,7 @@ use serde_json::json;
 #[tokio::test]
 async fn board_requests_route_tasks_and_update_only_local_current() {
     let root = tempfile::tempdir().unwrap();
-    support::template::copy(root.path());
+    support::template::prepare(root.path()).await;
     let mut app = App::open(root.path(), 0).await.unwrap();
     let original = app.local_state().board_id();
     let workshop = BoardId::from_bytes([81; 32]);
