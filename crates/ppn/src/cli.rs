@@ -1,5 +1,6 @@
 use crate::commands::config as config_command;
 use crate::commands::debug;
+use crate::commands::help;
 use crate::commands::version;
 use std::ffi::OsString;
 use std::path::Path;
@@ -20,7 +21,6 @@ use ppn::terminal::{Context, Terminal};
 use crate::commands::add;
 use crate::commands::show;
 use crate::commands::status;
-use crate::help;
 
 #[derive(Parser)]
 #[command(
@@ -40,12 +40,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Version(version::Args),
-    /// Show help for ppn.
-    #[command(after_help = example_help(&["ppn help --json"]))]
-    Help {
-        /// Command and optional subcommands to describe.
-        path: Vec<String>,
-    },
+    Help(help::Args),
     Config(config_command::Args),
     Status(status::Args),
     Add(add::Args),
@@ -178,12 +173,7 @@ fn dispatch(
         Some(Command::Add(args)) => add::run(context, args, json),
         Some(Command::Status(args)) => status::run(context, args),
         Some(Command::Version(args)) => Ok(version::run(context, args)),
-        Some(Command::Help { path }) => {
-            let mut definition = Cli::command();
-            definition.build();
-            help_target(&definition, path.iter().map(String::as_str))
-                .map(|command| help::run(context, command.clone(), None))
-        }
+        Some(Command::Help(args)) => help::for_path(context, Cli::command(), args),
         Some(Command::Config(args)) => {
             config_command::run(context, inputs, cli.globals.config, args)
         }
@@ -204,7 +194,7 @@ fn help_flag_target<'a>(
     let mut probe = mark_help_paths(definition.clone(), "");
     match probe.try_get_matches_from_mut(args) {
         Err(error) if error.kind() == ErrorKind::DisplayHelp => {
-            help_target(definition, error.render().to_string().split_whitespace())
+            help::help_target(definition, error.render().to_string().split_whitespace())
         }
         _ => Err(CliError::new(
             ppn::error::ErrorKind::Failure,
@@ -220,21 +210,6 @@ fn mark_help_paths(command: clap::Command, path: &str) -> clap::Command {
             let path = format!("{path} {}", child.get_name());
             mark_help_paths(child, &path)
         })
-}
-
-fn help_target<'a, 'b>(
-    mut command: &'a clap::Command,
-    path: impl IntoIterator<Item = &'b str>,
-) -> Result<&'a clap::Command, CliError> {
-    for name in path {
-        command = command.find_subcommand(name).ok_or_else(|| {
-            CliError::usage(command.clone().error(
-                ErrorKind::InvalidSubcommand,
-                format!("unrecognized subcommand '{name}'"),
-            ))
-        })?;
-    }
-    Ok(command)
 }
 
 #[cfg(test)]

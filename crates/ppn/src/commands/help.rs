@@ -1,5 +1,5 @@
 use clap::{Command, builder::StyledStr};
-use ppn::error::ErrorKind;
+use ppn::error::{CliError, ErrorKind};
 use ppn::help_tree::command_fields;
 use ppn::output::{CommandResult, Render};
 use ppn::terminal::{Context, Terminal};
@@ -87,4 +87,36 @@ pub fn run(_: &Context, mut command: Command, help_text: Option<StyledStr>) -> C
             .collect(),
         text,
     })
+}
+
+#[derive(clap::Args)]
+#[command(about = "Show help for ppn.", after_help = ppn::help_tree::example_help(&["ppn help --json"]))]
+pub struct Args {
+    /// Command and optional subcommands to describe.
+    path: Vec<String>,
+}
+
+pub fn for_path(
+    context: &Context<'_>,
+    mut definition: Command,
+    args: Args,
+) -> Result<CommandResult, CliError> {
+    definition.build();
+    let command = help_target(&definition, args.path.iter().map(String::as_str))?;
+    Ok(run(context, command.clone(), None))
+}
+
+pub(crate) fn help_target<'a, 'b>(
+    mut command: &'a clap::Command,
+    path: impl IntoIterator<Item = &'b str>,
+) -> Result<&'a clap::Command, CliError> {
+    for name in path {
+        command = command.find_subcommand(name).ok_or_else(|| {
+            CliError::usage(command.clone().error(
+                clap::error::ErrorKind::InvalidSubcommand,
+                format!("unrecognized subcommand '{name}'"),
+            ))
+        })?;
+    }
+    Ok(command)
 }
