@@ -185,3 +185,49 @@ async fn a_crash_after_confirmation_resends_once_and_the_receiver_deduplicates()
     assert!(node.published().is_empty());
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn app_writes_continue_while_publish_is_waiting_on_the_transport() {
+    use pepino_app::{App, OpenOptions};
+
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([53; 32]);
+    let local = DeviceId::from_bytes([54; 32]);
+    let mut app = directory::prepare(dir.path(), board, local).await;
+    directory::write(
+        &mut app,
+        json!({"op":"add_task","title":"Fix the shed lock"}),
+    )
+    .await;
+    let node = Arc::new(Stub::new(local));
+    let mut started = node.pause_publish();
+    let engine = SyncEngine::start(Default::default(), node, dir.path())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), started.wait_for(|started| *started))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let options = OpenOptions {
+        lock_timeout: Duration::ZERO,
+        ..Default::default()
+    };
+    let mut cli = App::open_with_options(dir.path(), directory::NOW, options)
+        .await
+        .unwrap();
+    directory::write(
+        &mut cli,
+        json!({"op":"add_task","title":"Replace the shed roof"}),
+    )
+    .await;
+    engine.shutdown().await.unwrap();
+    assert_eq!(
+        cli.store()
+            .outbox(board, local, 1.try_into().unwrap())
+            .await
+            .unwrap()
+            .pending,
+        2
+    );
+}
