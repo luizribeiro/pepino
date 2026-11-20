@@ -4,8 +4,11 @@ mod common;
 #[allow(dead_code)]
 #[path = "device/support.rs"]
 mod support;
+#[path = "common/wait.rs"]
+mod wait;
 
-use support::{Host, until};
+use support::Host;
+use wait::{WAIT, until};
 
 fn connect(owner: &Host, peer: &Host, name: &str) {
     let request = peer.request(name);
@@ -26,13 +29,17 @@ fn replicated_board_views(host: &Host) -> serde_json::Value {
 }
 
 fn wait_for_board(host: &Host, name: &str) {
-    until(|| {
-        board_views(host)
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|board| board["name"] == name && board["membership"] == "joined")
-    });
+    until(
+        || board_views(host),
+        |boards| {
+            boards
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|board| board["name"] == name && board["membership"] == "joined")
+        },
+        WAIT,
+    );
 }
 
 fn sync_hosts(hosts: &[&Host]) {
@@ -53,7 +60,11 @@ fn running_daemons_replicate_creations_renames_and_tasks() {
     owner.json(&["board", "new", "Workshop"]);
     let task = owner.json(&["add", "--board", "Workshop", "Hang the spade"]);
     wait_for_board(&peer, "Workshop");
-    until(|| peer.json(&["ls", "board:Workshop"])["total"] == 1);
+    until(
+        || peer.json(&["ls", "board:Workshop"]),
+        |listing| listing["total"] == 1,
+        WAIT,
+    );
     sync_hosts(&[&owner, &peer]);
     let id = task["created"].as_str().unwrap();
     let remote = peer.json(&["show", "--board", "Workshop", id]);

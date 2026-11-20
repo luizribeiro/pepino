@@ -1,6 +1,9 @@
 mod common;
 #[allow(dead_code)]
 mod daemon_support;
+#[allow(dead_code)]
+#[path = "common/wait.rs"]
+mod wait;
 
 use common::{as_json, seed_tasks, success, task_error, task_sandbox};
 use pepino_core::BoardId;
