@@ -22,7 +22,7 @@ const SHUTDOWN_LIMIT: Duration = Duration::from_secs(6);
 pub(crate) struct Worker {
     pub(crate) handle: Handle,
     pub(crate) pool: Arc<OnceLock<SqlitePool>>,
-    stop: oneshot::Sender<()>,
+    stop: oneshot::Sender<Box<dyn FnOnce() + Send>>,
     done: oneshot::Receiver<Result<(), Error>>,
 }
 
@@ -67,8 +67,8 @@ impl Worker {
                 let result = if ready_tx.send(handle).is_ok()
                     && let Ok((runtime, cleanup)) = runtimes
                 {
-                    let _ = runtime.block_on(stop_rx);
-                    stop_runtime(runtime, cleanup, worker_pool.get())
+                    let release = runtime.block_on(stop_rx).ok();
+                    stop_runtime(runtime, cleanup, worker_pool.get(), release)
                 } else {
                     Ok(())
                 };
@@ -99,7 +99,14 @@ impl Worker {
     }
 
     pub(crate) async fn shutdown(self) -> Result<(), Error> {
-        let _ = self.stop.send(());
+        self.shutdown_with(|| {}).await
+    }
+
+    pub(crate) async fn shutdown_with(
+        self,
+        release: impl FnOnce() + Send + 'static,
+    ) -> Result<(), Error> {
+        let _ = self.stop.send(Box::new(release));
         tokio::time::timeout(SHUTDOWN_LIMIT, self.done)
             .await
             .map_err(|_| {
@@ -113,20 +120,28 @@ fn stop_runtime(
     runtime: tokio::runtime::Runtime,
     cleanup: tokio::runtime::Runtime,
     pool: Option<&SqlitePool>,
+    release: Option<Box<dyn FnOnce() + Send>>,
 ) -> Result<(), Error> {
-    let Some(pool) = pool else {
-        drop(runtime);
-        return Ok(());
-    };
     // p2panda 0.8.1 rolls back cancelled transactions in a spawned task.
     // Hold SQLite's writer lock while cancelling runtime tasks so none can orphan a writer.
-    let writer = cleanup.block_on(async {
-        tokio::time::timeout(WRITER_LIMIT, pool.begin_with("BEGIN IMMEDIATE"))
-            .await
-            .map_err(|_| Error::Storage("timed out waiting for the node database writer".into()))?
-            .map_err(Error::storage)
+    let writer = pool.map(|pool| {
+        cleanup.block_on(async {
+            tokio::time::timeout(WRITER_LIMIT, pool.begin_with("BEGIN IMMEDIATE"))
+                .await
+                .map_err(|_| {
+                    Error::Storage("timed out waiting for the node database writer".into())
+                })?
+                .map_err(Error::storage)
+        })
     });
+    if let Some(release) = release {
+        let _entered = runtime.enter();
+        release();
+    }
     drop(runtime);
+    let Some((pool, writer)) = pool.zip(writer) else {
+        return Ok(());
+    };
     cleanup.block_on(async {
         let close = pool.close();
         let result = match writer {
@@ -155,7 +170,11 @@ mod tests {
                 .unwrap(),
             caller
         );
-        worker.shutdown().await.unwrap();
+        let handle = worker.handle.id();
+        worker
+            .shutdown_with(move || assert_eq!(Handle::current().id(), handle))
+            .await
+            .unwrap();
         drop(Worker::start(&database).await.unwrap());
     }
 

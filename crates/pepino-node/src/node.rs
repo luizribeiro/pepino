@@ -115,8 +115,7 @@ impl Node {
             ..
         } = self;
         let closed = boards.stop().await;
-        drop(inner);
-        worker.shutdown().await.and(closed)
+        worker.shutdown_with(move || drop(inner)).await.and(closed)
     }
 }
 
