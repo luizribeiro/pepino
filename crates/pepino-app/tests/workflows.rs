@@ -789,7 +789,7 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
         {"id":future_id.to_string(),"author":null,"hlc":null,"kind":"unknown","classification":"unknown_version","change":{"type":"skipped","version":2,"tasks":[]}},
     ]);
     let events = json!([
-        {"id":task,"author":author,"hlc":task_record.created,"kind":"task_created","classification":"applied","change":{"type":"creation","action":"created","title":"Replace the greenhouse latch","fields":{"description":null,"status":"todo","due":null,"priority":null,"tags":[],"assignees":[],"fields":{}}}},
+        {"id":task,"author":author,"hlc":task_record.created,"kind":"task_created","classification":"applied","change":{"type":"creation","action":"created","task":task,"title":"Replace the greenhouse latch","fields":{"description":null,"status":"todo","due":null,"priority":null,"tags":[],"assignees":[],"fields":{}}}},
         {"id":comment.id,"author":author,"hlc":comment.hlc,"kind":"comment_added","classification":"applied","change":{"type":"comment","action":"commented","task":task,"text":"Bring stainless screws"}},
         {"id":skip_id.to_string(),"author":author,"hlc":comment.hlc,"kind":"reminder_added","classification":"unknown_event","change":{"type":"skipped","tasks":[task]}}
     ]);
@@ -1136,4 +1136,29 @@ async fn log_actions_distinguish_sets_unsets_and_presence_changes() {
             .collect::<Vec<_>>(),
         [Created, Set, Unset, Added, Removed, Deleted]
     );
+}
+
+#[tokio::test]
+async fn an_edge_change_identifies_its_source_task() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::open(dir.path(), NOW).await.unwrap();
+    let from = add(&mut app, "Order latches").await;
+    let to = add(&mut app, "Repair greenhouse door").await;
+    handle(
+        &mut app,
+        json!({"op":"link","from":from,"kind":"blocks","to":to}),
+    )
+    .await
+    .unwrap();
+    let Response::Log { events, .. } = handle(&mut app, json!({"op":"log","limit":1}))
+        .await
+        .unwrap()
+    else {
+        panic!("expected log");
+    };
+    let change = serde_json::to_value(&events[0].change).unwrap();
+    assert_eq!(change["task"], from);
+    assert_eq!(change["from"], from);
+    assert_eq!(change["to"], to);
+    assert_eq!(change["action"], "added");
 }

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use pepino_core::{DecodeOutcome, Event, InitialFields};
+use pepino_core::{DecodeOutcome, Event, EventId, InitialFields, TaskId};
 use pepino_store::{EventClassification as StoredClassification, HistoryEvent};
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +78,7 @@ impl From<&Event> for EventAction {
 #[non_exhaustive]
 pub enum EventDetail {
     Creation {
+        task: String,
         title: String,
         fields: InitialTaskFields,
     },
@@ -95,6 +96,7 @@ pub enum EventDetail {
         who: String,
     },
     Edge {
+        task: String,
         from: String,
         kind: EdgeKind,
         to: String,
@@ -182,7 +184,7 @@ impl TryFrom<HistoryEvent> for EventRecord {
         };
         let action = record.event.as_ref().map(EventAction::from);
         let (kind, detail) = match record.event {
-            Some(event) => (event.kind(), EventDetail::try_from(event)?),
+            Some(event) => (event.kind(), EventDetail::try_from((decoded.id(), event))?),
             None => (
                 kind,
                 EventDetail::Skipped {
@@ -203,12 +205,13 @@ impl TryFrom<HistoryEvent> for EventRecord {
     }
 }
 
-impl TryFrom<Event> for EventDetail {
+impl TryFrom<(EventId, Event)> for EventDetail {
     type Error = AppError;
 
-    fn try_from(value: Event) -> Result<Self, Self::Error> {
+    fn try_from((id, value): (EventId, Event)) -> Result<Self, Self::Error> {
         Ok(match value {
             Event::TaskCreated { title, fields } => Self::Creation {
+                task: TaskId(id).to_string(),
                 title,
                 fields: fields.try_into()?,
             },
@@ -229,6 +232,7 @@ impl TryFrom<Event> for EventDetail {
             }
             Event::EdgeAdded { from, kind, to } | Event::EdgeRemoved { from, kind, to } => {
                 Self::Edge {
+                    task: from.to_string(),
                     from: from.to_string(),
                     kind: kind.try_into()?,
                     to: to.to_string(),
