@@ -79,3 +79,94 @@ async fn only_creation_makes_a_task_visible_and_deletion_is_permanent() {
         assert_eq!(visible, expected);
     }
 }
+
+#[tokio::test]
+async fn field_register_uses_clock_then_id_and_keeps_unset() {
+    use pepino_core::{FieldName, FieldValue};
+
+    let store = Store::open_in_memory().await.unwrap();
+    let board = BoardId::from_bytes([19; 32]);
+    let task = TaskId::from_bytes([70; 32]);
+    let hlc = Hlc {
+        wall_ms: 1_795_144_800_000,
+        counter: 4,
+    };
+    let field = FieldName::new("description").unwrap();
+    let original = FieldValue::Text("Measure the door before buying hinges".into());
+    let newer = FieldValue::Text("Use the brass hinges from the shed".into());
+    for (id, author, counter, value, expected) in [
+        (11, 32, 3, original.clone(), Some(original.clone())),
+        (22, 51, 4, newer.clone(), Some(newer.clone())),
+        (17, 12, 4, original.clone(), Some(newer)),
+        (23, 12, 4, FieldValue::Unset, None),
+        (90, 32, 3, original, None),
+    ] {
+        let envelope = Envelope::new(
+            DeviceId::from_bytes([author; 32]),
+            Hlc { counter, ..hlc },
+            Event::TaskFieldSet {
+                task,
+                field: field.clone(),
+                value,
+            },
+        )
+        .unwrap();
+        store
+            .append(
+                board,
+                &envelope.encode().unwrap(),
+                IdSource::Trusted(EventId::from_bytes([id; 32])),
+            )
+            .await
+            .unwrap();
+        let stored: Option<Vec<u8>> = sqlx::query_scalar(
+            "SELECT value FROM task_register WHERE board = ? AND task = ?
+             AND kind = 'field' AND member = ?",
+        )
+        .bind(board.as_bytes().as_slice())
+        .bind(task.as_bytes().as_slice())
+        .bind(field.as_str().as_bytes())
+        .fetch_one(&mut *store.connection.lock().await)
+        .await
+        .unwrap();
+        let decoded = stored.map(|bytes| ciborium::from_reader(bytes.as_slice()).unwrap());
+        assert_eq!(decoded, expected);
+    }
+}
+
+#[tokio::test]
+async fn failed_register_write_rolls_back_the_log() {
+    let store = Store::open_in_memory().await.unwrap();
+    let board = BoardId::from_bytes([19; 32]);
+    let envelope = Envelope::new(
+        DeviceId::from_bytes([32; 32]),
+        Hlc {
+            wall_ms: 1_795_144_800_000,
+            counter: 0,
+        },
+        Event::TaskCreated {
+            title: "Seal the balcony rail".into(),
+            fields: InitialFields::default(),
+        },
+    )
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fail_field BEFORE INSERT ON task_register
+                WHEN NEW.member = x'737461747573'
+                BEGIN SELECT RAISE(ABORT, 'test write failure'); END",
+    )
+    .execute(&mut *store.connection.lock().await)
+    .await
+    .unwrap();
+    let bytes = envelope.encode().unwrap();
+    assert!(matches!(
+        store.append(board, &bytes, IdSource::Content).await,
+        Err(StoreError::Database(_))
+    ));
+    assert_eq!(store.latest_hlc(board).await.unwrap(), None);
+    let tasks: i64 = sqlx::query_scalar("SELECT count(*) FROM task_state")
+        .fetch_one(&mut *store.connection.lock().await)
+        .await
+        .unwrap();
+    assert_eq!(tasks, 0);
+}

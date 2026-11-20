@@ -2,6 +2,7 @@ use pepino_core::{BoardId, Envelope, Event, TaskId};
 use sqlx::SqliteConnection;
 
 use crate::StoreError;
+use registers::Registers;
 
 pub(crate) async fn fold(
     connection: &mut SqliteConnection,
@@ -34,11 +35,20 @@ pub(crate) async fn fold(
     .bind(created.map(|_| *envelope.author().as_bytes()))
     .bind(hlc)
     .bind(matches!(envelope.event(), Event::TaskDeleted { .. }))
-    .execute(connection)
+    .execute(&mut *connection)
     .await
     .map_err(StoreError::database)?;
+    Registers {
+        connection,
+        board,
+        task,
+        envelope,
+    }
+    .apply()
+    .await?;
     Ok(Some(task))
 }
 
+mod registers;
 #[cfg(test)]
 mod tests;
