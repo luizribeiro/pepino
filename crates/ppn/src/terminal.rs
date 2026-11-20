@@ -19,16 +19,23 @@ pub enum Color {
     Never,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Terminal {
     pub stdout_is_tty: bool,
     pub stdin_is_tty: bool,
     pub color: bool,
+    pub width: Option<usize>,
+    no_color: bool,
+    dumb: bool,
 }
 
 impl Terminal {
     pub fn detect(color: Color, env: &Env) -> Self {
-        let stdout_is_tty = io::stdout().is_terminal();
+        let stdout = io::stdout();
+        let stdout_is_tty = stdout.is_terminal();
+        let width = terminal_size::terminal_size_of(&stdout)
+            .map(|(width, _)| usize::from(width.0))
+            .filter(|width| stdout_is_tty && *width > 0);
         let stdin_is_tty = io::stdin().is_terminal();
         let no_color = env
             .get(OsStr::new("NO_COLOR"))
@@ -40,6 +47,30 @@ impl Terminal {
             stdout_is_tty,
             stdin_is_tty,
             color: use_color(color, stdout_is_tty, no_color, dumb),
+            width,
+            no_color,
+            dumb,
+        }
+    }
+
+    pub fn task_output(self, color: Color) -> Self {
+        Self {
+            color: self.stdout_is_tty
+                && !self.no_color
+                && use_color(color, self.stdout_is_tty, self.no_color, self.dumb),
+            ..self
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fixed(width: Option<usize>, color: bool) -> Self {
+        Self {
+            stdout_is_tty: width.is_some(),
+            stdin_is_tty: false,
+            color,
+            width,
+            no_color: false,
+            dumb: false,
         }
     }
 }
@@ -158,6 +189,19 @@ mod tests {
         assert!(use_color(Color::Auto, true, false, false));
         assert!(use_color(Color::Always, true, false, true));
         assert!(!use_color(Color::Never, true, false, false));
+    }
+
+    #[test]
+    fn task_color_honors_config_on_terminals_and_stays_plain_on_pipes() {
+        let tty = Terminal::fixed(Some(48), false);
+        assert!(tty.task_output(Color::Always).color);
+        let muted = Terminal {
+            no_color: true,
+            ..tty
+        };
+        assert!(!muted.task_output(Color::Always).color);
+        let pipe = Terminal::fixed(None, false);
+        assert!(!pipe.task_output(Color::Always).color);
     }
 
     #[test]
