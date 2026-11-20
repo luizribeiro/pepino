@@ -72,8 +72,9 @@ async fn readmission_reactivates_the_same_key_and_clears_the_current_revocation(
     app.remember_device(device, "Garden tablet".into(), None)
         .await
         .unwrap();
+    let revoked_at = chrono::DateTime::from_timestamp(1795145000, 0).unwrap();
     let revoked = app
-        .record_device_revocation(device, chrono::Utc::now())
+        .record_device_revocation(device, revoked_at)
         .await
         .unwrap();
     assert_eq!(revoked.roster()[&device].state, RosterState::Revoked);

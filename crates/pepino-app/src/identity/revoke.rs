@@ -222,8 +222,9 @@ async fn a_board_with_only_the_target_as_manager_blocks_revocation() {
         .await
         .unwrap();
     board.set_role(owner, Role::Write).await.unwrap();
+    let revoked_at = DateTime::from_timestamp(1795145000, 0).unwrap();
     assert!(
-        app.record_device_revocation(tablet, Utc::now())
+        app.record_device_revocation(tablet, revoked_at)
             .await
             .unwrap_err()
             .to_string()
