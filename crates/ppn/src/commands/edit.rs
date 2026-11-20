@@ -28,10 +28,10 @@ pub struct Args {
     membership: MembershipArgs,
 }
 
-pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError> {
+pub fn run(context: &Context<'_>, args: Args, json: bool) -> Result<CommandResult, CliError> {
     let changes = args.fields.changes(context.time.today)?;
     if changes.is_empty() && args.membership.is_empty() {
-        return edit_interactively(context, &args.task);
+        return edit_interactively(context, &args.task, json);
     }
 
     let mut client = AppClient::open(context)?;
@@ -55,7 +55,11 @@ fn apply(
     write_document(context, merge_write_responses(&responses)?, "Edited")
 }
 
-fn edit_interactively(context: &Context<'_>, reference: &str) -> Result<CommandResult, CliError> {
+fn edit_interactively(
+    context: &Context<'_>,
+    reference: &str,
+    json: bool,
+) -> Result<CommandResult, CliError> {
     if !(context.terminal.stdin_is_tty && context.terminal.stdout_is_tty) {
         return Err(flags_required());
     }
@@ -68,9 +72,10 @@ fn edit_interactively(context: &Context<'_>, reference: &str) -> Result<CommandR
             format!("Could not prepare the edit form: {error}"),
         )
     })?;
-    let edited = edit_text(&(text + "\n"))?;
-    let mut after: Form = serde_json::from_str(&edited)
-        .map_err(|error| CliError::new(ErrorKind::Usage, format!("Invalid edit form: {error}")))?;
+    let mut after: Form = edit_text(&(text + "\n"), json, |edited| {
+        serde_json::from_str(edited)
+            .map_err(|error| CliError::new(ErrorKind::Usage, format!("Invalid edit form: {error}")))
+    })?;
     after.resolve_assignees(&mut client)?;
     let mut requests = after.membership_from(&before).requests(&task.id);
     requests.insert(

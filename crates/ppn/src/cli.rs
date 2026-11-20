@@ -205,7 +205,7 @@ fn dispatch(
         Some(Command::Deps(args)) => commands::deps::run(context, args),
         Some(Command::Log(args)) => commands::log::run(context, args),
         Some(Command::View(args)) => commands::view::run(context, args),
-        Some(Command::Edit(args)) => commands::edit::run(context, args),
+        Some(Command::Edit(args)) => commands::edit::run(context, args, json),
         Some(Command::Start(args)) => commands::start::run(context, args),
         Some(Command::Reopen(args)) => commands::start::reopen(context, args),
         Some(Command::Done(args)) => commands::done::run(context, args),

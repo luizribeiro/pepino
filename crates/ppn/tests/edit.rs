@@ -199,3 +199,36 @@ fn edit_prefers_visual_and_preserves_an_unchanged_form() {
         .env("EDITOR", "false");
     assert_write(&as_json(&success(task_terminal(command, Some(b"")))), false);
 }
+
+#[cfg(unix)]
+#[test]
+fn edit_reopens_the_same_file_after_a_parse_error() {
+    let (sandbox, _) = task_sandbox();
+    let task = create_task(&sandbox, "Paint the shed", &[]);
+    let script = sandbox.home.path().join("retry.sh");
+    std::fs::write(
+        &script,
+        r#"
+if test -f "$1.before"; then
+    test "$(cat "$1")" = 'bad form' || exit 5
+    sed 's/Paint the shed/Stain the shed/' "$1.before" > "$1"
+else
+    cp "$1" "$1.before"
+    printf 'bad form' > "$1"
+fi
+"#,
+    )
+    .unwrap();
+    let mut command = sandbox.command();
+    command
+        .args(["edit", &task])
+        .env("VISUAL", format!("sh '{}'", script.display()));
+    let output = task_terminal(command, Some(b""));
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .starts_with("error: Invalid edit form:")
+    );
+    assert_eq!(show_task(&sandbox, &task)["title"], "Stain the shed");
+}

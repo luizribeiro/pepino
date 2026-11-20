@@ -34,7 +34,11 @@ fn read_error(source: &str, error: io::Error) -> CliError {
 }
 
 #[cfg(unix)]
-pub fn edit_text(text: &str) -> Result<String, CliError> {
+pub fn edit_text<T>(
+    text: &str,
+    json: bool,
+    parse: impl Fn(&str) -> Result<T, CliError>,
+) -> Result<T, CliError> {
     let editor = ["VISUAL", "EDITOR"]
         .into_iter()
         .filter_map(std::env::var_os)
@@ -43,11 +47,16 @@ pub fn edit_text(text: &str) -> Result<String, CliError> {
             CliError::new(ErrorKind::Usage, "No editor is configured.")
                 .with_hint("Set VISUAL or EDITOR, or use the edit flags.")
         })?;
-    run_editor(&editor, text)
+    run_editor(&editor, text, json, parse)
 }
 
 #[cfg(unix)]
-fn run_editor(editor: &std::ffi::OsStr, text: &str) -> Result<String, CliError> {
+fn run_editor<T>(
+    editor: &std::ffi::OsStr,
+    text: &str,
+    json: bool,
+    parse: impl Fn(&str) -> Result<T, CliError>,
+) -> Result<T, CliError> {
     use std::ffi::OsString;
     use std::process::{Command, Stdio};
 
@@ -68,23 +77,29 @@ fn run_editor(editor: &std::ffi::OsStr, text: &str) -> Result<String, CliError> 
         .write(true)
         .open("/dev/tty")
         .map_or_else(|_| Stdio::from(io::stderr()), Stdio::from);
-    let status = command
-        .arg(&file)
-        .stdout(output)
-        .status()
-        .map_err(|error| {
+    command.arg(&file).stdout(output);
+    loop {
+        let status = command.status().map_err(|error| {
             CliError::new(
                 ErrorKind::Failure,
                 format!("Could not start the editor: {error}"),
             )
         })?;
-    if !status.success() {
-        return Err(CliError::new(
-            ErrorKind::Failure,
-            format!("The editor exited unsuccessfully ({status})."),
-        ));
+        if !status.success() {
+            return Err(CliError::new(
+                ErrorKind::Failure,
+                format!("The editor exited unsuccessfully ({status})."),
+            ));
+        }
+        let contents =
+            fs::read_to_string(&file).map_err(|error| read_error("editor file", error))?;
+        match parse(&contents) {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                error.report(json, io::stderr().lock());
+            }
+        }
     }
-    fs::read_to_string(file).map_err(|error| read_error("editor file", error))
 }
 
 #[cfg(test)]
@@ -99,10 +114,22 @@ mod tests {
         let title = "Order stainless fittings";
         let command = r#"sh -c 'test "$(cat "$1")" = "Order stainless fittings" && printf "%s" "Order brass fittings" > "$1"' editor"#;
         assert_eq!(
-            run_editor(OsStr::new(command), title).unwrap(),
+            run_editor(
+                OsStr::new(command),
+                title,
+                false,
+                |text| Ok(text.to_owned())
+            )
+            .unwrap(),
             "Order brass fittings"
         );
-        let error = run_editor(OsStr::new("false"), title).unwrap_err();
+        let error = run_editor(
+            OsStr::new("false"),
+            title,
+            false,
+            |text| Ok(text.to_owned()),
+        )
+        .unwrap_err();
         assert_eq!(error.kind(), ErrorKind::Failure);
     }
 
