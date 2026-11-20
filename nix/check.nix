@@ -3,7 +3,9 @@ let
   inherit (pkgs) lib;
   inherit (import ./check-eval.nix { inherit lib pkgs; }) evaluate forceOptions;
 
-  package = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+  inherit (self.inputs) nixpkgs;
+  inherit (pkgs.stdenv.hostPlatform) system;
+  package = self.packages.${system}.default;
   fixtures = import ./check-settings.nix { inherit lib package; };
 
   failedAssertions = config: map (entry: entry.message) (lib.filter (entry: !entry.assertion) config.assertions);
@@ -38,7 +40,25 @@ let
   fullLinux = linux fixtures.full;
   fullDarwinSettings = lib.recursiveUpdate fixtures.full { services.pepino.openFirewall = false; };
   fullDarwin = darwinWithAccount fullDarwinSettings;
+
+  nixos = nixpkgs.lib.nixosSystem {
+    modules = [
+      self.nixosModules.default
+      nixpkgs.nixosModules.readOnlyPkgs
+      {
+        nixpkgs.pkgs = pkgs;
+        system.stateVersion = "26.11";
+        boot.loader.grub.devices = [ "nodev" ];
+        fileSystems."/" = {
+          device = "/dev/disk/by-label/pepino-root";
+          fsType = "ext4";
+        };
+      }
+      fixtures.full
+    ];
+  };
 in
+assert system != "x86_64-linux" || builtins.seq nixos.config.system.build.toplevel.drvPath true;
 assert verify linux && verify darwinWithAccount;
 assert lib.all
   (evaluate:
@@ -72,7 +92,7 @@ pkgs.runCommand "pepino-config-check"
 {
   nativeBuildInputs = [ package pkgs.nix ];
   checkDir = ./.;
-  nixpkgsSource = self.inputs.nixpkgs.outPath;
+  nixpkgsSource = nixpkgs.outPath;
   empty = (linux fixtures.empty).environment.etc."pepino/config.toml".source;
   cleared = (linux fixtures.cleared).environment.etc."pepino/config.toml".source;
   client = fullLinux.environment.etc."pepino/config.toml".source;
