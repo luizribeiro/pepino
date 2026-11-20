@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use pepino_core::InitialFields;
 use serde::{Deserialize, Serialize};
 
-use crate::{Date, EdgeKind, FieldValue, Hlc, Status};
+use crate::{AppError, Date, EdgeKind, FieldValue, Hlc, Status};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EventRecord {
@@ -76,4 +77,28 @@ pub struct InitialTaskFields {
     pub tags: BTreeSet<String>,
     pub assignees: BTreeSet<String>,
     pub fields: BTreeMap<String, FieldValue>,
+}
+
+impl TryFrom<InitialFields> for InitialTaskFields {
+    type Error = AppError;
+
+    fn try_from(value: InitialFields) -> Result<Self, Self::Error> {
+        Ok(Self {
+            description: value.description,
+            status: value.status.try_into()?,
+            due: value.due.map(Into::into),
+            priority: value.priority,
+            tags: value.tags,
+            assignees: value
+                .assignees
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect(),
+            fields: value
+                .custom
+                .into_iter()
+                .map(|(name, value)| Ok((name.as_str().into(), value.try_into()?)))
+                .collect::<Result<_, AppError>>()?,
+        })
+    }
 }
