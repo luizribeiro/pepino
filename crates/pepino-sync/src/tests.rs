@@ -165,3 +165,24 @@ async fn rejected_head_retries_before_its_receipt_is_recorded() {
         0
     );
 }
+
+#[tokio::test]
+async fn shutdown_cancels_a_board_that_does_not_close_before_the_deadline() {
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().unwrap();
+    let board = pepino_core::BoardId::from_bytes([34; 32]);
+    let device = pepino_core::DeviceId::from_bytes([36; 32]);
+    directory::prepare(dir.path(), board, device).await;
+    let node = Arc::new(stub::Stub::new(device));
+    node.hang_on_close();
+    let engine = crate::SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    tokio::time::pause();
+    assert!(matches!(
+        engine.shutdown().await,
+        Err(crate::Error::ShutdownTimeout)
+    ));
+    assert_eq!(Arc::strong_count(&node), 1);
+}

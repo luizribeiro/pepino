@@ -124,6 +124,10 @@ impl<T: Transport> BoardWorkers<T> {
         Ok(())
     }
 
+    pub async fn abort(&mut self) {
+        self.workers.shutdown().await;
+    }
+
     pub async fn finish(&mut self) -> Result<(), Error> {
         let mut result = Ok(());
         while let Some(worker) = self.workers.join_next().await {

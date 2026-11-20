@@ -17,6 +17,7 @@ type Queue = mpsc::UnboundedSender<Delivery<Receipt>>;
 #[derive(Default)]
 struct Publisher {
     reject: AtomicBool,
+    hang_on_close: AtomicBool,
     pause: Mutex<Option<watch::Sender<bool>>>,
     operations: Arc<Mutex<Vec<Vec<u8>>>>,
     next_fault: Mutex<Option<PublishFault>>,
@@ -126,6 +127,10 @@ impl Stub {
         let (started, observing) = watch::channel(false);
         *self.publisher.pause.lock().unwrap() = Some(started);
         observing
+    }
+
+    pub(super) fn hang_on_close(&self) {
+        self.publisher.hang_on_close.store(true, Ordering::Relaxed);
     }
 
     pub(super) fn reject(&self, reject: bool) {
@@ -282,6 +287,10 @@ impl TransportBoard for Board {
     }
 
     async fn close(self) -> Result<(), Error> {
+        if self.publisher.hang_on_close.load(Ordering::Relaxed) {
+            std::future::pending::<()>().await;
+        }
+
         self.queues.lock().unwrap().remove(&self.id);
         self.status.lock().unwrap().boards.remove(&self.id);
         Ok(())

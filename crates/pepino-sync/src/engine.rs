@@ -12,6 +12,8 @@ use tokio_stream::wrappers::WatchStream;
 
 use crate::{BoardFailure, Status, Transport, board_workers::BoardWorkers};
 
+const SHUTDOWN_LIMIT: Duration = Duration::from_secs(4);
+
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub lock_timeout: Duration,
@@ -50,6 +52,8 @@ pub enum Error {
         enrolled: Vec<String>,
         failed: Vec<String>,
     },
+    #[error("timed out closing sync workers")]
+    ShutdownTimeout,
     #[error("sync did not become idle before the deadline")]
     Timeout,
     #[error("data directory belongs to device {local}, but the node is {node}")]
@@ -236,13 +240,24 @@ impl<T: Transport> SyncEngine<T> {
             ..
         } = self;
         drop(stop);
-        let mut result = Ok(());
-        while let Some(worker) = workers.join_next().await {
-            let outcome = worker.map_err(Error::from).and_then(|outcome| outcome);
-            result = result.and(outcome);
+        let joined = tokio::time::timeout(SHUTDOWN_LIMIT, async {
+            let mut result = Ok(());
+            while let Some(worker) = workers.join_next().await {
+                let outcome = worker.map_err(Error::from).and_then(|outcome| outcome);
+                result = result.and(outcome);
+            }
+            drop(board_stop);
+            result.and(boards.lock().await.finish().await)
+        })
+        .await;
+        match joined {
+            Ok(result) => result,
+            Err(_) => {
+                workers.shutdown().await;
+                boards.lock().await.abort().await;
+                Err(Error::ShutdownTimeout)
+            }
         }
-        drop(board_stop);
-        result.and(boards.lock().await.finish().await)
     }
 }
 
