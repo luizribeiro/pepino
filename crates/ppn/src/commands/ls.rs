@@ -68,8 +68,7 @@ pub(super) fn list(
         args.filter.push(format!("board:\"{board}\""));
     }
     let mut client = AppClient::open(context)?;
-    let (filter, positions) =
-        crate::cli::filter::input_with_positions(args.filter_text, args.filter)?;
+    let (filter, positions) = crate::cli::filter::input(args.filter_text, args.filter)?;
     let (sort, limit, today) = (args.sort, args.limit, context.time.today);
     let request = if all {
         ReadRequest::ListTasks {

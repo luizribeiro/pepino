@@ -26,11 +26,7 @@ impl Positions {
     }
 }
 
-pub fn input(text: Option<String>, terms: Vec<String>) -> Result<FilterInput, CliError> {
-    input_with_positions(text, terms).map(|(input, _)| input)
-}
-
-pub fn input_with_positions(
+pub fn input(
     text: Option<String>,
     terms: Vec<String>,
 ) -> Result<(FilterInput, Positions), CliError> {

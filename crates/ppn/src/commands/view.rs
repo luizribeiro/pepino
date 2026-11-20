@@ -64,24 +64,30 @@ enum Action {
 
 pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
-    let request = match args.action {
+    let response = match args.action {
         Action::Save {
             name,
             filter,
             filter_text,
-        } => Request::Write(WriteRequest::SaveView {
-            name,
-            filter: crate::cli::filter::input(filter_text, filter)?,
-        }),
-        Action::Ls => Request::Read(ReadRequest::ListViews),
-        Action::Rm { name, force } => Request::Write(WriteRequest::DeleteView { name, force }),
+        } => {
+            let (filter, positions) = crate::cli::filter::input(filter_text, filter)?;
+            client
+                .call(Request::Write(WriteRequest::SaveView {
+                    name: name.clone(),
+                    filter,
+                }))
+                .map_err(|error| positions.remap(error, Some(&name)))
+        }
+        Action::Ls => client.call(Request::Read(ReadRequest::ListViews)),
+        Action::Rm { name, force } => {
+            client.call(Request::Write(WriteRequest::DeleteView { name, force }))
+        }
         Action::Show { name } => {
             let response = client.call(Request::Read(ReadRequest::ListViews))?;
             let view = SavedView::find_by_name(response.views()?.views, &name)?.clone();
             return Ok(CommandResult::document(render::ViewDefinition(view)));
         }
-    };
-    let response = client.call(request)?;
+    }?;
     let empty = matches!(&response, pepino_app::Response::Views { views } if views.is_empty());
     Ok(
         CommandResult::app_document(context, response, |response, _| {

@@ -168,3 +168,27 @@ fn an_unknown_view_suggests_a_cli_command_without_repeating_the_reason() {
     let error = task_error(json, 2, "invalid_input");
     assert!(error.get("reason").is_none());
 }
+
+#[test]
+fn saved_filter_errors_point_to_the_supplied_filter_string() {
+    let (sandbox, _) = task_sandbox();
+    let output = sandbox
+        .command()
+        .args([
+            "view",
+            "save",
+            "weekend",
+            "--filter",
+            "  @missing",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let error = task_error(output, 2, "invalid_input");
+    assert_eq!(error["input"], "--filter");
+    assert_eq!(
+        error["position"],
+        serde_json::json!({"kind":"byte","byte":2})
+    );
+    assert_eq!(error["view_chain"], serde_json::json!(["weekend"]));
+}
