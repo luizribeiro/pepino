@@ -198,19 +198,25 @@ impl App {
             ));
         }
         let path = directory.join(REQUEST);
-        if exists(&path)? {
-            let saved = DeviceRequest::read(&path)?;
-            if saved.reusable(SystemTime::now()) {
-                return Ok(saved);
-            }
-        }
+        let saved = if exists(&path)? {
+            let bytes = fs::read(&path)
+                .map_err(|error| path_io_error(&path, "read device request", error))?;
+            serde_json::from_slice::<DeviceRequest>(&bytes).ok()
+        } else {
+            None
+        };
+        let saved_name = match saved {
+            Some(saved) if saved.reusable(SystemTime::now()) => return Ok(saved),
+            Some(saved) if !saved.name.trim().is_empty() => Some(saved.name),
+            _ => None,
+        };
         if exists(&directory.join(DATABASE))? {
             return Err(invalid(
                 "request",
                 "This directory already contains a task database.",
             ));
         }
-        let name = match options.device_name {
+        let name = match options.device_name.or(saved_name) {
             Some(name) => name,
             None => whoami::hostname().map_err(|err| storage("get hostname", err, false))?,
         };
@@ -288,6 +294,13 @@ async fn persists_a_request_without_creating_an_identity() {
     assert_ne!(renewed.secret, first.secret);
     assert_ne!(renewed.binding(), first.binding());
     assert_eq!(renewed.id, first.id);
+    assert_eq!(renewed.name, "Ferrum");
+    fs::write(path.join(REQUEST), b"{truncated").unwrap();
+    let recovered = App::request_device(path, OpenOptions::default())
+        .await
+        .unwrap();
+    assert_ne!(recovered.secret, renewed.secret);
+    assert_eq!(recovered.id, first.id);
     assert!(!path.join(FILE_NAME).exists());
     assert!(!path.join(DATABASE).exists());
 }
