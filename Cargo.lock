@@ -3637,6 +3637,7 @@ dependencies = [
  "pepino-core",
  "pepino-node",
  "pepino-store",
+ "pepino-sync",
  "serde",
  "serde_json",
  "sqlx",

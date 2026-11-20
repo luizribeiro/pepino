@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 pepino-app = { path = "../pepino-app" }
+pepino-sync = { path = "../pepino-sync" }
 pepino-node = { path = "../pepino-node" }
 pepino-core = { path = "../pepino-core" }
 blake3 = "1"
