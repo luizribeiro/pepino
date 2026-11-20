@@ -4,7 +4,6 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 use crate::AppError;
-use crate::state::storage;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -38,7 +37,6 @@ impl TryFrom<pepino_core::Status> for Status {
             Core::Doing => Self::Doing,
             Core::Done => Self::Done,
             Core::Cancelled => Self::Cancelled,
-            _ => return Err(unsupported_value("status")),
         })
     }
 }
@@ -73,14 +71,6 @@ impl TryFrom<pepino_core::EdgeKind> for EdgeKind {
             Core::Relates => Self::Relates,
         })
     }
-}
-
-fn unsupported_value(kind: &str) -> AppError {
-    storage(
-        "project stored value",
-        format_args!("unsupported {kind}"),
-        false,
-    )
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -172,7 +162,6 @@ impl TryFrom<pepino_core::FieldValue> for FieldValue {
             Core::Date(value) => Self::Date(value.into()),
             Core::Status(value) => Self::Status(value.try_into()?),
             Core::Unset => Self::Unset,
-            _ => return Err(unsupported_value("field value")),
         })
     }
 }

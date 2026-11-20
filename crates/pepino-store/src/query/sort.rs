@@ -180,7 +180,6 @@ fn status_rank(status: Status) -> u8 {
         Status::Doing => 1,
         Status::Done => 2,
         Status::Cancelled => 3,
-        _ => u8::MAX,
     }
 }
 

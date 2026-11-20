@@ -227,7 +227,7 @@ proptest! {
                                 parent_count += 1;
                             }
                             EdgeKind::Blocks => blocks.push((edge.from, edge.to)),
-                            _ => {}
+                            EdgeKind::Relates => {}
                         }
                     }
                     prop_assert!(parent_count <= 1);
