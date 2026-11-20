@@ -1016,8 +1016,9 @@ async fn listing_errors_report_source_positions_and_saved_view_chains() {
         json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown filter key \"tags\"","hint":"Use \"tag\"","term":"tags:hardware","position":{"kind":"argument","index":1,"byte":2}}})).await;
     list_golden(&mut app,json!(" \"é \\\"hinge\\\"\"  parent:bad"),None,None,
         json!({"error":{"kind":"invalid_input","field":"filter","reason":"invalid task ID prefix \"bad\" (expected 4 to 64 hexadecimal digits)","term":"parent:bad","position":{"kind":"byte","byte":" \"é \\\"hinge\\\"\"  ".len()}}})).await;
+    let person_hint = format!("Known person is {}", app.local_state().display_name);
     list_golden(&mut app,json!(["is:open","  assignee:Ben Gardener"]),None,None,
-        json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown person \"Ben Gardener\"","term":"assignee:\"Ben Gardener\"","position":{"kind":"argument","index":1,"byte":2}}})).await;
+        json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown person \"Ben Gardener\"","hint":person_hint,"term":"assignee:\"Ben Gardener\"","position":{"kind":"argument","index":1,"byte":2}}})).await;
     for (name, filter) in [("first", "@missing"), ("last", "is:open @first")] {
         handle(
             &mut app,
@@ -1027,7 +1028,7 @@ async fn listing_errors_report_source_positions_and_saved_view_chains() {
         .unwrap();
     }
     list_golden(&mut app,json!("@first"),None,None,
-        json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown saved view \"missing\"","term":"@missing","position":{"kind":"byte","byte":0},"view_chain":["first"]}})).await;
+        json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown saved view \"missing\"","hint":"Use list_views to see available saved views","term":"@missing","position":{"kind":"byte","byte":0},"view_chain":["first"]}})).await;
     handle(
         &mut app,
         json!({"op":"save_view","name":"first","filter":"@last","today":"2026-11-20"}),

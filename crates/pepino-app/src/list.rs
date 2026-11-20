@@ -39,7 +39,7 @@ impl App {
                 views: &saved,
             },
         };
-        let diagnostic = |error| query_error(error, source, &views);
+        let diagnostic = |error| query_error(error, source, &views, &self.local.display_name);
         let terms = query().board_terms().map_err(diagnostic)?;
         let local_board = Board {
             id: self.local.board_id,
@@ -102,7 +102,12 @@ fn select_boards(boards: &[Board<'_>], terms: &[Term]) -> Result<Vec<BoardId>, A
     Ok(selected.into_iter().map(|board| board.id).collect())
 }
 
-fn query_error(error: QueryError, source: &FilterInput, views: &ViewFilters<'_>) -> AppError {
+fn query_error(
+    error: QueryError,
+    source: &FilterInput,
+    views: &ViewFilters<'_>,
+    known_person: &str,
+) -> AppError {
     let parsed = views.parsed();
     if let QueryErrorKind::UnknownView { name } = &error.kind
         && let Some((_, Err(error_from_view))) = parsed.get(name)
@@ -125,6 +130,15 @@ fn query_error(error: QueryError, source: &FilterInput, views: &ViewFilters<'_>)
         .map_or(source, |(source, _)| source);
     let position = source.position_at(error.term_index);
     let reason = error.kind.to_string();
+    let hint = match &error.kind {
+        QueryErrorKind::UnknownView { .. } => {
+            Some("Use list_views to see available saved views".into())
+        }
+        QueryErrorKind::UnknownPerson { .. } => Some(format!("Known person is {known_person}")),
+        QueryErrorKind::AmbiguousPerson { candidates, .. } => Some(candidate_hint(candidates)),
+        QueryErrorKind::AmbiguousTaskPrefix { candidates, .. } => Some(candidate_hint(candidates)),
+        _ => None,
+    };
     let view_chain = match error.kind {
         QueryErrorKind::ViewCycle { chain } => chain,
         _ => error.view_chain,
@@ -136,7 +150,15 @@ fn query_error(error: QueryError, source: &FilterInput, views: &ViewFilters<'_>)
             term: error.term,
             position,
             view_chain,
-            hint: None,
+            hint,
         })),
     }
+}
+
+fn candidate_hint(candidates: &[impl ToString]) -> String {
+    let names = candidates
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    format!("Choose from {}", names.join(", "))
 }
