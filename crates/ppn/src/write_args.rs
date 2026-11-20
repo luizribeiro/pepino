@@ -111,3 +111,7 @@ mod tests {
         assert!(infer("9223372036854775808", "2026-11-20".parse().unwrap()).is_err());
     }
 }
+
+mod membership;
+
+pub use membership::AddMembershipArgs;

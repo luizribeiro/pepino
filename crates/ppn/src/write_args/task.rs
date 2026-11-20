@@ -2,24 +2,20 @@ use std::path::PathBuf;
 
 use clap::Args;
 
-use super::FieldArgs;
+use super::{AddMembershipArgs, FieldArgs};
 use crate::error::CliError;
 use crate::input::read_text;
 
 #[derive(Args, Default)]
 pub struct TaskWriteArgs {
-    /// Add a tag. Repeat for more tags.
-    #[arg(short = 't', long = "tag", value_name = "TAG")]
-    pub tags: Vec<String>,
+    #[command(flatten)]
+    pub membership: AddMembershipArgs,
     /// Set the due date. Accepts YYYY-MM-DD or relative dates such as tomorrow and -2w.
     #[arg(long, allow_hyphen_values = true, value_name = "DATE")]
     pub due: Option<String>,
     /// Set the task priority as a signed integer.
     #[arg(long, allow_negative_numbers = true)]
     pub priority: Option<i64>,
-    /// Assign me or a full identity ID. Repeat for more assignees.
-    #[arg(long = "assign", value_name = "WHO")]
-    pub assignees: Vec<String>,
     #[command(flatten)]
     pub relations: RelationArgs,
     #[command(flatten)]
@@ -110,10 +106,10 @@ mod tests {
         ])
         .unwrap()
         .args;
-        assert_eq!(edit.tags, ["release", "docs"]);
+        assert_eq!(edit.membership.tags, ["release", "docs"]);
         assert_eq!(edit.due.as_deref(), Some("-1w"));
         assert_eq!(edit.priority, Some(-2));
-        assert_eq!(edit.assignees, ["me"]);
+        assert_eq!(edit.membership.assignees, ["me"]);
         assert!(edit.description.reads_stdin());
         let edit = Edit::try_parse_from(["edit", "--description", "Check release notes"]).unwrap();
         assert_eq!(
