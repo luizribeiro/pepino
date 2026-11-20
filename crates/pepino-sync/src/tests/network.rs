@@ -70,3 +70,34 @@ async fn publishes_an_offline_project_and_syncs_edits_back() {
     views_match(&a, &b).await;
     tokio::join!(left.stop(), right.stop());
 }
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn concurrent_edits_to_one_task_converge() {
+    let (_dir, mut a, mut b) = pair().await;
+    let pepino_app::Response::Write {
+        created: Some(task),
+        ..
+    } = write(
+        &mut a.app,
+        json!({"op":"add_task","title":"Repair the greenhouse door"}),
+    )
+    .await
+    else {
+        panic!("expected a task ID");
+    };
+    let (left, right) = tokio::join!(a.start(), b.start());
+    b.await_events(&right, 1).await;
+    tokio::join!(left.stop(), right.stop());
+    for (app, state, comment) in [
+        (&mut a.app, "doing", "Measured the frame"),
+        (&mut b.app, "done", "Fitted the spare latch"),
+    ] {
+        write(app, json!({"op":"set_fields","task":task,"changes":{"status":{"type":"status","value":state}}})).await;
+        write(app, json!({"op":"comment","task":task,"text":comment})).await;
+    }
+    let (left, right) = tokio::join!(a.start(), b.start());
+    tokio::join!(a.await_events(&left, 5), b.await_events(&right, 5));
+    views_match(&a, &b).await;
+    tokio::join!(left.stop(), right.stop());
+}
