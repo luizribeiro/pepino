@@ -47,6 +47,8 @@ pub struct LocalState {
     pub(super) other_devices: BTreeMap<DeviceId, String>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) devices_seen_on_boards: BTreeSet<DeviceId>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) devices_added_here: BTreeSet<DeviceId>,
     #[serde(deserialize_with = "read_boards")]
     pub(super) boards: Vec<LocalBoard>,
     pub(crate) saved_views: SavedViews,
@@ -75,6 +77,11 @@ impl LocalState {
 
     pub fn boards(&self) -> &[LocalBoard] {
         &self.boards
+    }
+
+    pub fn added_device_here(&self, id: DeviceId) -> bool {
+        self.other_devices.contains_key(&id)
+            && (self.link.is_none() || self.devices_added_here.contains(&id))
     }
 
     pub fn saw_device_on_board(&self, id: DeviceId) -> bool {
@@ -134,6 +141,7 @@ impl LocalState {
             }],
             other_devices: BTreeMap::new(),
             devices_seen_on_boards: BTreeSet::new(),
+            devices_added_here: BTreeSet::new(),
             saved_views: SavedViews::default(),
             link: None,
         })

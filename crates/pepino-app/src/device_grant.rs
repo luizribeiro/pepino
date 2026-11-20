@@ -84,6 +84,7 @@ impl DeviceGrant {
             device_name,
             other_devices: devices,
             devices_seen_on_boards: BTreeSet::new(),
+            devices_added_here: BTreeSet::new(),
             boards,
             saved_views: Default::default(),
             link: Some(Box::new(Link {
@@ -151,5 +152,6 @@ fn a_grant_installs_the_recipient_and_all_named_boards() {
         BoardJoinState::WaitingToBeAdded
     );
     assert_eq!(local.devices()[&recipient], "Ferrum");
+    assert!(!local.added_device_here(issuer));
     assert_eq!(local.peer_hint().unwrap().id, issuer);
 }

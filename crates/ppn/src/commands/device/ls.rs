@@ -46,7 +46,8 @@ pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
                     (true, false, _) => "pending",
                     (true, true, _) => "joined",
                     (false, _, true) => "seen_on_board",
-                    (false, _, false) => "added_not_seen",
+                    (false, _, false) if local.added_device_here(id) => "added_not_seen",
+                    (false, _, false) => "known_not_seen",
                 },
                 last_seen: network.and_then(|network| network.last_seen.get(&label).copied()),
             }
@@ -72,6 +73,7 @@ impl Render for Devices {
                     match device.state {
                         "seen_on_board" => "seen on the board",
                         "added_not_seen" => "added here, not yet seen",
+                        "known_not_seen" => "in roster, not yet seen",
                         state => state,
                     }
                 );

@@ -22,6 +22,7 @@ impl App {
             ));
         }
         self.update_devices(move |local| {
+            local.devices_added_here.insert(id);
             if let Some(name) = override_name {
                 local.other_devices.insert(id, name);
             } else {
@@ -95,6 +96,7 @@ async fn readding_a_device_keeps_its_existing_name_unless_overridden() {
         .unwrap();
     let local = LocalState::load(dir.path()).unwrap();
     assert_eq!(local.devices()[&peer], "Garden tablet");
+    assert!(local.added_device_here(peer));
     assert!(app.remember_device(peer, "".into(), None).await.is_err());
 }
 
