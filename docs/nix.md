@@ -57,54 +57,58 @@ when overriding settings in user configuration.
 
 ## Always-on host
 
+This NixOS host joins an existing identity as a full device with access to
+its boards. Relay-only operation is unavailable.
+
 ```nix
-{ config, ... }:
 {
   services.pepino = {
     enable = true;
     network = "release-team";
-    credentialsFile = config.sops.secrets.pepino-credentials.path;
-    trustedDevices = [
-      "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
-    ];
-  };
-
-  sops.secrets.pepino-credentials = {
-    sopsFile = ./pepino-credentials.enc;
-    format = "binary";
-    owner = config.services.pepino.user;
-    group = config.services.pepino.group;
-    mode = "0600";
+    relayUrls = [ ];
+    mdns = true;
+    port = 44123;
+    openFirewall = true;
   };
 }
 ```
 
-This example uses sops-nix with a file encrypted in SOPS binary format.
-Replace the example node ID with the ID of a device allowed to request board
-relaying. The module provisions the service account, group and state directory
-and installs `/etc/pepino/node.toml`. The node file always includes `data_dir`,
-which defaults to `/var/lib/pepino`.
+The module provisions the `pepino` account and private `/var/lib/pepino`
+state directory. It renders `/etc/pepino/node.toml` with
+`daemon.autostart = false`. The `pepino-node` wrapper runs `ppn` as the service
+account with this configuration.
 
-`ppn` skips the node file by default. Pass `--config /etc/pepino/node.toml` to
-read it explicitly.
-`PPN_CONFIG` is the equivalent environment variable. A service-only module
-configuration leaves `/etc/pepino/config.toml` absent and `ppn` off the system
-`PATH`. Enable `programs.pepino.enable` to add both.
+On the server, generate a request with `sudo pepino-node device request --name server`.
+On the laptop, wait for `ppn daemon status` to report a running daemon, then run
+`ppn device add REQUEST`. Keep the grant private and paste it as one argument
+on the server.
 
-The read-only `services.pepino.configFile` option exposes the generated path
-for the future daemon's `--config` flag. Service units are a later addition.
+```sh
+sudo pepino-node device join GRANT --timeout 60s
+sudo pepino-node status
+sudo pepino-node ls
+```
 
-On nix-darwin, set `users.users.pepino.uid` and `users.groups.pepino.gid` to unused
-IDs on your host. Use the configured account and group names if you override the
-defaults.
+NixOS uses `pepino.path` to start `pepino.service` when the join installs
+`local.json`. The node starts on subsequent boots and uses the private socket
+`/run/pepino/control.sock`. The service can write persistent state under
+`services.pepino.dataDir`. View logs with `journalctl -u pepino.service`.
 
-You can leave the firewall closed for outbound relay connections. To allow
-incoming UDP, set both `services.pepino.openFirewall` and `services.pepino.port`.
-On NixOS the module adds the port to `networking.firewall.allowedUDPPorts`.
-On nix-darwin, configure the firewall manually.
-The daemon binds the configured port over IPv4. Set `programs.pepino.port` for a
-user daemon and `services.pepino.port` for the system node. Use distinct ports
-when running both on the same host.
+On nix-darwin, omit `openFirewall`, set unused numeric IDs with
+`users.users.pepino.uid` and `users.groups.pepino.gid`, and run `pepino-node`
+directly as a sudo-enabled administrator. The launchd daemon
+`org.nixos.pepino-node` checks for joined state at boot and every five seconds.
+It uses `runtime/daemon.sock` under `dataDir`. Account and directory permissions
+apply on macOS. Filesystem sandboxing and runtime directory management are
+provided by systemd on NixOS.
+
+On NixOS, `openFirewall` opens the fixed IPv4 UDP port and UDP 5353 if mDNS is
+enabled. Unset `mdns` defaults to enabled. You can leave the firewall closed
+for outbound relay connections. Manage the macOS firewall separately. Choose
+distinct UDP ports if both daemons run on the same host.
+
+A service-only installation provides `pepino-node`. Enable
+`programs.pepino.enable` to install `ppn` and its separate client configuration.
 
 ## Options
 
@@ -112,7 +116,7 @@ when running both on the same host.
 | --- | --- | --- | --- |
 | `programs.pepino.enable` | Boolean | `false` | Install the client and its system-wide config. |
 | `programs.pepino.daemon.enable` | Boolean | `false` | Start the user sync daemon with the login session. Requires the client to be enabled. |
-| `services.pepino.enable` | Boolean | `false` | Provision the always-on node's account, state and config. |
+| `services.pepino.enable` | Boolean | `false` | Run the always-on sync node under its own account. |
 | Both: `package` | Package | Pepino's flake package for the host system | Package for the client or always-on node. |
 | Both: `network` | String | Unset | Network name. |
 | Both: `relayUrls` | List of HTTPS URLs | Unset | Relay servers to use. |
@@ -127,13 +131,13 @@ when running both on the same host.
 | `services.pepino.user` | String | `"pepino"` | Always-on node account. |
 | `services.pepino.group` | String | `"pepino"` | Always-on node primary group. |
 | `programs.pepino.port` | Integer from 1 to 65535 | Unset | Fixed IPv4 UDP port for the user daemon. |
-| `services.pepino.openFirewall` | Boolean | `false` | Allow the fixed UDP port on NixOS. Requires `port`. |
+| `services.pepino.openFirewall` | Boolean | `false` | Allow the fixed UDP port and mDNS traffic on NixOS. Requires `port`. |
 | `services.pepino.port` | Integer from 1 to 65535 | Unset | Fixed IPv4 UDP port for the system node. |
 | `services.pepino.configFile` | Read-only path | Unset when disabled | Generated always-on node configuration. |
 
 Unset settings are omitted from TOML. Use an explicit empty list to override a
 list with no entries. An enabled always-on node with no trusted devices emits a
-warning.
+warning about relaying. Device linking uses its own grant.
 
 ## Credentials
 
@@ -143,3 +147,14 @@ node, give the service account ownership of the file and set mode `0600`. Keep
 plaintext CBOR credentials outside the Nix store and out of Nix expressions.
 The generated TOML contains the path string. Leave the system-wide client setting
 unset for separate per-user credentials.
+
+## Verification
+
+The x86_64 NixOS VM check runs the laptop and always-on services together on
+an isolated VLAN using mDNS. It exercises the request and grant, compares the
+JSON task lists, and verifies replication after editing a task and rebooting
+the server. Run it on a Linux host with KVM using
+`nix build .#checks.x86_64-linux.vm`.
+
+The nix-darwin launchd definitions have been evaluated. Their runtime behavior
+on macOS is unverified.
