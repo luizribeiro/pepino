@@ -1268,4 +1268,32 @@ fn task_flags_round_trip_through_add_show_and_status() {
             .iter()
             .all(|edge| edge["effective"] == true)
     );
+    let human = sandbox.run(&["show", id]);
+    for text in [
+        description.lines().next().unwrap(),
+        "Order stainless fittings",
+        "Renovate the greenhouse",
+        "Test the new latch",
+        "Due: 01 Dec 2026",
+        "Field estimate: 3",
+        status["identity"]["display_name"].as_str().unwrap(),
+    ] {
+        assert!(human.contains(text), "{human}");
+    }
+    let mut task = task.clone();
+    task["comments"] = json!([]);
+    let detail = as_json(&sandbox.run(&["show", id, "--json"]));
+    assert_eq!(
+        detail,
+        json!({"schema":1,"kind":"task","task":task,"edges":[],
+            "relation_titles":{parent:"Renovate the greenhouse", blocker:"Order stainless fittings",
+                downstream:"Test the new latch"},
+            "assignee_names":{me:status["identity"]["display_name"]}
+        })
+    );
+    assert!(sandbox.run(&["status"]).contains("Tasks: 4 open, 0 closed"));
+    assert_eq!(
+        as_json(&sandbox.run(&["status", "--json"]))["counts"]["open"],
+        4
+    );
 }
