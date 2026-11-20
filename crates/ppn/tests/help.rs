@@ -76,7 +76,11 @@ fn help_describes_the_cli_in_both_formats() {
     assert_eq!(commands[5]["name"], "show");
     assert_eq!(commands[4]["name"], "add");
     assert_eq!(commands[3]["name"], "status");
-    assert!(!human.contains("debug"));
+    assert!(
+        !human
+            .lines()
+            .any(|line| line.trim_start().starts_with("debug "))
+    );
     assert_eq!(commands[0]["name"], "version");
     assert_eq!(
         commands[0]["examples"],

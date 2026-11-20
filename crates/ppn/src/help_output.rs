@@ -32,7 +32,15 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "init" | "status" => (
             "status",
-            "identity Local person\ndevice Local device\nboard Current board\ndata_dir Local data directory\ncounts Task and event counts\nprotocol_version Application protocol version",
+            "identity Local person\ndevice Local device\nboard Current board\ndata_dir Local data directory\ncounts Task and event counts\nnetwork Daemon network snapshot or offline\nprotocol_version Application protocol version",
+        ),
+        "daemon run" | "daemon start" | "daemon stop" | "daemon status" => (
+            "daemon",
+            "action Lifecycle operation performed\nrunning Whether the daemon is running\npid Running process ID or null\nuptime_ms Monotonic uptime in milliseconds or null\nsocket_path Effective control socket path",
+        ),
+        "sync" => (
+            "sync",
+            "idle Whether all known sync work settled\nnetwork Peers and per-board sync activity",
         ),
         "view ls" => ("views", "views Saved filters ordered by name"),
         "view save" => (
