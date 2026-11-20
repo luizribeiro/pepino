@@ -1,5 +1,8 @@
 use pepino_core::BoardId;
-use tokio::sync::{mpsc, watch};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 
 use crate::{BoardEvent, Error, ack::AckStore, delivery_item::Delivery, spool::Spool};
 
@@ -9,6 +12,8 @@ pub(crate) struct DeliveryWriter {
     board: BoardId,
     spool: Spool,
     change: watch::Sender<Option<String>>,
+    stop: watch::Sender<bool>,
+    pump: JoinHandle<()>,
 }
 
 impl DeliveryWriter {
@@ -19,12 +24,15 @@ impl DeliveryWriter {
     ) -> (Self, mpsc::Receiver<Result<BoardEvent, Error>>) {
         let (change, changed) = watch::channel(None);
         let (out, events) = mpsc::channel(CAPACITY);
-        tokio::spawn(pump(board, spool.clone(), acks, out, changed));
+        let (stop, stopping) = watch::channel(false);
+        let pump = tokio::spawn(pump(board, spool.clone(), acks, out, changed, stopping));
         (
             Self {
                 board,
                 spool,
                 change,
+                stop,
+                pump,
             },
             events,
         )
@@ -38,6 +46,13 @@ impl DeliveryWriter {
         Ok(())
     }
 
+    pub(crate) async fn stop(self) -> Result<(), Error> {
+        self.stop.send_replace(true);
+        self.pump
+            .await
+            .map_err(|error| Error::Worker(error.to_string()))
+    }
+
     pub(crate) fn fail(&self, error: &Error) {
         self.change.send_replace(Some(error.to_string()));
     }
@@ -49,8 +64,16 @@ async fn pump(
     acks: AckStore,
     out: mpsc::Sender<Result<BoardEvent, Error>>,
     mut changed: watch::Receiver<Option<String>>,
+    mut stopping: watch::Receiver<bool>,
 ) {
-    while let Ok(slot) = out.reserve().await {
+    loop {
+        let Ok(slot) = (tokio::select! {
+            biased;
+            true = async { stopping.wait_for(|stopping| *stopping).await.is_ok() } => break,
+            slot = out.reserve() => slot,
+        }) else {
+            break;
+        };
         match spool.pop(board).await {
             Ok(Some(bytes)) => {
                 let item = ciborium::from_reader::<Delivery, _>(bytes.as_slice())
@@ -64,6 +87,7 @@ async fn pump(
             }
             Ok(None) => {
                 tokio::select! {
+                    true = async { stopping.wait_for(|stopping| *stopping).await.is_ok() } => break,
                     _ = out.closed() => break,
                     result = changed.changed() => {
                         if result.is_err() {
@@ -86,6 +110,33 @@ mod tests {
     use super::*;
     use crate::cursor::Position;
     use pepino_core::EventId;
+
+    #[tokio::test]
+    async fn stopping_a_full_spool_joins_the_pump_without_consuming_the_queue() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let acks = AckStore::create(pool).await.unwrap();
+        let board = BoardId::from_bytes([42; 32]);
+        let (writer, events) = DeliveryWriter::start(board, acks.spool.clone(), acks);
+        for _ in 0..=CAPACITY {
+            writer
+                .send(Delivery::Node("Greenhouse temporarily offline".into()))
+                .await
+                .unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while events.len() < CAPACITY {
+                tokio::task::yield_now().await;
+            }
+            writer.stop().await.unwrap();
+        })
+        .await
+        .unwrap();
+        assert_eq!(events.len(), CAPACITY);
+    }
 
     #[tokio::test]
     async fn a_paused_consumer_resumes_with_the_queue_full() {

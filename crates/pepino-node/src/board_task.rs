@@ -65,6 +65,7 @@ impl BoardTask {
         let mut joined = Box::pin(joined);
         let mut stopping = self.lease.stopping();
         let mut space = None;
+        let mut requested = false;
         let mut initial_error = self.observe_removal().await.err();
         let result = loop {
             if let Some(error) = initial_error.take() {
@@ -72,8 +73,14 @@ impl BoardTask {
             }
             tokio::select! {
                 biased;
-                _ = &mut self.stop => break Ok(()),
-                _ = async { let _ = stopping.wait_for(|state| *state).await; } => break Ok(()),
+                _ = &mut self.stop => {
+                    requested = true;
+                    break Ok(());
+                }
+                _ = async { let _ = stopping.wait_for(|state| *state).await; } => {
+                    requested = true;
+                    break Ok(());
+                }
                 state = &mut joined, if space.is_none() => match state {
                     Ok(state) => {
                         let state = Arc::new(state);
@@ -117,7 +124,12 @@ impl BoardTask {
         };
         // The upstream pipeline can cancel a writer when its last stream handle is dropped.
         self.lease.retain_upstream((joined, subscription));
-        closed.and(result)
+        let delivered = if requested {
+            self.events.stop().await
+        } else {
+            Ok(())
+        };
+        closed.and(delivered).and(result)
     }
 
     async fn observe_removal(&mut self) -> Result<(), Error> {
