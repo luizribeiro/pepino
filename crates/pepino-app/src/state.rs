@@ -78,16 +78,17 @@ impl LocalState {
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, AppError> {
-        let state: Self = serde_json::from_slice(bytes)
-            .map_err(|error| storage("decode local state", error, false))?;
-        if state.version != VERSION {
-            return Err(storage(
-                "unsupported local state version",
-                state.version,
-                false,
-            ));
+        #[derive(Deserialize)]
+        struct Version {
+            version: u64,
         }
-        Ok(state)
+
+        let Version { version } = serde_json::from_slice(bytes)
+            .map_err(|error| storage("decode local state", error, false))?;
+        if version != u64::from(VERSION) {
+            return Err(storage("unsupported local state version", version, false));
+        }
+        serde_json::from_slice(bytes).map_err(|error| storage("decode local state", error, false))
     }
 }
 
@@ -174,17 +175,17 @@ mod tests {
         assert_ne!(state.device_id, other.device_id);
         assert_ne!(state.identity_id, other.identity_id);
         assert_ne!(state.board_id, other.board_id);
-        let future = LocalState {
-            version: 99,
-            ..state
-        };
-        fs::write(path, serde_json::to_vec(&future).unwrap()).unwrap();
+        fs::write(
+            path,
+            br#"{"version":4294967296,"credentials":{"device":"future"}}"#,
+        )
+        .unwrap();
         assert!(matches!(
             LocalState::load_or_create(directory.path(), OpenOptions::default()),
             Err(AppError::Storage {
                 retryable: false,
                 reason,
-            }) if reason.contains("unsupported local state version")
+            }) if reason == "unsupported local state version: 4294967296"
         ));
     }
 
