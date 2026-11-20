@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use pepino_app::{AppError, AppErrorKind, FilterPosition};
+use pepino_app::{AppError, AppErrorKind, FilterInput, FilterPosition};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -342,7 +342,11 @@ impl From<AppError> for CliError {
                 && details
                     .get("term")
                     .and_then(Value::as_str)
-                    .is_some_and(|term| term.contains(char::is_whitespace) && term.contains(':'))
+                    .is_some_and(|term| {
+                        term.contains(char::is_whitespace)
+                            && term.contains(':')
+                            && !FilterInput::Argv(vec![term.into()]).syntax_is_valid()
+                    })
             {
                 let advice = "Pass filter terms as separate arguments or use --filter.";
                 diagnostic.hint = Some(match diagnostic.hint {

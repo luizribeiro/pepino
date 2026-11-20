@@ -506,3 +506,21 @@ fn mixed_filter_errors_preserve_their_cli_source_and_position() {
         serde_json::json!({"kind":"argument","index":1,"byte":2})
     );
 }
+
+#[test]
+fn a_well_formed_assignee_with_spaces_keeps_the_lookup_hint() {
+    let (sandbox, _) = task_sandbox();
+    let output = sandbox
+        .command()
+        .args(["ls", "assignee:Unknown Person", "--json"])
+        .output()
+        .unwrap();
+    let error = task_error(output, 2, "invalid_input");
+    assert!(error["hint"].as_str().unwrap().starts_with("Known person"));
+    assert!(
+        !error["hint"]
+            .as_str()
+            .unwrap()
+            .contains("separate arguments")
+    );
+}
