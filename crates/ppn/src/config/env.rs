@@ -31,10 +31,7 @@ pub(crate) fn apply(draft: &mut Draft<'_>, env: &Env) -> Result<(), CliError> {
             problems.push(format!("{variable}: {key}: expected a UTF-8 value"));
             continue;
         };
-        let mut validator = Validator {
-            file: None,
-            problems: Vec::new(),
-        };
+        let mut validator = Validator::new(None);
         draft.apply(key, &wrapped(value(key, raw)), &Source::Env, &mut validator);
         problems.extend(
             validator

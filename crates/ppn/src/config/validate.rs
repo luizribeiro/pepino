@@ -57,10 +57,7 @@ impl<'a> Draft<'a> {
     }
 
     pub fn apply_file(&mut self, path: &Path, text: &str, source: &Source) -> Result<(), CliError> {
-        let mut validator = Validator {
-            problems: Vec::new(),
-            file: Some((path, text)),
-        };
+        let mut validator = Validator::new(Some((path, text)));
         for (key, value) in validator.document(text) {
             match key.get_ref().as_ref() {
                 "ui" => {
@@ -285,11 +282,21 @@ date_format = "%Q"
 
     #[test]
     fn recovers_syntax_errors_and_suggests_misspelled_keys() {
-        let error = validate("network = ?\nmdns = ?\n[ui]\ndate_fromat = '%Y'\n")
+        let error = validate("network = ?\nmdns = ?\nrelay_urls = ['https://relay.example', ?]\nnetwork = 'duplicate'\n[ui]\ndate_fromat = '%Y'\ncolor = ?\n")
             .unwrap_err()
             .to_string();
-        assert!(error.contains("config.toml:1:11: TOML:"), "{error}");
-        assert!(error.contains("config.toml:2:8: TOML:"), "{error}");
+        assert!(error.contains("config.toml:1:11: network:"), "{error}");
+        assert!(error.contains("config.toml:2:8: mdns:"), "{error}");
+        assert!(
+            error.contains(": relay_urls[1]: string values must be quoted"),
+            "{error}"
+        );
+        assert!(
+            error.contains("config.toml:4:1: network: duplicate key"),
+            "{error}"
+        );
+        assert!(error.contains("config.toml:7:9: ui.color:"), "{error}");
+        assert_eq!(error.lines().count(), 6, "{error}");
         assert!(
             error.contains("ui.date_fromat: unknown key; did you mean `ui.date_format`?"),
             "{error}"
