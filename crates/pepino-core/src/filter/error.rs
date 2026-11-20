@@ -28,11 +28,11 @@ impl fmt::Display for Position {
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum ErrorKind {
-    #[error("unterminated quote; add a closing double quote")]
+    #[error("unterminated quote. Add a closing double quote")]
     UnterminatedQuote,
-    #[error("empty term; supply a search term")]
+    #[error("empty term. Supply a search term")]
     EmptyTerm,
-    #[error("empty view reference; supply a saved view name after '@'")]
+    #[error("empty view reference. Supply a saved view name after '@'")]
     EmptyView,
     #[error(
         "invalid saved view name {name:?}. View names cannot contain spaces and must match [a-z][a-z0-9_-]* within 64 bytes"
@@ -43,35 +43,35 @@ pub enum ErrorKind {
         value: String,
         suggested: &'static str,
     },
-    #[error("empty value; supply a value for each alternative")]
+    #[error("empty value. Supply a value for each alternative")]
     EmptyValue,
-    #[error("comparisons are unavailable for {key:?}; use {key}:value for equality")]
+    #[error("comparisons are unavailable for {key:?}. Use {key}:value for equality")]
     UnsupportedComparison { key: String },
     #[error(
         "unknown status {value:?}. Use {}",
-        super::keywords::accepted(super::keywords::STATUSES)
+        super::keywords::accepted(super::keywords::STATUSES, None)
     )]
     UnknownStatus { value: String },
     #[error("invalid tag {value:?}. Tags must match [a-z][a-z0-9_./-]*")]
     InvalidTag { value: String },
     #[error(
         "unknown state {value:?}. Use {}",
-        super::keywords::accepted(super::State::WORDS)
+        super::keywords::accepted(super::State::WORDS, None)
     )]
     UnknownState { value: String },
     #[error(
-        "unsupported presence field {field:?}. Use {} or a custom field",
-        super::keywords::accepted(super::PresenceField::WORDS)
+        "unsupported presence field {field:?}. Use {}",
+        super::keywords::accepted(super::PresenceField::WORDS, Some("a custom field"))
     )]
     UnsupportedPresence { field: String },
     #[error(
-        "invalid date {value:?}; use YYYY-MM-DD, today, tomorrow, yesterday, a weekday, or an offset such as +3d"
+        "invalid date {value:?}. Use YYYY-MM-DD, today, tomorrow, yesterday, a weekday, or an offset such as +3d"
     )]
     InvalidDate { value: String },
     #[error("invalid integer {value:?}. Enter a signed 64-bit integer")]
     InvalidInteger { value: String },
     #[error("date {value:?} is outside the supported calendar range")]
     DateOutOfRange { value: String },
-    #[error("keywords are lowercase; use {lowercase:?} for {value:?}")]
+    #[error("keywords are lowercase. Use {lowercase:?} for {value:?}")]
     LowercaseKeyword { value: String, lowercase: String },
 }

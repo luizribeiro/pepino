@@ -657,3 +657,72 @@ fn filters_can_be_constructed_from_terms() {
     assert_eq!(filter.terms(), terms);
     assert_eq!(parse("status:todo -has:assignee"), Ok(filter));
 }
+
+#[test]
+fn each_error_kind_has_a_display_message() {
+    let examples = [
+        (
+            r#""broken"#,
+            "unterminated quote. Add a closing double quote",
+        ),
+        ("-", "empty term. Supply a search term"),
+        (
+            "@",
+            "empty view reference. Supply a saved view name after '@'",
+        ),
+        (
+            r#"@"Weekend backlog""#,
+            "invalid saved view name \"Weekend backlog\". View names cannot contain spaces and must match [a-z][a-z0-9_-]* within 64 bytes",
+        ),
+        ("tags:tools", "unknown filter key \"tags\". Use \"tag\""),
+        ("board:", "empty value. Supply a value for each alternative"),
+        (
+            "tag:<tools",
+            "comparisons are unavailable for \"tag\". Use tag:value for equality",
+        ),
+        (
+            "status:paused",
+            "unknown status \"paused\". Use todo, doing, done, or cancelled",
+        ),
+        (
+            r#"tag:"needs review""#,
+            "invalid tag \"needs review\". Tags must match [a-z][a-z0-9_./-]*",
+        ),
+        (
+            "is:stalled",
+            "unknown state \"stalled\". Use blocked, ready, open, or closed",
+        ),
+        (
+            "has:board",
+            "unsupported presence field \"board\". Use due, parent, assignee, priority, tag, description, or a custom field",
+        ),
+        (
+            r#"due:"+ 3d""#,
+            "invalid date \"+ 3d\". Use YYYY-MM-DD, today, tomorrow, yesterday, a weekday, or an offset such as +3d",
+        ),
+        (
+            "priority:high",
+            "invalid integer \"high\". Enter a signed 64-bit integer",
+        ),
+        (
+            "due:+999999999w",
+            "date \"+999999999w\" is outside the supported calendar range",
+        ),
+        (
+            "status:TODO",
+            "keywords are lowercase. Use \"todo\" for \"TODO\"",
+        ),
+    ];
+    for (input, expected) in examples {
+        assert_eq!(
+            parse(input).unwrap_err().kind.to_string(),
+            expected,
+            "{input:?}"
+        );
+    }
+    let error = parse_argv(&["garden", " -due:<Fri "]).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        r#"filter term "-due:<Fri" at argument 1, byte 7: keywords are lowercase. Use "fri" for "Fri""#
+    );
+}

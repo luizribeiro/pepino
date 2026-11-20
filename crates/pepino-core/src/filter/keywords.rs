@@ -108,14 +108,15 @@ pub(super) fn lookup<T: Clone>(value: &str, words: &[(T, &str)]) -> Option<Resul
     })
 }
 
-pub(super) fn accepted<T>(words: &[(T, &str)]) -> String {
-    let Some(((_, last), rest)) = words.split_last() else {
-        return String::new();
-    };
-    let head = rest
+pub(super) fn accepted<T>(words: &[(T, &str)], extra: Option<&str>) -> String {
+    let mut names = words
         .iter()
         .map(|(_, word)| *word)
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{head}, or {last}")
+        .chain(extra)
+        .collect::<Vec<_>>();
+    match names.pop() {
+        Some(last) if !names.is_empty() => format!("{}, or {last}", names.join(", ")),
+        Some(only) => only.into(),
+        None => String::new(),
+    }
 }
