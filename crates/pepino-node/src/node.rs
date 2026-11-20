@@ -26,7 +26,7 @@ impl Node {
         let publish_confirmation_timeout = settings.publish_confirmation_timeout;
         let worker = Worker::start(&settings.database_path).await?;
         let worker_pool = worker.pool.clone();
-        let (inner, acks, status) = worker
+        let started = worker
             .run(async move {
                 let options = SqliteConnectOptions::new()
                     .filename(settings.database_path)
@@ -59,7 +59,14 @@ impl Node {
                 });
                 Ok((Arc::new(inner), acks, status))
             })
-            .await?;
+            .await;
+        let (inner, acks, status) = match started {
+            Ok(started) => started,
+            Err(error) => {
+                worker.shutdown().await?;
+                return Err(error);
+            }
+        };
         Ok(Self {
             inner,
             worker,
@@ -96,8 +103,22 @@ mod tests {
         let keys = DeviceCredentials::load_or_create(dir.path().join("device.cbor")).unwrap();
         let path = dir.path().join("missing-parent").join("node.sqlite");
         assert!(matches!(
-            Node::spawn(NodeSettings::new(keys, path)).await,
+            Node::spawn(NodeSettings::new(keys.clone(), &path)).await,
             Err(Error::Storage(_))
         ));
+        std::fs::create_dir(path.parent().unwrap()).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let settings = NodeSettings::new(keys, &path);
+        for _ in 0..2 {
+            assert!(matches!(
+                Node::spawn(settings.clone()).await,
+                Err(Error::Storage(_))
+            ));
+        }
+        let lock = std::fs::File::options()
+            .write(true)
+            .open(path.with_file_name("node.lock"))
+            .unwrap();
+        lock.try_lock().unwrap();
     }
 }
