@@ -1023,3 +1023,73 @@ async fn listing_errors_report_source_positions_and_saved_view_chains() {
     list_golden(&mut app,json!("@first"),None,None,
         json!({"error":{"kind":"invalid_input","field":"filter","reason":"saved view cycle: first -> last -> first","term":"@first","position":{"kind":"byte","byte":8},"view_chain":["first","last","first"]}})).await;
 }
+
+#[tokio::test]
+async fn history_describes_invalid_events_and_preserves_unknown_value_targets() {
+    use ciborium::Value as Cbor;
+    use pepino_core::{DeviceId, Envelope, Event, EventId, FieldName, FieldValue, Hlc, Status};
+    use pepino_store::IdSource;
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let board = app.local_state().board_id;
+    let app_task = add(&mut app, "Refit the greenhouse door").await;
+    let task = app_task.parse().unwrap();
+    let store = Store::open(directory.path().join("pepino.sqlite"))
+        .await
+        .unwrap();
+    let peer = DeviceId::from_bytes([61; 32]);
+    let hlc = Hlc {
+        wall_ms: NOW,
+        counter: 3,
+    };
+    let envelopes = [
+        (
+            Event::TagAdded {
+                task,
+                tag: "hardware".into(),
+            },
+            "tag",
+            Cbor::from("Hardware"),
+        ),
+        (
+            Event::TaskFieldSet {
+                task,
+                field: FieldName::new("status").unwrap(),
+                value: FieldValue::Status(Status::Doing),
+            },
+            "value",
+            Cbor::Map(vec![(Cbor::from("status"), Cbor::from("waiting"))]),
+        ),
+    ];
+    let [invalid, unknown] = [EventId::from_bytes([28; 32]), EventId::from_bytes([29; 32])];
+    for ((event, member, value), id) in envelopes.into_iter().zip([invalid, unknown]) {
+        let encoded = Envelope::new(peer, hlc, event).unwrap().encode().unwrap();
+        let mut frame: Cbor = ciborium::from_reader(encoded.as_slice()).unwrap();
+        let content = frame.as_array_mut().unwrap()[1].as_map_mut().unwrap();
+        let (_, event) = content
+            .iter_mut()
+            .find(|(key, _)| key.as_text() == Some("event"))
+            .unwrap();
+        let fields = event.as_map_mut().unwrap()[0].1.as_map_mut().unwrap();
+        let (_, field) = fields
+            .iter_mut()
+            .find(|(key, _)| key.as_text() == Some(member))
+            .unwrap();
+        *field = value;
+        let mut raw = Vec::new();
+        ciborium::into_writer(&frame, &mut raw).unwrap();
+        assert!(matches!(
+            store
+                .append(board, &raw, IdSource::Trusted(id))
+                .await
+                .unwrap(),
+            pepino_store::AppendOutcome::Skipped { .. }
+        ));
+    }
+    let wire_clock = pepino_app::Hlc::from(hlc);
+    read_golden(&mut app, json!({"op":"log","task":app_task,"limit":2}), json!({"ok":{"kind":"log","events":[
+        {"id":invalid.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"invalid","kind":"tag_added","reason":"invalid tag \"Hardware\"","change":{"type":"tag","task":app_task,"tag":"Hardware"}},
+        {"id":unknown.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"unknown_value","kind":"task_field_set","change":{"type":"skipped","tasks":[app_task]}}
+    ]}})).await;
+}

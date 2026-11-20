@@ -16,7 +16,6 @@ impl App {
                 self.list_tasks(&filter, sort.as_deref(), limit, today)
                     .await
             }
-
             ReadRequest::ListViews => self.list_views().await,
             ReadRequest::Log { task, limit } => self.log(task.as_deref(), limit).await,
             ReadRequest::Status => self.status().await,
