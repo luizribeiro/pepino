@@ -3,7 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use pepino_core::{BoardId, Clock, DeviceId, Hlc, TaskId};
+use pepino_core::{BoardId, Clock, DeviceId, EventId, Hlc, TaskId};
 use pepino_store::{AppendOutcome, DatabaseErrorKind, Store, StoreError};
 use tokio::time::{Instant, sleep};
 
@@ -169,6 +169,17 @@ impl App {
     ) -> Result<AppendOutcome, SyncStoreError> {
         let _guard = lock(&self.directory, self.lock_timeout).await?;
         Ok(self.store.append(board, bytes, Some(signer)).await?)
+    }
+
+    /// Persist a publication receipt under the directory lock after publishing.
+    pub async fn record_publication(
+        &self,
+        board: BoardId,
+        event: EventId,
+        operation: EventId,
+    ) -> Result<(), SyncStoreError> {
+        let _guard = lock(&self.directory, self.lock_timeout).await?;
+        Ok(self.store.mark_published(board, event, operation).await?)
     }
 
     pub async fn handle(&mut self, request: Request, now: u64) -> Result<Response, AppError> {

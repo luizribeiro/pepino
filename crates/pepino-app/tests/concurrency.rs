@@ -273,3 +273,61 @@ async fn transport_append_uses_the_request_lock_and_releases_it_after_commit() {
     ));
     guard.try_lock().unwrap();
 }
+
+#[tokio::test]
+async fn recording_a_publication_respects_the_request_lock() {
+    use pepino_app::{OpenOptions, Response, SyncStoreError};
+    use std::{fs::File, time::Duration};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let mut app = fixture::open_with_options(
+        path,
+        NOW,
+        OpenOptions {
+            lock_timeout: Duration::ZERO,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let request =
+        serde_json::from_str(r#"{"op":"add_task","title":"Install storm windows"}"#).unwrap();
+    let Response::Write {
+        created: Some(id), ..
+    } = app.handle(request, NOW).await.unwrap()
+    else {
+        panic!("expected a created task");
+    };
+    let id = id.parse().unwrap();
+    let board = app.local_state().board_id;
+    let author = app.local_state().device_id;
+    let guard = File::options()
+        .read(true)
+        .write(true)
+        .open(path.join("local.lock"))
+        .unwrap();
+    guard.try_lock().unwrap();
+    assert!(matches!(
+        app.record_publication(board, id, id).await,
+        Err(SyncStoreError::Lock(AppError::Busy))
+    ));
+    assert_eq!(
+        app.store()
+            .outbox(board, author, 1.try_into().unwrap())
+            .await
+            .unwrap()
+            .pending,
+        1
+    );
+    guard.unlock().unwrap();
+    app.record_publication(board, id, id).await.unwrap();
+    assert_eq!(
+        app.store()
+            .outbox(board, author, 1.try_into().unwrap())
+            .await
+            .unwrap()
+            .pending,
+        0
+    );
+}
