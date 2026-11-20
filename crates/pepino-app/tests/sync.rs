@@ -67,8 +67,8 @@ async fn exchange(order: [u8; 8]) -> ([TaskRecord; 2], [TaskRecord; 2]) {
     let right_store = Store::open(right_dir.path().join("pepino.sqlite"))
         .await
         .unwrap();
-    let left_board = left.local_state().board_id;
-    let right_board = right.local_state().board_id;
+    let left_board = left.local_state().board_id();
+    let right_board = right.local_state().board_id();
     assert_ne!(left.local_state().device_id, right.local_state().device_id);
 
     let title = "Order a replacement greenhouse latch";
@@ -168,7 +168,7 @@ async fn unlink_reports_activation_of_a_dormant_remote_blocker() {
         "Fit the door",
     )
     .await;
-    let board = app.local_state().board_id;
+    let board = app.local_state().board_id();
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();
@@ -224,7 +224,7 @@ async fn deleting_a_live_task_cleans_up_edges_to_already_deleted_batch_targets()
         "Pick up cedar",
     )
     .await;
-    let board = app.local_state().board_id;
+    let board = app.local_state().board_id();
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();
@@ -289,7 +289,7 @@ async fn deletion_reports_roots_created_when_older_parent_edges_activate() {
     let [removed, order, build, paint] = tasks.as_slice() else {
         panic!("expected four tasks")
     };
-    let board = app.local_state().board_id;
+    let board = app.local_state().board_id();
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();

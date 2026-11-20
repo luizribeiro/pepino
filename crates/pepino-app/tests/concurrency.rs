@@ -77,12 +77,12 @@ async fn concurrent_apps_open_and_write_to_the_same_directory() {
                 "write of {title} waited {:?}",
                 started.elapsed()
             );
-            (id, app.local_state().board_id)
+            (id, app.local_state().board_id())
         }));
     }
 
     let app = App::open(&path, NOW).await.unwrap();
-    let board = app.local_state().board_id;
+    let board = app.local_state().board_id();
     let mut ids = BTreeSet::new();
     for worker in workers {
         let (id, observed_board) = worker.await.unwrap();
@@ -258,7 +258,7 @@ async fn transport_append_uses_the_request_lock_and_releases_it_after_commit() {
     )
     .await
     .unwrap();
-    let board = app.local_state().board_id;
+    let board = app.local_state().board_id();
     let author = app.local_state().device_id;
     let guard = File::options()
         .read(true)
@@ -309,7 +309,7 @@ async fn recording_a_publication_respects_the_request_lock() {
         panic!("expected a created task");
     };
     let id = id.parse().unwrap();
-    let board = app.local_state().board_id;
+    let board = app.local_state().board_id();
     let author = app.local_state().device_id;
     let instance = Some([52; 16]);
     let guard = File::options()

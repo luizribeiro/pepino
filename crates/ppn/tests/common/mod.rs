@@ -316,7 +316,7 @@ pub fn ambiguous_tasks(data: &std::path::Path) -> (String, [String; 2]) {
     use pepino_store::Store;
 
     seed_tasks(data, async |app| {
-        let board = app.local_state().board_id;
+        let board = app.local_state().board_id();
         let store = Store::open(data.join("pepino.sqlite")).await.unwrap();
         let mut ids = Vec::new();
         // These envelopes share a four-digit prefix.

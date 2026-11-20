@@ -122,7 +122,7 @@ async fn a_missing_parent_leaves_the_event_log_unchanged() {
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();
-    let board = app.local_state().board_id;
+    let board = app.local_state().board_id();
     let error = handle(
         &mut app,
         json!({
@@ -151,7 +151,7 @@ async fn creation_rejects_the_same_dependency_in_both_directions() {
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();
-    let board = app.local_state().board_id;
+    let board = app.local_state().board_id();
     let before = store.latest_hlc(board).await.unwrap();
 
     let error = handle(
@@ -517,13 +517,13 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
         .await
         .unwrap();
     let history = store
-        .events(app.local_state().board_id, blocker.parse().unwrap())
+        .events(app.local_state().board_id(), blocker.parse().unwrap())
         .await
         .unwrap();
     assert_eq!(history.len(), 6);
     assert!(
         store
-            .edges(app.local_state().board_id, child.parse().unwrap())
+            .edges(app.local_state().board_id(), child.parse().unwrap())
             .await
             .unwrap()
             .is_empty()
@@ -562,7 +562,7 @@ async fn reopening_preserves_local_state_tasks_and_clock_across_wall_regression(
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();
-    let latest = pepino_app::Hlc::from(store.latest_hlc(local.board_id).await.unwrap().unwrap());
+    let latest = pepino_app::Hlc::from(store.latest_hlc(local.board_id()).await.unwrap().unwrap());
     assert_eq!(latest, recorded.updated);
     assert_eq!(latest.wall_ms, later);
     drop(app);
@@ -582,7 +582,7 @@ async fn reopening_preserves_local_state_tasks_and_clock_across_wall_regression(
     assert!(after.updated > latest);
     assert_eq!(after.comments[0].hlc, after.updated);
     assert_eq!(
-        store.latest_hlc(local.board_id).await.unwrap(),
+        store.latest_hlc(local.board_id()).await.unwrap(),
         Some(after.updated.into())
     );
 }
@@ -615,7 +615,7 @@ async fn a_failed_edge_projection_does_not_leave_a_task_or_advance_the_log() {
     );
     assert_eq!(get(&mut app, &parent).await, before);
     let store = Store::open(&database).await.unwrap();
-    let board = app.local_state().board_id;
+    let board = app.local_state().board_id();
     assert_eq!(
         store.latest_hlc(board).await.unwrap(),
         Some(before.updated.into())
@@ -667,7 +667,7 @@ async fn a_projection_failure_after_the_commit_reports_that_the_write_landed() {
     assert!(!error.retryable());
     let store = Store::open(&database).await.unwrap();
     let history = store
-        .events(app.local_state().board_id, id.parse().unwrap())
+        .events(app.local_state().board_id(), id.parse().unwrap())
         .await
         .unwrap();
     assert_eq!(history.len(), 2);
@@ -795,7 +795,7 @@ async fn status_reports_local_context_and_counts_from_the_log() {
     .await
     .unwrap();
     let local = app.local_state();
-    let board = local.board_id;
+    let board = local.board_id();
     let mut expected = json!({
         "kind":"status",
         "identity":{"id":local.identity_id.to_string(),"display_name":"Ada Gardener"},
@@ -858,7 +858,7 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
     use ciborium::Value as Cbor;
     let directory = tempfile::tempdir().unwrap();
     let mut app = fixture::open(directory.path(), NOW).await.unwrap();
-    let board = app.local_state().board_id;
+    let board = app.local_state().board_id();
     let author = app.local_state().device_id.to_string();
     let task = add(&mut app, "Replace the greenhouse latch").await;
     write(
@@ -1271,7 +1271,7 @@ async fn history_describes_invalid_events_and_preserves_unknown_value_targets() 
 
     let directory = tempfile::tempdir().unwrap();
     let mut app = fixture::open(directory.path(), NOW).await.unwrap();
-    let board = app.local_state().board_id;
+    let board = app.local_state().board_id();
     let app_task = add(&mut app, "Refit the greenhouse door").await;
     let task = app_task.parse().unwrap();
     let store = Store::open(directory.path().join("pepino.sqlite"))
@@ -1492,7 +1492,7 @@ async fn an_invalid_creation_lists_its_implicit_task_id_without_a_title() {
     *title = Cbor::from("");
     let mut bytes = Vec::new();
     ciborium::into_writer(&frame, &mut bytes).unwrap();
-    let board = app.local_state().board_id;
+    let board = app.local_state().board_id();
     let pepino_store::AppendOutcome::Skipped { id, .. } =
         store.append(board, &bytes, None).await.unwrap()
     else {

@@ -74,7 +74,7 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
     )
     .await
     .unwrap();
-    let board = app.local_state().board_id;
+    let board = app.local_state().board_id();
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();
@@ -271,7 +271,10 @@ async fn creation_rejects_invalid_events_without_writing_history() {
         .await
         .unwrap();
     assert_eq!(
-        store.latest_hlc(app.local_state().board_id).await.unwrap(),
+        store
+            .latest_hlc(app.local_state().board_id())
+            .await
+            .unwrap(),
         None
     );
 }
