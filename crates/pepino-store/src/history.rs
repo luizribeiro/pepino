@@ -126,17 +126,30 @@ impl Store {
         board: BoardId,
         task: TaskId,
     ) -> Result<Vec<EventRecord>, StoreError> {
-        Ok(self
-            .history_rows(board, Some(task), None)
-            .await?
+        let rows = self
+            .read(async |connection| {
+                sqlx::query_as::<_, HistoryRow<Vec<u8>>>(
+                    "SELECT t.id, e.author, t.hlc, e.bytes AS payload FROM event_task t
+                     JOIN event_log e USING (board, id)
+                     WHERE t.board = ? AND t.task = ? AND e.classification = 'known'
+                     ORDER BY t.hlc, t.id",
+                )
+                .bind(BoardKey(board))
+                .bind(task.as_bytes().as_slice())
+                .fetch_all(connection)
+                .await
+            })
+            .await?;
+        Ok(rows
             .into_iter()
-            .filter_map(|(row, event)| {
-                Some(EventRecord {
-                    id: event.decoded.id(),
-                    author: event.decoded.author()?,
-                    hlc: event.decoded.hlc()?,
-                    bytes: row.bytes,
-                })
+            .map(|row| {
+                let (id, author, hlc, bytes) = row.into_parts();
+                EventRecord {
+                    id,
+                    author,
+                    hlc,
+                    bytes,
+                }
             })
             .collect())
     }
