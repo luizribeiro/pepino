@@ -112,7 +112,10 @@ async fn duplicates_are_board_scoped_and_corrupt_bytes_are_rejected() {
     let trusted = IdSource::Trusted(id);
     assert_eq!(
         store.append(board, &bytes, trusted).await.unwrap(),
-        AppendOutcome::Logged { id }
+        AppendOutcome::Applied {
+            id,
+            task: TaskId(id)
+        }
     );
     assert_eq!(
         store.append(board, &bytes, trusted).await.unwrap(),
@@ -120,7 +123,10 @@ async fn duplicates_are_board_scoped_and_corrupt_bytes_are_rejected() {
     );
     assert_eq!(
         store.append(other, &bytes, trusted).await.unwrap(),
-        AppendOutcome::Logged { id }
+        AppendOutcome::Applied {
+            id,
+            task: TaskId(id)
+        }
     );
     assert!(matches!(
         store

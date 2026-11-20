@@ -1,9 +1,9 @@
 use pepino_core::{
-    BoardId, DecodeOutcome, DeviceId, Envelope, EventId, Hlc, InvalidEvent, UnknownValue,
+    BoardId, DecodeOutcome, DeviceId, Envelope, EventId, Hlc, InvalidEvent, TaskId, UnknownValue,
 };
 use sqlx::{Connection, SqliteConnection};
 
-use crate::{Store, StoreError};
+use crate::{Store, StoreError, fold::fold};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IdSource {
@@ -20,6 +20,7 @@ pub enum SkipReason {
         values: Vec<UnknownValue>,
     },
     Invalid(InvalidEvent),
+    EdgeViewPending,
 }
 
 impl SkipReason {
@@ -29,13 +30,14 @@ impl SkipReason {
             Self::UnknownEvent(_) => "unknown_event",
             Self::UnknownValue { .. } => "unknown_value",
             Self::Invalid(_) => "invalid",
+            Self::EdgeViewPending => "known",
         }
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppendOutcome {
-    Logged { id: EventId },
+    Applied { id: EventId, task: TaskId },
     Duplicate { id: EventId },
     Skipped { id: EventId, reason: SkipReason },
 }
@@ -117,7 +119,13 @@ impl Store {
         let id = decoded.id;
         let outcome = if decoded.insert(&mut tx, board, bytes).await? {
             match decoded.event {
-                Ok(_) => AppendOutcome::Logged { id },
+                Ok(envelope) => match fold(&mut tx, board, &envelope).await? {
+                    Some(task) => AppendOutcome::Applied { id, task },
+                    None => AppendOutcome::Skipped {
+                        id,
+                        reason: SkipReason::EdgeViewPending,
+                    },
+                },
                 Err(reason) => AppendOutcome::Skipped { id, reason },
             }
         } else {

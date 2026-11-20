@@ -1,3 +1,4 @@
+mod fold;
 mod log;
 
 use std::path::Path;
