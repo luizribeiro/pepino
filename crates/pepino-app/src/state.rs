@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use pepino_core::{BoardId, DeviceId, IdentityId};
@@ -18,6 +18,7 @@ pub struct OpenOptions {
     pub display_name: Option<String>,
     pub device_name: Option<String>,
     pub board_name: Option<String>,
+    pub credentials_file: Option<PathBuf>,
     /// Maximum wait for the data directory lock on each open or request.
     pub lock_timeout: Duration,
 }
@@ -28,6 +29,7 @@ impl Default for OpenOptions {
             display_name: None,
             device_name: None,
             board_name: None,
+            credentials_file: None,
             lock_timeout: Duration::from_secs(5),
         }
     }
@@ -115,9 +117,12 @@ impl LocalState {
     }
 
     pub(crate) fn load(directory: &Path) -> Result<Self, AppError> {
-        let path = directory.join(FILE_NAME);
+        Self::read(&directory.join(FILE_NAME))
+    }
+
+    pub(super) fn read(path: &Path) -> Result<Self, AppError> {
         let bytes =
-            fs::read(&path).map_err(|error| path_io_error(&path, "read local state", error))?;
+            fs::read(path).map_err(|error| path_io_error(path, "read local state", error))?;
         Self::decode(&bytes)
     }
 
@@ -135,14 +140,20 @@ impl LocalState {
     }
 
     pub(crate) fn replace(&self, directory: &Path) -> Result<(), AppError> {
+        self.write(&directory.join(FILE_NAME))
+    }
+
+    pub(super) fn write(&self, path: &Path) -> Result<(), AppError> {
+        let directory = path
+            .parent()
+            .ok_or_else(|| storage("save local state", "missing parent directory", false))?;
         let replace = || {
             stage(directory, self)?
-                .persist(directory.join(FILE_NAME))
+                .persist(path)
                 .map_err(|error| error.error)?;
             sync_directory(directory)
         };
-        replace()
-            .map_err(|error| path_io_error(&directory.join(FILE_NAME), "save local state", error))
+        replace().map_err(|error| path_io_error(path, "save local state", error))
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, AppError> {
@@ -250,7 +261,7 @@ fn stage(directory: &Path, state: &LocalState) -> io::Result<tempfile::NamedTemp
     Ok(file)
 }
 
-fn sync_directory(_directory: &Path) -> io::Result<()> {
+pub(super) fn sync_directory(_directory: &Path) -> io::Result<()> {
     #[cfg(unix)]
     fs::File::open(_directory)?.sync_all()?;
     Ok(())
