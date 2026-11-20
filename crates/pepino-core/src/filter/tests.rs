@@ -56,6 +56,7 @@ fn dates_resolve_across_weeks_and_years() {
     for (input, today) in [
         ("tomorrow", Date::MAX),
         ("-1d", Date::MIN),
+        ("+999999999w", today),
         ("+9223372036854775807w", today),
         ("+99999999999999999999999d", today),
     ] {

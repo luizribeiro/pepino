@@ -69,6 +69,31 @@ fn dates() -> impl Strategy<Value = Date> {
     ]
 }
 
+fn date_operands() -> impl Strategy<Value = DateOperand> {
+    prop_oneof![
+        dates().prop_map(DateOperand::Absolute),
+        select(vec![
+            "today",
+            "tomorrow",
+            "yesterday",
+            "mon",
+            "tue",
+            "wed",
+            "thu",
+            "fri",
+            "sat",
+            "sun",
+            "+99999999999999999999999d",
+        ])
+        .prop_map(|relative| relative.parse().unwrap()),
+        (any::<i64>(), select(vec!['d', 'w'])).prop_map(|(amount, unit)| format!(
+            "{amount:+}{unit}"
+        )
+        .parse()
+        .unwrap()),
+    ]
+}
+
 fn clause() -> impl Strategy<Value = Clause> {
     let states = select(
         State::WORDS
@@ -89,9 +114,7 @@ fn clause() -> impl Strategy<Value = Clause> {
     ];
     let custom_operand = prop_oneof![
         any::<i64>().prop_map(CustomValue::Integer),
-        dates()
-            .prop_map(DateOperand::Absolute)
-            .prop_map(CustomValue::Date),
+        date_operands().prop_map(CustomValue::Date),
         atom().prop_map(CustomValue::Text),
     ];
     prop_oneof![
@@ -106,9 +129,9 @@ fn clause() -> impl Strategy<Value = Clause> {
             }
         }),
         comparisons(any::<i64>()).prop_map(Clause::Priority),
-        comparisons(dates().prop_map(DateOperand::Absolute)).prop_map(Clause::Due),
-        comparisons(dates().prop_map(DateOperand::Absolute)).prop_map(Clause::Created),
-        comparisons(dates().prop_map(DateOperand::Absolute)).prop_map(Clause::Updated),
+        comparisons(date_operands()).prop_map(Clause::Due),
+        comparisons(date_operands()).prop_map(Clause::Created),
+        comparisons(date_operands()).prop_map(Clause::Updated),
         vec("[a-z][a-z0-9_./-]{0,16}", 1..4).prop_map(Clause::Tag),
         vec(
             select(

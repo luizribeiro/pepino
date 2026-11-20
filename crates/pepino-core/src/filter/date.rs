@@ -18,7 +18,6 @@ impl DateOperand {
         match self {
             Self::Absolute(date) => Ok(*date),
             Self::Relative(RelativeDate(value)) => relative_days(value, today)
-                .flatten()
                 .and_then(TimeDelta::try_days)
                 .and_then(|delta| today.checked_add_signed(delta))
                 .ok_or_else(|| ErrorKind::DateOutOfRange {
@@ -69,7 +68,8 @@ fn relative(value: &str) -> Option<String> {
         "today" | "tomorrow" | "yesterday" => Some(value.into()),
         _ if weekday(value).is_some() => Some(value[..3].into()),
         _ => {
-            let (sign, digits, unit) = offset_parts(value)?;
+            let (number, unit) = offset_parts(value)?;
+            let (sign, digits) = number.split_at(1);
             let digits = digits.trim_start_matches('0');
             Some(if digits.is_empty() {
                 format!("+0{unit}")
@@ -110,7 +110,7 @@ fn calendar(value: &str) -> Option<Option<Date>> {
     (date.to_string() == value).then_some(Some(date))
 }
 
-fn relative_days(value: &str, today: Date) -> Option<Option<i64>> {
+fn relative_days(value: &str, today: Date) -> Option<i64> {
     let days = match value {
         "today" => 0,
         "tomorrow" => 1,
@@ -122,25 +122,19 @@ fn relative_days(value: &str, today: Date) -> Option<Option<i64>> {
             i64::from((target + 7 - current) % 7)
         }
     };
-    Some(Some(days))
+    Some(days)
 }
 
-fn offset(value: &str) -> Option<Option<i64>> {
-    let (_, _, unit) = offset_parts(value)?;
-    let (number, _) = value.split_at(value.len() - 1);
+fn offset(value: &str) -> Option<i64> {
+    let (number, unit) = offset_parts(value)?;
     let multiplier = if unit == "w" { 7 } else { 1 };
-    Some(
-        number
-            .parse::<i64>()
-            .ok()
-            .and_then(|amount| amount.checked_mul(multiplier)),
-    )
+    number.parse::<i64>().ok()?.checked_mul(multiplier)
 }
 
-fn offset_parts(value: &str) -> Option<(&str, &str, &str)> {
+fn offset_parts(value: &str) -> Option<(&str, &str)> {
     let (number, unit) = value.split_at_checked(value.len().checked_sub(1)?)?;
     let digits = number.strip_prefix(['+', '-'])?;
-    (matches!(unit, "d" | "w") && ascii_digits(digits)).then(|| (&number[..1], digits, unit))
+    (matches!(unit, "d" | "w") && ascii_digits(digits)).then_some((number, unit))
 }
 
 fn weekday(value: &str) -> Option<Weekday> {
