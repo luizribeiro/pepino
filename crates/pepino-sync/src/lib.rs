@@ -1,5 +1,6 @@
 mod engine;
 mod inbox;
+mod join_progress;
 mod outbox;
 mod publication;
 mod retry;

@@ -98,6 +98,10 @@ impl<T: Transport> SyncEngine<T> {
                 .clone()
                 .map(|board| (board, Default::default()))
                 .collect(),
+            board_joins: boards
+                .clone()
+                .map(|id| (id, app.local_state().board_join_state(id)))
+                .collect(),
             node: node.status(),
             ..Default::default()
         });
@@ -138,6 +142,17 @@ impl<T: Transport> SyncEngine<T> {
             });
         }
         changes.send_modify(|status| status.node = node.status());
+        let progress_app = app.clone();
+        let progress_changes = changes.clone();
+        let progress_updates = status.clone();
+        let mut progress_stop = stopping.clone();
+        workers.spawn(async move {
+            tokio::select! {
+                _ = progress_stop.changed() => (),
+                _ = crate::join_progress::track(&progress_app, &progress_changes, progress_updates) => (),
+            }
+            Ok(())
+        });
         let observer = node.clone();
         workers.spawn(async move {
             observe_node(observer.as_ref(), changes, stopping).await;
