@@ -14,13 +14,16 @@ pub fn ppn() -> Command {
             command.env_remove(name);
         }
     }
-    command.env_remove("NO_COLOR").env(
-        "PPN_CONFIG",
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/default-config.toml"
-        ),
-    );
+    command
+        .env("PPN_NO_DAEMON", "1")
+        .env_remove("NO_COLOR")
+        .env(
+            "PPN_CONFIG",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/default-config.toml"
+            ),
+        );
     command
 }
 
