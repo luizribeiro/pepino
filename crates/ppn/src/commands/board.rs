@@ -1,3 +1,4 @@
+mod request;
 use std::path::Path;
 
 use pepino_app::{ReadRequest, Request, Response, WriteRequest};
@@ -21,6 +22,13 @@ pub struct Args {
 
 #[derive(clap::Subcommand)]
 enum Operation {
+    /// Print a secret request and a fingerprint for the inviter.
+    #[command(after_help = example_help(&["ppn board request --name 'Garden tablet'", "ppn board request --json"]))]
+    Request {
+        /// Label for this device in the request. Defaults to the device name.
+        #[arg(long, value_name = "LABEL")]
+        name: Option<String>,
+    },
     #[command(about = "List this identity's boards.", after_help = example_help(&["ppn board ls --json"]))]
     Ls,
     #[command(about = "Show details for a board.", after_help = example_help(&["ppn board show Workshop"]))]
@@ -65,9 +73,13 @@ pub fn run(
     config_path: Option<&Path>,
     allow_start: bool,
 ) -> Result<CommandResult, CliError> {
+    if let Operation::Request { name } = args.operation {
+        return request::run(context, name, config_path, allow_start);
+    }
     let mut client = AppClient::open(context)?;
     let using = matches!(args.operation, Operation::Use { .. });
     let (response, show_selection) = match args.operation {
+        Operation::Request { .. } => unreachable!(),
         Operation::Ls => (client.call(Request::Read(ReadRequest::BoardList))?, true),
         Operation::Show { reference: board } => (
             client.call(Request::Read(ReadRequest::BoardShow { board }))?,

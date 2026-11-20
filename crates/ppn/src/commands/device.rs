@@ -171,6 +171,7 @@ pub fn run(
                 single_line(&request.name),
             );
             Ok(CommandResult::document(RequestCode {
+                kind: "device_request",
                 code,
                 fingerprint,
                 id: request.id,
@@ -209,15 +210,16 @@ fn runtime() -> Result<tokio::runtime::Runtime, CliError> {
         })
 }
 
-fn invalid_code(error: CodeError) -> CliError {
+pub(crate) fn invalid_code(error: CodeError) -> CliError {
     CliError::new(ErrorKind::InvalidInput, error.to_string())
 }
 
-struct RequestCode {
-    code: String,
-    fingerprint: String,
-    id: DeviceId,
-    expires_at: chrono::DateTime<chrono::Utc>,
+pub(crate) struct RequestCode {
+    pub(crate) kind: &'static str,
+    pub(crate) code: String,
+    pub(crate) fingerprint: String,
+    pub(crate) id: DeviceId,
+    pub(crate) expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl Render for RequestCode {
@@ -227,7 +229,7 @@ impl Render for RequestCode {
 
     fn json_fields(self) -> Map<String, Value> {
         Map::from_iter([
-            ("kind".into(), json!("device_request")),
+            ("kind".into(), json!(self.kind)),
             ("request".into(), json!(self.code)),
             ("fingerprint".into(), json!(self.fingerprint)),
             ("device_id".into(), json!(self.id)),
@@ -237,7 +239,7 @@ impl Render for RequestCode {
     }
 }
 
-fn unexpected_reply() -> CliError {
+pub(crate) fn unexpected_reply() -> CliError {
     CliError::new(
         ErrorKind::DaemonUnreachable,
         "The daemon returned an unexpected control response.",

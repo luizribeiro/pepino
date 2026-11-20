@@ -34,6 +34,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "status",
             "identity Identity name, shared roster, cache status and rejected roster entries\ndevice Local device, known revocation or pending leave, and last peer contact when available\nboard Selected board\nselected_board Board selected for this invocation and its source\nboards Known boards with membership and sync activity\ndata_dir Local data directory\ncounts Task and event counts\nnetwork Daemon network snapshot or offline\nprotocol_version Application protocol version",
         ),
+        "board request" => (
+            "board_request",
+            "request Secret board request code\nfingerprint Fingerprint to confirm with the invitee\ndevice_id Requesting device ID\nexpires_at Request expiry in UTC\nsecret True for secret code output",
+        ),
         "board ls" => (
             "boards",
             "boards Known boards with current marker, counts, membership and sync activity\nselected_board Board selected for this invocation and its source",
