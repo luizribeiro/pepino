@@ -46,7 +46,7 @@ pub fn run(context: &Context<'_>, input: Args) -> Result<CommandResult, CliError
         .with_hint("Pass the description as text or use --from-file."));
     }
     let request = match from_json {
-        Some(file) => crate::task_stdin::request(&file, context.time.today)?,
+        Some(file) => crate::task_json::request(&file, context.time.today)?,
         None => new_task(read_task_text(title, None)?),
     };
     let request = args.apply_to_add(request, context.time.today)?;

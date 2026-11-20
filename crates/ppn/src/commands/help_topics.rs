@@ -39,6 +39,25 @@ const DATES: &str = "Use YYYY-MM-DD, today, tomorrow, yesterday, a three-letter 
 or a signed offset such as +3d or -1w. Units are d (days) and w (weeks). \
 A weekday chooses the next occurrence including today. Relative dates use the local calendar.";
 
+const JSON: &str = r#"Use --json or PPN_JSON=1. Success writes one versioned document to stdout
+with raw values, full IDs and UTC timestamps. Every document has schema and
+kind. Errors and warnings go to stderr under error and warning respectively.
+See ppn help --json for command response fields, exit statuses and error codes.
+
+Use ppn add --from-json FILE or --from-json - (stdin) for a task object.
+The title is required. Optional keys are description, status, due, priority,
+tags, assignees, fields, parent, blocks and blocked_by. An optional op must be
+"add_task". Status defaults to todo. Due accepts the forms in ppn help dates.
+Priority is a signed 64-bit integer. Tags, assignees, blocks and blocked_by
+are string arrays. Parent, blocks and blocked_by use task IDs or prefixes.
+Each entry of fields is a typed value such as {"type":"integer","value":3}.
+Other value types are text, date, status or unset. Omit value for unset.
+Explicit flags override scalar values and append tags, assignees and dependencies.
+The --json flag selects output only. ppn add - reads literal title text.
+
+Example:
+  {"title":"Replace the greenhouse latch","due":"tomorrow","tags":["hardware"],"fields":{"estimate":{"type":"integer","value":3}}}"#;
+
 pub(super) fn all() -> BTreeMap<&'static str, String> {
     let keywords = pepino_app::filter_keyword_groups()
         .map(|(group, words)| format!("{group} {}", words.join(", ")))
@@ -47,7 +66,7 @@ pub(super) fn all() -> BTreeMap<&'static str, String> {
         ("filters", format!("{keywords}\n\n{DATES}\n\n{FILTERS}")),
         ("dates", DATES.into()),
         ("ids", "Task IDs are 64 hexadecimal digits. Use any unambiguous prefix of at least four digits. Assignees accept me, a display name, a full identity ID or an unambiguous prefix.".into()),
-        ("json", "Use --json or PPN_JSON=1. Success writes one versioned document to stdout with raw values, full IDs and UTC timestamps. Errors and warnings go to stderr as error or warning objects. See ppn help --json for exit statuses and error codes.".into()),
+        ("json", JSON.into()),
     ])
 }
 

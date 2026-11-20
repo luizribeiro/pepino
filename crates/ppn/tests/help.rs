@@ -312,3 +312,18 @@ fn json_help_describes_the_success_document_of_each_leaf() {
             .contains("Matching")
     );
 }
+
+#[test]
+fn json_topic_describes_the_explicit_add_input() {
+    let human = run_ppn(&["help", "json"]);
+    for item in [
+        "--from-json FILE",
+        "blocked_by",
+        "ppn help dates",
+        "literal title text",
+    ] {
+        assert!(human.contains(item), "{item}");
+    }
+    let help = as_json(&run_ppn(&["help", "--json"]));
+    assert_eq!(help["topics"]["json"], human.trim_end());
+}
