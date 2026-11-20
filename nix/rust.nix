@@ -1,5 +1,6 @@
 { crane, pkgs, src, version }:
 let
+  inherit (pkgs) lib;
   craneLib = crane.mkLib pkgs;
   common = {
     pname = "ppn";
@@ -22,8 +23,19 @@ in
     clippy = craneLib.cargoClippy (shared // {
       cargoClippyExtraArgs = "--all-targets -- -D warnings";
     });
-    test = craneLib.cargoTest (shared // {
-      env.PEPINO_NETWORK_TESTS = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "1";
+    test = craneLib.cargoTest (shared // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+      env.PEPINO_NETWORK_TESTS = "1";
+      # The sandbox's loopback has no IPv4 multicast route. Keep the network tests isolated.
+      checkPhase = ''
+        runHook preCheck
+        export -f cargo cargoWithProfile
+        ${lib.getExe' pkgs.util-linux "unshare"} --user --map-root-user --net ${pkgs.runtimeShell} -ec '
+          ${lib.getExe' pkgs.iproute2 "ip"} link set lo up multicast on
+          ${lib.getExe' pkgs.iproute2 "ip"} route add 224.0.0.0/4 dev lo
+          cargoWithProfile test "$@"
+        ' bash ${common.cargoExtraArgs}
+        runHook postCheck
+      '';
     });
   };
 }
