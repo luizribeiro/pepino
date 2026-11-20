@@ -103,10 +103,10 @@ fn versioned_messages_have_a_shared_json_and_cbor_codec() {
         tasks: Vec::new(),
         edges: Vec::new(),
     }));
-    let error: WireResponse = serde_json::from_value(
-        json!({"v":1,"result":{"error":{"kind":"not_found","field":"task","task":"97ad"}}}),
-    )
-    .unwrap();
+    let error = WireResponse::new(Err(AppError::NotFound {
+        field: "task".into(),
+        reference: pepino_app::MissingReference::Task("97ad".into()),
+    }));
 
     for format in [WireFormat::Json, WireFormat::Cbor] {
         assert_eq!(

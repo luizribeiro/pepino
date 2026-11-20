@@ -129,8 +129,11 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
                 );
             } else if kind == AppErrorKind::NotFound {
                 assert_eq!(
-                    serde_json::to_value(error).unwrap(),
-                    json!({"kind":"not_found","field":field,"task":reference})
+                    error,
+                    AppError::NotFound {
+                        field: field.into(),
+                        reference: pepino_app::MissingReference::Task(reference.into())
+                    }
                 );
             } else {
                 assert!(
