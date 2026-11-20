@@ -2,6 +2,7 @@ use std::{fmt, str::FromStr};
 
 use data_encoding::{BASE32_NOPAD_NOCASE, HEXLOWER_PERMISSIVE};
 use p2panda::spaces::Member;
+use pepino_core::DeviceId;
 
 use crate::Error;
 
@@ -14,6 +15,10 @@ impl MemberInfo {
         let info = Self(bytes.try_into().map_err(invalid)?);
         info.member()?;
         Ok(info)
+    }
+
+    pub fn device_id(&self) -> Result<DeviceId, Error> {
+        Ok(DeviceId::from_bytes(*self.member()?.id().as_bytes()))
     }
 
     pub fn as_bytes(&self) -> &[u8; 305] {

@@ -54,8 +54,22 @@ impl BoardHandle {
         let space = self.space()?;
         let node = self.node.upgrade().ok_or(Error::Closed)?;
         self.run(async move {
-            node.register_member(member).await.map_err(Error::node)?;
-            space.add(id, role.level()).await.map_err(Error::node)
+            match space
+                .actors()
+                .await
+                .map_err(Error::node)?
+                .into_iter()
+                .find(|(actor, _)| actor.as_bytes() == id.as_bytes())
+            {
+                Some((_, level)) if level == role.level() => Ok(()),
+                Some(_) => Err(Error::Member(
+                    "device already has a different direct role".into(),
+                )),
+                None => {
+                    node.register_member(member).await.map_err(Error::node)?;
+                    space.add(id, role.level()).await.map_err(Error::node)
+                }
+            }
         })
         .await
     }

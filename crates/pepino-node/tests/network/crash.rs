@@ -35,6 +35,13 @@ async fn abort_recovers_exactly_the_random_unacknowledged_subset() {
             .await
             .unwrap();
     }
+    let ticket = b.member_info().await.unwrap();
+    assert_eq!(ticket.device_id().unwrap(), b.device_id());
+    owner.add_member(&ticket, Role::Write).await.unwrap();
+    assert!(matches!(
+        owner.add_member(&ticket, Role::Read).await,
+        Err(pepino_node::Error::Member(_))
+    ));
     tokio::try_join!(other.wait_until_joined(WAIT), third.wait_until_joined(WAIT)).unwrap();
 
     let mut events = owner.events().unwrap();
