@@ -1,7 +1,9 @@
-{ config, lib, pepinoClientReady, ... }:
+{ config, lib, pkgs, pepinoClientReady, pepinoNodeArgs, ... }:
 let
   client = config.programs.pepino;
   node = config.services.pepino;
+  stateDir = lib.replaceStrings [ "%" ] [ "%%" ] node.dataDir;
+  stateFile = "${stateDir}/local.json";
 in
 {
   config = lib.mkMerge [
@@ -26,6 +28,10 @@ in
       };
     })
     (lib.mkIf node.enable {
+      _module.args.pepinoNodeDaemon = {
+        autostart = false;
+        socket_path = "/run/pepino/control.sock";
+      };
       assertions = [{
         assertion = !node.openFirewall || node.port != null;
         message = "services.pepino.openFirewall requires services.pepino.port.";
@@ -40,7 +46,46 @@ in
         group = node.group;
         mode = "0700";
       };
-      networking.firewall.allowedUDPPorts = lib.mkIf (node.openFirewall && node.port != null) [ node.port ];
+      networking.firewall.allowedUDPPorts = lib.mkIf (node.openFirewall && node.port != null)
+        ([ node.port ] ++ lib.optional (node.mdns != false) 5353);
+      environment.systemPackages = [
+        (import ./node-wrapper.nix {
+          inherit pkgs node pepinoNodeArgs;
+          runAs = [ "${pkgs.util-linux}/bin/runuser" "-u" node.user "-g" node.group "--" ];
+        })
+      ];
+      systemd.paths.pepino = {
+        description = "Start Pepino when the node is linked";
+        wantedBy = [ "multi-user.target" ];
+        pathConfig.PathExists = stateFile;
+      };
+      systemd.services.pepino = {
+        description = "Pepino always-on sync node";
+        wantedBy = [ "multi-user.target" ];
+        after = [ "network.target" "systemd-tmpfiles-setup.service" ];
+        unitConfig.ConditionPathExists = stateFile;
+        serviceConfig = {
+          ExecStart = "${lib.escapeShellArgs pepinoNodeArgs} daemon run";
+          User = node.user;
+          Group = node.group;
+          Restart = "on-failure";
+          RestartSec = "5s";
+          RuntimeDirectory = "pepino";
+          RuntimeDirectoryMode = "0700";
+          UMask = "0077";
+          ProtectSystem = "strict";
+          ReadWritePaths = [ (lib.escapeShellArg stateDir) ];
+          NoNewPrivileges = true;
+          PrivateTmp = true;
+          PrivateDevices = true;
+          ProtectKernelTunables = true;
+          ProtectKernelModules = true;
+          ProtectControlGroups = true;
+          CapabilityBoundingSet = "";
+          RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" "AF_NETLINK" ];
+          RestrictSUIDSGID = true;
+        };
+      };
     })
   ];
 }

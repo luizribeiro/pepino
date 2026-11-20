@@ -81,6 +81,8 @@ assert accepts fullLinux [ ];
 assert fullLinux.environment.etc."pepino/node.toml".source == fullLinux.services.pepino.configFile;
 assert fullDarwin.environment.etc."pepino/node.toml".source == fullDarwin.services.pepino.configFile;
 assert fullLinux.networking.firewall.allowedUDPPorts == [ 44123 ];
+assert (linux (lib.recursiveUpdate fixtures.full { services.pepino.mdns = true; })).networking.firewall.allowedUDPPorts == [ 44123 5353 ];
+assert system != "x86_64-linux" || nixos.config.systemd.services.pepino.unitConfig.ConditionPathExists == "/srv/pepino/local.json";
 assert fullLinux.users.users.pepino-relay.isSystemUser;
 assert fullLinux.systemd.tmpfiles.settings.pepino."/srv/pepino".d.mode == "0700";
 assert accepts fullDarwin [ ];
@@ -101,6 +103,7 @@ pkgs.runCommand "pepino-config-check"
     programs.pepino.daemon.enable = true;
   })).environment.etc."pepino/config.toml".source;
   node = fullDarwin.services.pepino.configFile;
+  linuxNode = fullLinux.services.pepino.configFile;
   typicalClient = (darwinWithAccount fixtures.typical).environment.etc."pepino/config.toml".source;
   typicalNode = (linux fixtures.typical).services.pepino.configFile;
   untrustedNode = (darwinWithAccount fixtures.untrusted).services.pepino.configFile;
@@ -122,11 +125,13 @@ pkgs.runCommand "pepino-config-check"
       (name: { message, ... }: "check_error ${lib.escapeShellArgs [ name message ]}")
       fixtures.invalidTypes)}
 
-    for file in "$empty" "$cleared" "$client" "$supervisedClient" "$node" "$typicalClient" "$typicalNode" "$untrustedNode"; do
+    for file in "$empty" "$cleared" "$client" "$supervisedClient" "$node" "$linuxNode" "$typicalClient" "$typicalNode" "$untrustedNode"; do
       ppn config check "$file"
     done
     test ! -s "$empty"
     grep -qx 'autostart = false' "$supervisedClient"
+    grep -qx 'autostart = false' "$node"
+    grep -qx 'socket_path = "/run/pepino/control.sock"' "$linuxNode"
     grep -qx 'bootstrap_nodes = \[\]' "$cleared"
     grep -qx 'relay_urls = \[\]' "$cleared"
     grep -qx 'trusted_devices = \[\]' "$cleared"

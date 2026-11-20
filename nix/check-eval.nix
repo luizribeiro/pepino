@@ -24,6 +24,8 @@ in
           systemd.tmpfiles.settings = attrs;
           systemd.user.services = attrs;
           systemd.user.timers = attrs;
+          systemd.paths = attrs;
+          systemd.services = attrs;
           system.activationScripts.postActivation.text = mkOption { type = types.str; default = ""; };
         };
       }

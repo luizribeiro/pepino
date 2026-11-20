@@ -14,6 +14,8 @@ in
       ${pkgs.jq}/bin/jq -er '.values.data_dir.value') || exit 1
     test -f "$data_dir/local.json"
   '';
+  _module.args.pepinoNodeArgs = [ "${node.package}/bin/ppn" "--config" "${node.configFile}" ];
+  _module.args.pepinoNodeDaemon = lib.mkDefault { autostart = false; };
 
   environment.systemPackages = lib.mkIf client.enable [ client.package ];
   environment.etc."pepino/config.toml" = lib.mkIf client.enable {
@@ -24,5 +26,5 @@ in
     source = node.configFile;
   };
   services.pepino.configFile =
-    if node.enable then pepino.render pkgs "pepino-node.toml" node { } else null;
+    if node.enable then pepino.render pkgs "pepino-node.toml" node config._module.args.pepinoNodeDaemon else null;
 }
