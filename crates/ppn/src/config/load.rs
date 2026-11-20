@@ -23,12 +23,15 @@ pub fn load(
 ) -> Result<LoadedConfig, CliError> {
     let mut draft = Draft::new(dirs)?;
     let mut problems = Vec::new();
-    let files = visit_files(
-        &select_files(flags, env, dirs),
-        read,
-        &mut problems,
-        |file, text| draft.apply_file(&file.path, text, &file.source),
-    );
+    let files = match select_files(flags, env, dirs) {
+        Ok(files) => visit_files(&files, read, &mut problems, |file, text| {
+            draft.apply_file(&file.path, text, &file.source)
+        }),
+        Err(error) => {
+            problems.push(error.to_string());
+            Vec::new()
+        }
+    };
     if let Err(error) = super::env::apply(&mut draft, env) {
         problems.push(error.to_string());
     }
@@ -142,7 +145,7 @@ mod tests {
         };
         let error = load(&flags, &env, read, &dirs).unwrap_err();
         assert!(error.to_string().contains("/srv/pepino/custom.toml"));
-        let error = check(&select_files(&flags, &env, &dirs), read, &dirs).unwrap_err();
+        let error = check(&select_files(&flags, &env, &dirs).unwrap(), read, &dirs).unwrap_err();
         assert!(error.to_string().contains("/srv/pepino/custom.toml"));
     }
 }

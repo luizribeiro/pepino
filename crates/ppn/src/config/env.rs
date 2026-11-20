@@ -6,7 +6,7 @@ use toml::de::{DeTable, DeValue};
 use super::diagnostics::invalid_config;
 use super::document::{Input, Validator};
 use super::validate::Draft;
-use super::{Env, Source};
+use super::{Env, Source, ValueError};
 use crate::error::CliError;
 
 const VARIABLES: &[(&str, &str)] = &[
@@ -21,15 +21,23 @@ const VARIABLES: &[(&str, &str)] = &[
     ("PPN_DATE_FORMAT", "ui.date_format"),
 ];
 
+pub fn env_value<'a>(env: &'a Env, name: &str) -> Result<Option<&'a str>, ValueError> {
+    env.get(OsStr::new(name))
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_str().ok_or(ValueError("expected a UTF-8 value")))
+        .transpose()
+}
+
 pub(crate) fn apply(draft: &mut Draft<'_>, env: &Env) -> Result<(), CliError> {
     let mut problems = Vec::new();
     for &(variable, key) in VARIABLES {
-        let Some(raw) = env.get(OsStr::new(variable)) else {
-            continue;
-        };
-        let Some(raw) = raw.to_str() else {
-            problems.push(format!("{variable}: {key}: expected a UTF-8 value"));
-            continue;
+        let raw = match env_value(env, variable) {
+            Ok(Some(raw)) => raw,
+            Ok(None) => continue,
+            Err(error) => {
+                problems.push(format!("{variable}: {key}: {error}"));
+                continue;
+            }
         };
         let mut validator = Validator::new(None);
         draft.apply(key, &wrapped(value(key, raw)), &Source::Env, &mut validator);
@@ -118,7 +126,7 @@ mod tests {
                 ),
                 ("PPN_MDNS", "0"),
                 ("PPN_CREDENTIALS_FILE", "~/keys/device.cbor"),
-                ("PPN_TRUSTED_DEVICES", ""),
+                ("PPN_TRUSTED_DEVICES", id),
                 ("PPN_BOOTSTRAP_NODES", &bootstrap),
                 ("PPN_DATA_DIR", "/srv/pepino"),
                 ("PPN_COLOR", "always"),
@@ -152,7 +160,7 @@ mod tests {
             values["credentials_file"]["value"],
             "/home/release/keys/device.cbor"
         );
-        assert_eq!(values["trusted_devices"]["value"], serde_json::json!([]));
+        assert_eq!(values["trusted_devices"]["value"], serde_json::json!([id]));
         assert_eq!(values["bootstrap_nodes"]["value"][0]["node_id"], id);
         assert_eq!(
             values["bootstrap_nodes"]["value"][0]["relay_url"],

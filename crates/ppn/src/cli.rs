@@ -126,8 +126,8 @@ impl ProcessInputs {
         file: Option<&Path>,
     ) -> Result<Vec<config::ConfigFile>, CliError> {
         let dirs = (self.dirs)(&self.env)?;
-        Ok(match file {
-            Some(file) => vec![config::ConfigFile::explicit(file, &dirs)],
+        match file {
+            Some(file) => Ok(vec![config::ConfigFile::explicit(file, &dirs)]),
             None => config::select_files(
                 &Flags {
                     config,
@@ -136,7 +136,7 @@ impl ProcessInputs {
                 &self.env,
                 &dirs,
             ),
-        })
+        }
     }
 
     fn context(&self, globals: &Globals, explicit_color: bool) -> Context<'_> {
@@ -280,6 +280,30 @@ mod tests {
             inputs.env.insert("PPN_MDNS".into(), "maybe".into());
             assert!(execute(&inputs).0.is_ok());
         }
+    }
+
+    #[test]
+    fn empty_config_environment_variables_preserve_defaults() {
+        let mut inputs = inputs(&["ppn", "config", "show", "--json"]);
+        inputs.env = ["PPN_CONFIG", "PPN_MDNS", "PPN_NETWORK", "PPN_DATA_DIR"]
+            .map(|name| (name.into(), "".into()))
+            .into();
+        inputs.dirs = |_| {
+            Ok(PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None).unwrap())
+        };
+        inputs.read = |path| {
+            assert!(!path.as_os_str().is_empty());
+            Err(io::ErrorKind::NotFound.into())
+        };
+        let context = inputs.context(&Globals::on_early_exit(&inputs.args, true), false);
+        let config = &context.config().unwrap().config;
+        assert!(
+            config
+                .values()
+                .values()
+                .all(|value| value["source"] == "default")
+        );
+        assert!(execute(&inputs).0.is_ok());
     }
 
     #[test]

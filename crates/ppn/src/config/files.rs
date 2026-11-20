@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -7,8 +7,8 @@ use serde::Serialize;
 
 use super::diagnostics::invalid_config;
 use super::path::{expand_home, serialize_path};
-use super::{PlatformDirs, SYSTEM_CONFIG, Source};
-use crate::error::CliError;
+use super::{PlatformDirs, SYSTEM_CONFIG, Source, env_value};
+use crate::error::{CliError, ErrorKind};
 use crate::terminal::Color;
 
 pub const CONFIG_ENV: &str = "PPN_CONFIG";
@@ -72,18 +72,26 @@ pub struct FileStatus {
     pub exists: bool,
 }
 
-pub fn select_files(flags: &Flags, env: &Env, dirs: &PlatformDirs) -> Vec<ConfigFile> {
-    let explicit = flags
-        .config
-        .as_deref()
-        .or_else(|| env.get(OsStr::new(CONFIG_ENV)).map(Path::new));
+pub fn select_files(
+    flags: &Flags,
+    env: &Env,
+    dirs: &PlatformDirs,
+) -> Result<Vec<ConfigFile>, CliError> {
+    let explicit = match flags.config.as_deref() {
+        Some(path) => Some(path),
+        None => env_value(env, CONFIG_ENV)
+            .map_err(|error| {
+                CliError::new(ErrorKind::InvalidConfig, format!("{CONFIG_ENV}: {error}"))
+            })?
+            .map(Path::new),
+    };
     if let Some(path) = explicit {
-        return vec![ConfigFile::explicit(path, dirs)];
+        return Ok(vec![ConfigFile::explicit(path, dirs)]);
     }
 
     let system = PathBuf::from(SYSTEM_CONFIG);
     let user = dirs.user_config.as_path().to_owned();
-    vec![
+    Ok(vec![
         ConfigFile {
             source: Source::SystemFile {
                 path: system.clone(),
@@ -94,7 +102,7 @@ pub fn select_files(flags: &Flags, env: &Env, dirs: &PlatformDirs) -> Vec<Config
             source: Source::UserFile { path: user.clone() },
             path: user,
         },
-    ]
+    ])
 }
 
 pub fn paths(
@@ -121,7 +129,7 @@ mod tests {
             PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None).unwrap();
         let mut env = Env::new();
         let mut flags = Flags::default();
-        let files = select_files(&flags, &env, &dirs);
+        let files = select_files(&flags, &env, &dirs).unwrap();
         let statuses = paths(&files, |path| Ok(path == dirs.user_config.as_path())).unwrap();
         assert_eq!(statuses.len(), 2);
         assert_eq!(
@@ -140,14 +148,14 @@ mod tests {
         );
 
         env.insert(CONFIG_ENV.into(), "~/profile.toml".into());
-        let files = select_files(&flags, &env, &dirs);
+        let files = select_files(&flags, &env, &dirs).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, Path::new("/home/release/profile.toml"));
         let error = paths(&files, |_| Ok(false)).unwrap_err();
         assert!(error.to_string().contains("/home/release/profile.toml"));
 
         flags.config = Some("/srv/pepino/custom.toml".into());
-        let files = select_files(&flags, &env, &dirs);
+        let files = select_files(&flags, &env, &dirs).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, Path::new("/srv/pepino/custom.toml"));
         assert_eq!(paths(&files, |_| Ok(true)).unwrap()[0].path, files[0].path);

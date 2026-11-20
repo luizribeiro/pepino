@@ -1,10 +1,10 @@
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Args, ValueEnum};
 
-use crate::config::Env;
+use crate::config::{Env, env_value};
 use crate::error::{CliError, ErrorKind};
 use crate::terminal::Color;
 
@@ -47,17 +47,16 @@ fn parse_timeout(value: &str) -> Result<Duration, humantime::DurationError> {
 
 fn parse_json(value: &str) -> Result<bool, &'static str> {
     match value {
-        "" | "0" | "false" => Ok(false),
+        "0" | "false" => Ok(false),
         "1" | "true" => Ok(true),
         _ => Err("expected 0, false, 1, or true"),
     }
 }
 
 pub fn json_from_env(env: &Env) -> Result<bool, CliError> {
-    env.get(OsStr::new(JSON_ENV))
-        .map_or(Some(""), |value| value.to_str())
-        .ok_or("expected a UTF-8 value")
-        .and_then(parse_json)
+    env_value(env, JSON_ENV)
+        .map_err(|error| error.to_string())
+        .and_then(|value| value.map_or(Ok(false), parse_json).map_err(str::to_owned))
         .map_err(|error| CliError::new(ErrorKind::Usage, format!("Invalid {JSON_ENV}: {error}")))
 }
 

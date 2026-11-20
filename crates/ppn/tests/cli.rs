@@ -900,3 +900,47 @@ fn config_show_reports_file_and_environment_errors_together() {
         "{message}"
     );
 }
+
+#[test]
+fn config_show_ignores_empty_environment_values() {
+    let sandbox = ConfigSandbox::new();
+    let output = sandbox
+        .command()
+        .env("PPN_CONFIG", "")
+        .env("PPN_NETWORK", "")
+        .env("PPN_MDNS", "")
+        .env("PPN_DATA_DIR", "")
+        .args(["config", "show", "--json"])
+        .output()
+        .unwrap();
+    let data = as_json(&success(output));
+    assert_eq!(data["values"]["network"]["value"], "release-team");
+    assert_eq!(data["values"]["network"]["source"], "user_file");
+    assert_eq!(data["values"]["data_dir"]["source"], "default");
+}
+
+#[cfg(unix)]
+#[test]
+fn config_show_names_non_utf8_environment_variables() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let sandbox = ConfigSandbox::new();
+    let output = sandbox
+        .command()
+        .env("PPN_CONFIG", OsStr::from_bytes(b"bad\xff"))
+        .env("PPN_MDNS", OsStr::from_bytes(b"bad\xff"))
+        .args(["config", "show", "--json"])
+        .output()
+        .unwrap();
+    let diagnostic = assert_json_error(output, 1, "invalid_config");
+    let message = diagnostic["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("PPN_CONFIG: expected a UTF-8 value"),
+        "{message}"
+    );
+    assert!(
+        message.contains("PPN_MDNS: mdns: expected a UTF-8 value"),
+        "{message}"
+    );
+}

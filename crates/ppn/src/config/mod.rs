@@ -15,6 +15,7 @@ pub use path::AbsolutePath;
 pub use types::{DateFormat, Network, NodeId, RelayUrl, ValueError};
 
 pub use diagnostics::nearest_key;
+pub use env::env_value;
 pub use files::{CONFIG_ENV, ConfigFile, Env, FileStatus, Flags, paths, select_files};
 pub use load::{LoadedConfig, check, load};
 pub use validate::validate_file;
