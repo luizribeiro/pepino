@@ -18,6 +18,15 @@ const PLAN: &[u8] =
 const REVIEW: &[u8] = br#"{"kind":"comment","text":"Review rollback steps with on-call."}"#;
 const DONE: &[u8] = br#"{"kind":"status","value":"done"}"#;
 
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_ci_runs_the_opted_in_network_tests() {
+    assert!(
+        std::env::var_os("CI").is_none() || cfg!(pepino_network_tests),
+        "Linux CI must build the network tests with PEPINO_NETWORK_TESTS=1"
+    );
+}
+
 #[tokio::test]
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn two_devices_exchange_events_and_a_late_member_gets_history() {
