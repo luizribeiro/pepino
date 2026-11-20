@@ -1,4 +1,4 @@
-use pepino_core::{BoardId, Envelope, Event, FieldValue, TaskId};
+use pepino_core::{BoardId, Envelope, Event, FieldValue, IdentityId, TaskId};
 use sqlx::SqliteConnection;
 
 use crate::{BoardKey, StoreError};
@@ -10,9 +10,14 @@ pub(super) struct Registers<'a> {
     pub(super) envelope: &'a Envelope,
 }
 
+enum PresenceMember<'a> {
+    Tag(&'a str),
+    Assignee(&'a IdentityId),
+}
+
 impl Registers<'_> {
     pub(super) async fn apply(&mut self) -> Result<(), StoreError> {
-        match self.envelope.event() {
+        let (member, present) = match self.envelope.event() {
             Event::TaskCreated { title, fields } => {
                 for (name, value) in [
                     ("title", Some(FieldValue::Text(title.clone()))),
@@ -32,48 +37,43 @@ impl Registers<'_> {
                     self.field(name.as_str(), value).await?;
                 }
                 for tag in &fields.tags {
-                    self.presence("tag", tag.as_bytes(), true).await?;
+                    self.presence(PresenceMember::Tag(tag), true).await?;
                 }
                 for who in &fields.assignees {
-                    self.presence("assignee", who.as_bytes(), true).await?;
+                    self.presence(PresenceMember::Assignee(who), true).await?;
                 }
-                Ok(())
+                return Ok(());
             }
-            Event::TaskFieldSet { field, value, .. } => self.field(field.as_str(), value).await,
-            event @ (Event::TagAdded { tag, .. } | Event::TagRemoved { tag, .. }) => {
-                self.presence(
-                    "tag",
-                    tag.as_bytes(),
-                    matches!(event, Event::TagAdded { .. }),
-                )
-                .await
+            Event::TaskFieldSet { field, value, .. } => {
+                return self.field(field.as_str(), value).await;
             }
-            event @ (Event::AssigneeAdded { who, .. } | Event::AssigneeRemoved { who, .. }) => {
-                self.presence(
-                    "assignee",
-                    who.as_bytes(),
-                    matches!(event, Event::AssigneeAdded { .. }),
-                )
-                .await
-            }
+            Event::TagAdded { tag, .. } => (PresenceMember::Tag(tag), true),
+            Event::TagRemoved { tag, .. } => (PresenceMember::Tag(tag), false),
+            Event::AssigneeAdded { who, .. } => (PresenceMember::Assignee(who), true),
+            Event::AssigneeRemoved { who, .. } => (PresenceMember::Assignee(who), false),
             Event::CommentAdded { text, .. } => {
-                self.write(
-                    "comment",
-                    self.envelope.id().as_bytes(),
-                    Some(text.as_bytes()),
-                )
-                .await
+                return self
+                    .write(
+                        "comment",
+                        self.envelope.id().as_bytes(),
+                        Some(text.as_bytes()),
+                    )
+                    .await;
             }
-            _ => Ok(()),
-        }
+            _ => return Ok(()),
+        };
+        self.presence(member, present).await
     }
 
     async fn presence(
         &mut self,
-        kind: &str,
-        member: &[u8],
+        member: PresenceMember<'_>,
         present: bool,
     ) -> Result<(), StoreError> {
+        let (kind, member) = match member {
+            PresenceMember::Tag(tag) => ("tag", tag.as_bytes()),
+            PresenceMember::Assignee(who) => ("assignee", who.as_bytes().as_slice()),
+        };
         self.write(kind, member, present.then_some(&[])).await
     }
 
