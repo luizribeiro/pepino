@@ -1,6 +1,7 @@
 use std::fs::{File, OpenOptions as FileOptions};
 use std::path::{Path, PathBuf};
 
+use pepino_core::{Clock, Hlc};
 use pepino_store::{DatabaseErrorKind, Store, StoreError};
 
 use crate::state::{FILE_NAME, io_error, storage};
@@ -11,6 +12,7 @@ pub struct App {
     pub(super) local: LocalState,
     pub(super) database: PathBuf,
     directory: PathBuf,
+    pub(super) clock: Clock,
 }
 
 impl App {
@@ -20,7 +22,7 @@ impl App {
 
     pub async fn open_with_options(
         data_dir: impl AsRef<Path>,
-        _now: u64,
+        now: u64,
         options: OpenOptions,
     ) -> Result<Self, AppError> {
         let directory = std::path::absolute(data_dir.as_ref())
@@ -29,7 +31,16 @@ impl App {
         let _lock = lock(&directory)?;
         let database = directory.join("pepino.sqlite");
         let store = Store::open(&database).await.map_err(store_error)?;
+        let hlc = store
+            .latest_hlc(local.board_id)
+            .await
+            .map_err(store_error)?
+            .unwrap_or(Hlc {
+                wall_ms: now,
+                counter: 0,
+            });
         Ok(Self {
+            clock: Clock::from_hlc(hlc),
             store,
             local,
             database,

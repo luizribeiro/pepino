@@ -1,4 +1,6 @@
 mod app;
+#[allow(dead_code)]
+mod batch;
 mod projection;
 mod protocol;
 mod state;
