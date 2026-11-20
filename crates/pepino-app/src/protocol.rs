@@ -20,6 +20,7 @@ pub enum ReadRequest {
     GetTask { task: String },
     Tree { task: Option<String> },
     Deps { task: String },
+    Status,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

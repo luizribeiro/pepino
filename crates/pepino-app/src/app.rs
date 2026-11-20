@@ -13,7 +13,7 @@ use crate::{AppError, LocalState, OpenOptions, Request, Response};
 pub struct App {
     pub(super) store: Store,
     pub(super) local: LocalState,
-    directory: PathBuf,
+    pub(super) directory: PathBuf,
     lock_timeout: Duration,
     pub(super) clock: Clock,
 }

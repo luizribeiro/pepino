@@ -677,3 +677,47 @@ async fn graph_reads_render_the_project_forest_and_transitive_dependencies() {
         .await;
     }
 }
+
+#[tokio::test]
+async fn status_reports_local_context_and_counts_from_the_log() {
+    use pepino_app::OpenOptions;
+    use pepino_store::IdSource;
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open_with_options(
+        directory.path(),
+        NOW,
+        OpenOptions {
+            display_name: Some("Ada Gardener".into()),
+            board_name: Some("Greenhouse".into()),
+            ..OpenOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+    let local = app.local_state();
+    let board = local.board_id;
+    let mut expected = json!({
+        "kind":"status",
+        "identity":{"id":local.identity_id.to_string(),"display_name":"Ada Gardener"},
+        "device":{"id":local.device_id.to_string(),"name":local.device_name},
+        "board":{"id":board.to_string(),"name":"Greenhouse"},
+        "data_dir":directory.path(),"protocol_version":1,
+        "counts":{"open":0,"closed":0,"events":0,"skipped":{"unknown_version":0,"unknown_event":0,"unknown_value":0,"invalid":0}}
+    });
+    read_golden(&mut app, json!({"op":"status"}), json!({"ok":expected})).await;
+    add(&mut app, "Clean the greenhouse gutters").await;
+    write(
+        &mut app,
+        json!({"op":"add_task","title":"Inspect the roof","status":"done"}),
+    )
+    .await;
+    let store = Store::open(directory.path().join("pepino.sqlite"))
+        .await
+        .unwrap();
+    store
+        .append(board, &[0x82, 2, 0xf6], IdSource::Content)
+        .await
+        .unwrap();
+    expected["counts"] = json!({"open":1,"closed":1,"events":3,"skipped":{"unknown_version":1,"unknown_event":0,"unknown_value":0,"invalid":0}});
+    read_golden(&mut app, json!({"op":"status"}), json!({"ok":expected})).await;
+}
