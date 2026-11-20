@@ -8,7 +8,6 @@ mod membership;
 mod node;
 mod receipt;
 mod settings;
-#[cfg(test)]
 mod status;
 mod worker;
 
@@ -19,6 +18,7 @@ pub use events::{BoardEvent, BoardEvents};
 pub use membership::{MemberInfo, Role};
 pub use node::Node;
 pub use settings::{BootstrapNode, MdnsMode, NodeSettings};
+pub use status::{NodeEvent, NodeEvents, SyncCounts};
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]

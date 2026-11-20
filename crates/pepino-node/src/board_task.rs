@@ -9,14 +9,15 @@ use p2panda::{
     streams::{Source, StreamEvent},
 };
 use pepino_core::{DeviceId, EventId};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use crate::{
-    Error,
+    Error, NodeEvent,
     ack::AckStore,
     board_lease::BoardLease,
     events::{BoardEvent, pipeline_error},
     receipt::{Payload, Receipts},
+    status::board_status,
 };
 
 pub(crate) enum JoinState {
@@ -38,6 +39,7 @@ impl JoinState {
 pub(crate) struct BoardTask {
     pub(crate) lease: BoardLease,
     pub(crate) acks: AckStore,
+    pub(crate) status: broadcast::Sender<NodeEvent>,
     pub(crate) ready: watch::Sender<JoinState>,
     pub(crate) stop: oneshot::Receiver<()>,
     pub(crate) events: mpsc::UnboundedSender<Result<BoardEvent, Error>>,
@@ -84,6 +86,7 @@ impl BoardTask {
     }
 
     fn forward(&self, event: StreamEvent<Payload>) {
+        board_status(&self.status, self.lease.id, &event);
         if let StreamEvent::Processed { operation, source } = event {
             let id = EventId::from_bytes(*operation.id().as_bytes());
             if matches!(source, Source::Egress) && operation.author() == self.author {
@@ -121,6 +124,7 @@ mod tests {
         let task = BoardTask {
             lease,
             acks: AckStore::create(pool).await.unwrap(),
+            status: broadcast::channel(4).0,
             ready,
             stop: stop_rx,
             events,

@@ -12,13 +12,13 @@ use p2panda::{
 use pepino_core::{BoardId, EventId};
 use tokio::{
     runtime::Handle,
-    sync::{mpsc, oneshot, watch},
+    sync::{broadcast, mpsc, oneshot, watch},
     task::JoinHandle,
     time::timeout,
 };
 
 use crate::{
-    BoardEvent, BoardEvents, Error, Node,
+    BoardEvent, BoardEvents, Error, Node, NodeEvent,
     ack::AckStore,
     board_lease::BoardLease,
     board_task::{BoardTask, JoinState},
@@ -46,6 +46,7 @@ impl Node {
     pub async fn create_board(&self) -> Result<BoardHandle, Error> {
         let node = self.inner.clone();
         let acks = self.acks.clone();
+        let status = self.status.clone();
         let boards = self.boards.clone();
         self.worker
             .run(async move {
@@ -53,8 +54,9 @@ impl Node {
                     node.create_space::<Payload>().await.map_err(Error::node)?;
                 let id = BoardId::from_bytes(*space.id().as_bytes());
                 let lease = boards.reserve(id)?;
-                let board =
-                    BoardHandle::attach(&node, lease, acks, subscription, async { Ok(space) });
+                let board = BoardHandle::attach(&node, lease, acks, status, subscription, async {
+                    Ok(space)
+                });
                 board.wait_until_joined(Duration::from_secs(30)).await?;
                 Ok(board)
             })
@@ -72,6 +74,7 @@ impl Node {
     ) -> Result<BoardHandle, Error> {
         let node = self.inner.clone();
         let acks = self.acks.clone();
+        let status = self.status.clone();
         let lease = self.boards.reserve(id)?;
         self.worker
             .run(async move {
@@ -89,6 +92,7 @@ impl Node {
                     &node,
                     lease,
                     acks,
+                    status,
                     subscription,
                     pending.joined(),
                 ))
@@ -102,6 +106,7 @@ impl BoardHandle {
         node: &Arc<p2panda::Node>,
         lease: BoardLease,
         acks: AckStore,
+        status: broadcast::Sender<NodeEvent>,
         subscription: SpaceSubscription<Payload>,
         joined: impl Future<Output = Result<Space<Payload>, SpacesManagerError>> + Send + 'static,
     ) -> Self {
@@ -114,6 +119,7 @@ impl BoardHandle {
         let task = BoardTask {
             lease,
             acks,
+            status,
             ready,
             events: events_tx,
             receipts: receipts.clone(),
