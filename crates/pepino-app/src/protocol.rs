@@ -38,6 +38,10 @@ pub enum ReadRequest {
         tasks: Vec<String>,
     },
     ListViews,
+    BoardList,
+    BoardShow {
+        board: Option<String>,
+    },
     ListOpenTasks {
         filter: FilterInput,
         sort: Option<String>,
@@ -142,6 +146,12 @@ pub enum TaskChange {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Response {
+    Boards {
+        boards: Vec<crate::BoardInfo>,
+    },
+    Board {
+        board: crate::BoardInfo,
+    },
     DeletePreview {
         targets: Vec<String>,
         tasks: Vec<TaskSummary>,

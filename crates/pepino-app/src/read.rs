@@ -31,6 +31,8 @@ impl App {
             ReadRequest::PreviewDelete { tasks } => self.preview_delete(tasks).await,
             ReadRequest::ListViews => self.list_views().await,
             ReadRequest::Log { task, limit } => self.log(task.as_deref(), limit).await,
+            ReadRequest::BoardList => self.board_list().await,
+            ReadRequest::BoardShow { board } => self.board_show(board.as_deref()).await,
             ReadRequest::Status => self.status().await,
             ReadRequest::GetTask { task } => self.get_task(&task).await,
             ReadRequest::Tree { task } => self.tree(task.as_deref()).await,
