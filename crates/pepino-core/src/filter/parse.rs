@@ -39,14 +39,42 @@ pub fn parse(input: &str, today: Date) -> Result<Filter, ParseError> {
 
 /// Parse arguments that the caller has already split into individual terms.
 ///
-/// Whitespace within an argument is literal. Keep filter-level quotes in an
-/// argument to protect punctuation from its filter syntax, as in `tag:"tools,seeds"`.
+/// A keyed argument keeps whitespace within its operands. Other arguments with
+/// internal whitespace are literal text. Keep filter-level quotes around
+/// keyed values to protect comma punctuation, as in `board:"Tools, Seeds"`.
 pub fn parse_argv<S: AsRef<str>>(argv: &[S], today: Date) -> Result<Filter, ParseError> {
     argv.iter()
         .enumerate()
-        .map(|(index, raw)| parse_term(raw.as_ref(), Position::Argument { index, byte: 0 }, today))
+        .map(|(index, raw)| parse_argument(raw.as_ref(), index, today))
         .collect::<Result<Vec<_>, _>>()
         .map(Filter)
+}
+
+fn parse_argument(input: &str, index: usize, today: Date) -> Result<Term, ParseError> {
+    let start = input.trim_start();
+    let raw = start.trim_end();
+    let position = Position::Argument {
+        index,
+        byte: input.len() - start.len(),
+    };
+    if raw.is_empty() {
+        return Err(error(input, position, (0, ErrorKind::EmptyTerm)));
+    }
+    if raw.contains(char::is_whitespace) {
+        let body = raw.strip_prefix('-').unwrap_or(raw);
+        let keyed = key_parts(body)
+            .is_some_and(|(_, values)| values.starts_with(|ch: char| !ch.is_whitespace()));
+        let quoted_view = body.starts_with("@\"")
+            && lex::characters(&body[1..])
+                .any(|item| matches!(item, Ok((_, ch, true)) if ch.is_whitespace()));
+        if !keyed && !quoted_view {
+            return Ok(Term {
+                negated: false,
+                clause: Clause::Text(raw.into()),
+            });
+        }
+    }
+    parse_term(raw, position, today)
 }
 
 fn parse_term(raw: &str, position: Position, today: Date) -> Result<Term, ParseError> {

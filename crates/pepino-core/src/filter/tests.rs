@@ -311,17 +311,69 @@ fn empty_values_report_the_whole_term() {
 
 #[test]
 fn argv_keeps_each_argument_together() {
-    let argv = ["garden", "fix the fence", "-paint the shed"];
+    let argv = [
+        "garden",
+        " fix: the fence　",
+        "-5 degrees",
+        r#"say "hi""#,
+        "@garden backlog",
+        r#""fix the fence"#,
+        "re: fence",
+        "http://example.com",
+    ];
+    let expected = [
+        "garden",
+        "fix: the fence",
+        "-5 degrees",
+        r#"say "hi""#,
+        "@garden backlog",
+        r#""fix the fence"#,
+        "re: fence",
+        "http://example.com",
+    ];
+    let filter = parse_argv(&argv).unwrap();
     assert_eq!(
-        parse_argv(&argv),
-        parse(r#"garden "fix the fence" -"paint the shed""#)
+        filter.terms(),
+        expected.map(|text| Term {
+            negated: false,
+            clause: Clause::Text(text.into())
+        })
     );
     assert!(parse_argv::<&str>(&[]).unwrap().terms().is_empty());
+    assert_eq!(
+        parse_argv(&[" 　 "]).unwrap_err().kind,
+        ErrorKind::EmptyTerm
+    );
 
-    let error = parse_argv(&["garden", r#""fix the fence"#]).unwrap_err();
-    assert_eq!(error.position, Position::Argument { index: 1, byte: 0 });
-    assert_eq!(error.term, r#""fix the fence"#);
+    let error = parse_argv(&["garden", r#" "broken"#]).unwrap_err();
+    assert_eq!(error.position, Position::Argument { index: 1, byte: 1 });
+    assert_eq!(error.term, r#""broken"#);
     assert_eq!(error.kind, ErrorKind::UnterminatedQuote);
+}
+
+#[test]
+fn argv_parses_keyed_values_with_whitespace() {
+    let argv = [
+        " assignee:Ana Maria ",
+        r#"-board:House Move,"Tools, Seeds""#,
+        "client:Acme Corp",
+        "@garden",
+    ];
+    let input =
+        r#"assignee:"Ana Maria" -board:"House Move","Tools, Seeds" client:"Acme Corp" @garden"#;
+    assert_eq!(parse_argv(&argv).unwrap(), parse(input).unwrap());
+    assert_eq!(
+        parse("board:\"//Tools\"").unwrap().to_string(),
+        "board:\"//Tools\""
+    );
+}
+
+#[test]
+fn unicode_whitespace_separates_string_terms() {
+    assert_eq!(
+        parse("　garden\u{2003}board:yard\u{a0}-shed\n"),
+        parse("garden board:yard -shed")
+    );
 }
 
 #[test]
