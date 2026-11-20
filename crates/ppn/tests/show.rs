@@ -194,3 +194,43 @@ fn human_errors_shorten_full_ids_while_json_keeps_them() {
         .unwrap();
     assert_eq!(task_error(output, 3, "not_found")["task"], missing);
 }
+
+#[test]
+fn write_diagnostics_keep_one_prefix_and_short_edge_endpoints() {
+    let (sandbox, _) = task_sandbox();
+    let id = create_task(&sandbox, "Paint the shed", &[]);
+    let self_edge = format!(
+        "error: invalid to: edge connects task {} to itself\n",
+        &id[..6]
+    );
+    for (args, message) in [
+        (
+            &["edit", &id, "--title", "   "][..],
+            "error: invalid title \"   \": expected a non-empty title\n",
+        ),
+        (&["link", &id, "blocks", &id], self_edge.as_str()),
+        (
+            &["tag", &id, "Hardware"],
+            "error: invalid tag \"Hardware\": expected a lowercase tag of at most 64 bytes\nhint: Use a tag matching [a-z][a-z0-9_./-]* with at most 64 bytes.\n",
+        ),
+        (
+            &["assign", &id, "Ada"],
+            "error: invalid assignee \"Ada\": expected a full hexadecimal identity ID or me\nhint: Use `me` or a full identity ID.\n",
+        ),
+    ] {
+        let output = sandbox.command().args(args).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, message.as_bytes());
+    }
+
+    sandbox.run(&["view", "save", "weekend", "tag:hardware"]);
+    sandbox.run(&["view", "save", "maintenance", "@weekend"]);
+    let output = sandbox
+        .command()
+        .args(["view", "rm", "weekend"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.stderr, b"error: view weekend is referenced by maintenance\nhint: Pass `--force` to remove the referenced view.\n");
+}
