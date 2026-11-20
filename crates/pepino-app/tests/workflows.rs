@@ -36,7 +36,7 @@ async fn write(
     {
         assert_eq!(
             names[&app.local_state().device_id.to_string()],
-            app.local_state().device_name
+            app.local_state().display_name
         );
     }
     (changed, created, tasks, edges)
@@ -397,7 +397,7 @@ async fn comments_are_ordered_and_preserve_repeated_text() {
     };
     assert_eq!(
         names,
-        [(author, app.local_state().device_name.clone())].into()
+        [(author, app.local_state().display_name.clone())].into()
     );
     let response = Response::Task {
         edges: vec![],
@@ -733,7 +733,7 @@ async fn graph_reads_render_the_project_forest_and_transitive_dependencies() {
         get(&mut app, &test).await.summary,
     ];
     assert_eq!(test_record.comment_count, 1);
-    let names = json!({app.local_state().device_id.to_string(): app.local_state().device_name});
+    let names = json!({app.local_state().device_id.to_string(): app.local_state().display_name});
     let branch = json!([
         {"depth":0,"task":root_record},
         {"depth":1,"task":install_record},
@@ -897,7 +897,7 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
     else {
         panic!("expected a skip")
     };
-    let names = json!({app.local_state().device_id.to_string(): app.local_state().device_name});
+    let names = json!({app.local_state().device_id.to_string(): app.local_state().display_name});
     let unordered = json!([
         {"id":future_id.to_string(),"author":null,"hlc":null,"kind":"unknown","classification":"unknown_version","change":{"type":"skipped","summary":"Skipped event","version":2,"tasks":[]}},
     ]);
@@ -1174,7 +1174,7 @@ async fn task_lists_sort_limit_and_search_project_records_with_both_filter_forms
     assert_eq!(summary.comment_count, 1);
     let names = json!({
         app.local_state().identity_id.to_string(): "Ada Gardener",
-        app.local_state().device_id.to_string(): app.local_state().device_name
+        app.local_state().device_id.to_string(): app.local_state().display_name
     });
 
     list_golden(&mut app,json!("tag:hardware assignee:me"),None, None,
@@ -1560,7 +1560,7 @@ async fn deletion_returns_the_prior_record_for_write_rendering() {
         panic!("expected write response");
     };
     assert!(changed && tasks.is_empty());
-    assert_eq!(names[&prior.author], app.local_state().device_name);
+    assert_eq!(names[&prior.author], app.local_state().display_name);
     assert_eq!(deleted, [prior]);
 }
 

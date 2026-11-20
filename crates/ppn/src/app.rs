@@ -69,19 +69,19 @@ impl AppClient {
 
     pub fn author_labels(&self, verbose: bool) -> impl Fn(Option<&str>) -> String + use<> {
         let local = self.app.local_state();
-        let local_id = local.device_id.to_string();
+        let devices = local.devices();
         let local_person = crate::render::single_line(&local.display_name);
-        let local_device = crate::render::single_line(&local.device_name);
         move |id| {
             let Some(id) = id else {
                 return "unknown person".into();
             };
-            let (person, device) = if id == local_id {
-                (local_person.as_str(), local_device.as_str())
-            } else {
-                ("unknown person", crate::render::short_id(id))
-            };
+            let device = id.parse().ok().and_then(|id| devices.get(&id));
+            let person = device.map_or("unknown person", |_| local_person.as_str());
             if verbose {
+                let device = device.map_or_else(
+                    || crate::render::short_id(id).to_owned(),
+                    |device| crate::render::single_line(device),
+                );
                 format!("{person} ({device})")
             } else {
                 person.into()

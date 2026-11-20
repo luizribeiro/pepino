@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -42,6 +43,8 @@ pub struct LocalState {
     pub identity_id: IdentityId,
     pub display_name: String,
     pub device_name: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) other_devices: BTreeMap<DeviceId, String>,
     pub(super) boards: Vec<LocalBoard>,
     pub(crate) saved_views: SavedViews,
 }
@@ -65,6 +68,12 @@ impl LocalState {
         &self.boards
     }
 
+    pub fn devices(&self) -> BTreeMap<DeviceId, String> {
+        let mut devices = self.other_devices.clone();
+        devices.insert(self.device_id, self.device_name.clone());
+        devices
+    }
+
     pub(super) fn task_names<'a>(
         &self,
         tasks: impl IntoIterator<Item = &'a crate::TaskSummary>,
@@ -79,20 +88,15 @@ impl LocalState {
         ids: impl IntoIterator<Item = &'a str>,
     ) -> std::collections::BTreeMap<String, String> {
         let identity = self.identity_id.to_string();
-        let device = self.device_id.to_string();
-        let mut names = std::collections::BTreeMap::new();
-        for id in ids {
-            if id == identity {
-                names
-                    .entry(identity.clone())
-                    .or_insert_with(|| self.display_name.clone());
-            } else if id == device {
-                names
-                    .entry(device.clone())
-                    .or_insert_with(|| self.device_name.clone());
-            }
-        }
-        names
+        ids.into_iter()
+            .filter(|id| {
+                *id == identity
+                    || id.parse::<DeviceId>().is_ok_and(|device| {
+                        device == self.device_id || self.other_devices.contains_key(&device)
+                    })
+            })
+            .map(|id| (id.to_owned(), self.display_name.clone()))
+            .collect()
     }
 
     pub(super) fn new(
@@ -115,6 +119,7 @@ impl LocalState {
                 id: board_id,
                 name: board_name,
             }],
+            other_devices: BTreeMap::new(),
             saved_views: SavedViews::default(),
         })
     }
@@ -348,6 +353,25 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[test]
+    fn names_authors_from_every_known_device() {
+        let names = OpenOptions::default().try_into().unwrap();
+        let own = DeviceId::from_bytes([11; 32]);
+        let peer = DeviceId::from_bytes([22; 32]);
+        let mut state = LocalState::new(names, own, BoardId::from_bytes([13; 32])).unwrap();
+        state.other_devices.insert(peer, "garden tablet".into());
+        let stranger = DeviceId::from_bytes([44; 32]).to_string();
+        let names = state.names_for(
+            [own.to_string(), peer.to_string(), stranger]
+                .iter()
+                .map(String::as_str),
+        );
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[&peer.to_string()], state.display_name);
+        assert_eq!(names[&own.to_string()], state.display_name);
+        assert_eq!(state.devices()[&peer], "garden tablet");
     }
 
     #[test]
