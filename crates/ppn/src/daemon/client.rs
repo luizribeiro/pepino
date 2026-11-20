@@ -65,7 +65,7 @@ impl Client {
 pub fn unavailable(error: &io::Error) -> bool {
     matches!(
         error.kind(),
-        io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
+        io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound | io::ErrorKind::UnexpectedEof
     )
 }
 

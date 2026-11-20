@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, path::Path, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use pepino_app::{BoardJoinState, SignedGrant};
 use pepino_core::BoardId;
@@ -20,7 +24,7 @@ pub(super) fn run(
     selection: Option<&Path>,
 ) -> Result<CommandResult, CliError> {
     let wait = context.timeout.unwrap_or(Duration::from_secs(30));
-    let timeout_ms = wait_millis(wait)?;
+    wait_millis(wait)?;
     let grant: SignedGrant = Kind::Grant.decode(code).map_err(invalid_code)?;
     let (directory, options) = local_options(context, None)?;
     let local = runtime()?.block_on(App::join_device(directory, grant, options))?;
@@ -40,18 +44,7 @@ pub(super) fn run(
         .remove(&id)
         .unwrap_or_else(|| format!("unknown device {}", ppn::render::short_id(&id.to_string())));
     let grantor = Grantor { id, name };
-    let outcome = client
-        .call(Operation::RegisterPeerHint { peer })
-        .map_err(unreachable)?;
-    if !matches!(outcome, Outcome::PeerHintRegistered) {
-        return Err(unexpected_reply());
-    }
-    let outcome = client
-        .call_with(
-            Operation::BoardJoinState { timeout_ms },
-            wait.saturating_add(Duration::from_secs(2)),
-        )
-        .map_err(unreachable)?;
+    let outcome = wait_for_boards(&client, peer, wait)?;
     let Outcome::BoardJoinState { boards } = outcome else {
         return Err(unexpected_reply());
     };
@@ -73,6 +66,46 @@ pub(super) fn run(
         .with_detail("grantor", json!(result.grantor)));
     }
     Ok(CommandResult::document(result))
+}
+
+fn wait_for_boards(
+    client: &Client,
+    peer: pepino_app::PeerHint,
+    wait: Duration,
+) -> Result<Outcome, CliError> {
+    let start = Instant::now();
+    loop {
+        let remaining = wait.saturating_sub(start.elapsed());
+        let outcome = client
+            .call(Operation::RegisterPeerHint { peer: peer.clone() })
+            .and_then(|outcome| match outcome {
+                Outcome::PeerHintRegistered => client.call_with(
+                    Operation::BoardJoinState {
+                        timeout_ms: remaining.as_millis().try_into().unwrap_or(0),
+                    },
+                    remaining + Duration::from_secs(2),
+                ),
+                _ => Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Expected a peer hint acknowledgement",
+                )),
+            });
+        match outcome {
+            Ok(outcome) => return Ok(outcome),
+            Err(error)
+                if !remaining.is_zero()
+                    && (ppn::daemon::client::unavailable(&error)
+                        || matches!(
+                            error.kind(),
+                            std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::TimedOut
+                        )) =>
+            {
+                process::wait_for_service(client, wait.saturating_sub(start.elapsed()))
+                    .map_err(unreachable)?;
+            }
+            Err(error) => return Err(unreachable(error)),
+        }
+    }
 }
 
 struct JoinResult {

@@ -8,7 +8,9 @@ const FRAME_LIMIT: usize = 1024 * 1024;
 pub async fn read<T: DeserializeOwned>(stream: impl AsyncRead + Unpin) -> io::Result<T> {
     let mut frame = Vec::new();
     let mut reader = BufReader::new(stream).take(FRAME_LIMIT as u64);
-    reader.read_until(b'\n', &mut frame).await?;
+    if reader.read_until(b'\n', &mut frame).await? == 0 {
+        return Err(io::ErrorKind::UnexpectedEof.into());
+    }
     if frame.last() != Some(&b'\n') {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -39,6 +41,10 @@ mod tests {
     #[tokio::test]
     async fn reads_one_complete_frame_at_a_time() {
         let (mut client, mut server) = tokio::io::duplex(128);
+        assert_eq!(
+            read::<Value>(tokio::io::empty()).await.unwrap_err().kind(),
+            io::ErrorKind::UnexpectedEof
+        );
         let request = json!({"version": 1, "op": "status"});
         write(&mut client, &request).await.unwrap();
         assert_eq!(read::<Value>(&mut server).await.unwrap(), request);
