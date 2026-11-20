@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use pepino_app::{BoardJoinState, DeviceRequest, PeerHint};
+use pepino_app::{BoardJoinState, BoardRequest, BoardRole, DeviceRequest, IdentityCard, PeerHint};
 use pepino_core::{BoardId, DeviceId};
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +39,14 @@ pub enum Operation {
         timeout_ms: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         board: Option<BoardId>,
+    },
+    BoardRequest {
+        name: Option<String>,
+    },
+    BoardInvite {
+        board: BoardId,
+        request: Box<BoardRequest>,
+        role: BoardRole,
     },
     Stop,
 }
@@ -100,6 +108,12 @@ pub enum Outcome {
     PeerHintRegistered,
     BoardJoinState {
         boards: BTreeMap<BoardId, BoardJoinState>,
+    },
+    BoardRequest {
+        request: Box<BoardRequest>,
+    },
+    BoardInvited {
+        owner: IdentityCard,
     },
     Stopping,
     Error {
@@ -211,4 +225,21 @@ fn a_device_removal_wait_round_trips_the_full_device_id() {
     let request: Request = serde_json::from_value(wire.clone()).unwrap();
     assert_eq!(request.request.wait_ms(), Some(6000));
     assert_eq!(serde_json::to_value(request).unwrap(), wire);
+}
+
+#[cfg(test)]
+#[test]
+fn a_board_request_control_message_has_no_capabilities() {
+    let request = Request {
+        v: VERSION,
+        request: Operation::BoardRequest {
+            name: Some("Garden tablet".into()),
+        },
+    };
+    assert_eq!(
+        serde_json::to_value(request).unwrap(),
+        serde_json::json!({
+            "v": 1, "request": { "op": "board_request", "name": "Garden tablet" }
+        })
+    );
 }

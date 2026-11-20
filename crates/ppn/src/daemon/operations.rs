@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use pepino_app::BoardJoinState;
-use pepino_sync::SyncEngine;
+use pepino_sync::{Error, SyncEngine};
 
 use super::{
     network::snapshot,
@@ -91,6 +91,28 @@ pub(super) async fn operate(
                 boards: select(engine.status().board_join_states()),
             }
         }
+        Operation::BoardRequest { name } => match engine.request_board(name.as_deref()).await {
+            Ok(request) => Outcome::BoardRequest {
+                request: Box::new(request),
+            },
+            Err(Error::App(error)) => Outcome::error("invalid_input", &error.to_string()),
+            Err(_) => Outcome::error("request_failed", "Could not prepare the board request."),
+        },
+        Operation::BoardInvite {
+            board,
+            request,
+            role,
+        } => match engine.invite_board(board, *request, role).await {
+            Ok(owner) => Outcome::BoardInvited { owner },
+            Err(Error::EnrollmentAccess { board }) => Outcome::MemberAccessDenied { board },
+            Err(Error::App(error @ pepino_app::AppError::InvalidInput { .. })) => {
+                Outcome::error("invalid_input", &error.to_string())
+            }
+            Err(_) => Outcome::error(
+                "invite_failed",
+                "Could not enroll the device and publish its identity card.",
+            ),
+        },
         Operation::Stop => Outcome::Stopping,
     }
 }
