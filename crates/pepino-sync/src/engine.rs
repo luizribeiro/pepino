@@ -1,13 +1,8 @@
-use std::{
-    collections::BTreeMap,
-    path::Path,
-    sync::{Arc, Weak},
-    time::Duration,
-};
+use std::{path::Path, sync::Arc, time::Duration};
 
 use futures_util::{Stream, StreamExt};
 use pepino_app::{App, DeviceRequest, OpenOptions, PeerHint};
-use pepino_core::{BoardId, DeviceId};
+use pepino_core::DeviceId;
 use pepino_node::{Node, Role};
 use tokio::{
     sync::{Mutex, watch},
@@ -15,7 +10,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::WatchStream;
 
-use crate::{BoardFailure, Status, Transport, TransportBoard};
+use crate::{BoardFailure, Status, Transport, board_workers::BoardWorkers};
 
 #[derive(Clone, Debug)]
 pub struct Settings {
@@ -67,10 +62,10 @@ pub enum Error {
 pub struct SyncEngine<T: Transport = Node> {
     node: Arc<T>,
     app: Arc<App>,
-    boards: BTreeMap<BoardId, Weak<T::Board>>,
-    membership: Mutex<()>,
+    boards: Arc<Mutex<BoardWorkers<T>>>,
     status: watch::Receiver<Status>,
     stop: watch::Sender<()>,
+    board_stop: watch::Sender<()>,
     nudges: watch::Sender<u64>,
     workers: JoinSet<Result<(), Error>>,
 }
@@ -97,58 +92,26 @@ impl<T: Transport> SyncEngine<T> {
             });
         }
         let store_instance = app.store().instance_id().await?;
-        let boards = app.local_state().boards().iter().map(|board| board.id);
         let (stop, stopping) = watch::channel(());
+        let (board_stop, boards_stopping) = watch::channel(());
         let (nudges, nudged) = watch::channel(0);
         let (changes, status) = watch::channel(Status {
-            boards: boards
-                .clone()
-                .map(|board| (board, Default::default()))
-                .collect(),
-            board_joins: boards
-                .clone()
-                .map(|id| (id, app.local_state().board_join_state(id)))
-                .collect(),
             node: node.status(),
             ..Default::default()
         });
         let mut workers = JoinSet::new();
-        let mut handles = BTreeMap::new();
-        let node_instance = node.instance_id();
-        for id in boards {
-            let mut board = node.open_board_for_store(id, store_instance).await?;
-            let stream = board.deliveries()?;
-            let board = Arc::new(board);
-            handles.insert(id, Arc::downgrade(&board));
-            let mut stopping = stopping.clone();
-            let app = app.clone();
-            let status = changes.clone();
-            let nudged = nudged.clone();
-            let poll = settings.poll_interval;
-            workers.spawn(async move {
-                let result = tokio::select! {
-                    biased;
-                    _ = stopping.changed() => Ok(()),
-                    _ = crate::outbox::run(&app, id, board.as_ref(), node_instance, &status, nudged, poll) => Err("outbox worker ended".into()),
-                    result = crate::inbox::run(&app, id, stream, &status) => result.map_err(|error| error.to_string()),
-                };
-                let result = result.map_err(|cause| BoardFailure { board: id, cause });
-                status.send_modify(|status| {
-                    let board = status.boards.entry(id).or_default();
-                    board.closed = true;
-                    if let Err(failure) = &result {
-                        board.last_error = Some(failure.cause.clone());
-                        status.restart_required.get_or_insert_with(|| failure.clone());
-                    }
-                });
-                let closed = match Arc::into_inner(board) {
-                    Some(board) => board.close().await,
-                    None => Err(pepino_node::Error::Closed),
-                };
-                result.map_err(Error::from).and(closed.map_err(Error::from))
-            });
-        }
-        changes.send_modify(|status| status.node = node.status());
+        let mut board_workers = BoardWorkers::new(
+            node.clone(),
+            app.clone(),
+            changes.clone(),
+            boards_stopping,
+            nudged,
+            settings.poll_interval,
+            store_instance,
+        );
+        board_workers.open_missing(app.local_state()).await?;
+        let boards = Arc::new(Mutex::new(board_workers));
+        workers.spawn(crate::discover::run(boards.clone(), stopping.clone()));
         let progress_app = app.clone();
         let progress_changes = changes.clone();
         let progress_updates = status.clone();
@@ -168,10 +131,10 @@ impl<T: Transport> SyncEngine<T> {
         Ok(Self {
             node,
             app,
-            boards: handles,
-            membership: Mutex::new(()),
+            boards,
             status,
             stop,
+            board_stop,
             nudges,
             workers,
         })
@@ -201,10 +164,11 @@ impl<T: Transport> SyncEngine<T> {
                 if let Some(failure) = &status.restart_required {
                     return Err(failure.clone().into());
                 }
-                if status
-                    .boards
-                    .values()
-                    .all(|board| board.scan_generation >= Some(generation))
+                if status.catalog_generation >= generation
+                    && status
+                        .boards
+                        .values()
+                        .all(|board| board.scan_generation >= Some(generation))
                     && status.idle_with(&self.node.status())
                 {
                     return Ok(());
@@ -239,7 +203,11 @@ impl<T: Transport> SyncEngine<T> {
 
     pub async fn shutdown(self) -> Result<(), Error> {
         let Self {
-            stop, mut workers, ..
+            stop,
+            board_stop,
+            mut workers,
+            boards,
+            ..
         } = self;
         drop(stop);
         let mut result = Ok(());
@@ -247,7 +215,8 @@ impl<T: Transport> SyncEngine<T> {
             let outcome = worker.map_err(Error::from).and_then(|outcome| outcome);
             result = result.and(outcome);
         }
-        result
+        drop(board_stop);
+        result.and(boards.lock().await.finish().await)
     }
 }
 
@@ -267,36 +236,32 @@ impl SyncEngine {
                 diagnostic: None,
             }));
         }
-        let _guard = self.membership.lock().await;
+        let mut boards = self.boards.lock().await;
+        let local = self.app.fresh_local_state().await?;
+        boards.open_missing(&local).await?;
         let owner = self.node.device_id();
-        let allowed =
-            futures_util::future::try_join_all(self.app.local_state().boards().iter().map(
-                |board| async move {
-                    let denied = || Error::EnrollmentAccess {
-                        board: board.name.clone(),
-                    };
-                    let handle = self
-                        .boards
-                        .get(&board.id)
-                        .and_then(Weak::upgrade)
-                        .ok_or_else(denied)?;
-                    handle
-                        .wait_until_joined(Duration::from_secs(5))
-                        .await
-                        .map_err(|_| denied())?;
-                    let role = handle
-                        .members()
-                        .await
-                        .map_err(|_| denied())?
-                        .into_iter()
-                        .find_map(|(id, role)| {
-                            (id == owner && role == Role::Manage).then_some(role)
-                        })
-                        .ok_or_else(denied)?;
-                    Ok::<_, Error>((board.name.as_str(), handle, role))
-                },
-            ))
-            .await?;
+        let allowed = futures_util::future::try_join_all(local.boards().iter().map(|board| {
+            let handle = boards.handle(board.id);
+            async move {
+                let denied = || Error::EnrollmentAccess {
+                    board: board.name.clone(),
+                };
+                let handle = handle.ok_or_else(denied)?;
+                handle
+                    .wait_until_joined(Duration::from_secs(5))
+                    .await
+                    .map_err(|_| denied())?;
+                let role = handle
+                    .members()
+                    .await
+                    .map_err(|_| denied())?
+                    .into_iter()
+                    .find_map(|(id, role)| (id == owner && role == Role::Manage).then_some(role))
+                    .ok_or_else(denied)?;
+                Ok::<_, Error>((board.name.as_str(), handle, role))
+            }
+        }))
+        .await?;
         let results =
             futures_util::future::join_all(allowed.into_iter().map(|(name, handle, role)| {
                 let member = &member;
@@ -307,6 +272,8 @@ impl SyncEngine {
         self.app
             .remember_device(device.id, device.name, name)
             .await?;
+        self.app.remember_member_bundle(&member).await?;
+        self.nudge();
         Ok(())
     }
 

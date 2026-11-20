@@ -1,3 +1,5 @@
+mod board_workers;
+mod discover;
 mod engine;
 mod inbox;
 mod join_progress;
