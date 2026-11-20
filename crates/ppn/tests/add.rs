@@ -480,3 +480,11 @@ fn add_title_from_stdin_is_literal_even_in_json_mode() {
     let output = sandbox.run(&["add", "--from-json", file.to_str().unwrap()]);
     assert!(output.ends_with("  Order the replacement latch\n"));
 }
+
+#[test]
+fn add_joins_multiple_words_with_options_between_them() {
+    let (sandbox, _) = task_sandbox();
+    let json = as_json(&sandbox.run(&["add", "Buy", "-t", "shopping", "milk", "--json"]));
+    assert_eq!(json["tasks"][0]["title"], "Buy milk");
+    assert_eq!(json["tasks"][0]["tags"], json!(["shopping"]));
+}

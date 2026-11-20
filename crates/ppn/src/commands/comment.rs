@@ -19,7 +19,7 @@ pub struct Args {
     #[arg(value_name = "TASK")]
     task: String,
     /// Comment text. Use - to read it from stdin.
-    text: Option<String>,
+    text: Vec<String>,
     /// Read the comment from a file.
     #[arg(long, value_name = "PATH", conflicts_with = "text")]
     from_file: Option<PathBuf>,
@@ -34,6 +34,7 @@ pub fn run(
     }: Args,
 ) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
+    let text = (!text.is_empty()).then(|| text.join(" "));
     let text = read_task_text(text, from_file.as_deref())?;
     let response = client.call(Request::Write(WriteRequest::Comment { task, text }))?;
     write_document(context, response, "Commented on")

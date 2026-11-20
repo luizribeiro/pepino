@@ -69,3 +69,15 @@ fn comment_rejects_blank_arguments_and_closed_stdin() {
     assert_eq!(task_error(output, 2, "invalid_input")["field"], "text");
     assert_eq!(show_task(&sandbox, &id)["comment_count"], 0);
 }
+
+#[test]
+fn comment_joins_multiple_words_with_options_between_them() {
+    let (sandbox, _) = task_sandbox();
+    let id = create_task(&sandbox, "Check the greenhouse", &[]);
+    let result = as_json(&sandbox.run(&["comment", &id, "Use", "--json", "stainless", "hardware"]));
+    assert_write(&result, true);
+    assert_eq!(
+        show_task(&sandbox, &id)["comments"][0]["text"],
+        "Use stainless hardware"
+    );
+}

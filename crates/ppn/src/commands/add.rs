@@ -19,7 +19,7 @@ use ppn::write_args::{TaskWriteArgs, new_task};
 pub struct Args {
     /// Task title. Use - to read title text from stdin.
     #[arg(required_unless_present = "from_json")]
-    title: Option<String>,
+    title: Vec<String>,
     /// Read a task object from a file or - for stdin. See ppn help json.
     #[arg(long, value_name = "FILE|-", conflicts_with = "title")]
     from_json: Option<PathBuf>,
@@ -34,6 +34,7 @@ pub fn run(context: &Context<'_>, input: Args) -> Result<CommandResult, CliError
         from_json,
         args,
     } = input;
+    let title = (!title.is_empty()).then(|| title.join(" "));
     let from_stdin = title.as_deref() == Some("-")
         || from_json
             .as_deref()
