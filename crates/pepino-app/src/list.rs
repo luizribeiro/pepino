@@ -56,8 +56,8 @@ impl App {
             supplied
         };
         let local_board = Board {
-            id: self.local.board_id,
-            name: &self.local.board_name,
+            id: self.local.board_id(),
+            name: self.local.board_name(),
         };
         let boards = select_boards(&[local_board], &terms)?;
         let (tasks, total, resolved_dates, warnings) = if let Some(&board) = boards.first() {

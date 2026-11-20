@@ -19,7 +19,7 @@ pub(super) struct Device {
 
 impl Device {
     pub(super) fn board(&self) -> BoardId {
-        self.app.local_state().board_id
+        self.app.local_state().board_id()
     }
 }
 

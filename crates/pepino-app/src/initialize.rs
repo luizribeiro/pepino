@@ -230,7 +230,7 @@ mod tests {
         let node = Node::spawn(NodeSettings::offline(keys, path.join(NODE_DATABASE)))
             .await
             .unwrap();
-        let board = node.open_board(pending.board_id).await.unwrap();
+        let board = node.open_board(pending.board_id()).await.unwrap();
         board
             .wait_until_joined(std::time::Duration::from_secs(5))
             .await

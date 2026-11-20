@@ -45,7 +45,7 @@ impl App {
         let open = board.iter().filter(|task| task.status.is_open()).count();
         let events = self
             .store
-            .statistics(self.local.board_id)
+            .statistics(self.local.board_id())
             .await
             .map_err(store_error)?;
         Ok(Response::Status {
@@ -58,8 +58,8 @@ impl App {
                 name: self.local.device_name.clone(),
             },
             board: NamedRecord {
-                id: self.local.board_id.to_string(),
-                name: self.local.board_name.clone(),
+                id: self.local.board_id().to_string(),
+                name: self.local.board_name().to_owned(),
             },
             data_dir: self.directory.to_string_lossy().into_owned(),
             credentials_file: self.credentials_file.to_string_lossy().into_owned(),
