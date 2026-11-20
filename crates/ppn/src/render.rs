@@ -31,4 +31,4 @@ pub use detail::task_detail;
 
 mod write;
 
-pub use write::write_document;
+pub use write::{write_document, write_documents};
