@@ -50,7 +50,16 @@ pub(super) fn run(
     let Outcome::BoardJoinState { boards } = outcome else {
         return Err(unexpected_reply());
     };
-    Ok(CommandResult::document(JoinResult(boards)))
+    let result = JoinResult(boards);
+    if !result.joined() {
+        return Err(CliError::new(
+            ErrorKind::Pending,
+            format!("Timed out waiting for initial sync. {PENDING}"),
+        )
+        .with_detail("joined", json!(false))
+        .with_detail("boards", json!(result.0.values().collect::<Vec<_>>())));
+    }
+    Ok(CommandResult::document(result))
 }
 
 struct JoinResult(BTreeMap<BoardId, BoardJoinState>);
@@ -65,11 +74,7 @@ impl JoinResult {
 
 impl Render for JoinResult {
     fn human(&self, _: &Terminal) -> String {
-        if self.joined() {
-            "Device joined. Initial sync complete.".into()
-        } else {
-            format!("Timed out waiting for initial sync. {PENDING}")
-        }
+        "Device joined. Initial sync complete.".into()
     }
 
     fn json_fields(self) -> Map<String, Value> {

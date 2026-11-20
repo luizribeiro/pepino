@@ -181,13 +181,19 @@ fn a_timed_out_join_completes_when_the_grantor_returns() {
     let grant = titanium.add(&ferrum.request("Ferrum"), &[]);
     titanium.stop();
 
-    let human = ferrum.run(&["device", "join", &grant, "--timeout", "150ms"]);
+    let output = ferrum.output(&["device", "join", &grant, "--timeout", "150ms"]);
+    assert_eq!(output.status.code(), Some(7));
+    let human = String::from_utf8_lossy(&output.stderr);
     assert!(human.contains("Timed out waiting for initial sync"));
     assert!(
         human.contains("The join is kept and will complete when the granting device is reachable.")
     );
     assert!(human.contains("Check with `ppn status` or `ppn sync`"));
-    let pending = ferrum.json(&["device", "join", &grant, "--timeout", "150ms"]);
+    let pending = task_error(
+        ferrum.output(&["device", "join", &grant, "--timeout", "150ms", "--json"]),
+        7,
+        "pending",
+    );
     assert_eq!(pending["joined"], false);
     assert_eq!(pending["boards"][0], "waiting_to_be_added");
     assert!(

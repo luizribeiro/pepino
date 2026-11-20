@@ -18,6 +18,7 @@ pub enum ErrorKind {
     PermissionDenied,
     DaemonUnreachable,
     SyncTimeout,
+    Pending,
     ConfirmationRequired,
     InvalidConfig,
     InvalidInput,
@@ -40,6 +41,7 @@ impl ErrorKind {
             Self::PermissionDenied => "The operation is not permitted.",
             Self::DaemonUnreachable => "The daemon or network could not be reached.",
             Self::SyncTimeout => "Sync timed out with work pending.",
+            Self::Pending => "The join is kept and will complete later.",
             Self::ConfirmationRequired => "The operation needs explicit confirmation.",
             Self::InvalidConfig => "Configuration could not be read or is invalid.",
             Self::InvalidInput => "The request input is invalid.",
@@ -62,6 +64,7 @@ impl ErrorKind {
             Self::AmbiguousId => 4,
             Self::PermissionDenied => 5,
             Self::DaemonUnreachable => 6,
+            Self::Pending => 7,
         }
     }
 
@@ -75,6 +78,7 @@ impl ErrorKind {
             Self::PermissionDenied => "permission_denied",
             Self::DaemonUnreachable => "daemon_unreachable",
             Self::SyncTimeout => "sync_timeout",
+            Self::Pending => "pending",
             Self::ConfirmationRequired => "confirmation_required",
             Self::InvalidConfig => "invalid_config",
             Self::InvalidInput => "invalid_input",
@@ -113,6 +117,11 @@ impl CliError {
 
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.hint = Some(hint.into());
+        self
+    }
+
+    pub fn with_detail(mut self, key: &str, value: Value) -> Self {
+        self.details.insert(key.into(), value);
         self
     }
 

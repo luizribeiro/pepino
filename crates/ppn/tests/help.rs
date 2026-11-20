@@ -104,7 +104,7 @@ fn help_describes_the_cli_in_both_formats() {
         flag("color")["choices"],
         serde_json::json!(["auto", "always", "never"])
     );
-    assert_eq!(help["exit_codes"].as_array().unwrap().len(), 7);
+    assert_eq!(help["exit_codes"].as_array().unwrap().len(), 8);
     assert_eq!(
         help["exit_codes"][6],
         serde_json::json!({"status": 6, "code": "daemon_unreachable", "error_codes": ["daemon_unreachable"]})
