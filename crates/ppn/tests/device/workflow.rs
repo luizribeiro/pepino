@@ -157,6 +157,18 @@ fn linked_devices_share_tasks_and_late_members_get_history() {
         wait_for_events(&late, 7);
         assert_views(&titanium, &late, &[&project, &child, &inspection]);
     }
+    let peer_id = result["device_id"].as_str().unwrap().parse().unwrap();
+    until(|| {
+        pepino_app::LocalState::load(&titanium.data)
+            .unwrap()
+            .saw_device_on_board(peer_id)
+    });
+    titanium.stop();
+    assert!(
+        titanium
+            .run(&["device", "ls"])
+            .contains("seen on the board")
+    );
 }
 
 #[test]
