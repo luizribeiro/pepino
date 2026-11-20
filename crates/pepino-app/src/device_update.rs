@@ -51,9 +51,10 @@ impl App {
         &self,
         update: impl FnOnce(&mut LocalState) + Send + 'static,
     ) -> Result<(), AppError> {
-        let _guard = lock(&self.directory, self.lock_timeout).await?;
+        let guard = lock(&self.directory, self.lock_timeout).await?;
         let directory = self.directory.clone();
         worker("update device state", move || {
+            let _guard = guard;
             let previous = LocalState::load(&directory)?;
             let mut local = previous.clone();
             update(&mut local);
@@ -81,4 +82,21 @@ async fn readding_a_device_keeps_its_existing_name_unless_overridden() {
     let local = LocalState::load(dir.path()).unwrap();
     assert_eq!(local.devices()[&peer], "Garden tablet");
     assert!(app.remember_device(peer, "".into(), None).await.is_err());
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn concurrent_enrollments_keep_both_device_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
+    let ferrum = DeviceId::from_bytes([44; 32]);
+    let cobalt = DeviceId::from_bytes([55; 32]);
+    tokio::try_join!(
+        app.remember_device(ferrum, "Ferrum".into(), None),
+        app.remember_device(cobalt, "Cobalt".into(), None),
+    )
+    .unwrap();
+    let local = LocalState::load(dir.path()).unwrap();
+    assert_eq!(local.devices()[&ferrum], "Ferrum");
+    assert_eq!(local.devices()[&cobalt], "Cobalt");
 }
