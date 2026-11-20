@@ -1,6 +1,7 @@
 mod diagnostics;
 mod dirs;
 mod document;
+mod env;
 mod files;
 mod load;
 mod model;

@@ -25,6 +25,7 @@ pub fn load(
     let files = visit_files(&select_files(flags, env, dirs), read, |file, text| {
         draft.apply_file(&file.path, text, &file.source)
     })?;
+    super::env::apply(&mut draft, env)?;
     if let Some(value) = flags.color {
         draft.config.ui.color = Setting {
             value,
