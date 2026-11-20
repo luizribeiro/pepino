@@ -11,11 +11,11 @@ mod validate;
 
 pub use dirs::{Platform, PlatformDirs, SYSTEM_CONFIG};
 pub use model::{
-    BootstrapNode, Config, DEFAULT_RELAY_URLS, EnvironmentVariable, Setting, Source, UiConfig,
-    environment_variables,
+    BootstrapNode, Config, DEFAULT_RELAY_URLS, DaemonConfig, EnvironmentVariable, Setting, Source,
+    UiConfig, environment_variables,
 };
 pub use path::AbsolutePath;
-pub use types::{DateFormat, Network, NodeId, RelayUrl, ValueError};
+pub use types::{DateFormat, LogLevel, Network, NodeId, RelayUrl, ValueError};
 
 pub use diagnostics::nearest_key;
 pub use env::env_value;

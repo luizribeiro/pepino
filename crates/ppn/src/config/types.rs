@@ -152,3 +152,23 @@ mod tests {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, clap::ValueEnum, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    Off,
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl std::str::FromStr for LogLevel {
+    type Err = ValueError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        <Self as clap::ValueEnum>::from_str(text, false)
+            .map_err(|_| ValueError("expected off, error, warn, info, debug, or trace"))
+    }
+}

@@ -36,12 +36,12 @@ fn config_show_reports_effective_values_and_sources() {
             .lines()
             .any(|line| line.starts_with("network") && line.ends_with("release-team"))
     );
-    assert_eq!(human.lines().count(), 13);
+    assert_eq!(human.lines().count(), 14);
 
     let data = as_json(&sandbox.run(&["config", "show", "--json"]));
     assert_eq!(data["kind"], "config");
     let values = data["values"].as_object().unwrap();
-    assert_eq!(values.len(), 12);
+    assert_eq!(values.len(), 13);
     assert_eq!(
         values["network"],
         json!({

@@ -7,7 +7,8 @@ use serde_json::{Value, json};
 use super::document::{Input, Validator};
 use super::path::serialize_path;
 use super::{
-    AbsolutePath, CONFIG_ENV, DateFormat, Network, NodeId, PlatformDirs, RelayUrl, ValueError,
+    AbsolutePath, CONFIG_ENV, DateFormat, LogLevel, Network, NodeId, PlatformDirs, RelayUrl,
+    ValueError,
 };
 use super::{env, validate};
 use crate::terminal::Color;
@@ -208,6 +209,7 @@ macro_rules! settings {
 settings! {
     dirs;
     root {
+        log_level: LogLevel = scalar("PPN_LOG_LEVEL", "off, error, warn, info, debug, or trace.", Ok(LogLevel::Info));
         network: Network = scalar("PPN_NETWORK", "Non-empty network name.", "pepino".parse());
         relay_urls: Vec<RelayUrl> = list("PPN_RELAY_URLS", "Comma-separated HTTPS URLs.",
             DEFAULT_RELAY_URLS.iter().map(|url| url.parse()).collect());
@@ -252,6 +254,7 @@ mod tests {
                 .collect()
         );
         assert!(values.values().all(|value| value["source"] == "default"));
+        assert_eq!(values["log_level"]["value"], "info");
         assert_eq!(values["network"]["value"], "pepino");
         assert_eq!(values["relay_urls"]["value"], json!(DEFAULT_RELAY_URLS));
         assert_eq!(values["mdns"]["value"], true);

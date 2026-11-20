@@ -126,6 +126,7 @@ mod tests {
                 ),
                 ("PPN_MDNS", "0"),
                 ("PPN_PORT", "44123"),
+                ("PPN_LOG_LEVEL", "warn"),
                 ("PPN_DAEMON_AUTOSTART", "false"),
                 ("PPN_DAEMON_SOCKET_PATH", "~/release.sock"),
                 ("PPN_CREDENTIALS_FILE", "~/keys/device.cbor"),
