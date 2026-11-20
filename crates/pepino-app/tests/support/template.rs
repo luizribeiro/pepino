@@ -116,7 +116,7 @@ async fn store_fixture(directory: &Path, board: BoardId) {
     fs::write(
         directory.join("local.json"),
         serde_json::to_vec(&json!({
-            "version": 2,
+            "version": 3,
             "device_id": device,
             "identity_id": identity,
             "display_name": "Ada Gardener",

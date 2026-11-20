@@ -318,6 +318,7 @@ pub struct CommentRecord {
 pub enum AppErrorKind {
     NotFound,
     NotInitialized,
+    IncompatibleLocalState,
     PermissionDenied,
     AmbiguousId,
     InvalidInput,
@@ -333,6 +334,7 @@ impl AppErrorKind {
         match self {
             Self::NotFound => "not_found",
             Self::NotInitialized => "not_initialized",
+            Self::IncompatibleLocalState => "incompatible_local_state",
             Self::PermissionDenied => "permission_denied",
             Self::AmbiguousId => "ambiguous_id",
             Self::InvalidInput => "invalid_input",
@@ -379,6 +381,10 @@ pub enum AppError {
     },
     #[error("{directory} is not initialized; run ppn init")]
     NotInitialized { directory: String },
+    #[error(
+        "local state version {version} in {directory} cannot be upgraded because its device and board IDs are not real keys and spaces. Move the directory aside and run ppn init."
+    )]
+    IncompatibleLocalState { version: u64, directory: String },
     #[error("permission denied for {path}: {reason}")]
     PermissionDenied { path: String, reason: String },
     #[error("another pepino process holds the data directory")]
@@ -481,6 +487,7 @@ impl AppError {
         match self {
             Self::NotFound { .. } => AppErrorKind::NotFound,
             Self::NotInitialized { .. } => AppErrorKind::NotInitialized,
+            Self::IncompatibleLocalState { .. } => AppErrorKind::IncompatibleLocalState,
             Self::PermissionDenied { .. } => AppErrorKind::PermissionDenied,
             Self::AmbiguousId { .. } => AppErrorKind::AmbiguousId,
             Self::InvalidInput { .. } => AppErrorKind::InvalidInput,

@@ -117,8 +117,6 @@ impl App {
             .bind_local(local.board_id, local.identity_id, local.device_id)
             .await
             .map_err(|error| store_error_at(&directory.join(DATABASE), error))?;
-        let state_dir = directory.clone();
-        let local = worker("migrate local state", move || local.migrate(&state_dir)).await??;
         let hlc = store
             .latest_hlc(local.board_id)
             .await

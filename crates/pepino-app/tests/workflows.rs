@@ -901,25 +901,9 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
 }
 
 #[tokio::test]
-async fn saved_views_migrate_v1_state_and_survive_concurrent_opens() {
+async fn saved_views_survive_concurrent_opens() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("local.json");
-    let mut legacy = json!({
-        "version":1,"device_id":"51".repeat(32),"identity_id":"62".repeat(32),
-        "display_name":"Ada Gardener","device_name":"Garden laptop","board_id":"73".repeat(32),
-        "board_name":"Greenhouse"
-    });
-    Store::open(directory.path().join("pepino.sqlite"))
-        .await
-        .unwrap();
-    std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
-    let mut app = App::open(directory.path(), NOW).await.unwrap();
-    legacy["version"] = json!(2);
-    legacy["saved_views"] = json!({});
-    assert_eq!(
-        serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),
-        legacy
-    );
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     read_golden(
         &mut app,
         json!({"op":"list_views"}),
