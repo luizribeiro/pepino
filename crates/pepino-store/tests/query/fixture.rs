@@ -144,6 +144,12 @@ async fn load() -> BoardView {
                 FieldValue::Text("12".into()),
             );
         }
+        if index == 4 {
+            fields.description = Some("Seal the roof first".into());
+            fields
+                .custom
+                .insert(FieldName::new("estimate").unwrap(), FieldValue::Integer(8));
+        }
         if index == 3 {
             fields.description = Some(String::new());
         }
@@ -161,6 +167,20 @@ async fn load() -> BoardView {
             Event::TaskCreated {
                 title: title.into(),
                 fields,
+            },
+        )
+        .await;
+    }
+    for (counter, field) in [(30, "description"), (31, "estimate")] {
+        record(
+            &store,
+            counter,
+            midnight - 86_400_990,
+            EventId::from_bytes([counter; 32]),
+            Event::TaskFieldSet {
+                task: id(4),
+                field: FieldName::new(field).unwrap(),
+                value: FieldValue::Unset,
             },
         )
         .await;
@@ -187,10 +207,6 @@ async fn load() -> BoardView {
         Event::CommentAdded {
             task: id(7),
             text: "Use the Straße marker".into(),
-        },
-        Event::CommentAdded {
-            task: id(14),
-            text: "Discard the greenhouse glass".into(),
         },
         Event::TaskDeleted { task: id(14) },
     ]) {

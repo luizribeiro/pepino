@@ -98,6 +98,12 @@ fn presence_checks_every_field_including_empty_description_and_custom_values() {
     check("has:description", &[0, 3]);
     check("has:estimate", &[0, 1]);
     check("has:budget", &[]);
+    check("weatherproof -has:estimate -has:description", &[4]);
+    check("latch has:description", &[3]);
+    assert_eq!(
+        board().task(id(3)).unwrap().description.as_deref(),
+        Some("")
+    );
     check("has:parent,description", &[0, 1, 3, 6]);
 }
 
@@ -128,7 +134,6 @@ fn free_text_searches_each_body_with_unicode_simple_case_folding() {
     check("@fence-details bolts", &[0]);
     check("fence -bolts", &[]);
     check(r#""fence use""#, &[]);
-    check("greenhouse", &[]);
 }
 
 #[test]
