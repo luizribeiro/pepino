@@ -310,9 +310,19 @@ fn write_date_and_field_operands_match_the_app_filter() {
             "part=\"004\"",
             "--set",
             "estimate=+004",
+            "--set",
+            "zip=007",
+            "--set",
+            "cost=12.50",
         ],
     );
     let detail = as_json(&sandbox.run(&["show", &id, "--json"]));
+    for (name, value) in [("estimate", "+004"), ("zip", "007"), ("cost", "12.50")] {
+        assert_eq!(
+            detail["task"]["fields"][name],
+            json!({"type":"text","value":value})
+        );
+    }
     let today = detail["task"]["fields"]["anchor"]["value"]
         .as_str()
         .unwrap()
@@ -323,7 +333,9 @@ fn write_date_and_field_operands_match_the_app_filter() {
             "due:-2w",
             "arrival:tomorrow",
             "part:\"004\"",
-            "estimate:+004",
+            "estimate:\"+004\"",
+            "zip:\"007\"",
+            "cost:\"12.50\"",
         ]
         .map(String::from)
         .into(),

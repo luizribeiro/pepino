@@ -56,7 +56,13 @@ pub(crate) fn custom_value(value: &str, today: Date) -> Result<FieldValue, &'sta
     if value.contains('"') {
         return quoted_text(value).map(FieldValue::Text);
     }
-    if digits(value.strip_prefix(['+', '-']).unwrap_or(value)) {
+    let unsigned = value.strip_prefix('-').unwrap_or(value);
+    if value.starts_with('+')
+        || (unsigned.len() > 1 && unsigned.starts_with('0') && digits(unsigned))
+    {
+        return Ok(FieldValue::Text(value.to_owned()));
+    }
+    if digits(unsigned) {
         return value
             .parse()
             .map(FieldValue::Integer)
@@ -107,7 +113,16 @@ mod tests {
         }
         .apply("2026-11-20".parse().unwrap(), &mut fields)
         .unwrap();
-        assert_eq!(fields["estimate"], FieldValue::Integer(-3));
+        assert_eq!(fields["estimate"], FieldValue::Text("-03".into()));
+        let today = "2026-11-20".parse().unwrap();
+        assert_eq!(custom_value("0", today).unwrap(), FieldValue::Integer(0));
+        assert_eq!(custom_value("-3", today).unwrap(), FieldValue::Integer(-3));
+        for value in ["007", "+12", "12.50"] {
+            assert_eq!(
+                custom_value(value, today).unwrap(),
+                FieldValue::Text(value.into())
+            );
+        }
         assert_eq!(
             fields["arrival"],
             FieldValue::Date("2026-11-21".parse().unwrap())
