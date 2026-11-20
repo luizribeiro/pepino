@@ -69,7 +69,12 @@ impl Status {
                         !signals.replaying
                             && signals.active_syncs.is_empty()
                             && signals.pending_deliveries == 0
-                            && node.connected_peers.is_subset(&signals.caught_up)
+                            && node.connected_peers.iter().all(|peer| {
+                                self.members
+                                    .get(id)
+                                    .is_some_and(|members| !members.contains(peer))
+                                    || signals.caught_up.contains(peer)
+                            })
                     })
             })
     }
@@ -135,4 +140,21 @@ fn a_repeated_error_preserves_the_snapshot_without_waking_observers() {
     );
     record_error(&status, board, message);
     assert!(!updates.has_changed().unwrap());
+}
+
+#[cfg(test)]
+#[test]
+fn an_unrelated_connected_peer_does_not_block_private_board_idle() {
+    let board = BoardId::from_bytes([34; 32]);
+    let stranger = DeviceId::from_bytes([35; 32]);
+    let member = DeviceId::from_bytes([36; 32]);
+    let mut status = Status::default();
+    status.board_joins.insert(board, BoardJoinState::Joined);
+    status.boards.entry(board).or_default().outbox_pending = Some(0);
+    status.node.boards.insert(board, Default::default());
+    status.members.insert(board, [member].into());
+    status.node.connected_peers.insert(stranger);
+    assert!(status.is_idle());
+    status.node.connected_peers.insert(member);
+    assert!(!status.is_idle());
 }
