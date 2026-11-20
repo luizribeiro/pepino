@@ -1499,3 +1499,30 @@ fn status_honors_zero_timeout_on_the_data_directory_lock() {
         "status"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn show_uses_tty_dates_and_configured_color() {
+    let (sandbox, data) = task_sandbox();
+    std::fs::write(
+        &sandbox.config,
+        format!(
+            "data_dir = {}\n[ui]\ncolor = 'always'\ndate_format = '%d %b %Y'\n",
+            json!(data)
+        ),
+    )
+    .unwrap();
+    let id = create_task(&sandbox, "Inspect the hinge", &["--due", "tomorrow"]);
+    let plain = sandbox.run(&["show", &id, "--color", "always"]);
+    assert!(
+        plain
+            .lines()
+            .any(|line| line.starts_with("Due: ") && line.as_bytes()[5].is_ascii_digit())
+    );
+    let args = ["show", &id, "--config", sandbox.config.to_str().unwrap()];
+    let colored = String::from_utf8(tty_output(&args, None)).unwrap();
+    assert!(colored.contains("\x1b[36m"));
+    assert!(colored.contains("Due: tomorrow") || colored.contains("Due: today"));
+    let suppressed = String::from_utf8(tty_output(&args, Some("1"))).unwrap();
+    assert!(!suppressed.contains('\x1b'));
+}
