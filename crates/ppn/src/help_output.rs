@@ -42,6 +42,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "sync",
             "idle Whether all known sync work settled\nnetwork Peers and per-board sync activity",
         ),
+        "device request" => (
+            "device_request",
+            "request Reusable request code for an existing device",
+        ),
         "view ls" => ("views", "views Saved filters ordered by name"),
         "view save" => (
             "view_saved",

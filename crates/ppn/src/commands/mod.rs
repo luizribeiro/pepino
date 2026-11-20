@@ -5,6 +5,7 @@ pub mod comment;
 pub mod config;
 pub mod debug;
 pub mod deps;
+pub mod device;
 pub mod done;
 pub mod edit;
 pub mod help;
