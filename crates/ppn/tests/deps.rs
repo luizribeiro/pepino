@@ -124,7 +124,7 @@ fn task_reads_keep_reference_statuses_across_graphs_and_history() {
         }
     }
 
-    for command in ["deps", "tree"] {
+    for command in ["deps", "tree", "log"] {
         let output = sandbox
             .command()
             .args([command, &deleted, "--json"])
@@ -132,9 +132,14 @@ fn task_reads_keep_reference_statuses_across_graphs_and_history() {
             .unwrap();
         assert_eq!(task_error(output, 3, "not_found")["task"], deleted);
     }
-    let log = as_json(&sandbox.run(&["log", &deleted, "--json"]));
+    let log = as_json(&sandbox.run(&["log", "--limit", "65540", "--json"]));
     let events = log["events"].as_array().unwrap();
-    assert_eq!(events.last().unwrap()["change"]["action"], "deleted");
+    assert!(
+        events
+            .iter()
+            .any(|event| event["change"]["action"] == "deleted"
+                && event["change"]["task"] == deleted)
+    );
 }
 
 #[test]

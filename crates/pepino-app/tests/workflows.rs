@@ -1318,9 +1318,7 @@ async fn log_actions_distinguish_sets_unsets_and_presence_changes() {
     ] {
         handle(&mut app, request).await.unwrap();
     }
-    let Response::Log { events, titles, .. } = handle(&mut app, json!({"op":"log","task":task}))
-        .await
-        .unwrap()
+    let Response::Log { events, titles, .. } = handle(&mut app, json!({"op":"log"})).await.unwrap()
     else {
         panic!("expected log");
     };

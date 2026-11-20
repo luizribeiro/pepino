@@ -134,7 +134,7 @@ impl App {
         limit: Option<usize>,
     ) -> Result<Response, AppError> {
         let task = if let Some(reference) = reference {
-            Some(resolve_id(&self.board().await?, "task", reference, true)?)
+            Some(resolve_id(&self.board().await?, "task", reference, false)?)
         } else {
             None
         };
