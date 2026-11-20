@@ -9,7 +9,7 @@ use crate::{BoardView, PrefixResolution, TaskRecord};
 
 use super::{
     QueryError, QueryErrorKind,
-    predicates::{compare, custom, fold, has, is, text_matches, utc_days},
+    predicates::{compare, custom, fold, folded_text, has, is, utc_days},
     saved::{self, Expanded, SavedViews, canonical_terms},
 };
 
@@ -62,8 +62,9 @@ pub struct Query<'a> {
 
 /// A query resolved against a particular board snapshot.
 pub struct Prepared<'view> {
-    predicates: Vec<Check<'view>>,
+    predicates: Vec<Check>,
     view_count: usize,
+    view: &'view BoardView,
 }
 
 impl fmt::Debug for Prepared<'_> {
@@ -77,7 +78,13 @@ impl fmt::Debug for Prepared<'_> {
 impl<'view> Prepared<'view> {
     /// Tests a task from the snapshot used to prepare the query.
     pub fn matches(&self, task: &TaskRecord) -> bool {
-        all_match(&self.predicates, task, &mut vec![None; self.view_count])
+        let mut evaluation = TaskEvaluation {
+            task,
+            view: self.view,
+            views: vec![None; self.view_count],
+            folded: None,
+        };
+        evaluation.matches(&self.predicates)
     }
 }
 
@@ -97,6 +104,7 @@ impl Query<'_> {
         Ok(Prepared {
             predicates,
             view_count: saved.len(),
+            view,
         })
     }
 }
@@ -115,46 +123,61 @@ pub fn select<'view>(
     Ok(view.iter().filter(|task| prepared.matches(task)).collect())
 }
 
-type Predicate<'a> = Box<dyn Fn(&TaskRecord) -> bool + 'a>;
+type Predicate = Box<dyn Fn(&TaskRecord) -> bool>;
 
-struct Check<'view> {
-    predicate: CheckKind<'view>,
+struct Check {
+    predicate: CheckKind,
     negated: bool,
 }
 
-enum CheckKind<'view> {
-    Task(Predicate<'view>),
-    View(Rc<ViewChecks<'view>>),
+enum CheckKind {
+    Task(Predicate),
+    Text(String),
+    View(Rc<ViewChecks>),
 }
 
-struct ViewChecks<'view> {
+struct ViewChecks {
     id: usize,
-    checks: Vec<Check<'view>>,
+    checks: Vec<Check>,
 }
 
-fn all_match(checks: &[Check<'_>], task: &TaskRecord, results: &mut [Option<bool>]) -> bool {
-    checks.iter().all(|check| {
-        let matched = match &check.predicate {
-            CheckKind::Task(predicate) => predicate(task),
-            CheckKind::View(view) => match results[view.id] {
-                Some(matched) => matched,
-                None => {
-                    let matched = all_match(&view.checks, task, results);
-                    results[view.id] = Some(matched);
-                    matched
-                }
-            },
-        };
-        matched != check.negated
-    })
-}
-
-fn prepare<'a>(
+struct TaskEvaluation<'a> {
+    task: &'a TaskRecord,
     view: &'a BoardView,
+    views: Vec<Option<bool>>,
+    folded: Option<Vec<String>>,
+}
+
+impl TaskEvaluation<'_> {
+    fn matches(&mut self, checks: &[Check]) -> bool {
+        checks.iter().all(|check| {
+            let matched = match &check.predicate {
+                CheckKind::Task(predicate) => predicate(self.task),
+                CheckKind::Text(needle) => self
+                    .folded
+                    .get_or_insert_with(|| folded_text(self.view, self.task))
+                    .iter()
+                    .any(|part| part.contains(needle)),
+                CheckKind::View(view) => match self.views[view.id] {
+                    Some(matched) => matched,
+                    None => {
+                        let matched = self.matches(&view.checks);
+                        self.views[view.id] = Some(matched);
+                        matched
+                    }
+                },
+            };
+            matched != check.negated
+        })
+    }
+}
+
+fn prepare(
+    view: &BoardView,
     filter: &Filter,
     context: &Context<'_>,
-    saved: &mut SavedViews<'_, Rc<ViewChecks<'a>>>,
-) -> Result<Expanded<Vec<Check<'a>>>, QueryError> {
+    saved: &mut SavedViews<'_, Rc<ViewChecks>>,
+) -> Result<Expanded<Vec<Check>>, QueryError> {
     let mut predicates = Vec::new();
     let mut has_boards = false;
     for term in canonical_terms(filter) {
@@ -162,6 +185,12 @@ fn prepare<'a>(
             Clause::Board(_) => {
                 has_boards = true;
                 continue;
+            }
+            Clause::Text(text) => {
+                if !view.comments_loaded() {
+                    return Err(saved.error(term, QueryErrorKind::CommentsRequired));
+                }
+                CheckKind::Text(fold(text))
             }
             Clause::View(name) => {
                 let nested = saved.expand(term, name, |saved, nested| {
@@ -197,19 +226,12 @@ fn prepare<'a>(
     })
 }
 
-fn prepare_clause<'a>(
-    view: &'a BoardView,
+fn prepare_clause(
+    view: &BoardView,
     clause: &Clause,
     context: &Context<'_>,
-) -> Result<Option<Predicate<'a>>, QueryErrorKind> {
-    let predicate: Predicate<'a> = match clause.clone() {
-        Clause::Text(text) => {
-            if !view.comments_loaded() {
-                return Err(QueryErrorKind::CommentsRequired);
-            }
-            let needle = fold(&text);
-            Box::new(move |task| text_matches(view, task, &needle))
-        }
+) -> Result<Option<Predicate>, QueryErrorKind> {
+    let predicate: Predicate = match clause.clone() {
         Clause::Is(values) => Box::new(move |task| values.iter().any(|value| is(task, *value))),
         Clause::Has(values) => Box::new(move |task| values.iter().any(|value| has(task, value))),
         Clause::Tag(values) => {
@@ -240,7 +262,7 @@ fn prepare_clause<'a>(
                 .get(&field)
                 .is_some_and(|value| custom(value, &alternatives))
         }),
-        Clause::Board(_) | Clause::View(_) => return Ok(None),
+        Clause::Board(_) | Clause::View(_) | Clause::Text(_) => return Ok(None),
     };
     Ok(Some(predicate))
 }
@@ -265,11 +287,11 @@ fn resolve_person(
     }
 }
 
-fn relation<'a>(
+fn relation(
     view: &BoardView,
     values: &[String],
     contains: fn(&TaskRecord, TaskId) -> bool,
-) -> Result<Predicate<'a>, QueryErrorKind> {
+) -> Result<Predicate, QueryErrorKind> {
     let ids = resolve_prefixes(view, values)?;
     Ok(Box::new(move |task| {
         ids.iter().any(|&id| contains(task, id))

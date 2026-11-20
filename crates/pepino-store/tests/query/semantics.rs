@@ -123,7 +123,8 @@ fn free_text_searches_each_body_with_unicode_simple_case_folding() {
     check("οδυσσεύσ", &[12]);
     check("STRAẞE", &[2, 7]);
     check("STRASSE", &[]);
-    check("fence bolts", &[0]);
+    check("fence bolts cèdre", &[0]);
+    check("@fence-details bolts", &[0]);
     check("fence -bolts", &[]);
     check(r#""fence use""#, &[]);
     check("greenhouse", &[]);

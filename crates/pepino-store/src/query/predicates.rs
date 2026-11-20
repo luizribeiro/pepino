@@ -75,7 +75,7 @@ pub(super) fn fold(text: &str) -> String {
     text.chars().map(|ch| mapper.simple_fold(ch)).collect()
 }
 
-pub(super) fn text_matches(view: &BoardView, task: &TaskRecord, needle: &str) -> bool {
+pub(super) fn folded_text(view: &BoardView, task: &TaskRecord) -> Vec<String> {
     std::iter::once(task.title.as_str())
         .chain(task.description.as_deref())
         .chain(
@@ -83,5 +83,6 @@ pub(super) fn text_matches(view: &BoardView, task: &TaskRecord, needle: &str) ->
                 .iter()
                 .map(|comment| comment.text.as_str()),
         )
-        .any(|text| fold(text).contains(needle))
+        .map(fold)
+        .collect()
 }
