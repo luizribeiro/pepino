@@ -2,10 +2,11 @@ use pepino_app::{FilterInput, ReadRequest, Request};
 use ppn::app::AppClient;
 use ppn::error::CliError;
 use ppn::help_tree::example_help;
-use ppn::output::CommandResult;
+use ppn::output::{CommandResult, Warning};
 use ppn::render::{ShortIds, task_row};
 use ppn::response::ResponseExt;
 use ppn::terminal::Context;
+use serde_json::{Map, json};
 
 #[derive(clap::Args)]
 #[command(about = "List tasks matching an optional filter.", after_help = example_help(&[
@@ -53,6 +54,21 @@ pub fn run(context: &Context<'_>, mut args: Args) -> Result<CommandResult, CliEr
     }))?;
 
     let result = response.tasks()?;
+    let warnings: Vec<_> = result
+        .warnings
+        .iter()
+        .map(|warning| Warning {
+            message: format!(
+                "Unknown filter field {:?}. Did you mean {:?}?",
+                warning.field, warning.suggestion
+            ),
+            details: Map::from_iter([
+                ("code".into(), json!("unknown_filter_field")),
+                ("field".into(), json!(warning.field)),
+                ("suggestion".into(), json!(warning.suggestion)),
+            ]),
+        })
+        .collect();
     let count = result.tasks.len();
     let note = if count < *result.total {
         Some(format!("showing {count} of {}", result.total))
@@ -78,6 +94,7 @@ pub fn run(context: &Context<'_>, mut args: Args) -> Result<CommandResult, CliEr
                 .collect::<Vec<_>>()
                 .join("\n"))
         })?
-        .with_human_note(note),
+        .with_human_note(note)
+        .with_warnings(warnings),
     )
 }

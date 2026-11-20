@@ -242,3 +242,23 @@ fn negated_terms_and_flags_can_be_interleaved() {
         "-tag:someday -is:blocked"
     );
 }
+
+#[test]
+fn ls_warns_on_unknown_custom_fields_without_failing() {
+    let (sandbox, _) = task_sandbox();
+    let args = ["ls", "statuss:todo"];
+    let output = sandbox.command().args(args).output().unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_eq!(output.stderr, b"No matching tasks.\nwarning: Unknown filter field \"statuss\". Did you mean \"status\"?\n");
+    let output = sandbox.command().args(args).arg("--json").output().unwrap();
+    assert!(output.status.success());
+    let warning = as_json(std::str::from_utf8(&output.stderr).unwrap());
+    assert_eq!(warning["warning"]["code"], "unknown_filter_field");
+    assert_eq!(
+        as_json(std::str::from_utf8(&output.stdout).unwrap())["warnings"],
+        serde_json::json!([
+            {"field": "statuss", "suggestion": "status"}
+        ])
+    );
+}

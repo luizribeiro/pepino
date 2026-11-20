@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use pepino_app::{
-    Date, DependencyRecord, EdgeEffect, EventRecord, IdentityRecord, NamedRecord, Response,
-    SavedView, StatusCounts, TaskRecord, TaskSummary, TreeNode,
+    Date, DependencyRecord, EdgeEffect, EventRecord, FilterWarning, IdentityRecord, NamedRecord,
+    Response, SavedView, StatusCounts, TaskRecord, TaskSummary, TreeNode,
 };
 
 use crate::error::{CliError, ErrorKind};
@@ -44,7 +44,7 @@ response_views! {
     },
     tasks => Tasks {
         tasks: &'a [TaskSummary], names: &'a Names, total: &'a usize, filter: &'a str,
-        resolved_dates: &'a BTreeMap<String, Date>, sort: &'a str,
+        resolved_dates: &'a BTreeMap<String, Date>, sort: &'a str, warnings: &'a [FilterWarning],
     },
     tree => Tree { nodes: &'a [TreeNode], names: &'a Names },
     deps => Deps {
