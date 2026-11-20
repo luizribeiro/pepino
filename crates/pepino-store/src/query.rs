@@ -1,5 +1,9 @@
 //! In-memory filtering and ordering for a board snapshot.
 
+mod sort;
+
+pub use sort::Sort;
+
 use pepino_core::filter::{Clause, Filter, Term};
 
 /// Splits out top-level board terms, retaining order, alternatives and negation.
