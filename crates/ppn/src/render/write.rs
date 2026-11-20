@@ -53,31 +53,52 @@ pub fn write_documents(
         }
         warnings.extend(excluded);
     }
-    let result = Response::Write {
-        changed: writes.iter().any(|write| *write.changed),
-        created: None,
-        tasks: writes
-            .iter()
-            .flat_map(|write| write.tasks.iter().cloned())
-            .collect(),
-        deleted: writes
-            .iter()
-            .flat_map(|write| write.deleted.iter().cloned())
-            .collect(),
-        edges: writes
-            .iter()
-            .flat_map(|write| write.edges.iter().cloned())
-            .collect(),
-        names: writes
-            .iter()
-            .flat_map(|write| write.names.clone())
-            .collect(),
-    };
+    let result = combine_responses(responses, &writes)?;
     let human = messages.join("\n");
     Ok(
         CommandResult::app_document(context, result, move |_, _| Ok(human))?
             .with_warnings(warnings),
     )
+}
+
+fn combine_responses(
+    responses: &[Response],
+    writes: &[crate::response::Write<'_>],
+) -> Result<Response, CliError> {
+    let mut result = responses
+        .first()
+        .cloned()
+        .ok_or_else(|| CliError::new(ErrorKind::Failure, "No task write outcomes to render."))?;
+    if let Response::Write {
+        changed,
+        created,
+        tasks,
+        deleted,
+        edges,
+        names,
+        ..
+    } = &mut result
+    {
+        *changed = writes.iter().any(|write| *write.changed);
+        *created = None;
+        *tasks = writes
+            .iter()
+            .flat_map(|write| write.tasks.iter().cloned())
+            .collect();
+        *deleted = writes
+            .iter()
+            .flat_map(|write| write.deleted.iter().cloned())
+            .collect();
+        *edges = writes
+            .iter()
+            .flat_map(|write| write.edges.iter().cloned())
+            .collect();
+        *names = writes
+            .iter()
+            .flat_map(|write| write.names.clone())
+            .collect();
+    }
+    Ok(result)
 }
 
 fn write_output(response: &Response, verb: &str) -> Result<(String, Vec<Warning>), CliError> {
@@ -156,6 +177,13 @@ fn write_output_with_ids(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_requires_at_least_one_write_outcome() {
+        let error = combine_responses(&[], &[]).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Failure);
+        assert_eq!(error.to_string(), "No task write outcomes to render.");
+    }
 
     #[test]
     fn created_id_uses_only_visible_tasks_for_uniqueness() {
