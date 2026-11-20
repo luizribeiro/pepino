@@ -12,11 +12,22 @@ pub struct EventRecord {
 }
 
 #[derive(FromRow)]
-struct EventRow {
+pub(crate) struct HistoryRow<T> {
     id: [u8; 32],
     author: [u8; 32],
     hlc: [u8; 12],
-    bytes: Vec<u8>,
+    payload: T,
+}
+
+impl<T> HistoryRow<T> {
+    pub(crate) fn into_parts(self) -> (EventId, DeviceId, Hlc, T) {
+        (
+            EventId::from_bytes(self.id),
+            DeviceId::from_bytes(self.author),
+            Hlc::from_key(self.hlc),
+            self.payload,
+        )
+    }
 }
 
 pub(crate) async fn index(
@@ -48,8 +59,8 @@ impl Store {
     ) -> Result<Vec<EventRecord>, StoreError> {
         let rows = self
             .read(async |connection| {
-                sqlx::query_as::<_, EventRow>(
-                    "SELECT t.id, e.author, t.hlc, e.bytes FROM event_task t
+                sqlx::query_as::<_, HistoryRow<Vec<u8>>>(
+                    "SELECT t.id, e.author, t.hlc, e.bytes AS payload FROM event_task t
                      JOIN event_log e USING (board, id)
                      WHERE t.board = ? AND t.task = ? ORDER BY t.hlc, t.id",
                 )
@@ -61,11 +72,14 @@ impl Store {
             .await?;
         Ok(rows
             .into_iter()
-            .map(|row| EventRecord {
-                id: EventId::from_bytes(row.id),
-                author: DeviceId::from_bytes(row.author),
-                hlc: Hlc::from_key(row.hlc),
-                bytes: row.bytes,
+            .map(|row| {
+                let (id, author, hlc, bytes) = row.into_parts();
+                EventRecord {
+                    id,
+                    author,
+                    hlc,
+                    bytes,
+                }
             })
             .collect())
     }
