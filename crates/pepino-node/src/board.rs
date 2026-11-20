@@ -6,7 +6,7 @@ use std::{
 
 use p2panda::{
     Hash,
-    spaces::{Space, SpaceSubscription, SpacesManagerError},
+    spaces::{PublishSpaceError, Space, SpaceSubscription, SpacesManagerError},
     streams::StreamFrom,
 };
 use pepino_core::{BoardId, EventId};
@@ -40,6 +40,7 @@ pub struct BoardHandle {
     runtime: Handle,
     joined: watch::Receiver<JoinState>,
     receipts: Receipts,
+    confirmation_timeout: Duration,
     events: Option<mpsc::UnboundedReceiver<Result<BoardEvent, Error>>>,
     stop: oneshot::Sender<()>,
     done: JoinHandle<Result<(), Error>>,
@@ -50,6 +51,7 @@ impl Node {
         let node = self.inner.clone();
         let acks = self.acks.clone();
         let status = self.status.clone();
+        let confirmation_timeout = self.publish_confirmation_timeout;
         let boards = self.boards.clone();
         self.worker
             .run(async move {
@@ -57,9 +59,15 @@ impl Node {
                     node.create_space::<Payload>().await.map_err(Error::node)?;
                 let id = BoardId::from_bytes(*space.id().as_bytes());
                 let lease = boards.reserve(id)?;
-                let board = BoardHandle::attach(&node, lease, acks, status, subscription, async {
-                    Ok(space)
-                });
+                let board = BoardHandle::attach(
+                    &node,
+                    lease,
+                    acks,
+                    status,
+                    confirmation_timeout,
+                    subscription,
+                    async { Ok(space) },
+                );
                 board.wait_until_joined(Duration::from_secs(30)).await?;
                 Ok(board)
             })
@@ -82,6 +90,7 @@ impl Node {
         let node = self.inner.clone();
         let acks = self.acks.clone();
         let status = self.status.clone();
+        let confirmation_timeout = self.publish_confirmation_timeout;
         let lease = self.boards.reserve(id)?;
         self.worker
             .run(async move {
@@ -100,6 +109,7 @@ impl Node {
                     lease,
                     acks,
                     status,
+                    confirmation_timeout,
                     subscription,
                     pending.joined(),
                 ))
@@ -114,6 +124,7 @@ impl BoardHandle {
         lease: BoardLease,
         acks: AckStore,
         status: broadcast::Sender<NodeEvent>,
+        confirmation_timeout: Duration,
         subscription: SpaceSubscription<Payload>,
         joined: impl Future<Output = Result<Space<Payload>, SpacesManagerError>> + Send + 'static,
     ) -> Self {
@@ -139,6 +150,7 @@ impl BoardHandle {
             runtime: Handle::current(),
             joined: state,
             receipts,
+            confirmation_timeout,
             events: Some(events),
             stop,
             done: tokio::spawn(task.drive(subscription, joined)),
@@ -180,21 +192,46 @@ impl BoardHandle {
             .map_err(|error| Error::Worker(error.to_string()))?
     }
 
+    /// Publish opaque bytes and return the transport operation ID.
+    ///
+    /// [`Error::PublishNotSubmitted`] is safe to retry. After
+    /// [`Error::PublishUnconfirmed`] the operation may or may not be durable.
+    /// Retrying may create a second operation. The application store deduplicates
+    /// identical payloads by their content-derived event ID.
     pub async fn publish(&self, bytes: Vec<u8>) -> Result<EventId, Error> {
-        let space = self.space()?;
+        let space = self
+            .space()
+            .map_err(|error| Error::PublishNotSubmitted(error.to_string()))?;
         let (message, receipt) = self.receipts.track(bytes);
-        self.run(async move {
-            let submitted = space.publish(message).await.map_err(Error::node)?;
-            let processing = submitted.processed.processing_count;
-            submitted.await.map_err(Error::node)?;
-            if processing == 0 {
-                return Err(Error::PublishReceipt);
-            }
-            timeout(Duration::from_secs(30), receipt.id())
+        let limit = self.confirmation_timeout;
+        let (started, mut state) = oneshot::channel();
+        let result = self
+            .run(async move {
+                let _ = started.send(());
+                timeout(limit, async {
+                    let submitted = space.publish(message).await.map_err(publish_error)?;
+                    if submitted.processed.processing_count == 0 {
+                        return Err(Error::PublishUnconfirmed("no processing route".into()));
+                    }
+                    submitted
+                        .await
+                        .map_err(|error| Error::PublishUnconfirmed(error.to_string()))?;
+                    receipt
+                        .id()
+                        .await
+                        .map_err(|error| Error::PublishUnconfirmed(error.to_string()))
+                })
                 .await
-                .map_err(|_| Error::PublishReceipt)?
-        })
-        .await
+                .map_err(|_| Error::PublishUnconfirmed("confirmation timed out".into()))?
+            })
+            .await;
+        match result {
+            Err(Error::Worker(details)) if state.try_recv().is_err() => {
+                Err(Error::PublishNotSubmitted(details))
+            }
+            Err(Error::Worker(details)) => Err(Error::PublishUnconfirmed(details)),
+            other => other,
+        }
     }
 
     pub async fn close(self) -> Result<(), Error> {
@@ -202,5 +239,14 @@ impl BoardHandle {
         self.done
             .await
             .map_err(|error| Error::Worker(error.to_string()))?
+    }
+}
+
+fn publish_error(error: PublishSpaceError) -> Error {
+    match error {
+        PublishSpaceError::Space(_) | PublishSpaceError::Submit(_) => {
+            Error::PublishUnconfirmed(error.to_string())
+        }
+        _ => Error::PublishNotSubmitted(error.to_string()),
     }
 }

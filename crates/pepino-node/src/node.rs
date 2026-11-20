@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use futures_util::StreamExt;
 use pepino_core::DeviceId;
@@ -21,11 +21,13 @@ pub struct Node {
     pub(crate) acks: AckStore,
     pub(crate) boards: OpenBoards,
     pub(crate) status: broadcast::Sender<NodeEvent>,
+    pub(crate) publish_confirmation_timeout: Duration,
 }
 
 impl Node {
     pub async fn spawn(settings: NodeSettings) -> Result<Self, Error> {
         let builder = settings.builder()?;
+        let publish_confirmation_timeout = settings.publish_confirmation_timeout;
         let worker = Worker::start(&settings.database_path).await?;
         let worker_pool = worker.pool.clone();
         let (inner, acks, status) = worker
@@ -69,6 +71,7 @@ impl Node {
             acks,
             boards: OpenBoards::default(),
             status,
+            publish_confirmation_timeout,
         })
     }
 

@@ -1,4 +1,4 @@
-use std::{net::Ipv4Addr, path::PathBuf};
+use std::{net::Ipv4Addr, path::PathBuf, time::Duration};
 
 use p2panda::{
     Hash, NodeBuilder, RelayUrl, VerifyingKey, network::MdnsDiscoveryMode, node::AckPolicy,
@@ -31,6 +31,7 @@ pub struct NodeSettings {
     pub bind_port: Option<u16>,
     pub credentials: DeviceCredentials,
     pub database_path: PathBuf,
+    pub publish_confirmation_timeout: Duration,
 }
 
 impl NodeSettings {
@@ -44,6 +45,7 @@ impl NodeSettings {
             bind_port: None,
             credentials,
             database_path: database_path.into(),
+            publish_confirmation_timeout: Duration::from_secs(30),
         }
     }
 

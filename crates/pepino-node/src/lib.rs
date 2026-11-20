@@ -31,8 +31,10 @@ pub enum Error {
     EventsTaken,
     #[error("waiting for board membership timed out")]
     JoinTimeout,
-    #[error("the local operation was submitted without a processed receipt")]
-    PublishReceipt,
+    #[error("the operation was not submitted: {0}")]
+    PublishNotSubmitted(String),
+    #[error("the operation was submitted or may have been submitted, without confirmation: {0}")]
+    PublishUnconfirmed(String),
     #[error("this device has not joined the board")]
     NotJoined,
     #[error("processing board operation {id}: {details}")]

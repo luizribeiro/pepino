@@ -99,7 +99,10 @@ async fn two_devices_exchange_events_and_a_late_member_gets_history() {
     let mut board_c = enroll(&board_a, &c, Role::Read).await;
     let mut events_c = board_c.events().unwrap();
     expect(&mut events_c, &history).await;
-    assert!(board_c.publish(DONE.to_vec()).await.is_err());
+    assert!(matches!(
+        board_c.publish(DONE.to_vec()).await,
+        Err(Error::PublishNotSubmitted(_))
+    ));
     c.shutdown().await.unwrap();
     b.shutdown().await.unwrap();
     a.shutdown().await.unwrap();
