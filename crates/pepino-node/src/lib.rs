@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod ack;
 mod credentials;
 mod node;
 mod settings;
