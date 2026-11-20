@@ -52,6 +52,10 @@ enum Command {
     Deps(commands::deps::Args),
     Log(commands::log::Args),
     View(commands::view::Args),
+
+    Edit(commands::edit::Args),
+    Start(commands::start::Args),
+    Done(commands::done::Args),
     Debug(debug::Args),
 }
 
@@ -190,6 +194,9 @@ fn dispatch(
         Some(Command::Deps(args)) => commands::deps::run(context, args),
         Some(Command::Log(args)) => commands::log::run(context, args),
         Some(Command::View(args)) => commands::view::run(context, args),
+        Some(Command::Edit(args)) => commands::edit::run(context, args),
+        Some(Command::Start(args)) => commands::start::run(context, args),
+        Some(Command::Done(args)) => commands::done::run(context, args),
         Some(Command::Debug(args)) => debug::run(context, args),
         None => Ok(help::run(context, Cli::command(), None)),
     }
