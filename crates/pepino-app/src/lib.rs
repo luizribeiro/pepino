@@ -8,6 +8,7 @@
 
 mod app;
 mod batch;
+mod device_grant;
 mod device_request;
 mod filter;
 mod hlc;
@@ -25,6 +26,7 @@ mod wire;
 mod write;
 
 pub use app::{App, SyncStoreError};
+pub use device_grant::{DeviceGrant, PeerHint};
 pub use device_request::DeviceRequest;
 pub use filter::{FilterDiagnostic, FilterInput, FilterPosition, FilterWarning};
 pub use hlc::Hlc;

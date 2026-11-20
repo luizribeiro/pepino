@@ -38,7 +38,7 @@ impl Default for OpenOptions {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LocalState {
-    version: u32,
+    pub(super) version: u32,
     pub device_id: DeviceId,
     pub identity_id: IdentityId,
     pub display_name: String,
@@ -47,6 +47,8 @@ pub struct LocalState {
     pub(super) other_devices: BTreeMap<DeviceId, String>,
     pub(super) boards: Vec<LocalBoard>,
     pub(crate) saved_views: SavedViews,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) link: Option<crate::device_grant::Link>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -121,6 +123,7 @@ impl LocalState {
             }],
             other_devices: BTreeMap::new(),
             saved_views: SavedViews::default(),
+            link: None,
         })
     }
 
