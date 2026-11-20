@@ -81,6 +81,38 @@ pub enum DecodeOutcome {
     },
 }
 
+impl DecodeOutcome {
+    pub const fn id(&self) -> EventId {
+        match self {
+            Self::Known(envelope) => envelope.id(),
+            Self::UnknownVersion { id, .. }
+            | Self::UnknownEvent { id, .. }
+            | Self::UnknownValue { id, .. }
+            | Self::InvalidEvent { id, .. } => *id,
+        }
+    }
+
+    pub const fn author(&self) -> Option<DeviceId> {
+        match self {
+            Self::Known(envelope) => Some(envelope.author()),
+            Self::UnknownVersion { author, .. } => *author,
+            Self::UnknownEvent { author, .. }
+            | Self::UnknownValue { author, .. }
+            | Self::InvalidEvent { author, .. } => Some(*author),
+        }
+    }
+
+    pub const fn hlc(&self) -> Option<Hlc> {
+        match self {
+            Self::Known(envelope) => Some(envelope.hlc()),
+            Self::UnknownVersion { hlc, .. } => *hlc,
+            Self::UnknownEvent { hlc, .. }
+            | Self::UnknownValue { hlc, .. }
+            | Self::InvalidEvent { hlc, .. } => Some(*hlc),
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize)]
 struct Content<E> {
     author: DeviceId,

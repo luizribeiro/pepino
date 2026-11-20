@@ -91,10 +91,15 @@ fn distinguishes_unknown_nested_values_from_corruption() {
         ),
     ] {
         let bytes = encode(variant, payload);
+        let decoded = Envelope::decode(&bytes).unwrap();
+        let id = EventId::from_bytes(*blake3::hash(&bytes).as_bytes());
+        assert_eq!(decoded.id(), id);
+        assert_eq!(decoded.author(), Some(AUTHOR));
+        assert_eq!(decoded.hlc(), Some(HLC));
         assert_eq!(
-            Envelope::decode(&bytes).unwrap(),
+            decoded,
             DecodeOutcome::UnknownValue {
-                id: EventId::from_bytes(*blake3::hash(&bytes).as_bytes()),
+                id,
                 author: AUTHOR,
                 hlc: HLC,
                 variant: variant.into(),
@@ -167,10 +172,15 @@ fn unknown_status_does_not_hide_unsorted_tags() {
 }
 
 fn assert_invalid(bytes: &[u8], reason: InvalidEvent) {
+    let decoded = Envelope::decode(bytes).unwrap();
+    let id = EventId::from_bytes(*blake3::hash(bytes).as_bytes());
+    assert_eq!(decoded.id(), id);
+    assert_eq!(decoded.author(), Some(AUTHOR));
+    assert_eq!(decoded.hlc(), Some(HLC));
     assert_eq!(
-        Envelope::decode(bytes).unwrap(),
+        decoded,
         DecodeOutcome::InvalidEvent {
-            id: EventId::from_bytes(*blake3::hash(bytes).as_bytes()),
+            id,
             author: AUTHOR,
             hlc: HLC,
             reason,

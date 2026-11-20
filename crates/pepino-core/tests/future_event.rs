@@ -209,7 +209,11 @@ fn event_superset_preserves_known_encodings() {
             Envelope::decode(&bytes).unwrap(),
             expected(EventId::from_bytes(*blake3::hash(&bytes).as_bytes()))
         );
-        assert_eq!(Envelope::decode_with_id(id, &bytes).unwrap(), expected(id));
+        let decoded = Envelope::decode_with_id(id, &bytes).unwrap();
+        assert_eq!(decoded.id(), id);
+        assert_eq!(decoded.author(), Some(author));
+        assert_eq!(decoded.hlc(), Some(hlc));
+        assert_eq!(decoded, expected(id));
         assert!(Envelope::decode(&bytes[..bytes.len() - 1]).is_err());
     }
 }

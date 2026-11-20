@@ -28,21 +28,27 @@ fn round_trips_task_creation_with_local_or_external_id() {
         Envelope::decode(&encoded).unwrap(),
         DecodeOutcome::Known(local)
     );
-    assert_eq!(
-        Envelope::decode_with_id(external.id(), &encoded).unwrap(),
-        DecodeOutcome::Known(external)
-    );
+    let decoded = Envelope::decode_with_id(external.id(), &encoded).unwrap();
+    assert_eq!(decoded.id(), external.id());
+    assert_eq!(decoded.author(), Some(author));
+    assert_eq!(decoded.hlc(), Some(hlc));
+    assert_eq!(decoded, DecodeOutcome::Known(external));
 }
 
 #[test]
 fn unknown_version_still_requires_a_complete_frame() {
     let mut bytes = Vec::new();
     ciborium::into_writer(&(2, "future content format", true), &mut bytes).unwrap();
+    let decoded = Envelope::decode(&bytes).unwrap();
+    let id = EventId::from_bytes(*blake3::hash(&bytes).as_bytes());
+    assert_eq!(decoded.id(), id);
+    assert_eq!(decoded.author(), None);
+    assert_eq!(decoded.hlc(), None);
     assert_eq!(
-        Envelope::decode(&bytes).unwrap(),
+        decoded,
         DecodeOutcome::UnknownVersion {
             version: 2,
-            id: EventId::from_bytes(*blake3::hash(&bytes).as_bytes()),
+            id,
             author: None,
             hlc: None,
             bytes: bytes.clone(),
@@ -76,8 +82,12 @@ fn future_frames_preserve_metadata_when_available() {
     ]);
     let mut bytes = Vec::new();
     ciborium::into_writer(&(12, content, "future payload"), &mut bytes).unwrap();
+    let decoded = Envelope::decode_with_id(id, &bytes).unwrap();
+    assert_eq!(decoded.id(), id);
+    assert_eq!(decoded.author(), Some(author));
+    assert_eq!(decoded.hlc(), Some(hlc));
     assert_eq!(
-        Envelope::decode_with_id(id, &bytes).unwrap(),
+        decoded,
         DecodeOutcome::UnknownVersion {
             version: 12,
             id,
