@@ -240,7 +240,10 @@ mod tests {
         assert!(futures_util::poll!(&mut shutdown).is_pending());
         release.send(()).unwrap();
         shutdown.await.unwrap();
-        writing.await.unwrap();
+        // SQLite can release the writer lock before the runtime polls the commit result.
+        if let Err(error) = writing.await {
+            assert!(error.is_cancelled(), "{error}");
+        }
         let reopened = crate::node::open_database(&path).await.unwrap();
         let table: String =
             sqlx::query_scalar("SELECT name FROM sqlite_schema WHERE type = 'table'")
