@@ -1,4 +1,5 @@
 mod add;
+mod join;
 
 use std::path::Path;
 
@@ -26,6 +27,13 @@ pub struct Args {
 
 #[derive(Subcommand)]
 enum Action {
+    /// Install a grant and wait for board membership and the first sync.
+    #[command(after_help = example_help(&["ppn device join GRANT --timeout 45s"]))]
+    Join {
+        /// Secret grant code printed by an existing device.
+        grant: String,
+    },
+
     /// Grant a requested device manager access to your boards and print a secret code.
     #[command(after_help = example_help(&["ppn device add REQUEST --name ferrum"]))]
     Add {
@@ -52,6 +60,7 @@ pub fn run(
     allow_start: bool,
 ) -> Result<CommandResult, CliError> {
     match args.action {
+        Action::Join { grant } => join::run(context, &grant, selection),
         Action::Add { request, name } => add::run(context, &request, name, selection, allow_start),
         Action::Request { name } => {
             let (directory, options) = local_options(context, name)?;

@@ -42,3 +42,17 @@ fn device_add_rejects_a_corrupt_request_without_starting_a_daemon() {
     );
     assert!(!data.exists());
 }
+
+#[test]
+fn device_join_rejects_invalid_payloads_without_creating_state() {
+    use ppn::device_code::Kind;
+    let (sandbox, data) = uninitialized_task_sandbox();
+    let code = Kind::Grant.encode(&"Ferrum").unwrap();
+    let output = sandbox
+        .command()
+        .args(["device", "join", &code, "--json"])
+        .output()
+        .unwrap();
+    assert_json_error(output, 2, "invalid_input");
+    assert!(!data.exists());
+}

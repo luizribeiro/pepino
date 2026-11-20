@@ -50,6 +50,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "device_grant",
             "grant Secret object with code and secret fields",
         ),
+        "device join" => (
+            "device_join",
+            "joined Whether every board finished its first sync\nboards Per-board join states\nmessage Recovery guidance after timeout or null",
+        ),
         "view ls" => ("views", "views Saved filters ordered by name"),
         "view save" => (
             "view_saved",

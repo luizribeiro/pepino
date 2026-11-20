@@ -44,6 +44,18 @@ pub async fn settings(config: &Config) -> Result<NodeSettings, CliError> {
             relay_url: entry.relay_url.as_url().as_str().to_owned(),
         })
         .collect();
+    if let Some(peer) = app.local_state().peer_hint()
+        && let Some(relay_url) = peer.relay_url
+        && !settings
+            .bootstrap_nodes
+            .iter()
+            .any(|entry| entry.device_id == peer.id && entry.relay_url == relay_url)
+    {
+        settings.bootstrap_nodes.push(BootstrapNode {
+            device_id: peer.id,
+            relay_url,
+        });
+    }
     settings.mdns = if config.mdns.value {
         MdnsMode::Active
     } else {
