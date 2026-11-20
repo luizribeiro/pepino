@@ -1,5 +1,6 @@
 mod invite;
 mod join;
+mod members;
 mod request;
 use std::path::Path;
 
@@ -24,6 +25,13 @@ pub struct Args {
 
 #[derive(clap::Subcommand)]
 enum Operation {
+    /// Show people, invite details, and current device membership.
+    #[command(after_help = example_help(&["ppn board members House", "ppn board members --json"]))]
+    Members {
+        /// Board name or unambiguous ID prefix. Defaults to the selected board.
+        #[arg(value_name = "BOARD")]
+        reference: Option<String>,
+    },
     /// Install a secret board grant and wait for membership and the first sync.
     #[command(after_help = example_help(&["ppn board join - --timeout 45s < grant.txt", "ppn board join --from-file grant.txt"]))]
     Join {
@@ -114,6 +122,7 @@ pub fn run(
     allow_start: bool,
 ) -> Result<CommandResult, CliError> {
     let operation = match args.operation {
+        Operation::Members { reference } => return members::run(context, reference.as_deref()),
         Operation::Join { input } => return join::run(context, &input.read(context)?, config_path),
         Operation::Request { name } => {
             return request::run(context, name, config_path, allow_start);
@@ -137,7 +146,10 @@ pub fn run(
     let mut client = AppClient::open(context)?;
     let using = matches!(operation, Operation::Use { .. });
     let (response, show_selection) = match operation {
-        Operation::Request { .. } | Operation::Invite { .. } | Operation::Join { .. } => {
+        Operation::Request { .. }
+        | Operation::Invite { .. }
+        | Operation::Join { .. }
+        | Operation::Members { .. } => {
             unreachable!()
         }
         Operation::Ls => (client.call(Request::Read(ReadRequest::BoardList))?, true),

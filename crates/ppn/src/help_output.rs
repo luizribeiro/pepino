@@ -46,6 +46,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "board_join",
             "joined Whether the board finished its first sync",
         ),
+        "board members" => (
+            "board_members",
+            "board Board name\npeople Identity IDs, display names, effective roles, device memberships and invitation details",
+        ),
         "board ls" => (
             "boards",
             "boards Known boards with current marker, counts, membership and sync activity\nselected_board Board selected for this invocation and its source",
