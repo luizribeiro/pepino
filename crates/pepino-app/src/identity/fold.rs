@@ -61,6 +61,14 @@ pub(super) fn fold(entries: &BTreeMap<EventId, SignedEdit>, root: DeviceId) -> F
             Change::Add { device, .. } => active(edit.writer) && !active(*device),
             Change::RenameDevice(device, _) => active(edit.writer) && active(*device),
             Change::RenameIdentity(_) => active(edit.writer),
+            Change::Revoke { device, .. } => {
+                edit.writer != *device
+                    && active(edit.writer)
+                    && active(*device)
+                    && record
+                        .as_ref()
+                        .is_some_and(|record| record.active_count() > 1)
+            }
         };
         let generation = edit
             .parents
@@ -103,6 +111,7 @@ fn valid_names(change: &Change) -> bool {
             }
         }
         Change::RenameIdentity(name) | Change::RenameDevice(_, name) => valid(name),
+        Change::Revoke { .. } => true,
     }
 }
 

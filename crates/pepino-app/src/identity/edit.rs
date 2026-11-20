@@ -18,6 +18,10 @@ pub(super) enum Change {
         name: String,
         added_ms: Option<u64>,
     },
+    Revoke {
+        device: DeviceId,
+        at: chrono::DateTime<chrono::Utc>,
+    },
     RenameIdentity(String),
     RenameDevice(DeviceId, String),
 }

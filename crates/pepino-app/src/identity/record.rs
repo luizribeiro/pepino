@@ -13,6 +13,13 @@ pub enum RosterState {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Revocation {
+    #[serde(with = "wire_id")]
+    pub by: DeviceId,
+    pub at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RosterDevice {
     #[serde(with = "wire_id")]
     pub id: DeviceId,
@@ -21,6 +28,8 @@ pub struct RosterDevice {
     pub added_by: Option<DeviceId>,
     pub added_at: Option<crate::Hlc>,
     pub state: RosterState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revocation: Option<Revocation>,
 }
 
 impl RosterDevice {
@@ -39,6 +48,7 @@ impl RosterDevice {
                 counter: 0,
             }),
             state: RosterState::Active,
+            revocation: None,
         }
     }
 }
@@ -50,6 +60,13 @@ pub(super) struct Record {
 }
 
 impl Record {
+    pub(super) fn active_count(&self) -> usize {
+        self.devices
+            .values()
+            .filter(|device| device.state == RosterState::Active)
+            .count()
+    }
+
     pub(super) fn fold<'a>(
         edits: impl IntoIterator<Item = (&'a Change, DeviceId)>,
     ) -> Option<Self> {
@@ -78,9 +95,28 @@ impl Record {
                     name,
                     added_ms,
                 } => {
-                    current.devices.entry(*device).or_insert_with(|| {
-                        RosterDevice::active(*device, name.clone(), Some(writer), *added_ms)
-                    });
+                    if current
+                        .devices
+                        .get(device)
+                        .is_none_or(|row| row.state == RosterState::Revoked)
+                    {
+                        current.devices.insert(
+                            *device,
+                            RosterDevice::active(*device, name.clone(), Some(writer), *added_ms),
+                        );
+                    }
+                }
+                Change::Revoke { device, at } => {
+                    if current.active_count() > 1
+                        && let Some(row) = current.devices.get_mut(device)
+                        && row.state == RosterState::Active
+                    {
+                        row.state = RosterState::Revoked;
+                        row.revocation = Some(Revocation {
+                            by: writer,
+                            at: *at,
+                        });
+                    }
                 }
                 Change::RenameIdentity(name) => current.display_name.clone_from(name),
                 Change::RenameDevice(device, name) => {
