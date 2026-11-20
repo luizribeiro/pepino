@@ -4,14 +4,14 @@ use super::ast::ME;
 use super::keywords::{self, Builtin};
 
 use super::{
-    Assignee, Clause, Comparison, CustomValue, Date, DateOperand, ErrorKind, Filter, Operator,
-    ParseError, Position, PresenceField, State, Term, date, lex,
+    Assignee, Clause, Comparison, CustomValue, Date, ErrorKind, Filter, Operator, ParseError,
+    Position, PresenceField, State, Term, date, lex,
 };
 
 /// Parse whitespace-separated terms using the supplied calendar date.
 ///
-/// The displayed filter uses real whitespace inside quotes and stores
-/// resolved dates in calendar form.
+/// The displayed filter uses real whitespace inside quotes and preserves
+/// symbolic dates in canonical form.
 ///
 /// ```
 /// use pepino_core::filter::{Date, parse, parse_argv};
@@ -22,7 +22,7 @@ use super::{
 /// assert_eq!(parse_argv(&argv, today)?, filter);
 /// assert_eq!(
 ///     filter.to_string(),
-///     r#"tag:garden due:<2026-11-27 "fix the fence""#,
+///     r#"tag:garden due:<fri "fix the fence""#,
 /// );
 /// # Ok::<(), pepino_core::filter::ParseError>(())
 /// ```
@@ -141,7 +141,7 @@ fn parse_keyed(field: FieldName, raw: &str, today: Date) -> Located<Clause> {
     let equal_text = || alternatives(raw, key, false, |operand| Ok(operand.value));
     let dates = || {
         alternatives(raw, key, true, |operand| {
-            let value = DateOperand::Absolute(date::resolve(&operand.value, today)?);
+            let value = operand.value.parse()?;
             Ok(Comparison {
                 operator: operand.operator,
                 value,

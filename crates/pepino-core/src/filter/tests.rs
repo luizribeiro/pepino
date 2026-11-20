@@ -27,7 +27,7 @@ fn mixed_filter_has_one_canonical_spelling() {
         "is:blocked,ready",
         r#"effort:">threshold",>=5"#,
     ];
-    let expected = r#"tag:garden status:todo assignee:me due:<2026-11-20 -tag:someday "fix the fence" -@weekend-backlog -has:parent is:blocked,ready effort:">threshold",>=5"#;
+    let expected = r#"tag:garden status:todo assignee:me due:<fri -tag:someday "fix the fence" -@weekend-backlog -has:parent is:blocked,ready effort:">threshold",>=5"#;
     let filter = parse(input).unwrap();
     assert_eq!(parse_argv(&argv).unwrap(), filter);
     assert_eq!(filter.to_string(), expected);
@@ -165,17 +165,14 @@ fn calendar_dates_are_typed_and_validated() {
     let filter = parse("-due:<=2026-12-01,>fri created:>=2024-02-29 updated:<2027-01-01").unwrap();
     let comparison = |operator, date: &str| Comparison {
         operator,
-        value: DateOperand::Absolute(date.parse().unwrap()),
+        value: date.parse().unwrap(),
     };
     assert_eq!(
         filter.terms(),
         [
             Term {
                 negated: true,
-                clause: Clause::Due(vec![
-                    comparison(Le, "2026-12-01"),
-                    comparison(Gt, "2026-11-20"),
-                ])
+                clause: Clause::Due(vec![comparison(Le, "2026-12-01"), comparison(Gt, "fri"),])
             },
             Term {
                 negated: false,
@@ -721,8 +718,8 @@ fn each_error_kind_has_a_display_message() {
             "invalid integer \"high\". Enter a signed 64-bit integer",
         ),
         (
-            "due:+999999999w",
-            "date \"+999999999w\" is outside the supported calendar range",
+            "due:+999999999-01-01",
+            "date \"+999999999-01-01\" is outside the supported calendar range",
         ),
         (
             "status:TODO",

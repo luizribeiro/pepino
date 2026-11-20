@@ -845,7 +845,7 @@ async fn saved_views_migrate_v1_state_and_survive_concurrent_opens() {
     )
     .await;
     let mut peer = App::open(directory.path(), NOW).await.unwrap();
-    let latch = json!({"name":"latch","filter":"due:2026-11-21 tag:hardware"});
+    let latch = json!({"name":"latch","filter":"due:tomorrow tag:hardware"});
     read_golden(&mut app, json!({"op":"save_view","name":"latch","filter":["due:tomorrow","tag:hardware"],"today":"2026-11-20"}), json!({"ok":{"kind":"view_saved","view":latch,"replaced":false}})).await;
     let weekend = json!({"name":"weekend","filter":"@latch is:open"});
     read_golden(
@@ -959,7 +959,7 @@ async fn task_lists_sort_limit_and_search_project_records_with_both_filter_forms
     list_golden(&mut app,json!(["tag:hardware","assignee:Ada Gardener"]),Some("title"),Some(1),
         json!({"ok":{"kind":"tasks","tasks":[hinges.summary],"total":2,"filter":"tag:hardware assignee:\"Ada Gardener\"","sort":"title"}})).await;
     list_golden(&mut app,json!("due:tomorrow"),None,Some(0),
-        json!({"ok":{"kind":"tasks","tasks":[],"total":1,"filter":"due:2026-11-21","sort":"default"}})).await;
+        json!({"ok":{"kind":"tasks","tasks":[],"total":1,"filter":"due:tomorrow","sort":"default"}})).await;
     for filter in [
         json!(" tag:hardware  \"STAINLESS screws\" "),
         json!(["tag:hardware", "STAINLESS screws"]),

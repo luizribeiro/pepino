@@ -186,7 +186,7 @@ async fn simultaneous_view_saves_preserve_both_definitions() {
                 },
                 SavedView {
                     name: "winter".into(),
-                    filter: "is:open due:2026-11-21".into()
+                    filter: "is:open due:tomorrow".into()
                 },
             ],
         }
