@@ -9,6 +9,7 @@
 mod app;
 mod batch;
 mod hlc;
+mod log;
 mod projection;
 mod protocol;
 mod read;
@@ -20,6 +21,7 @@ mod write;
 
 pub use app::App;
 pub use hlc::Hlc;
+pub use log::{EventChange, EventClassification, EventRecord, InitialTaskFields};
 pub use state::{LocalState, OpenOptions};
 pub use status::{IdentityRecord, NamedRecord, SkippedCounts, StatusCounts};
 
