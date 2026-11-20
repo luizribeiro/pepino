@@ -424,14 +424,21 @@ fn add_reports_cyclic_dependencies_in_json() {
 }
 
 #[test]
-fn add_clears_stdin_due_dates_with_unset() {
+fn add_clears_structured_due_dates_with_the_due_flag() {
     let (sandbox, _) = task_sandbox();
     let output = task_stdin(
         &sandbox,
-        &["add", "--from-json", "-", "--unset", "due", "--json"],
+        &["add", "--from-json", "-", "--due", "", "--json"],
         r#"{"title":"Inspect the latch","due":"2026-12-01"}"#,
     );
     assert_eq!(as_json(&success(output))["tasks"][0]["due"], Value::Null);
+    assert!(!run_ppn(&["add", "--help"]).contains("--unset"));
+    let output = sandbox
+        .command()
+        .args(["add", "Paint the shed", "--unset", "due", "--json"])
+        .output()
+        .unwrap();
+    assert_json_error(output, 2, "usage");
 }
 
 #[test]

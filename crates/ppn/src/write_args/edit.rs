@@ -13,11 +13,14 @@ pub struct FieldArgs {
     pub title: Option<String>,
     #[command(flatten)]
     pub fields: AddFieldArgs,
+    /// Clear a custom field or due, description, or priority. Repeat for more fields.
+    #[arg(long, value_name = "KEY")]
+    pub unset: Vec<String>,
 }
 
 impl FieldArgs {
     pub fn changes(self, today: Date) -> Result<BTreeMap<String, FieldValue>, CliError> {
-        let mut changes = self.fields.changes(today)?;
+        let mut changes = self.fields.changes(today, self.unset)?;
         if let Some(title) = self.title {
             changes
                 .entry("title".into())

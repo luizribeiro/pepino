@@ -18,15 +18,13 @@ pub struct CustomArgs {
     /// Set a custom field from KEY=VALUE. Repeat for more fields.
     #[arg(long = "set", value_name = "KEY=VALUE")]
     set: Vec<String>,
-    /// Clear a custom field or due, description, or priority. Repeat for more fields.
-    #[arg(long = "unset", value_name = "KEY")]
-    unset: Vec<String>,
 }
 
 impl CustomArgs {
     pub(super) fn apply(
         self,
         today: Date,
+        unset: Vec<String>,
         fields: &mut BTreeMap<String, FieldValue>,
     ) -> Result<(), CliError> {
         for entry in self.set {
@@ -45,7 +43,7 @@ impl CustomArgs {
             if matches!(key, "title" | "description" | "status" | "due" | "priority") {
                 return Err(invalid("use the dedicated field option"));
             }
-            if fields.contains_key(key) || self.unset.iter().any(|name| name == key) {
+            if fields.contains_key(key) || unset.iter().any(|name| name == key) {
                 return Err(CliError::new(
                     ErrorKind::Usage,
                     format!("Specify only one --set or --unset for {key:?}."),
@@ -53,7 +51,7 @@ impl CustomArgs {
             }
             fields.insert(key.to_owned(), custom_value(value, today).map_err(invalid)?);
         }
-        fields.extend(self.unset.into_iter().map(|key| (key, FieldValue::Unset)));
+        fields.extend(unset.into_iter().map(|key| (key, FieldValue::Unset)));
         Ok(())
     }
 }
@@ -115,9 +113,12 @@ mod tests {
             ]
             .map(String::from)
             .into(),
-            unset: vec!["old".into()],
         }
-        .apply("2026-11-20".parse().unwrap(), &mut fields)
+        .apply(
+            "2026-11-20".parse().unwrap(),
+            vec!["old".into()],
+            &mut fields,
+        )
         .unwrap();
         assert_eq!(fields["estimate"], FieldValue::Text("-03".into()));
         let today = "2026-11-20".parse().unwrap();

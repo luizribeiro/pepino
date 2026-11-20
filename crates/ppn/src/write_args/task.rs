@@ -37,7 +37,11 @@ pub struct AddFieldArgs {
 }
 
 impl AddFieldArgs {
-    pub(super) fn changes(self, today: Date) -> Result<BTreeMap<String, FieldValue>, CliError> {
+    pub(super) fn changes(
+        self,
+        today: Date,
+        unset: Vec<String>,
+    ) -> Result<BTreeMap<String, FieldValue>, CliError> {
         let mut fields = BTreeMap::new();
         if let Some(due) = self.due {
             let value = if due.is_empty() || due.eq_ignore_ascii_case("none") {
@@ -73,7 +77,7 @@ impl AddFieldArgs {
         if let Some(status) = self.status {
             fields.insert("status".into(), FieldValue::Status(status.into()));
         }
-        self.custom.apply(today, &mut fields)?;
+        self.custom.apply(today, unset, &mut fields)?;
         Ok(fields)
     }
 }

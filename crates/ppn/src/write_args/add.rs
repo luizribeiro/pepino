@@ -41,7 +41,7 @@ impl TaskWriteArgs {
                 "Expected an add_task request.",
             ));
         };
-        for (key, value) in self.fields.changes(today)? {
+        for (key, value) in self.fields.changes(today, vec![])? {
             match (key.as_str(), value) {
                 ("due", FieldValue::Date(value)) => *due = Some(value),
                 ("description", FieldValue::Text(value)) => *description = Some(value),
@@ -50,13 +50,6 @@ impl TaskWriteArgs {
                 ("due", FieldValue::Unset) => *due = None,
                 ("description", FieldValue::Unset) => *description = None,
                 ("priority", FieldValue::Unset) => *priority = None,
-                ("title" | "status", FieldValue::Unset) => {
-                    return Err(CliError::new(
-                        ErrorKind::InvalidInput,
-                        format!("The {key} field cannot be cleared."),
-                    )
-                    .with_field(key));
-                }
                 (_, value) => {
                     fields.insert(key, value);
                 }
