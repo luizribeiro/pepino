@@ -43,6 +43,12 @@ impl Wire {
         }
     }
 
+    pub(super) fn restart(&mut self, receiver: usize) {
+        for op in self.logs.iter_mut().flatten() {
+            op.queued[receiver] = false;
+        }
+    }
+
     pub(super) fn send(
         &mut self,
         receiver: usize,
@@ -77,7 +83,7 @@ impl Wire {
 }
 
 #[tokio::test]
-async fn acknowledges_individual_transport_operations() {
+async fn restart_redelivers_only_operations_without_a_durable_ack() {
     use crate::{Acknowledgement, TransportBoard};
     use futures_util::StreamExt;
 
@@ -103,10 +109,16 @@ async fn acknowledges_individual_transport_operations() {
         .await
         .unwrap();
     assert!(wire.send(1, &receiver, 0, 1, 0));
-    assert_ne!(
-        deliveries.next().await.unwrap().unwrap().operation,
-        EventId::from_bytes([0; 32])
-    );
+    let unacked = deliveries.next().await.unwrap().unwrap().operation;
     assert_eq!(wire.acknowledged(1).count(), 1);
+    assert!(!wire.send(1, &receiver, 0, 1, 0));
+
+    let receiver = receiver.restarted();
+    let mut inbox = receiver.open_board(board).await.unwrap();
+    wire.restart(1);
+    assert!(wire.send(1, &receiver, 0, 1, 0));
+    let event = inbox.deliveries().unwrap().next().await.unwrap().unwrap();
+    assert_eq!(event.operation, unacked);
+    event.ack.ack().await.unwrap();
     assert!(!wire.send(1, &receiver, 0, 1, 0));
 }
