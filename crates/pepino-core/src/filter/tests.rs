@@ -301,8 +301,7 @@ fn comparison_operators_apply_to_each_alternative() {
 }
 
 #[test]
-fn empty_keys_and_values_report_the_whole_term() {
-    assert_eq!(parse(":garden").unwrap_err().kind, ErrorKind::EmptyKey);
+fn empty_values_report_the_whole_term() {
     for raw in ["tag:", "tag:,garden", "tag:garden,", r#"tag:"""#] {
         let error = parse_argv(&[raw]).unwrap_err();
         assert_eq!(error.term, raw);
@@ -425,4 +424,46 @@ fn whitespace_escapes_keep_canonical_terms_in_one_argument() {
         parse(r#""\\u{20} \u{xyz} \u{61}""#).unwrap().terms()[0].clause,
         Clause::Text(r"\u{20} \u{xyz} \u{61}".into())
     );
+}
+
+#[test]
+fn keys_use_field_tokens_and_suggest_builtins() {
+    for literal in [
+        "http://example.com",
+        ":garden",
+        "bad.key:pear",
+        r#""tag":garden"#,
+        "id:42",
+    ] {
+        let expected = if literal == r#""tag":garden"# {
+            "tag:garden"
+        } else {
+            literal
+        };
+        assert_eq!(
+            parse(literal).unwrap().terms()[0].clause,
+            Clause::Text(expected.into())
+        );
+    }
+    assert_eq!(
+        parse("Tag:x").unwrap_err().kind,
+        ErrorKind::LowercaseKeyword {
+            value: "Tag".into(),
+            lowercase: "tag".into(),
+        }
+    );
+    for (value, suggested) in [
+        ("tags", "tag"),
+        ("assignees", "assignee"),
+        ("statuses", "status"),
+    ] {
+        assert_eq!(
+            parse(&format!("{value}:x")).unwrap_err().kind,
+            ErrorKind::UnknownKey {
+                value: value.into(),
+                suggested,
+            }
+        );
+    }
+    assert_eq!(parse("re: fence").unwrap_err().kind, ErrorKind::EmptyValue);
 }

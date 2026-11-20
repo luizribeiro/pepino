@@ -38,8 +38,11 @@ pub enum ErrorKind {
         "invalid saved view name {name:?}. View names cannot contain spaces and must match [a-z][a-z0-9_-]* within 64 bytes"
     )]
     InvalidView { name: String },
-    #[error("empty key; supply a field name before ':'")]
-    EmptyKey,
+    #[error("unknown filter key {value:?}. Use {suggested:?}")]
+    UnknownKey {
+        value: String,
+        suggested: &'static str,
+    },
     #[error("empty value; supply a value for each alternative")]
     EmptyValue,
     #[error("comparisons are unavailable for {key:?}; use {key}:value for equality")]

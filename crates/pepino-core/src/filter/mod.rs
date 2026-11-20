@@ -4,6 +4,7 @@ mod ast;
 mod date;
 mod display;
 mod error;
+mod keywords;
 mod lex;
 mod parse;
 

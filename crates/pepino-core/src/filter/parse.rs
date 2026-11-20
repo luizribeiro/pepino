@@ -1,4 +1,6 @@
-use crate::field::valid_name;
+use crate::{FieldName, field::valid_name};
+
+use super::keywords::Builtin;
 
 use super::{
     Clause, Comparison, Date, ErrorKind, Filter, Operator, ParseError, Position, State, Term,
@@ -61,12 +63,36 @@ fn parse_clause(body: &str, today: Date) -> Located<Clause> {
     if let Some(name) = body.strip_prefix('@') {
         return parse_view(name).map_err(|failure| shifted(failure, 1));
     }
-    if let Some((key, values)) = lex::split_once(body, ':') {
-        let key = decode_required(key, ErrorKind::EmptyKey)?;
-        return parse_keyed(key, values, today)
+    if let Some((key, values)) = key_parts(body) {
+        let key = key.map_err(|kind| (0, kind))?;
+        return parse_keyed(key.as_str().into(), values, today)
             .map_err(|failure| shifted(failure, body.len() - values.len()));
     }
     decode_required(body, ErrorKind::EmptyTerm).map(Clause::Text)
+}
+
+fn key_parts(body: &str) -> Option<(Result<FieldName, ErrorKind>, &str)> {
+    let (key, values) = body.split_once(':')?;
+    if values.starts_with("//") {
+        return None;
+    }
+    if Builtin::find(key).is_none()
+        && let Some((suggested, wrong_case)) = Builtin::correction(key)
+    {
+        let kind = if wrong_case {
+            ErrorKind::LowercaseKeyword {
+                value: key.into(),
+                lowercase: suggested.as_str().into(),
+            }
+        } else {
+            ErrorKind::UnknownKey {
+                value: key.into(),
+                suggested: suggested.as_str(),
+            }
+        };
+        return Some((Err(kind), values));
+    }
+    Some((Ok(FieldName::new(key).ok()?), values))
 }
 
 fn parse_view(raw: &str) -> Located<Clause> {
@@ -138,13 +164,14 @@ enum FieldKind {
 
 impl FieldKind {
     fn of(key: &str) -> Self {
-        match key {
-            "tag" | "assignee" | "board" | "parent" | "blocks" | "blocked-by" => Self::Exact,
-            "status" => Self::Status,
-            "due" | "created" | "updated" => Self::Date,
-            "priority" => Self::Priority,
-            "is" | "has" => Self::Predicate,
-            _ => Self::Custom,
+        use Builtin::*;
+        match Builtin::find(key) {
+            Some(Tag | Assignee | Board | Parent | Blocks | BlockedBy) => Self::Exact,
+            Some(Status) => Self::Status,
+            Some(Due | Created | Updated) => Self::Date,
+            Some(Priority) => Self::Priority,
+            Some(Is | Has) => Self::Predicate,
+            None => Self::Custom,
         }
     }
 

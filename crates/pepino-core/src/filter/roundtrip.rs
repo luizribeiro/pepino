@@ -43,10 +43,7 @@ fn clause() -> impl Strategy<Value = Clause> {
         named(vec!["due", "parent", "assignee"]),
         atom().prop_map(|name| format!("field {name}")),
     ];
-    let custom_key = prop_oneof![
-        Just("priority".into()),
-        atom().prop_map(|name| format!("field {name}")),
-    ];
+    let custom_key = prop_oneof![Just("priority".into()), "custom_[a-z0-9_-]{0,56}",];
     let dates = prop_oneof![
         select(vec![Date::MIN, Date::MAX]),
         (-200_000..=200_000, 1_u32..=12, 1_u32..=28)
