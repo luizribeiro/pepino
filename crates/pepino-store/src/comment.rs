@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use pepino_core::{BoardId, DeviceId, EventId, Hlc, TaskId};
 use sqlx::{FromRow, QueryBuilder, SqliteConnection};
 
@@ -70,5 +72,22 @@ pub(crate) async fn records(
                 },
             )
         })
+        .collect())
+}
+
+pub(crate) async fn counts(
+    connection: &mut SqliteConnection,
+    board: BoardId,
+) -> Result<HashMap<TaskId, u64>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, ([u8; 32], i64)>(
+        "SELECT task, COUNT(*) FROM task_register
+         WHERE board = ? AND kind = 'comment' GROUP BY task",
+    )
+    .bind(BoardKey(board))
+    .fetch_all(connection)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(task, count)| (TaskId::from_bytes(task), count as u64))
         .collect())
 }

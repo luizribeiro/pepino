@@ -66,6 +66,9 @@ async fn comments_are_visible_only_on_live_tasks_and_ordered_by_clock_then_id() 
     assert!(store.board(board).await.unwrap().comments(task).is_empty());
     let snapshot = store.board_with_comments(board).await.unwrap();
     assert_eq!(snapshot.comments(task), comments);
+    let summary = store.board(board).await.unwrap();
+    assert_eq!(summary.task(task).unwrap().comment_count, 3);
+    assert_eq!(snapshot.task(task).unwrap().comment_count, 3);
     let deletion = Envelope::new(creation.author(), hlc, Event::TaskDeleted { task }).unwrap();
     store
         .append(board, &deletion.encode().unwrap(), IdSource::Content)

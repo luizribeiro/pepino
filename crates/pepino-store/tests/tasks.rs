@@ -92,6 +92,7 @@ async fn creation_merges_with_retained_registers_by_clock() {
         blocked_by: Default::default(),
         relates: Default::default(),
         blocked: false,
+        comment_count: 0,
         ready: true,
     };
     assert_eq!(

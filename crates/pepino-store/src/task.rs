@@ -28,6 +28,7 @@ pub struct TaskRecord {
     pub relates: BTreeSet<TaskId>,
     pub blocked: bool,
     pub ready: bool,
+    pub comment_count: u64,
 }
 
 #[derive(FromRow)]
@@ -63,6 +64,7 @@ impl TaskRow {
             relates: BTreeSet::new(),
             blocked: false,
             ready: false,
+            comment_count: 0,
         }
     }
 }

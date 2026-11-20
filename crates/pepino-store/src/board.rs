@@ -80,7 +80,7 @@ impl Store {
         board: BoardId,
         with_comments: bool,
     ) -> Result<BoardView, StoreError> {
-        let (task_rows, edge_rows, deleted_ids, comment_records) = self
+        let (task_rows, edge_rows, deleted_ids, comment_records, comment_counts) = self
             .read(async move |connection| {
                 let mut tx = connection.begin().await?;
                 let tasks = task::task_rows(&mut tx, board).await?;
@@ -91,17 +91,25 @@ impl Store {
                 .fetch_all(&mut *tx)
                 .await?;
                 let edges = edges::edge_rows(&mut tx, board).await?;
-                let comments = if with_comments {
-                    Some(comment::records(&mut tx, board, None).await?)
+                let (comments, counts) = if with_comments {
+                    let records = comment::records(&mut tx, board, None).await?;
+                    let mut counts = HashMap::new();
+                    for (task, _) in &records {
+                        *counts.entry(*task).or_insert(0) += 1;
+                    }
+                    (Some(records), counts)
                 } else {
-                    None
+                    (None, comment::counts(&mut tx, board).await?)
                 };
                 tx.commit().await?;
-                Ok((tasks, edges, deleted, comments))
+                Ok((tasks, edges, deleted, comments, counts))
             })
             .await?;
         let projected = edges::project(&edge_rows)?;
         let mut tasks = task::records(task_rows, &projected)?;
+        for task in &mut tasks {
+            task.comment_count = comment_counts.get(&task.id).copied().unwrap_or(0);
+        }
         let edges: Vec<_> = projected.into_iter().map(|edge| edge.record).collect();
         tasks.sort_unstable_by_key(|task| (task.created, task.id));
         let by_id = tasks
