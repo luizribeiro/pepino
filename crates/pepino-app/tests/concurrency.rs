@@ -311,6 +311,7 @@ async fn recording_a_publication_respects_the_request_lock() {
     let id = id.parse().unwrap();
     let board = app.local_state().board_id;
     let author = app.local_state().device_id;
+    let instance = Some([52; 16]);
     let guard = File::options()
         .read(true)
         .write(true)
@@ -318,22 +319,24 @@ async fn recording_a_publication_respects_the_request_lock() {
         .unwrap();
     guard.try_lock().unwrap();
     assert!(matches!(
-        app.record_publication(board, id, id).await,
+        app.record_publication_for(board, id, id, instance).await,
         Err(SyncStoreError::Lock(AppError::Busy))
     ));
     assert_eq!(
         app.store()
-            .outbox(board, author, 1.try_into().unwrap())
+            .outbox_for(board, author, 1.try_into().unwrap(), instance)
             .await
             .unwrap()
             .pending,
         1
     );
     guard.unlock().unwrap();
-    app.record_publication(board, id, id).await.unwrap();
+    app.record_publication_for(board, id, id, instance)
+        .await
+        .unwrap();
     assert_eq!(
         app.store()
-            .outbox(board, author, 1.try_into().unwrap())
+            .outbox_for(board, author, 1.try_into().unwrap(), instance)
             .await
             .unwrap()
             .pending,

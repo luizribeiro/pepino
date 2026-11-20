@@ -178,8 +178,23 @@ impl App {
         event: EventId,
         operation: EventId,
     ) -> Result<(), SyncStoreError> {
+        self.record_publication_for(board, event, operation, None)
+            .await
+    }
+
+    /// Persist a publication receipt for the current node database under the directory lock.
+    pub async fn record_publication_for(
+        &self,
+        board: BoardId,
+        event: EventId,
+        operation: EventId,
+        node_instance: Option<[u8; 16]>,
+    ) -> Result<(), SyncStoreError> {
         let _guard = lock(&self.directory, self.lock_timeout).await?;
-        Ok(self.store.mark_published(board, event, operation).await?)
+        Ok(self
+            .store
+            .mark_published_for(board, event, operation, node_instance)
+            .await?)
     }
 
     pub async fn handle(&mut self, request: Request, now: u64) -> Result<Response, AppError> {
