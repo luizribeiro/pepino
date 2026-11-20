@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/pepino-core", "crates/pepino-node", "crates/pepino-store", "crates/ppn"]
+members = ["crates/pepino-app", "crates/pepino-core", "crates/pepino-node", "crates/pepino-store", "crates/ppn"]
 resolver = "3"
 
 [workspace.package]

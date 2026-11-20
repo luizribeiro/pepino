@@ -941,6 +941,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pepino-app"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "pepino-core",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "pepino-core"
 version = "0.1.0"
 dependencies = [
