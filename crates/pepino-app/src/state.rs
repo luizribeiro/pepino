@@ -246,9 +246,6 @@ mod tests {
     #[test]
     fn open_persists_private_state_and_preserves_first_names() {
         let directory = tempfile::tempdir().unwrap();
-        let child = directory.path().join("greenhouse");
-        LocalState::prepare_directory(&child).unwrap();
-        assert!(child.is_dir() && !child.join(FILE_NAME).exists());
         let options = OpenOptions {
             display_name: Some("Ada Gardener".into()),
             device_name: Some("garden tablet".into()),

@@ -315,6 +315,7 @@ pub struct CommentRecord {
 #[non_exhaustive]
 pub enum AppErrorKind {
     NotFound,
+    NotInitialized,
     AmbiguousId,
     InvalidInput,
     Conflict,
@@ -328,6 +329,7 @@ impl AppErrorKind {
     pub const fn code(self) -> &'static str {
         match self {
             Self::NotFound => "not_found",
+            Self::NotInitialized => "not_initialized",
             Self::AmbiguousId => "ambiguous_id",
             Self::InvalidInput => "invalid_input",
             Self::Conflict => "conflict",
@@ -369,6 +371,8 @@ pub enum AppError {
         #[serde(flatten)]
         reference: ConflictReference,
     },
+    #[error("{directory} is not initialized; run ppn init")]
+    NotInitialized { directory: String },
     #[error("another pepino process holds the data directory")]
     Busy,
     #[error("storage error: {reason}")]
@@ -448,6 +452,7 @@ impl AppError {
     pub const fn kind(&self) -> AppErrorKind {
         match self {
             Self::NotFound { .. } => AppErrorKind::NotFound,
+            Self::NotInitialized { .. } => AppErrorKind::NotInitialized,
             Self::AmbiguousId { .. } => AppErrorKind::AmbiguousId,
             Self::InvalidInput { .. } => AppErrorKind::InvalidInput,
             Self::Conflict { .. } => AppErrorKind::Conflict,

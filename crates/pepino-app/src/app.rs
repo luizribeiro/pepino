@@ -1,4 +1,4 @@
-use std::fs::{File, OpenOptions as FileOptions, TryLockError};
+use std::fs::{self, File, OpenOptions as FileOptions, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -11,6 +11,8 @@ use crate::state::{io_error, storage};
 use crate::{
     AppError, ConflictReference, LocalState, OpenOptions, Request, Response, WriteRequest,
 };
+
+const DATABASE: &str = "pepino.sqlite";
 
 pub struct App {
     pub(super) store: Store,
@@ -30,7 +32,7 @@ impl App {
         now: u64,
         options: OpenOptions,
     ) -> Result<Self, AppError> {
-        Self::open_with_options(data_dir, now, options).await
+        Self::startup(data_dir, now, options, true).await
     }
 
     pub async fn open(data_dir: impl AsRef<Path>, now: u64) -> Result<Self, AppError> {
@@ -42,32 +44,59 @@ impl App {
         now: u64,
         options: OpenOptions,
     ) -> Result<Self, AppError> {
+        Self::startup(data_dir, now, options, false).await
+    }
+
+    async fn startup(
+        data_dir: impl AsRef<Path>,
+        now: u64,
+        options: OpenOptions,
+        initialize: bool,
+    ) -> Result<Self, AppError> {
         let directory = data_dir.as_ref().to_owned();
         let lock_timeout = options.lock_timeout;
-        let directory = worker("initialize local state", move || {
+        let directory = worker("locate local state", move || {
             let directory = std::path::absolute(directory)
                 .map_err(|error| io_error("resolve data directory", error))?;
-            LocalState::prepare_directory(&directory)?;
-            LocalState::load_or_create(&directory, options)?;
+            if initialize {
+                LocalState::prepare_directory(&directory)?;
+            }
+            if !exists(&directory.join("local.lock"))? {
+                missing_pair(&directory, initialize)?;
+            }
             Ok::<_, AppError>(directory)
         })
         .await??;
-        let guard = lock(&directory, lock_timeout).await?;
+        let _guard = lock(&directory, lock_timeout).await?;
         let state_dir = directory.clone();
-        let (_guard, local) = worker("migrate local state", move || {
-            LocalState::load(&state_dir)?
-                .migrate(&state_dir)
-                .map(|local| (guard, local))
+        let (local, fresh) = worker("open local state", move || {
+            let fresh = missing_pair(&state_dir, initialize)?;
+            let local = if fresh {
+                LocalState::load_or_create(&state_dir, options)?
+            } else {
+                LocalState::load(&state_dir)?
+            };
+            Ok::<_, AppError>((local, fresh))
         })
         .await??;
-        let database = directory.join("pepino.sqlite");
+        let database = directory.join(DATABASE);
         let runtime = tokio::runtime::Handle::current();
         // Store startup borrows its migration connection through a non-Send future.
         let store = worker("open store", move || {
-            create_database_file(&database)?;
-            runtime.block_on(Store::open(database)).map_err(store_error)
+            if fresh {
+                create_database_file(&database)?;
+            }
+            runtime
+                .block_on(Store::open_existing(database))
+                .map_err(store_error)
         })
         .await??;
+        store
+            .bind_local(local.board_id, local.identity_id, local.device_id)
+            .await
+            .map_err(store_error)?;
+        let state_dir = directory.clone();
+        let local = worker("migrate local state", move || local.migrate(&state_dir)).await??;
         let hlc = store
             .latest_hlc(local.board_id)
             .await
@@ -121,6 +150,36 @@ impl App {
             *title = titles.remove(&id);
         }
         result
+    }
+}
+
+fn exists(path: &Path) -> Result<bool, AppError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(io_error(&format!("inspect {}", path.display()), error)),
+    }
+}
+
+fn missing_pair(directory: &Path, initialize: bool) -> Result<bool, AppError> {
+    let state = directory.join(crate::state::FILE_NAME);
+    let database = directory.join(DATABASE);
+    match (exists(&state)?, exists(&database)?) {
+        (true, true) => Ok(false),
+        (false, false) if initialize => Ok(true),
+        (false, false) => Err(AppError::NotInitialized {
+            directory: directory.display().to_string(),
+        }),
+        (false, true) => Err(storage(
+            "local state mismatch",
+            format_args!("{} exists without {}", database.display(), state.display()),
+            false,
+        )),
+        (true, false) => Err(storage(
+            "local state mismatch",
+            format_args!("{} exists without {}", state.display(), database.display()),
+            false,
+        )),
     }
 }
 

@@ -260,3 +260,27 @@ async fn creation_rejects_invalid_events_without_writing_history() {
         None
     );
 }
+
+#[tokio::test]
+async fn opening_requires_both_local_files_and_a_matching_binding() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("greenhouse");
+    let error = App::open(&path, NOW).await.err().unwrap();
+    assert_eq!(error.kind(), AppErrorKind::NotInitialized);
+    assert!(!path.exists());
+
+    let app = App::init(&path, NOW).await.unwrap();
+    let local = path.join("local.json");
+    let original = std::fs::read(&local).unwrap();
+    let mut state: Value = serde_json::from_slice(&original).unwrap();
+    drop(app);
+    state["board_id"] = json!("f1".repeat(32));
+    std::fs::write(&local, serde_json::to_vec(&state).unwrap()).unwrap();
+    let error = App::open(&path, NOW).await.err().unwrap();
+    assert!(error.to_string().contains("database does not match"));
+
+    std::fs::remove_file(&local).unwrap();
+    let error = App::init(&path, NOW).await.err().unwrap();
+    assert!(error.to_string().contains("pepino.sqlite exists without"));
+    assert!(!local.exists());
+}
