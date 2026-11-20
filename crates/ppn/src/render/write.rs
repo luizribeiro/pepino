@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use pepino_app::{EdgeKind, Response};
 use serde_json::{Map, json};
 
-use super::{ShortIds, edge_reason, link_description, single_line};
+use super::{ShortIds, edge_reason, single_line};
 use crate::error::{CliError, ErrorKind};
 use crate::output::{CommandResult, Warning};
 use crate::response::ResponseExt;
@@ -247,10 +247,23 @@ fn write_output_with_ids(
     let warnings = excluded
         .into_iter()
         .map(|(edge, reason)| Warning {
-            message: format!(
-                "Excluded recorded link {} ({reason}).",
-                link_description(edge, ids, &BTreeMap::new())
-            ),
+            message: {
+                let relation = match edge.kind {
+                    EdgeKind::Parent => "parent",
+                    EdgeKind::Blocks => "blocks",
+                    EdgeKind::Relates => "relates",
+                    _ => "links",
+                };
+                let reason = match edge.reason {
+                    Some(pepino_app::EdgeExclusionReason::Cycle) => "would create a cycle".into(),
+                    _ => format!("({reason})"),
+                };
+                format!(
+                    "recorded, but not in effect: {} {relation} {} {reason}",
+                    ids.get(&edge.from),
+                    ids.get(&edge.to)
+                )
+            },
             details: Map::from_iter([
                 ("code".into(), json!("edge_not_effective")),
                 ("edge".into(), json!(edge)),
@@ -324,7 +337,7 @@ mod tests {
         assert_eq!(message, "Created 97ad97a  Replace the greenhouse latch");
         assert_eq!(
             warnings[0].message,
-            "Excluded recorded link 97ad97a blocks 97ad97b (it would create a cycle)."
+            "recorded, but not in effect: 97ad97a blocks 97ad97b would create a cycle"
         );
     }
 }

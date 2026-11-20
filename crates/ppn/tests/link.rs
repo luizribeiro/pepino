@@ -116,3 +116,23 @@ fn link_warns_when_cycles_or_newer_parents_exclude_recorded_links() {
         assert_eq!(detail["task"]["blocks"], serde_json::json!([]));
     }
 }
+
+#[test]
+fn link_warns_with_two_short_ids_for_an_excluded_parent() {
+    let (sandbox, _) = task_sandbox();
+    let project = small_project(&sandbox);
+    let output = sandbox
+        .command()
+        .args(["link", &project.parent, "parent", &project.blocker])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!(
+            "warning: recorded, but not in effect: {} parent {} would create a cycle\n",
+            &project.parent[..6],
+            &project.blocker[..6]
+        )
+    );
+}
