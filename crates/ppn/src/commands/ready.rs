@@ -17,5 +17,5 @@ pub struct Args {
 
 pub fn run(context: &Context<'_>, mut args: Args) -> Result<CommandResult, CliError> {
     args.listing.filter.push("is:ready".into());
-    ls::list(context, args.listing, false)
+    ls::list(context, args.listing, false, false)
 }

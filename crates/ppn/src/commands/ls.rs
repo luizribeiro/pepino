@@ -14,6 +14,8 @@ use serde_json::{Map, json};
     "ppn ls status:done assignee:me --sort created,-due",
     "ppn ls 'due:<fri' -tag:someday",
     "ppn ls @weekend --limit 20 --json",
+    "ppn ls board:Workshop",
+    "ppn ls --all-boards --json",
 ]))]
 pub struct Args {
     #[command(flatten)]
@@ -21,6 +23,9 @@ pub struct Args {
     /// Include closed tasks. By default only open tasks are listed unless the filter or a saved view selects a status.
     #[arg(long)]
     all: bool,
+    /// List tasks across all boards and include their board in each row.
+    #[arg(long)]
+    all_boards: bool,
 }
 
 #[derive(clap::Args)]
@@ -47,26 +52,18 @@ pub(super) struct ListingArgs {
     /// Return at most N matching tasks.
     #[arg(long, value_name = "N")]
     limit: Option<usize>,
-
-    /// Select a board by name or full ID.
-    #[arg(long, value_name = "BOARD", hide = true)]
-    board: Option<String>,
 }
 
 pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError> {
-    list(context, args.listing, args.all)
+    list(context, args.listing, args.all, args.all_boards)
 }
 
 pub(super) fn list(
     context: &Context<'_>,
-    mut args: ListingArgs,
+    args: ListingArgs,
     all: bool,
+    all_boards: bool,
 ) -> Result<CommandResult, CliError> {
-    let board_option = args.board.is_some();
-    if let Some(board) = args.board {
-        let board = board.replace('\\', "\\\\").replace('"', "\\\"");
-        args.filter.push(format!("board:\"{board}\""));
-    }
     let mut client = AppClient::open(context)?;
     let (filter, positions) = crate::cli::filter::input(args.filter_text, args.filter)?;
     let (sort, limit, today) = (args.sort, args.limit, context.time.today);
@@ -85,14 +82,9 @@ pub(super) fn list(
             today,
         }
     };
-    let response = client.call(Request::Read(request)).map_err(|error| {
-        let error = positions.remap(error, None);
-        if board_option && error.kind() == ppn::error::ErrorKind::NotFound {
-            error.map_input("filter", "--board")
-        } else {
-            error
-        }
-    })?;
+    let response = client
+        .call_listing(Request::Read(request), all_boards)
+        .map_err(|error| positions.remap(error, None))?;
 
     let result = response.tasks()?;
     let warnings: Vec<_> = result
@@ -140,7 +132,18 @@ pub(super) fn list(
             Ok(result
                 .tasks
                 .iter()
-                .map(|task| rows.row(task, "", ""))
+                .map(|task| {
+                    let row = rows.row(task, "", "");
+                    if let Some(board) = &task.board {
+                        format!(
+                            "{} ({})  {row}",
+                            ppn::render::single_line(&board.name),
+                            ppn::render::short_id(&board.id.to_string())
+                        )
+                    } else {
+                        row
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join("\n"))
         })?

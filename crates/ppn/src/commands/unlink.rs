@@ -9,7 +9,7 @@ use ppn::terminal::Context;
 use super::link::RelationArgs;
 
 #[derive(clap::Args)]
-#[command(about = "Remove a link between two tasks.", after_help = example_help(&[
+#[command(about = "Remove a link between two tasks.", long_about = "Both tasks must be on the same board. Moving tasks between boards is unsupported.", after_help = example_help(&[
     "ppn unlink 97ad97 blocks 33ea33", "ppn unlink 97ad97 blocked-by 33ea33 --json",
 ]))]
 pub struct Args {

@@ -7,7 +7,7 @@ use ppn::render::relation_document;
 use ppn::terminal::Context;
 
 #[derive(clap::Args)]
-#[command(about = "Link two tasks.", after_help = example_help(&[
+#[command(about = "Link two tasks.", long_about = "Both tasks must be on the same board. Moving tasks between boards is unsupported.", after_help = example_help(&[
     "ppn link 97ad97 blocks 33ea33", "ppn link 97ad97 parent 33ea33 --json",
 ]))]
 pub struct Args {
