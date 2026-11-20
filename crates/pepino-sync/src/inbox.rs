@@ -5,7 +5,7 @@ use pepino_core::BoardId;
 use pepino_store::{AppendOutcome, StoreError};
 use tokio::sync::watch;
 
-use crate::{Acknowledgement, Delivery, DeliveryStream, Error, Status};
+use crate::{Acknowledgement, Delivery, DeliveryStream, Error, Status, retry::Retry};
 
 pub(crate) async fn run<A: Acknowledgement>(
     app: &App,
@@ -32,13 +32,19 @@ pub(crate) async fn run<A: Acknowledgement>(
 
         match item {
             Ok(delivery) => {
-                ingest(app, id, &delivery, status).await?;
-                delivery.ack.ack().await?;
+                ingest(app, id, &delivery, status).await;
+                let mut retry = Retry::new();
+                while let Err(error) = delivery.ack.ack().await {
+                    report(
+                        status,
+                        id,
+                        format!("ack operation {}: {error}", delivery.operation),
+                    );
+                    retry.wait().await;
+                }
             }
             Err(error) => {
-                status.send_modify(|state| {
-                    state.boards.entry(id).or_default().last_error = Some(error.to_string())
-                });
+                report(status, id, error.to_string());
             }
         }
         status.send_modify(|state| state.boards.entry(id).or_default().ingest_pending = false);
@@ -47,27 +53,50 @@ pub(crate) async fn run<A: Acknowledgement>(
 
 async fn ingest<A>(
     app: &App,
-    id: BoardId,
+    board: BoardId,
     delivery: &Delivery<A>,
     status: &watch::Sender<Status>,
-) -> Result<(), Error> {
-    let result = app
-        .append_received(id, &delivery.bytes, delivery.signer)
-        .await;
-    match result {
-        Ok(AppendOutcome::Applied { id: event, .. } | AppendOutcome::Skipped { id: event, .. }) => {
-            status.send_modify(|state| {
-                state.boards.entry(id).or_default().last_ingested = Some(event)
-            });
+) {
+    let mut retry = Retry::new();
+    loop {
+        match app
+            .append_received(board, &delivery.bytes, delivery.signer)
+            .await
+        {
+            Ok(AppendOutcome::Applied { id, .. } | AppendOutcome::Skipped { id, .. }) => {
+                status.send_modify(|state| {
+                    state.boards.entry(board).or_default().last_ingested = Some(id)
+                });
+                return;
+            }
+            Ok(AppendOutcome::Duplicate { .. }) => return,
+            Err(SyncStoreError::Store(StoreError::Decode(error))) => {
+                report(
+                    status,
+                    board,
+                    format!("decode operation {}: {error}", delivery.operation),
+                );
+                return;
+            }
+            Err(error) => {
+                report(
+                    status,
+                    board,
+                    format!("store operation {}: {error}", delivery.operation),
+                );
+                retry.wait().await;
+            }
         }
-        Ok(AppendOutcome::Duplicate { .. }) => {}
-        Err(SyncStoreError::Store(StoreError::Decode(error))) => {
-            status.send_modify(|state| {
-                state.boards.entry(id).or_default().last_error =
-                    Some(format!("decode operation {}: {error}", delivery.operation));
-            });
-        }
-        Err(error) => return Err(error.into()),
     }
-    Ok(())
+}
+
+fn report(status: &watch::Sender<Status>, board: BoardId, error: String) {
+    status.send_if_modified(|state| {
+        let board = state.boards.entry(board).or_default();
+        if board.last_error.as_ref() == Some(&error) {
+            return false;
+        }
+        board.last_error = Some(error);
+        true
+    });
 }

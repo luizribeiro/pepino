@@ -27,8 +27,6 @@ pub enum Error {
     #[error(transparent)]
     App(#[from] pepino_app::AppError),
     #[error(transparent)]
-    Store(#[from] pepino_app::SyncStoreError),
-    #[error(transparent)]
     Node(#[from] pepino_node::Error),
     #[error(transparent)]
     Worker(#[from] tokio::task::JoinError),
