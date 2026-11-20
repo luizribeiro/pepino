@@ -22,5 +22,5 @@ pub fn isolate(command: &mut Command, home: &Path) {
         .mode(0o700)
         .create(home.join("runtime"))
         .unwrap();
-    command.env("HOME", home);
+    command.env("HOME", home).env("PPN_TEST_SANDBOX", home);
 }

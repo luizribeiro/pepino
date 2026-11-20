@@ -451,3 +451,34 @@ fn test_commands_resolve_xdg_paths_inside_their_home() {
         }
     }
 }
+
+#[test]
+fn test_sandbox_rejects_escaped_runtime_state_and_credentials() {
+    let sandbox = ConfigSandbox::new();
+    let outside = tempfile::tempdir().unwrap();
+    let link = sandbox.home.path().join("link");
+    std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+    for (key, path) in [
+        ("XDG_RUNTIME_DIR", outside.path().to_owned()),
+        ("PPN_DATA_DIR", outside.path().join("board")),
+        ("PPN_CREDENTIALS_FILE", link.join("credentials.cbor")),
+        ("PPN_DAEMON_SOCKET_PATH", link.join("daemon.sock")),
+    ] {
+        if key == "XDG_RUNTIME_DIR" && !cfg!(target_os = "linux") {
+            continue;
+        }
+        let output = sandbox
+            .command()
+            .env(key, path)
+            .args(["status", "--json"])
+            .output()
+            .unwrap();
+        let error = assert_json_error(output, 1, "failure");
+        assert!(
+            error["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Test path escaped")
+        );
+    }
+}

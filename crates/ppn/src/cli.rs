@@ -218,6 +218,7 @@ impl ProcessInputs {
                         source: config::Source::Flag,
                     };
                 }
+                check_sandbox_paths(&self.env, &loaded.config)?;
                 Ok(loaded)
             },
         );
@@ -228,6 +229,47 @@ impl ProcessInputs {
             .cloned();
         context
     }
+}
+
+fn check_sandbox_paths(env: &Env, config: &config::Config) -> Result<(), CliError> {
+    let Some(home) = env.get(std::ffi::OsStr::new("PPN_TEST_SANDBOX")) else {
+        return Ok(());
+    };
+    let root = Path::new(home).canonicalize().map_err(|error| {
+        CliError::new(
+            ppn::error::ErrorKind::Failure,
+            format!("Invalid test sandbox: {error}"),
+        )
+    })?;
+    let socket = ppn::daemon::address::socket_path(config);
+    for path in [
+        config.data_dir.value.as_path(),
+        config.credentials_file.value.as_path(),
+        &socket,
+    ] {
+        let inside = path.starts_with(home)
+            && !path
+                .components()
+                .any(|part| part == std::path::Component::ParentDir)
+            && path
+                .ancestors()
+                .find_map(|ancestor| match ancestor.canonicalize() {
+                    Ok(resolved) => Some(resolved.starts_with(&root)),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        // A dangling symlink can lead outside even when its destination is missing.
+                        ancestor.symlink_metadata().ok().map(|_| false)
+                    }
+                    Err(_) => Some(false),
+                })
+                == Some(true);
+        if !inside {
+            return Err(CliError::new(
+                ppn::error::ErrorKind::Failure,
+                format!("Test path escaped the sandbox: {}", path.display()),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn dispatch(

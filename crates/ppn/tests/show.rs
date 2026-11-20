@@ -138,14 +138,24 @@ fn show_uses_tty_dates_and_configured_color() {
             .lines()
             .any(|line| line.starts_with("due ") && line.as_bytes()[4].is_ascii_digit())
     );
-    let args = ["show", &id, "--config", sandbox.config.to_str().unwrap()];
-    let colored = String::from_utf8(tty_output(&args, None)).unwrap();
+    let show = |flags: &[&str], no_color: &str| {
+        let mut command = sandbox.command();
+        command
+            .args(["show", &id])
+            .args(flags)
+            .env("NO_COLOR", no_color);
+        let output = task_terminal(command, None);
+        assert!(
+            output.status.success() && output.stderr.is_empty(),
+            "{output:?}"
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let colored = show(&[], "");
     assert!(colored.contains("\x1b[36m"));
     assert!(colored.contains("due tomorrow") || colored.contains("due today"));
-    let suppressed = String::from_utf8(tty_output(&args, Some("1"))).unwrap();
-    assert_eq!(suppressed, colored);
-    let auto = [&args[..], &["--color", "auto"]].concat();
-    assert!(!tty_output(&auto, Some("1")).contains(&0x1b));
+    assert_eq!(show(&[], "1"), colored);
+    assert!(!show(&["--color", "auto"], "1").contains('\x1b'));
 }
 
 #[test]
