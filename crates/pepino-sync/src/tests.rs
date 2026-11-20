@@ -1,4 +1,5 @@
 mod directory;
+mod ingest;
 mod stub;
 
 #[tokio::test]

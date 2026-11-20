@@ -1,5 +1,4 @@
 mod engine;
-#[cfg(test)]
 mod inbox;
 mod status;
 mod transport;

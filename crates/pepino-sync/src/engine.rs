@@ -53,7 +53,7 @@ impl<T: Transport> SyncEngine<T> {
             lock_timeout: settings.lock_timeout,
             ..Default::default()
         };
-        let app = App::open_with_options(data_dir, 0, options).await?;
+        let app = Arc::new(App::open_with_options(data_dir, 0, options).await?);
         let local = app.local_state().device_id;
         if local != node.device_id() {
             return Err(Error::DeviceMismatch {
@@ -73,11 +73,25 @@ impl<T: Transport> SyncEngine<T> {
         });
         let mut workers = JoinSet::new();
         for id in boards {
-            let board = node.open_board(id).await?;
+            let mut board = node.open_board(id).await?;
+            let stream = board.deliveries()?;
             let mut stopping = stopping.clone();
+            let app = app.clone();
+            let status = changes.clone();
             workers.spawn(async move {
-                let _ = stopping.changed().await;
-                Ok(board.close().await?)
+                let result = tokio::select! {
+                    biased;
+                    _ = stopping.changed() => Ok(()),
+                    result = crate::inbox::run(&app, id, stream, &status) => result,
+                };
+                status.send_modify(|status| {
+                    let board = status.boards.entry(id).or_default();
+                    board.closed = true;
+                    if let Err(error) = &result {
+                        board.last_error = Some(error.to_string());
+                    }
+                });
+                result.and(board.close().await.map_err(Error::from))
             });
         }
         changes.send_modify(|status| status.node = node.status());
