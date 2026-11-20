@@ -1,3 +1,4 @@
+use chrono::Datelike;
 use proptest::{collection::vec, prelude::*, sample::select};
 
 use crate::FieldName;
@@ -60,6 +61,14 @@ fn comparisons<T: std::fmt::Debug>(
     )
 }
 
+fn dates() -> impl Strategy<Value = Date> {
+    prop_oneof![
+        select(vec![Date::MIN, Date::MAX]),
+        (Date::MIN.num_days_from_ce()..=Date::MAX.num_days_from_ce())
+            .prop_map(|day| Date::from_num_days_from_ce_opt(day).unwrap()),
+    ]
+}
+
 fn clause() -> impl Strategy<Value = Clause> {
     let states = select(
         State::WORDS
@@ -78,14 +87,9 @@ fn clause() -> impl Strategy<Value = Clause> {
             .prop_filter("custom presence field", FieldName::is_custom)
             .prop_map(PresenceField::Custom),
     ];
-    let dates = prop_oneof![
-        select(vec![Date::MIN, Date::MAX]),
-        (-200_000..=200_000, 1_u32..=12, 1_u32..=28)
-            .prop_map(|(y, m, d)| Date::from_ymd_opt(y, m, d).unwrap()),
-    ];
     let custom_operand = prop_oneof![
         any::<i64>().prop_map(CustomValue::Integer),
-        dates.clone().prop_map(CustomValue::Date),
+        dates().prop_map(CustomValue::Date),
         atom().prop_map(CustomValue::Text),
     ];
     prop_oneof![
@@ -100,9 +104,9 @@ fn clause() -> impl Strategy<Value = Clause> {
             }
         }),
         comparisons(any::<i64>()).prop_map(Clause::Priority),
-        comparisons(dates.clone()).prop_map(Clause::Due),
-        comparisons(dates.clone()).prop_map(Clause::Created),
-        comparisons(dates).prop_map(Clause::Updated),
+        comparisons(dates()).prop_map(Clause::Due),
+        comparisons(dates()).prop_map(Clause::Created),
+        comparisons(dates()).prop_map(Clause::Updated),
         vec("[a-z][a-z0-9_./-]{0,16}", 1..4).prop_map(Clause::Tag),
         vec(
             select(
@@ -136,8 +140,34 @@ proptest! {
         terms in vec((any::<bool>(), clause()).prop_map(|(negated, clause)| Term { negated, clause }), 0..9)
     ) {
         let ast = Filter::from_terms(terms);
-        let text = ast.to_string();
-        prop_assert_eq!(parse(&text, Date::MIN), Ok(ast), "canonical filter {:?}", text);
+        let argv = ast.terms().iter().map(Term::to_string).collect::<Vec<_>>();
+        let text = argv.join(" ");
+        prop_assert_eq!(ast.to_string(), text.as_str());
+        prop_assert_eq!(parse(&text, Date::MIN), Ok(ast.clone()), "canonical filter {:?}", text);
+        prop_assert_eq!(parse_argv(&argv, Date::MAX), Ok(ast), "canonical argv {:?}", argv);
+    }
+
+    #[test]
+    fn arbitrary_string_parses_without_panicking_with_fixed_point_display(
+        input in any::<String>(),
+        today in dates(),
+    ) {
+        if let Ok(ast) = parse(&input, today) {
+            let printed = ast.to_string();
+            let reparsed = parse(&printed, today);
+            prop_assert_eq!(reparsed.as_ref(), Ok(&ast));
+            prop_assert_eq!(reparsed.unwrap().to_string(), printed);
+        }
+    }
+
+    #[test]
+    fn arbitrary_argv_parses_without_panicking(
+        argv in vec(any::<String>(), 0..16),
+        today in dates(),
+    ) {
+        if let Ok(ast) = parse_argv(&argv, today) {
+            prop_assert_eq!(parse(&ast.to_string(), today), Ok(ast));
+        }
     }
 }
 
