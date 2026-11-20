@@ -1,17 +1,5 @@
 use super::*;
 
-fn today() -> Date {
-    "2026-11-19".parse().unwrap()
-}
-
-fn parse(input: &str) -> Result<Filter, ParseError> {
-    super::parse(input, today())
-}
-
-fn parse_argv<S: AsRef<str>>(argv: &[S]) -> Result<Filter, ParseError> {
-    super::parse_argv(argv, today())
-}
-
 #[test]
 fn mixed_filter_has_one_canonical_spelling() {
     let input = r#" tag:garden  status:todo assignee:me due:<fri -tag:someday "fix the fence" -@weekend-backlog -has:parent is:blocked,ready effort:">threshold",>=5 "#;
@@ -31,7 +19,7 @@ fn mixed_filter_has_one_canonical_spelling() {
     let filter = parse(input).unwrap();
     assert_eq!(parse_argv(&argv).unwrap(), filter);
     assert_eq!(filter.to_string(), expected);
-    assert_eq!(super::parse(expected, Date::MAX).unwrap(), filter);
+    assert_eq!(parse(expected).unwrap(), filter);
     assert_eq!(Filter::default().to_string(), "");
 }
 
@@ -57,7 +45,7 @@ fn dates_resolve_across_weeks_and_years() {
         );
     }
     for value in ["+3", "-1m", "next week", "+ 3d", "2026-1-1"] {
-        let error = super::parse_argv(&[format!("due:>{value}")], today).unwrap_err();
+        let error = parse_argv(&[format!("due:>{value}")]).unwrap_err();
         assert_eq!(
             error.kind,
             ErrorKind::InvalidDate {
@@ -635,7 +623,7 @@ fn custom_operands_use_their_unquoted_form() {
             },
         }]
     );
-    assert_eq!(super::parse(&filter.to_string(), Date::MAX), Ok(filter));
+    assert_eq!(parse(&filter.to_string()), Ok(filter));
     for (input, kind) in [
         (
             "effort:+9223372036854775808",

@@ -20,7 +20,7 @@ use pepino_store::query::{Context, Query, QueryErrorKind};
 use fixture::{ANA, BOB, date};
 
 fn filter(input: &str) -> Filter {
-    parse(input, date(19)).unwrap()
+    parse(input).unwrap()
 }
 
 fn query(filter: &Filter) -> Query<'_> {

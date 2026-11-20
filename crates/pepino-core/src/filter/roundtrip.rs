@@ -143,23 +143,22 @@ proptest! {
     ) {
         let ast = Filter::from_terms(terms);
         let text = ast.to_string();
-        let parsed = parse(&text, Date::MIN);
+        let parsed = parse(&text);
         prop_assert_eq!(parsed.as_ref(), Ok(&ast), "canonical filter {:?}", text);
 
         let argv = ast.terms().iter().map(Term::to_string)
             .filter(|term| !term.contains(char::is_whitespace))
             .collect::<Vec<_>>();
-        prop_assert_eq!(parse_argv(&argv, Date::MAX), parse(&argv.join(" "), Date::MIN), "canonical argv {:?}", argv);
+        prop_assert_eq!(parse_argv(&argv), parse(&argv.join(" ")), "canonical argv {:?}", argv);
     }
 
     #[test]
     fn arbitrary_string_parses_without_panicking_with_fixed_point_display(
         input in any::<String>(),
-        today in dates(),
     ) {
-        if let Ok(ast) = parse(&input, today) {
+        if let Ok(ast) = parse(&input) {
             let printed = ast.to_string();
-            let reparsed = parse(&printed, today);
+            let reparsed = parse(&printed);
             prop_assert_eq!(reparsed.as_ref(), Ok(&ast));
             prop_assert_eq!(reparsed.unwrap().to_string(), printed);
         }
@@ -168,18 +167,17 @@ proptest! {
     #[test]
     fn arbitrary_argv_parses_without_panicking(
         argv in vec(any::<String>(), 0..16),
-        today in dates(),
     ) {
-        if let Ok(ast) = parse_argv(&argv, today) {
-            prop_assert_eq!(parse(&ast.to_string(), today), Ok(ast));
+        if let Ok(ast) = parse_argv(&argv) {
+            prop_assert_eq!(parse(&ast.to_string()), Ok(ast));
         }
     }
 }
 
 #[test]
 fn canonical_comparison_keeps_leading_equals_in_the_operand() {
-    let filter = parse(r#"effort:<"=high",>"=low""#, Date::MIN).unwrap();
+    let filter = parse(r#"effort:<"=high",>"=low""#).unwrap();
     let printed = filter.to_string();
     assert_eq!(printed, r#"effort:<"=high",>"=low""#);
-    assert_eq!(parse(&printed, Date::MAX), Ok(filter));
+    assert_eq!(parse(&printed), Ok(filter));
 }

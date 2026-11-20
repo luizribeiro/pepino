@@ -8,32 +8,31 @@ use super::{
     Position, PresenceField, State, Term, lex,
 };
 
-/// Parse whitespace-separated terms using the supplied calendar date.
+/// Parse whitespace-separated terms.
 ///
 /// The displayed filter uses real whitespace inside quotes and preserves
 /// symbolic dates in canonical form.
 ///
 /// ```
-/// use pepino_core::filter::{Date, parse, parse_argv};
+/// use pepino_core::filter::{parse, parse_argv};
 ///
-/// let today = Date::from_ymd_opt(2026, 11, 26).unwrap();
-/// let filter = parse(r#"tag:garden due:<fri "fix the fence""#, today)?;
+/// let filter = parse(r#"tag:garden due:<fri "fix the fence""#)?;
 /// let argv = ["tag:garden", "due:<fri", "fix the fence"];
-/// assert_eq!(parse_argv(&argv, today)?, filter);
+/// assert_eq!(parse_argv(&argv)?, filter);
 /// assert_eq!(
 ///     filter.to_string(),
 ///     r#"tag:garden due:<fri "fix the fence""#,
 /// );
 /// # Ok::<(), pepino_core::filter::ParseError>(())
 /// ```
-pub fn parse(input: &str, today: Date) -> Result<Filter, ParseError> {
+pub fn parse(input: &str) -> Result<Filter, ParseError> {
     let mut terms = Vec::new();
     let mut rest = input.trim_start();
     while !rest.is_empty() {
         let position = Position::Byte(input.len() - rest.len());
         let end = lex::term_end(rest)
             .map_err(|offset| error(rest, position, (offset, ErrorKind::UnterminatedQuote)))?;
-        terms.push(parse_term(&rest[..end], position, today)?);
+        terms.push(parse_term(&rest[..end], position)?);
         rest = rest[end..].trim_start();
     }
     Ok(Filter::from_terms(terms))
@@ -45,23 +44,23 @@ pub fn parse(input: &str, today: Date) -> Result<Filter, ParseError> {
 /// internal whitespace are literal text. An explicitly quoted saved view name
 /// containing whitespace is an error. Keep filter-level quotes around keyed
 /// values to protect comma punctuation, as in `board:"Tools, Seeds"`.
-pub fn parse_argv<S: AsRef<str>>(argv: &[S], today: Date) -> Result<Filter, ParseError> {
+pub fn parse_argv<S: AsRef<str>>(argv: &[S]) -> Result<Filter, ParseError> {
     argv.iter()
         .enumerate()
-        .map(|(index, raw)| parse_argument(raw.as_ref(), index, today))
+        .map(|(index, raw)| parse_argument(raw.as_ref(), index))
         .collect::<Result<Vec<_>, _>>()
         .map(Filter::from_terms)
 }
 
-pub fn parse_at(input: &str, today: Date) -> Result<Filter, ParseError> {
-    parse(input, today)
+pub fn parse_at(input: &str, _today: Date) -> Result<Filter, ParseError> {
+    parse(input)
 }
 
-pub fn parse_argv_at<S: AsRef<str>>(argv: &[S], today: Date) -> Result<Filter, ParseError> {
-    parse_argv(argv, today)
+pub fn parse_argv_at<S: AsRef<str>>(argv: &[S], _today: Date) -> Result<Filter, ParseError> {
+    parse_argv(argv)
 }
 
-fn parse_argument(input: &str, index: usize, today: Date) -> Result<Term, ParseError> {
+fn parse_argument(input: &str, index: usize) -> Result<Term, ParseError> {
     let start = input.trim_start();
     let raw = start.trim_end();
     let position = Position::Argument {
@@ -85,10 +84,10 @@ fn parse_argument(input: &str, index: usize, today: Date) -> Result<Term, ParseE
             });
         }
     }
-    parse_term(raw, position, today)
+    parse_term(raw, position)
 }
 
-fn parse_term(raw: &str, position: Position, _today: Date) -> Result<Term, ParseError> {
+fn parse_term(raw: &str, position: Position) -> Result<Term, ParseError> {
     let body = raw.strip_prefix('-');
     let clause = parse_clause(body.unwrap_or(raw))
         .map_err(|failure| error(raw, position, shifted(failure, usize::from(body.is_some()))))?;
