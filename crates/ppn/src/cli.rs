@@ -50,6 +50,7 @@ enum Command {
     Add(add::Args),
     Show(show::Args),
     Init(status::InitArgs),
+    #[command(visible_alias = "list")]
     Ls(commands::ls::Args),
     Ready(commands::ready::Args),
     Tree(commands::tree::Args),
@@ -62,6 +63,7 @@ enum Command {
     Reopen(commands::start::ReopenArgs),
     Done(commands::done::Args),
     Cancel(commands::cancel::Args),
+    #[command(visible_alias = "delete")]
     Rm(commands::rm::Args),
     Tag(commands::tag::Args),
     Assign(commands::assign::Args),

@@ -36,6 +36,10 @@ pub fn command_fields(command: &Command) -> Map<String, Value> {
         [
             ("name", command.get_name().into()),
             ("summary", summary.into()),
+            (
+                "aliases",
+                json!(command.get_visible_aliases().collect::<Vec<_>>()),
+            ),
             ("examples", json!(examples(command))),
             ("arguments", json!(details(arguments))),
             ("flags", json!(details(flags))),

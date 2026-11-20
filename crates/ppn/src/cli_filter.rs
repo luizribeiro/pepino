@@ -38,7 +38,7 @@ pub fn escape_terms(args: &[OsString]) -> Vec<OsString> {
             }
         }
         match path.as_slice() {
-            [] if matches!(value, "ls" | "ready" | "view") => path.push(value.to_owned()),
+            [] if matches!(value, "ls" | "list" | "ready" | "view") => path.push(value.to_owned()),
             [view] if view == "view" && value == "save" => path.push(value.to_owned()),
             [view, _] if view == "view" => path.push(value.to_owned()),
             [command, ..] if command != "view" || path.len() == 3 => {

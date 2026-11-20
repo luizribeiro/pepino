@@ -53,7 +53,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         "version" => ("version", "version Installed ppn version"),
         "ppn" | "help" => (
             "help",
-            "name Command name\nsummary Command summary\narguments Positional argument descriptions\nflags Available options and values\ncommands Child commands\nexamples Example invocations\noutput Success document description\nenvironment Configuration environment variables when applicable\nexit_codes Exit statuses\nerror_codes Stable error codes\ntopics Help topic text by name",
+            "name Command name\nsummary Command summary\naliases Alternative command names\narguments Positional argument descriptions\nflags Available options and values\ncommands Child commands\nexamples Example invocations\noutput Success document description\nenvironment Configuration environment variables when applicable\nexit_codes Exit statuses\nerror_codes Stable error codes\ntopics Help topic text by name",
         ),
         "debug confirm" => ("confirmation", "confirmed Whether the user confirmed"),
         "debug input" => ("text", "text Text read from the chosen input"),

@@ -402,3 +402,25 @@ fn keyed_positional_filter_errors_explain_how_to_pass_multiple_terms() {
     );
     assert!(error["hint"].as_str().unwrap().contains("--filter"));
 }
+
+#[test]
+fn list_and_delete_are_visible_working_aliases() {
+    let (sandbox, _) = task_sandbox();
+    let id = create_task(&sandbox, "Repair the greenhouse latch", &["-t", "hardware"]);
+    assert_eq!(
+        sandbox.run(&["list", "-tag:outdoors", "--json"]),
+        sandbox.run(&["ls", "-tag:outdoors", "--json"])
+    );
+    let help = as_json(&common::run_ppn(&["help", "--json"]));
+    for (name, alias) in [("ls", "list"), ("rm", "delete")] {
+        let command = help["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["name"] == name)
+            .unwrap();
+        assert_eq!(command["aliases"], serde_json::json!([alias]));
+    }
+    let deleted = as_json(&sandbox.run(&["delete", &id, "--yes", "--json"]));
+    assert_eq!(deleted["deleted"][0]["id"], id);
+}
