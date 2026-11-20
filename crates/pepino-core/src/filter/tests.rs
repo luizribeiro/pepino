@@ -100,25 +100,42 @@ fn free_text_terms() {
 #[test]
 fn keyed_terms_preserve_quoted_delimiters() {
     let filter =
-        parse(r#"tag:garden,"needs review","tools, seeds" "plot: north" -assignee:me"#).unwrap();
+        parse(r#"board:garden,"needs review","tools, seeds" "plot: north" -assignee:me"#).unwrap();
     assert_eq!(
         filter.terms()[0].clause,
-        Clause::Match {
-            key: "tag".into(),
-            alternatives: ["garden", "needs review", "tools, seeds"]
-                .map(|value| Comparison {
-                    operator: Operator::Eq,
-                    value: Value::Text(value.into()),
-                })
-                .into(),
-        }
+        Clause::Board(
+            ["garden", "needs review", "tools, seeds"]
+                .map(str::to_owned)
+                .into()
+        )
     );
     assert_eq!(filter.terms()[1].clause, Clause::Text("plot: north".into()));
     assert!(filter.terms()[2].negated);
+}
+
+#[test]
+fn tags_use_event_name_rules() {
     assert_eq!(
-        parse_argv(&["tag:needs review"]),
-        parse(r#"tag:"needs review""#)
+        parse("tag:garden.tools,home/repair,back-yard")
+            .unwrap()
+            .terms()[0]
+            .clause,
+        Clause::Tag(
+            ["garden.tools", "home/repair", "back-yard"]
+                .map(str::to_owned)
+                .into()
+        )
     );
+    for value in ["needs review", "Upper", "9patch", "garden!"] {
+        let error = parse_argv(&[format!("tag:{value}")]).unwrap_err();
+        assert_eq!(
+            error.kind,
+            ErrorKind::InvalidTag {
+                value: value.into()
+            }
+        );
+        assert!(error.to_string().contains("[a-z][a-z0-9_./-]*"));
+    }
 }
 
 #[test]
@@ -232,21 +249,32 @@ fn predicates_accept_negation_and_alternatives() {
 
 #[test]
 fn built_in_field_matches_preserve_symbolic_values() {
-    let filter = parse("board:garden parent:ab12 blocks:cd34 blocked-by:ef56 assignee:me status:todo,doing,done,cancelled").unwrap();
-    for (term, (name, value)) in filter.terms().iter().zip([
-        ("board", "garden"),
-        ("parent", "ab12"),
-        ("blocks", "cd34"),
-        ("blocked-by", "ef56"),
-        ("assignee", "me"),
-        ("status", "todo"),
-    ]) {
-        let Clause::Match { key, alternatives } = &term.clause else {
-            panic!("expected match");
-        };
-        assert_eq!(key, name);
-        assert_eq!(alternatives[0].value, Value::Text(value.into()));
-    }
+    use crate::Status::*;
+    let filter = parse(r#"board:garden parent:ab12 blocks:cd34 blocked-by:ef56 assignee:me,"me",Ana status:todo,doing,done,cancelled"#).unwrap();
+    let expected = [
+        Clause::Board(vec!["garden".into()]),
+        Clause::Parent(vec!["ab12".into()]),
+        Clause::Blocks(vec!["cd34".into()]),
+        Clause::BlockedBy(vec!["ef56".into()]),
+        Clause::Assignee(vec![
+            Assignee::Me,
+            Assignee::Person("me".into()),
+            Assignee::Person("Ana".into()),
+        ]),
+        Clause::Status(vec![Todo, Doing, Done, Cancelled]),
+    ];
+    assert_eq!(
+        filter.terms().iter().map(|t| &t.clause).collect::<Vec<_>>(),
+        expected.iter().collect::<Vec<_>>()
+    );
+    assert!(filter.to_string().contains(r#"assignee:me,"me",Ana"#));
+    assert_eq!(
+        parse("status:TODO").unwrap_err().kind,
+        ErrorKind::LowercaseKeyword {
+            value: "TODO".into(),
+            lowercase: "todo".into()
+        }
+    );
 
     let error = parse("tag:garden status:todo,in-progress").unwrap_err();
     assert_eq!(error.term, "status:todo,in-progress");
@@ -266,12 +294,8 @@ fn built_in_field_matches_preserve_symbolic_values() {
 #[test]
 fn comparison_operators_apply_to_each_alternative() {
     use Operator::*;
-    let filter = parse(r#"priority:>=2,<4 effort:<=8,>12 tag:">gate""#).unwrap();
-    let expected = [
-        [(Ge, "2"), (Lt, "4")].as_slice(),
-        &[(Le, "8"), (Gt, "12")],
-        &[(Eq, ">gate")],
-    ];
+    let filter = parse(r#"priority:>=2,<4 effort:<=8,>12"#).unwrap();
+    let expected = [[(Ge, "2"), (Lt, "4")].as_slice(), &[(Le, "8"), (Gt, "12")]];
     for (term, pairs) in filter.terms().iter().zip(expected) {
         let Clause::Match { alternatives, .. } = &term.clause else {
             panic!("expected match");

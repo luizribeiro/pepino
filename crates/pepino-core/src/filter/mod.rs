@@ -13,6 +13,6 @@ mod roundtrip;
 #[cfg(test)]
 mod tests;
 
-pub use ast::{Clause, Comparison, Date, Filter, Operator, State, Term, Value};
+pub use ast::{Assignee, Clause, Comparison, Date, Filter, Operator, State, Term, Value};
 pub use error::{ErrorKind, ParseError, Position};
 pub use parse::{parse, parse_argv};

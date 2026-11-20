@@ -1,10 +1,11 @@
 use crate::{FieldName, field::valid_name};
 
-use super::keywords::Builtin;
+use super::ast::ME;
+use super::keywords::{self, Builtin};
 
 use super::{
-    Clause, Comparison, Date, ErrorKind, Filter, Operator, ParseError, Position, State, Term,
-    Value, date, lex,
+    Assignee, Clause, Comparison, Date, ErrorKind, Filter, Operator, ParseError, Position, State,
+    Term, Value, date, lex,
 };
 
 /// Parse whitespace-separated terms using the supplied calendar date.
@@ -133,78 +134,84 @@ fn parse_view(raw: &str) -> Located<Clause> {
 }
 
 fn parse_keyed(key: String, raw: &str, today: Date) -> Located<Clause> {
-    let field = FieldKind::of(&key);
+    use Builtin::*;
+    let equal_text = || alternatives(raw, &key, false, |operand| Ok(operand.value));
     match Builtin::find(&key) {
-        Some(Builtin::Is) => {
-            alternatives(raw, &key, false, |_, value| State::parse(value)).map(Clause::Is)
+        Some(Tag) => {
+            alternatives(raw, &key, false, |operand| parse_tag(operand.value)).map(Clause::Tag)
         }
-        Some(Builtin::Has) => {
-            alternatives(raw, &key, false, |_, value| parse_presence(value)).map(Clause::Has)
+        Some(Status) => alternatives(raw, &key, false, |operand| {
+            keywords::read(operand.value, keywords::STATUSES, |value| {
+                ErrorKind::UnknownStatus { value }
+            })
+        })
+        .map(Clause::Status),
+        Some(Assignee) => alternatives(raw, &key, false, |operand| Ok(parse_assignee(operand)))
+            .map(Clause::Assignee),
+        Some(Board) => equal_text().map(Clause::Board),
+        Some(Parent) => equal_text().map(Clause::Parent),
+        Some(Blocks) => equal_text().map(Clause::Blocks),
+        Some(BlockedBy) => equal_text().map(Clause::BlockedBy),
+        Some(Is) => {
+            alternatives(raw, &key, false, |operand| State::parse(operand.value)).map(Clause::Is)
         }
-        _ => {
-            let alternatives =
-                alternatives(raw, &key, field.supports_comparison(), |operator, value| {
-                    let value = match field {
-                        FieldKind::Date => Value::Date(date::resolve(&value, today)?),
-                        FieldKind::Status
-                            if !matches!(
-                                value.as_str(),
-                                "todo" | "doing" | "done" | "cancelled"
-                            ) =>
-                        {
-                            return Err(ErrorKind::UnknownStatus { value });
-                        }
-                        _ => Value::Text(value),
-                    };
-                    Ok(Comparison { operator, value })
-                })?;
+        Some(Has) => {
+            alternatives(raw, &key, false, |operand| parse_presence(operand.value)).map(Clause::Has)
+        }
+        builtin => {
+            let alternatives = alternatives(raw, &key, true, |operand| {
+                let value = if matches!(builtin, Some(Due | Created | Updated)) {
+                    Value::Date(date::resolve(&operand.value, today)?)
+                } else {
+                    Value::Text(operand.value)
+                };
+                Ok(Comparison {
+                    operator: operand.operator,
+                    value,
+                })
+            })?;
             Ok(Clause::Match { key, alternatives })
         }
     }
 }
 
+fn parse_tag(value: String) -> Result<String, ErrorKind> {
+    if valid_name(&value, b"./") {
+        Ok(value)
+    } else {
+        Err(ErrorKind::InvalidTag { value })
+    }
+}
+
+fn parse_assignee(operand: Operand) -> Assignee {
+    if !operand.quoted && operand.value == ME {
+        Assignee::Me
+    } else {
+        Assignee::Person(operand.value)
+    }
+}
+
 fn parse_presence(field: String) -> Result<String, ErrorKind> {
-    if matches!(field.as_str(), "due" | "parent" | "assignee")
-        || FieldKind::of(&field) == FieldKind::Custom
-    {
+    if matches!(
+        Builtin::find(&field),
+        None | Some(Builtin::Due | Builtin::Parent | Builtin::Assignee)
+    ) {
         return Ok(field);
     }
     Err(ErrorKind::UnsupportedPresence { field })
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum FieldKind {
-    Exact,
-    Status,
-    Date,
-    Priority,
-    Predicate,
-    Custom,
-}
-
-impl FieldKind {
-    fn of(key: &str) -> Self {
-        use Builtin::*;
-        match Builtin::find(key) {
-            Some(Tag | Assignee | Board | Parent | Blocks | BlockedBy) => Self::Exact,
-            Some(Status) => Self::Status,
-            Some(Due | Created | Updated) => Self::Date,
-            Some(Priority) => Self::Priority,
-            Some(Is | Has) => Self::Predicate,
-            None => Self::Custom,
-        }
-    }
-
-    fn supports_comparison(self) -> bool {
-        matches!(self, Self::Date | Self::Priority | Self::Custom)
-    }
+struct Operand {
+    operator: Operator,
+    value: String,
+    quoted: bool,
 }
 
 fn alternatives<T>(
     raw: &str,
     key: &str,
     ordered: bool,
-    mut type_operand: impl FnMut(Operator, String) -> Result<T, ErrorKind>,
+    mut type_operand: impl FnMut(Operand) -> Result<T, ErrorKind>,
 ) -> Located<Vec<T>> {
     lex::split(raw, ',')
         .map(|(offset, raw)| {
@@ -215,7 +222,12 @@ fn alternatives<T>(
             if operator != Operator::Eq && !ordered {
                 return Err((offset, ErrorKind::UnsupportedComparison { key: key.into() }));
             }
-            type_operand(operator, value).map_err(|kind| (operand_start, kind))
+            type_operand(Operand {
+                operator,
+                value,
+                quoted: raw.contains('"'),
+            })
+            .map_err(|kind| (operand_start, kind))
         })
         .collect()
 }

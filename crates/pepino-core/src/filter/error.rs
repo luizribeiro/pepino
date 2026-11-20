@@ -47,8 +47,13 @@ pub enum ErrorKind {
     EmptyValue,
     #[error("comparisons are unavailable for {key:?}; use {key}:value for equality")]
     UnsupportedComparison { key: String },
-    #[error("unknown status {value:?}; use todo, doing, done, or cancelled")]
+    #[error(
+        "unknown status {value:?}. Use {}",
+        super::keywords::accepted(super::keywords::STATUSES)
+    )]
     UnknownStatus { value: String },
+    #[error("invalid tag {value:?}. Tags must match [a-z][a-z0-9_./-]*")]
+    InvalidTag { value: String },
     #[error("unknown state {value:?}; use blocked, ready, open, or closed")]
     UnknownState { value: String },
     #[error("unsupported presence field {field:?}; use due, parent, assignee, or a custom field")]

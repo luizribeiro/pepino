@@ -55,3 +55,54 @@ impl Builtin {
             .map(|builtin| (builtin, key != lower))
     }
 }
+
+use crate::Status;
+
+use super::ErrorKind;
+
+pub(super) const STATUSES: &[(Status, &str)] = &[
+    (Status::Todo, status_word(Status::Todo)),
+    (Status::Doing, status_word(Status::Doing)),
+    (Status::Done, status_word(Status::Done)),
+    (Status::Cancelled, status_word(Status::Cancelled)),
+];
+
+pub(super) const fn status_word(status: Status) -> &'static str {
+    match status {
+        Status::Todo => "todo",
+        Status::Doing => "doing",
+        Status::Done => "done",
+        Status::Cancelled => "cancelled",
+    }
+}
+
+pub(super) fn read<T: Clone>(
+    value: String,
+    words: &[(T, &str)],
+    unknown: impl FnOnce(String) -> ErrorKind,
+) -> Result<T, ErrorKind> {
+    for (item, word) in words {
+        if value == *word {
+            return Ok(item.clone());
+        }
+        if value.eq_ignore_ascii_case(word) {
+            return Err(ErrorKind::LowercaseKeyword {
+                value,
+                lowercase: (*word).into(),
+            });
+        }
+    }
+    Err(unknown(value))
+}
+
+pub(super) fn accepted<T>(words: &[(T, &str)]) -> String {
+    let Some(((_, last), rest)) = words.split_last() else {
+        return String::new();
+    };
+    let head = rest
+        .iter()
+        .map(|(_, word)| *word)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{head}, or {last}")
+}

@@ -1,3 +1,5 @@
+use crate::Status;
+
 use super::ErrorKind;
 pub use chrono::NaiveDate as Date;
 
@@ -22,11 +24,26 @@ pub enum Clause {
     View(String),
     Is(Vec<State>),
     Has(Vec<String>),
+    Tag(Vec<String>),
+    Status(Vec<Status>),
+    Assignee(Vec<Assignee>),
+    Board(Vec<String>),
+    Parent(Vec<String>),
+    Blocks(Vec<String>),
+    BlockedBy(Vec<String>),
     Match {
         key: String,
         alternatives: Vec<Comparison>,
     },
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Assignee {
+    Me,
+    Person(String),
+}
+
+pub(super) const ME: &str = "me";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum State {

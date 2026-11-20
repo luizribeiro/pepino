@@ -1,5 +1,6 @@
 use proptest::{collection::vec, prelude::*, sample::select};
 
+use super::keywords::STATUSES;
 use super::*;
 
 fn atom() -> impl Strategy<Value = String> {
@@ -59,24 +60,30 @@ fn clause() -> impl Strategy<Value = Clause> {
             named(vec!["due", "created", "updated"]),
             (operator(), dates.prop_map(Value::Date))
         ),
-        matching(
-            named(vec![
-                "tag",
-                "assignee",
-                "board",
-                "parent",
-                "blocks",
-                "blocked-by"
-            ]),
-            (Just(Operator::Eq), atom().prop_map(Value::Text)),
-        ),
-        matching(
-            Just("status".into()),
-            (
-                Just(Operator::Eq),
-                named(vec!["todo", "doing", "done", "cancelled"]).prop_map(Value::Text)
+        vec("[a-z][a-z0-9_./-]{0,16}", 1..4).prop_map(Clause::Tag),
+        vec(
+            select(
+                STATUSES
+                    .iter()
+                    .map(|(status, _)| *status)
+                    .collect::<Vec<_>>()
             ),
-        ),
+            1..4
+        )
+        .prop_map(Clause::Status),
+        vec(
+            prop_oneof![
+                Just(Assignee::Me),
+                Just(Assignee::Person("me".into())),
+                atom().prop_map(Assignee::Person)
+            ],
+            1..4
+        )
+        .prop_map(Clause::Assignee),
+        vec(atom(), 1..4).prop_map(Clause::Board),
+        vec(atom(), 1..4).prop_map(Clause::Parent),
+        vec(atom(), 1..4).prop_map(Clause::Blocks),
+        vec(atom(), 1..4).prop_map(Clause::BlockedBy),
     ]
 }
 
