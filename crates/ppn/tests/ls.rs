@@ -383,3 +383,22 @@ fn listing_accepts_canonical_filters_and_combines_both_grammars() {
     assert_eq!(combined["total"], 1);
     assert_eq!(combined["tasks"][0]["id"], kept);
 }
+
+#[test]
+fn keyed_positional_filter_errors_explain_how_to_pass_multiple_terms() {
+    let (sandbox, _) = task_sandbox();
+    let args = ["ls", "tag:hardware tag:garden"];
+    let output = sandbox.command().args(args).output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let message = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        message.contains("separate arguments or use --filter"),
+        "{message}"
+    );
+    let error = task_error(
+        sandbox.command().args(args).arg("--json").output().unwrap(),
+        2,
+        "invalid_input",
+    );
+    assert!(error["hint"].as_str().unwrap().contains("--filter"));
+}

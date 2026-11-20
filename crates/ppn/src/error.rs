@@ -291,6 +291,20 @@ impl From<AppError> for CliError {
             if let Some(Value::String(hint)) = details.remove("hint") {
                 diagnostic.hint = Some(hint);
             }
+            if details
+                .get("position")
+                .is_some_and(|position| position["kind"] == "argument")
+                && details
+                    .get("term")
+                    .and_then(Value::as_str)
+                    .is_some_and(|term| term.contains(char::is_whitespace) && term.contains(':'))
+            {
+                let advice = "Pass filter terms as separate arguments or use --filter.";
+                diagnostic.hint = Some(match diagnostic.hint {
+                    Some(hint) => format!("{hint} {advice}"),
+                    None => advice.into(),
+                });
+            }
             diagnostic.details = details;
         }
         diagnostic
