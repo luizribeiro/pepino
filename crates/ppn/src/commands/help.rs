@@ -6,6 +6,9 @@ use ppn::terminal::{Context, Terminal};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
+#[path = "help_topics.rs"]
+mod topics;
+
 struct Help {
     command: Map<String, Value>,
     exit_codes: Vec<ExitStatus>,
@@ -62,6 +65,7 @@ impl Render for Help {
             .insert("exit_codes".into(), json!(self.exit_codes));
         self.command
             .insert("error_codes".into(), json!(self.error_codes));
+        self.command.insert("topics".into(), json!(topics::all()));
         self.command
     }
 }
@@ -92,7 +96,7 @@ pub fn run(_: &Context, mut command: Command, help_text: Option<StyledStr>) -> C
 #[derive(clap::Args)]
 #[command(about = "Show help for ppn.", after_help = ppn::help_tree::example_help(&["ppn help --json"]))]
 pub struct Args {
-    /// Command and optional subcommands to describe.
+    /// Command, subcommand or topic (filters, dates, ids, json) to describe.
     path: Vec<String>,
 }
 
@@ -102,6 +106,11 @@ pub fn for_path(
     args: Args,
 ) -> Result<CommandResult, CliError> {
     definition.build();
+    if let [name] = args.path.as_slice()
+        && let Some(text) = topics::all().remove(name.as_str())
+    {
+        return Ok(CommandResult::document(topics::Topic(name.clone(), text)));
+    }
     let command = help_target(&definition, args.path.iter().map(String::as_str))?;
     Ok(run(context, command.clone(), None))
 }

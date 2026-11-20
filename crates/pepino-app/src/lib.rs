@@ -28,6 +28,7 @@ pub use hlc::Hlc;
 pub use log::{
     EventAction, EventChange, EventClassification, EventDetail, EventRecord, InitialTaskFields,
 };
+pub use pepino_core::filter::keyword_groups as filter_keyword_groups;
 pub use state::{LocalState, OpenOptions};
 pub use status::{IdentityRecord, NamedRecord, SkippedCounts, StatusCounts};
 

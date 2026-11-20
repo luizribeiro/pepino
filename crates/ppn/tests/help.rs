@@ -189,3 +189,25 @@ fn upcoming_commands_are_hidden_but_have_direct_help_and_clear_errors() {
         );
     }
 }
+
+#[test]
+fn topics_are_available_without_a_board_in_both_formats() {
+    let help = as_json(&run_ppn(&["help", "--json"]));
+    for name in ["filters", "dates", "ids", "json"] {
+        let human = run_ppn(&["help", name]);
+        assert_eq!(help["topics"][name], human.trim_end());
+        let topic = as_json(&run_ppn(&["help", name, "--json"]));
+        assert_eq!(topic["text"], help["topics"][name]);
+    }
+    let filters = help["topics"]["filters"].as_str().unwrap();
+    for (group, words) in pepino_app::filter_keyword_groups() {
+        assert!(filters.contains(&format!("{group} {}", words.join(", "))));
+    }
+    assert_eq!(
+        filters
+            .lines()
+            .filter(|line| line.starts_with("  ppn "))
+            .count(),
+        6
+    );
+}
