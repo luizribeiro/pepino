@@ -1389,7 +1389,7 @@ fn task_error(output: Output, status: i32, code: &str) -> Value {
 }
 
 #[test]
-fn task_diagnostics_include_request_locations_and_validation_hints() {
+fn show_diagnostics_distinguish_malformed_and_missing_references() {
     let (sandbox, _) = task_sandbox();
     let error = |args: &[&str], status, code| {
         let output = sandbox.command().args(args).arg("--json").output().unwrap();
@@ -1403,6 +1403,15 @@ fn task_diagnostics_include_request_locations_and_validation_hints() {
     let malformed = error(&["show", "latch"], 2, "invalid_input");
     assert!(malformed["message"].as_str().unwrap().contains("\"latch\""));
     assert!(malformed["hint"].as_str().unwrap().contains("4 hex digits"));
+}
+
+#[test]
+fn add_diagnostics_report_invalid_values_and_hints() {
+    let (sandbox, _) = task_sandbox();
+    let error = |args: &[&str], status, code| {
+        let output = sandbox.command().args(args).arg("--json").output().unwrap();
+        task_error(output, status, code)
+    };
     let invalid = error(
         &["add", "Repair the latch", "-t", "bad tag"],
         2,
