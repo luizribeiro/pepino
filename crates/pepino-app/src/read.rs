@@ -1,7 +1,7 @@
 use pepino_store::{BoardView, Dependency};
 
 use crate::app::store_error;
-use crate::projection::{edge_effect, project, resolve};
+use crate::projection::{edge_effect, project_summary, resolve};
 use crate::{App, AppError, DependencyRecord, ReadRequest, Response, TreeNode};
 
 impl App {
@@ -48,11 +48,7 @@ impl App {
     }
 
     async fn tree(&self, reference: Option<&str>) -> Result<Response, AppError> {
-        let board = self
-            .store
-            .board_with_comments(self.local.board_id)
-            .await
-            .map_err(store_error)?;
+        let board = self.board().await?;
         let roots = match reference {
             Some(reference) => vec![resolve(&board, "task", reference)?.id],
             None => board
@@ -70,7 +66,7 @@ impl App {
                     .expect("subtree task belongs to the snapshot");
                 Ok(TreeNode {
                     depth: node.depth,
-                    task: project(task, board.comments(task.id))?,
+                    task: project_summary(task)?,
                 })
             })
             .collect::<Result<_, AppError>>()?;
@@ -78,11 +74,7 @@ impl App {
     }
 
     async fn deps(&self, reference: &str) -> Result<Response, AppError> {
-        let board = self
-            .store
-            .board_with_comments(self.local.board_id)
-            .await
-            .map_err(store_error)?;
+        let board = self.board().await?;
         let task = resolve(&board, "task", reference)?;
         let deps = board.dependencies(task.id);
         let project_deps = |entries: Vec<Dependency>| {
@@ -94,13 +86,13 @@ impl App {
                         .expect("dependency belongs to the snapshot");
                     Ok(DependencyRecord {
                         distance: entry.distance,
-                        task: project(task, board.comments(task.id))?,
+                        task: project_summary(task)?,
                     })
                 })
                 .collect::<Result<_, AppError>>()
         };
         Ok(Response::Deps {
-            task: Box::new(project(task, board.comments(task.id))?),
+            task: Box::new(project_summary(task)?),
             blockers: project_deps(deps.blocked_by)?,
             dependents: project_deps(deps.blocks)?,
         })

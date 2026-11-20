@@ -638,11 +638,12 @@ async fn graph_reads_render_the_project_forest_and_transitive_dependencies() {
     )
     .await;
     let [root_record, order_record, install_record, test_record] = [
-        get(&mut app, &root).await,
-        get(&mut app, &order).await,
-        get(&mut app, &install).await,
-        get(&mut app, &test).await,
+        get(&mut app, &root).await.summary,
+        get(&mut app, &order).await.summary,
+        get(&mut app, &install).await.summary,
+        get(&mut app, &test).await.summary,
     ];
+    assert_eq!(test_record.comment_count, 1);
     let branch = json!([
         {"depth":0,"task":root_record},
         {"depth":1,"task":install_record},

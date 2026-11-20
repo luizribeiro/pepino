@@ -133,7 +133,7 @@ pub enum Response {
         nodes: Vec<TreeNode>,
     },
     Deps {
-        task: Box<TaskRecord>,
+        task: Box<TaskSummary>,
         blockers: Vec<DependencyRecord>,
         dependents: Vec<DependencyRecord>,
     },
@@ -170,13 +170,13 @@ pub enum Response {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TreeNode {
     pub depth: usize,
-    pub task: TaskRecord,
+    pub task: TaskSummary,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DependencyRecord {
     pub distance: usize,
-    pub task: TaskRecord,
+    pub task: TaskSummary,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
