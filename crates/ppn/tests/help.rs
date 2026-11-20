@@ -367,3 +367,23 @@ fn the_board_option_is_hidden_from_listing_help() {
         );
     }
 }
+
+#[test]
+fn linking_help_describes_private_inputs_and_verified_outputs() {
+    let add = as_json(&run_ppn(&["help", "device", "add", "--json"]));
+    assert!(
+        add["examples"][0]
+            .as_str()
+            .unwrap()
+            .contains("add - --fingerprint")
+    );
+    assert!(add["output"]["fields"]["fingerprint"].is_string());
+    let request = as_json(&run_ppn(&["help", "device", "request", "--json"]));
+    assert!(request["output"]["fields"]["expires_at"].is_string());
+    assert_eq!(
+        request["output"]["cancel_output"]["kind"],
+        "device_request_cancel"
+    );
+    let join = as_json(&run_ppn(&["help", "device", "join", "--json"]));
+    assert!(join["output"]["fields"]["grantor"].is_string());
+}

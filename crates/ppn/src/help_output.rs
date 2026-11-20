@@ -44,15 +44,15 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "device request" => (
             "device_request",
-            "request Reusable request code for an existing device",
+            "request Secret request code for an existing device\nsecret Whether the request code is secret\ndevice_id Requesting device ID\nfingerprint Fingerprint to verify on both hosts\nexpires_at Expiry of the signed member information",
         ),
         "device add" => (
             "device_grant",
-            "grant Secret object with code and secret fields",
+            "grant Secret object with code and secret fields\ndevice_id Enrolled device ID\nfingerprint Fingerprint of the confirmed request",
         ),
         "device join" => (
             "device_join",
-            "joined Whether every board finished its first sync\nboards Per-board join states\nmessage Recovery guidance after timeout or null",
+            "joined Whether every board finished its first sync\nboards Per-board join states\ngrantor Signing device ID and name\nmessage Null on success",
         ),
         "device ls" => (
             "devices",
@@ -84,6 +84,12 @@ pub(super) fn for_command(command: &Command) -> Value {
         _ => return Value::Null,
     };
     let mut document = shape(kind, fields);
+    if name == "device request" {
+        document["cancel_output"] = shape(
+            "device_request_cancel",
+            "cancelled Whether a pending request was removed",
+        );
+    }
     if name == "help" {
         document["topic_output"] =
             shape("help_topic", "topic Requested topic name\ntext Topic text");
