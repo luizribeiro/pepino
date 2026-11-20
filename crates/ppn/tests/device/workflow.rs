@@ -154,3 +154,61 @@ fn a_timed_out_join_completes_when_the_grantor_returns() {
     titanium.stop();
     join(&ferrum, &grant);
 }
+
+#[test]
+fn rejects_corrupt_truncated_unsupported_and_other_device_grants() {
+    use crate::common::task_error;
+    use ppn::device_code::Kind;
+
+    let (_dir, network) = network();
+    let titanium = Host::owner(&network);
+    let ferrum = Host::new(&network);
+    let cobalt = Host::new(&network);
+    let request = ferrum.request("Ferrum");
+    cobalt.request("Cobalt");
+    let grant = titanium.add(&request, &[]);
+    let mut corrupt = grant.clone();
+    let index = "PPN-GRANT-".len() + 1;
+    corrupt.replace_range(
+        index..=index,
+        if &grant[index..=index] == "A" {
+            "B"
+        } else {
+            "A"
+        },
+    );
+    let v2 = unsupported_grant();
+    for (host, code) in [
+        (&ferrum, corrupt.as_str()),
+        (&ferrum, &grant[..grant.len() - 8]),
+        (&ferrum, v2.as_str()),
+        (&cobalt, grant.as_str()),
+    ] {
+        let error = task_error(
+            host.output(&["device", "join", code, "--json"]),
+            2,
+            "invalid_input",
+        );
+        assert!(!error.to_string().contains(code));
+        assert!(!host.data.join("local.json").exists());
+    }
+    join(&ferrum, &grant);
+    let board: pepino_app::DeviceGrant = Kind::Grant.decode(&grant).unwrap();
+    for host in [&titanium, &ferrum] {
+        let log = std::fs::read_to_string(host.data.join("daemon.log")).unwrap();
+        for secret in [&request, &grant, &board.boards[0].id.to_string()] {
+            assert!(!log.contains(secret));
+        }
+    }
+}
+
+fn unsupported_grant() -> String {
+    let mut value = vec![2, 0xf6];
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"PPN-GRANT-").update(&value);
+    value.extend(&hash.finalize().as_bytes()[..8]);
+    format!(
+        "PPN-GRANT-{}",
+        data_encoding::BASE32_NOPAD_NOCASE.encode(&value)
+    )
+}
