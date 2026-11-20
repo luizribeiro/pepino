@@ -509,11 +509,12 @@ async fn reopening_preserves_local_state_tasks_and_clock_across_wall_regression(
 
     let directory = tempfile::tempdir().unwrap();
     let later = NOW + 3 * 86_400_000;
-    let mut app = App::open_with_options(
+    let mut app = App::init_with_options(
         directory.path(),
         later,
         OpenOptions {
             display_name: Some("Ada Gardener".into()),
+            device_name: Some("garden tablet".into()),
             board_name: Some("Greenhouse winter prep".into()),
             ..OpenOptions::default()
         },
@@ -521,6 +522,14 @@ async fn reopening_preserves_local_state_tasks_and_clock_across_wall_regression(
     .await
     .unwrap();
     let local = app.local_state().clone();
+    assert_eq!(local.device_name, "garden tablet");
+    assert_eq!(
+        App::init(directory.path(), later)
+            .await
+            .unwrap()
+            .local_state(),
+        &local
+    );
     let id = add(&mut app, "Order a replacement latch").await;
     let recorded = get(&mut app, &id).await;
     let store = Store::open(directory.path().join("pepino.sqlite"))

@@ -16,6 +16,7 @@ const FILE_NAME: &str = "local.json";
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenOptions {
     pub display_name: Option<String>,
+    pub device_name: Option<String>,
     pub board_name: Option<String>,
     /// Maximum wait for the data directory lock on each open or request.
     pub lock_timeout: Duration,
@@ -25,6 +26,7 @@ impl Default for OpenOptions {
     fn default() -> Self {
         Self {
             display_name: None,
+            device_name: None,
             board_name: None,
             lock_timeout: Duration::from_secs(5),
         }
@@ -88,7 +90,15 @@ impl LocalState {
             }
         };
         let board_name = options.board_name.unwrap_or_else(|| "Personal".into());
-        for (field, value) in [("display_name", &display_name), ("board_name", &board_name)] {
+        let device_name = match options.device_name {
+            Some(name) => name,
+            None => whoami::hostname().map_err(|error| storage("get hostname", error, false))?,
+        };
+        for (field, value) in [
+            ("display_name", &display_name),
+            ("device_name", &device_name),
+            ("board_name", &board_name),
+        ] {
             if value.trim().is_empty() {
                 return Err(invalid(
                     field,
@@ -96,8 +106,6 @@ impl LocalState {
                 ));
             }
         }
-        let device_name =
-            whoami::hostname().map_err(|error| storage("get hostname", error, false))?;
         let state = Self {
             version: VERSION,
             device_id: DeviceId::from_bytes(random_id()?),
@@ -232,6 +240,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let options = OpenOptions {
             display_name: Some("Ada Gardener".into()),
+            device_name: Some("garden tablet".into()),
             board_name: Some("Greenhouse".into()),
             ..OpenOptions::default()
         };
@@ -239,7 +248,7 @@ mod tests {
         let path = directory.path().join(FILE_NAME);
         assert_eq!(state.display_name, "Ada Gardener");
         assert_eq!(state.board_name, "Greenhouse");
-        assert_eq!(state.device_name, whoami::hostname().unwrap());
+        assert_eq!(state.device_name, "garden tablet");
         assert_eq!(
             LocalState::load_or_create(directory.path(), OpenOptions::default()).unwrap(),
             state
@@ -256,6 +265,7 @@ mod tests {
         let other = LocalState::load_or_create(other.path(), OpenOptions::default()).unwrap();
         assert_eq!(other.display_name, whoami::username().unwrap());
         assert_eq!(other.board_name, "Personal");
+        assert_eq!(other.device_name, whoami::hostname().unwrap());
         assert_ne!(state.device_id, other.device_id);
         assert_ne!(state.identity_id, other.identity_id);
         assert_ne!(state.board_id, other.board_id);

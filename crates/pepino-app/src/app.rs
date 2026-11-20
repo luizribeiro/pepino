@@ -21,6 +21,18 @@ pub struct App {
 }
 
 impl App {
+    pub async fn init(data_dir: impl AsRef<Path>, now: u64) -> Result<Self, AppError> {
+        Self::init_with_options(data_dir, now, OpenOptions::default()).await
+    }
+
+    pub async fn init_with_options(
+        data_dir: impl AsRef<Path>,
+        now: u64,
+        options: OpenOptions,
+    ) -> Result<Self, AppError> {
+        Self::open_with_options(data_dir, now, options).await
+    }
+
     pub async fn open(data_dir: impl AsRef<Path>, now: u64) -> Result<Self, AppError> {
         Self::open_with_options(data_dir, now, OpenOptions::default()).await
     }
