@@ -49,7 +49,7 @@ impl App {
             name: &self.local.board_name,
         };
         let boards = select_boards(&[local_board], &terms)?;
-        let (tasks, total, resolved_dates) = if let Some(&board) = boards.first() {
+        let (tasks, total, resolved_dates, warnings) = if let Some(&board) = boards.first() {
             let view = if views.needs_comments(&filter) {
                 self.store.board_with_comments(board).await
             } else {
@@ -70,13 +70,19 @@ impl App {
                 .iter()
                 .map(|(expression, date)| (expression.clone(), (*date).into()))
                 .collect();
-            (tasks, total, resolved_dates)
+            let warnings = views.field_warnings(
+                &filter,
+                view.iter()
+                    .flat_map(|task| task.custom.keys().map(|key| key.as_str())),
+            );
+            (tasks, total, resolved_dates, warnings)
         } else {
-            (Vec::new(), 0, BTreeMap::new())
+            (Vec::new(), 0, BTreeMap::new(), Vec::new())
         };
         let names = self.local.task_names(&tasks);
         Ok(Response::Tasks {
             names,
+            warnings,
             tasks,
             total,
             filter: filter.to_string(),

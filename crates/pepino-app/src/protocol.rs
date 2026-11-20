@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    Date, EdgeKind, EventRecord, FieldValue, FilterDiagnostic, FilterInput, Hlc, IdentityRecord,
-    NamedRecord, SavedView, Status, StatusCounts,
+    Date, EdgeKind, EventRecord, FieldValue, FilterDiagnostic, FilterInput, FilterWarning, Hlc,
+    IdentityRecord, NamedRecord, SavedView, Status, StatusCounts,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -185,6 +185,8 @@ pub enum Response {
         filter: String,
         resolved_dates: BTreeMap<String, Date>,
         sort: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        warnings: Vec<FilterWarning>,
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         names: BTreeMap<String, String>,
     },

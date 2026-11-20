@@ -23,7 +23,7 @@ mod wire;
 mod write;
 
 pub use app::App;
-pub use filter::{FilterDiagnostic, FilterInput, FilterPosition};
+pub use filter::{FilterDiagnostic, FilterInput, FilterPosition, FilterWarning};
 pub use hlc::Hlc;
 pub use log::{
     EventAction, EventChange, EventClassification, EventDetail, EventRecord, InitialTaskFields,

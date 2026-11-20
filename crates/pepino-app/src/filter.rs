@@ -1,9 +1,9 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Mutex, MutexGuard, PoisonError},
 };
 
-use pepino_core::filter::{self, Clause, Filter};
+use pepino_core::filter::{self, Clause, Filter, PresenceField};
 use serde::{Deserialize, Serialize};
 
 use crate::AppError;
@@ -109,6 +109,28 @@ fn term_starts(text: &str) -> impl Iterator<Item = usize> {
     })
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FilterWarning {
+    pub field: String,
+    pub suggestion: String,
+}
+
+const BUILTIN_KEYS: &[&str] = &[
+    "assignee",
+    "blocked-by",
+    "blocks",
+    "board",
+    "created",
+    "due",
+    "has",
+    "is",
+    "parent",
+    "priority",
+    "status",
+    "tag",
+    "updated",
+];
+
 type ParsedViews = BTreeMap<String, (FilterInput, Result<Filter, AppError>)>;
 
 pub(super) struct ViewFilters<'a> {
@@ -145,6 +167,54 @@ impl<'a> ViewFilters<'a> {
             .as_ref()
             .ok()
             .cloned()
+    }
+
+    pub(super) fn field_warnings<'b>(
+        &self,
+        filter: &Filter,
+        fields: impl Iterator<Item = &'b str>,
+    ) -> Vec<FilterWarning> {
+        let fields: BTreeSet<_> = fields.collect();
+        let parsed = self.parsed();
+        let mut unknown = BTreeSet::new();
+        for term in std::iter::once(filter)
+            .chain(
+                parsed
+                    .values()
+                    .filter_map(|(_, parsed)| parsed.as_ref().ok()),
+            )
+            .flat_map(Filter::terms)
+        {
+            match &term.clause {
+                Clause::Custom { field, .. } => {
+                    unknown.insert(field.as_str());
+                }
+                Clause::Has(alternatives) => {
+                    unknown.extend(alternatives.iter().filter_map(|field| match field {
+                        PresenceField::Custom(name) => Some(name.as_str()),
+                        _ => None,
+                    }))
+                }
+                _ => {}
+            }
+        }
+        unknown
+            .into_iter()
+            .filter(|field| !fields.contains(field))
+            .filter_map(|field| {
+                let suggestion = BUILTIN_KEYS
+                    .iter()
+                    .copied()
+                    .chain(fields.iter().copied())
+                    .min_by_key(|candidate| {
+                        (strsim::damerau_levenshtein(field, candidate), *candidate)
+                    })?;
+                Some(FilterWarning {
+                    field: field.into(),
+                    suggestion: suggestion.into(),
+                })
+            })
+            .collect()
     }
 
     pub(super) fn needs_comments(&self, filter: &Filter) -> bool {
@@ -201,6 +271,31 @@ mod tests {
         assert!(!views.parsed().contains_key("broken"));
         assert!(views.resolve("broken").is_none());
         assert!(views.parsed()["broken"].1.is_err());
+    }
+
+    #[test]
+    fn unknown_fields_include_reachable_views_and_prefer_the_closest_key() {
+        let mut saved = SavedViews::default();
+        saved.insert(
+            "weekend".into(),
+            "has:estmate estimate:3 statuss:todo".into(),
+        );
+        let views = ViewFilters::new(&saved);
+        assert!(views.resolve("weekend").is_some());
+        let filter = filter::parse("statuss:doing @weekend").unwrap();
+        assert_eq!(
+            views.field_warnings(&filter, ["estimate"].into_iter()),
+            [
+                FilterWarning {
+                    field: "estmate".into(),
+                    suggestion: "estimate".into()
+                },
+                FilterWarning {
+                    field: "statuss".into(),
+                    suggestion: "status".into()
+                },
+            ]
+        );
     }
 
     #[test]
