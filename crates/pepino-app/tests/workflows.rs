@@ -1,3 +1,6 @@
+#[path = "support/template.rs"]
+mod fixture;
+
 use pepino_app::{
     App, AppError, EdgeEffect, EdgeKind, FieldValue, ReadRequest, Request, Response, TaskRecord,
     TaskSummary,
@@ -61,7 +64,7 @@ async fn get(app: &mut App, id: &str) -> TaskRecord {
 #[tokio::test]
 async fn add_plans_a_project_and_returns_each_affected_record() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let parent = add(&mut app, "Prepare the greenhouse for winter").await;
     let blocker = add(&mut app, "Order a replacement latch").await;
     let following = add(&mut app, "Check the door seal").await;
@@ -115,7 +118,7 @@ async fn add_plans_a_project_and_returns_each_affected_record() {
 #[tokio::test]
 async fn a_missing_parent_leaves_the_event_log_unchanged() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();
@@ -142,7 +145,7 @@ async fn a_missing_parent_leaves_the_event_log_unchanged() {
 #[tokio::test]
 async fn creation_rejects_the_same_dependency_in_both_directions() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let first = add(&mut app, "Order a replacement latch").await;
     let second = add(&mut app, "Check the door seal").await;
     let store = Store::open(directory.path().join("pepino.sqlite"))
@@ -168,7 +171,7 @@ async fn creation_rejects_the_same_dependency_in_both_directions() {
 #[tokio::test]
 async fn edit_fields_completes_work_and_clears_optional_values() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let id = add(&mut app, "Order a replacement latch").await;
     let (_, _, tasks, _) = write(
         &mut app,
@@ -250,7 +253,7 @@ async fn edit_fields_completes_work_and_clears_optional_values() {
 #[tokio::test]
 async fn tags_and_assignees_deduplicate_and_validate_entire_batches() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let id = add(&mut app, "Sharpen the pruning shears").await;
     let me = app.local_state().identity_id.to_string();
     let other = "ab".repeat(32);
@@ -302,7 +305,7 @@ async fn tags_and_assignees_deduplicate_and_validate_entire_batches() {
 #[tokio::test]
 async fn link_and_unlink_reject_cycles_without_recording_them() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let first = add(&mut app, "Order a replacement latch").await;
     let second = add(&mut app, "Install the latch").await;
     let link =
@@ -341,7 +344,7 @@ async fn link_and_unlink_reject_cycles_without_recording_them() {
 #[tokio::test]
 async fn comments_are_ordered_and_preserve_repeated_text() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let id = add(&mut app, "Install the latch").await;
     let author = app.local_state().device_id.to_string();
     for text in ["", " \t\r\n", "\u{2003}"] {
@@ -416,7 +419,7 @@ async fn comments_are_ordered_and_preserve_repeated_text() {
 #[tokio::test]
 async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let blocker = add(&mut app, "Order a replacement latch").await;
     let (_, _, tasks, _) = write(
         &mut app,
@@ -533,7 +536,7 @@ async fn reopening_preserves_local_state_tasks_and_clock_across_wall_regression(
 
     let directory = tempfile::tempdir().unwrap();
     let later = NOW + 3 * 86_400_000;
-    let mut app = App::init_with_options(
+    let mut app = fixture::open_with_options(
         directory.path(),
         later,
         OpenOptions {
@@ -589,7 +592,7 @@ async fn a_failed_edge_projection_does_not_leave_a_task_or_advance_the_log() {
     use sqlx::{ConnectOptions, sqlite::SqliteConnectOptions};
 
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let parent = add(&mut app, "Prepare the greenhouse for winter").await;
     let database = directory.path().join("pepino.sqlite");
     let mut connection = SqliteConnectOptions::new()
@@ -633,7 +636,7 @@ async fn a_projection_failure_after_the_commit_reports_that_the_write_landed() {
     use sqlx::{ConnectOptions, sqlite::SqliteConnectOptions};
 
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let id = add(&mut app, "Prepare the greenhouse for winter").await;
     let database = directory.path().join("pepino.sqlite");
     let mut connection = SqliteConnectOptions::new()
@@ -701,7 +704,7 @@ async fn read_golden(app: &mut App, request: Value, expected: Value) {
 #[tokio::test]
 async fn graph_reads_render_the_project_forest_and_transitive_dependencies() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     read_golden(
         &mut app,
         json!({"op":"tree","task":null}),

@@ -1,3 +1,6 @@
+#[path = "support/template.rs"]
+mod fixture;
+
 use std::fs::File;
 use std::time::Duration;
 
@@ -61,7 +64,7 @@ fn operations(reference: &str, peer: &str) -> [(Value, &'static str); 15] {
 #[tokio::test]
 async fn every_operation_classifies_task_references_and_storage_contention() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init_with_options(
+    let mut app = fixture::open_with_options(
         directory.path(),
         NOW,
         OpenOptions {
@@ -233,7 +236,7 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
 #[tokio::test]
 async fn creation_rejects_invalid_events_without_writing_history() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     for (input, expected_field) in [
         (json!({"title":""}), "title"),
         (json!({"title":"x".repeat(1025)}), "title"),
@@ -281,7 +284,7 @@ async fn opening_requires_both_local_files_and_a_matching_binding() {
     assert_eq!(error.kind(), AppErrorKind::NotInitialized);
     assert!(!path.exists());
 
-    let app = App::init(&path, NOW).await.unwrap();
+    let app = fixture::open(&path, NOW).await.unwrap();
     let local = path.join("local.json");
     let original = std::fs::read(&local).unwrap();
     let mut state: Value = serde_json::from_slice(&original).unwrap();
@@ -303,7 +306,7 @@ async fn app_reports_the_path_of_unreadable_local_state() {
     use std::{fs, os::unix::fs::PermissionsExt};
 
     let directory = tempfile::tempdir().unwrap();
-    App::init(directory.path(), NOW).await.unwrap();
+    fixture::open(directory.path(), NOW).await.unwrap();
     let path = directory.path().join("local.json");
     fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
     let result = App::open(directory.path(), NOW).await;

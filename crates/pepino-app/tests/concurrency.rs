@@ -1,3 +1,6 @@
+#[path = "support/template.rs"]
+mod fixture;
+
 use pepino_app::{App, AppError, ReadRequest, Request};
 
 const NOW: u64 = 1_795_144_800_000;
@@ -10,7 +13,7 @@ async fn open_and_handle_are_send() {
 
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().to_owned();
-    App::init(&path, NOW).await.unwrap();
+    fixture::open(&path, NOW).await.unwrap();
     let error = tokio::spawn(async move {
         let mut app = assert_send(App::open(path, NOW)).await.unwrap();
         let request = Request::Read(ReadRequest::GetTask {
@@ -43,6 +46,7 @@ async fn concurrent_apps_open_and_write_to_the_same_directory() {
         "Clean the gutters",
         "Bring the seedlings inside",
     ];
+    fixture::copy(&path);
     let start = Arc::new(Barrier::new(titles.len()));
     let mut workers = Vec::new();
     for title in titles {
@@ -54,7 +58,7 @@ async fn concurrent_apps_open_and_write_to_the_same_directory() {
                 lock_timeout: Duration::from_secs(2),
                 ..OpenOptions::default()
             };
-            let mut app = App::init_with_options(path, NOW, options).await.unwrap();
+            let mut app = App::open_with_options(path, NOW, options).await.unwrap();
             let request = serde_json::from_value(json!({"op":"add_task","title":title})).unwrap();
             let Response::Write {
                 created: Some(id),
@@ -68,7 +72,7 @@ async fn concurrent_apps_open_and_write_to_the_same_directory() {
         }));
     }
 
-    let app = App::init(&path, NOW).await.unwrap();
+    let app = App::open(&path, NOW).await.unwrap();
     let board = app.local_state().board_id;
     let mut ids = BTreeSet::new();
     for worker in workers {
@@ -104,7 +108,7 @@ async fn lock_wait_expires_with_a_retryable_busy_error() {
 
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path();
-    App::init(path, NOW).await.unwrap();
+    fixture::open(path, NOW).await.unwrap();
     let guard = File::options()
         .read(true)
         .write(true)
@@ -142,7 +146,7 @@ async fn simultaneous_view_saves_preserve_both_definitions() {
     use tokio::sync::Barrier;
 
     let directory = tempfile::tempdir().unwrap();
-    let mut reader = App::init(directory.path(), NOW).await.unwrap();
+    let mut reader = fixture::open(directory.path(), NOW).await.unwrap();
     let start = Arc::new(Barrier::new(2));
     let mut workers = Vec::new();
     for (name, filter) in [
@@ -200,7 +204,7 @@ async fn local_state_replacement_preserves_the_directory_lock() {
 
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path();
-    App::init(path, NOW).await.unwrap();
+    fixture::open(path, NOW).await.unwrap();
     let guard = File::options()
         .read(true)
         .write(true)
