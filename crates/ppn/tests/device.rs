@@ -25,6 +25,7 @@ fn device_request_is_stable_for_a_piped_script() {
     let note = String::from_utf8_lossy(&output.stderr).into_owned();
     assert!(note.contains("Device Ferrum, fingerprint"));
     assert!(note.contains("request code is secret"));
+    assert!(note.contains("Expires "));
     let code = success(output);
     assert!(code.starts_with("PPN-REQUEST-"));
     assert_eq!(sandbox.run(&["device", "request"]), code);
@@ -32,6 +33,7 @@ fn device_request_is_stable_for_a_piped_script() {
     assert_eq!(json["schema"], 1);
     assert_eq!(json["request"], code.trim());
     assert_eq!(json["secret"], true);
+    assert!(chrono::DateTime::parse_from_rfc3339(json["expires_at"].as_str().unwrap()).is_ok());
     assert!(note.contains(json["fingerprint"].as_str().unwrap()));
     assert_eq!(json["device_id"].as_str().unwrap().len(), 64);
     assert!(data.join("node.sqlite").exists());

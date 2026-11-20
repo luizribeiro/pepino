@@ -98,14 +98,23 @@ pub fn run(
             let request = runtime.block_on(App::request_device(directory, options))?;
             let code = encode_request(&request)?;
             let fingerprint = request.fingerprint();
+            let expires_at = i64::try_from(request.expires_at()?)
+                .ok()
+                .and_then(|seconds| chrono::DateTime::from_timestamp(seconds, 0))
+                .ok_or_else(|| {
+                    CliError::new(ErrorKind::InvalidInput, "Invalid device request expiry.")
+                })?;
+            let settings = context.render_settings()?;
+            let expiry = settings.dates().timestamp(expires_at, &settings.terminal);
             let note = format!(
-                "Device {}, fingerprint {fingerprint}. This request code is secret.",
+                "Device {}, fingerprint {fingerprint}. This request code is secret. Expires {expiry}.",
                 single_line(&request.name),
             );
             Ok(CommandResult::document(RequestCode {
                 code,
                 fingerprint,
                 id: request.id,
+                expires_at,
             })
             .with_human_note(Some(note)))
         }
@@ -148,6 +157,7 @@ struct RequestCode {
     code: String,
     fingerprint: String,
     id: DeviceId,
+    expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl Render for RequestCode {
@@ -161,6 +171,7 @@ impl Render for RequestCode {
             ("request".into(), json!(self.code)),
             ("fingerprint".into(), json!(self.fingerprint)),
             ("device_id".into(), json!(self.id)),
+            ("expires_at".into(), json!(self.expires_at)),
             ("secret".into(), json!(true)),
         ])
     }
