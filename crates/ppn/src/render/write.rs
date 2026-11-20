@@ -1,0 +1,128 @@
+use std::collections::BTreeMap;
+
+use pepino_app::Response;
+use serde_json::{Map, json};
+
+use super::{ShortIds, edge_reason, link_description, single_line};
+use crate::error::{CliError, ErrorKind};
+use crate::output::{CommandResult, Warning};
+use crate::response::ResponseExt;
+use crate::terminal::Context;
+
+pub fn write_document(
+    context: &Context<'_>,
+    response: Response,
+    verb: &str,
+) -> Result<CommandResult, CliError> {
+    let (message, warnings) = write_output(&response, verb)?;
+    Ok(
+        CommandResult::app_document(context, response, move |_, _| Ok(message))?
+            .with_warnings(warnings),
+    )
+}
+
+fn write_output(response: &Response, verb: &str) -> Result<(String, Vec<Warning>), CliError> {
+    let write = response.write()?;
+    let targets: Vec<_> = if let Some(id) = write.created {
+        vec![
+            write
+                .tasks
+                .iter()
+                .find(|task| &task.id == id)
+                .ok_or_else(|| {
+                    CliError::new(
+                        ErrorKind::Failure,
+                        "The app omitted the created task from the write response.",
+                    )
+                })?,
+        ]
+    } else if !write.deleted.is_empty() {
+        write.deleted.iter().collect()
+    } else {
+        write.tasks.iter().collect()
+    };
+    let excluded: Vec<_> = write
+        .edges
+        .iter()
+        .filter_map(|edge| Some((edge, edge_reason(edge)?)))
+        .collect();
+    let ids = ShortIds::new(
+        targets
+            .iter()
+            .map(|task| &task.id)
+            .chain(excluded.iter().flat_map(|(edge, _)| [&edge.from, &edge.to]))
+            .map(String::as_str),
+    );
+    let label = if *write.changed {
+        verb.into()
+    } else {
+        format!("Already {}", verb.to_lowercase())
+    };
+    let message = targets
+        .iter()
+        .map(|task| {
+            format!(
+                "{label} {}  {}",
+                ids.get(&task.id),
+                single_line(&task.title)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let warnings = excluded
+        .into_iter()
+        .map(|(edge, reason)| Warning {
+            message: format!(
+                "Excluded recorded link {} ({reason}).",
+                link_description(edge, &ids, &BTreeMap::new())
+            ),
+            details: Map::from_iter([
+                ("code".into(), json!("edge_not_effective")),
+                ("edge".into(), json!(edge)),
+            ]),
+        })
+        .collect();
+    Ok((message, warnings))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn created_id_uses_only_visible_tasks_for_uniqueness() {
+        let id = "97ad97a8";
+        let peer = "97ad97b8";
+        let task = |id| {
+            json!({
+                "id":id,"title":"Replace the greenhouse latch","description":null,"status":"todo",
+                "due":null,"priority":null,"fields":{},"tags":[],"assignees":[],"author":"6b376b",
+                "created":{"wall_ms":1795149900000u64,"counter":2},"updated":{"wall_ms":1795149900000u64,"counter":2},
+                "parent":null,"children":[],"blocks":[],"blocked_by":[],"relates":[],"blocked":false,"ready":true,"comment_count":0
+            })
+        };
+        let mut response = json!({"kind":"write","created":id,"changed":true,"tasks":[task(id),task(peer)],"edges":[]});
+        let render =
+            |value| write_output(&serde_json::from_value(value).unwrap(), "Created").unwrap();
+        assert_eq!(
+            render(response.clone()).0,
+            "Created 97ad97  Replace the greenhouse latch"
+        );
+        let mut unchanged = response.clone();
+        unchanged.as_object_mut().unwrap().remove("created");
+        unchanged["changed"] = json!(false);
+        let (message, _) =
+            write_output(&serde_json::from_value(unchanged).unwrap(), "Done").unwrap();
+        assert!(message.starts_with("Already done 97ad97a  Replace the greenhouse latch"));
+        assert_eq!(message.lines().count(), 2);
+        response["edges"] =
+            json!([{"from":id,"to":peer,"kind":"blocks","effective":false,"reason":"cycle"}]);
+        let (message, warnings) = render(response);
+        assert_eq!(warnings[0].details["edge"]["reason"], "cycle");
+        assert_eq!(message, "Created 97ad97a  Replace the greenhouse latch");
+        assert_eq!(
+            warnings[0].message,
+            "Excluded recorded link 97ad97a blocks 97ad97b (it would create a cycle)."
+        );
+    }
+}

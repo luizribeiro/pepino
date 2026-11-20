@@ -28,3 +28,7 @@ pub use detail_fields::task_fields;
 mod detail;
 
 pub use detail::task_detail;
+
+mod write;
+
+pub use write::write_document;
