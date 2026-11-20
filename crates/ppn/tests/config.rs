@@ -1,0 +1,418 @@
+use serde_json::json;
+
+mod common;
+use common::*;
+
+#[test]
+fn global_config_flag_overrides_the_environment_file() {
+    let missing = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/missing-config.toml"
+    );
+    let output = ppn()
+        .args(["config", "show", "--config", missing, "--json"])
+        .output()
+        .unwrap();
+    let diagnostic = assert_json_error(output, 1, "invalid_config");
+    assert!(
+        diagnostic["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(missing)
+    );
+}
+
+#[test]
+fn config_show_reports_effective_values_and_sources() {
+    let sandbox = ConfigSandbox::new();
+    let human = sandbox.run(&["config", "show"]);
+    assert!(human.starts_with("KEY"));
+    assert!(human.contains("release-team"));
+    assert!(human.contains("https://east.release.example"));
+    assert!(human.contains("explicit_file"));
+    assert!(human.contains("ui.date_format"));
+    assert!(
+        human
+            .lines()
+            .any(|line| line.starts_with("network") && line.ends_with("release-team"))
+    );
+    assert_eq!(human.lines().count(), 10);
+
+    let data = as_json(&sandbox.run(&["config", "show", "--json"]));
+    let values = data["values"].as_object().unwrap();
+    assert_eq!(values.len(), 9);
+    assert_eq!(
+        values["network"],
+        json!({
+            "value": "release-team", "source": "explicit_file", "path": sandbox.config,
+        })
+    );
+    assert_eq!(values["relay_urls"]["value"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        values["bootstrap_nodes"]["value"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(
+        values["trusted_devices"]["value"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        values["credentials_file"]["value"],
+        json!(sandbox.home.path().join("secrets/release.cbor"))
+    );
+    let data_dir = if cfg!(target_os = "macos") {
+        sandbox
+            .home
+            .path()
+            .join("Library/Application Support/pepino")
+    } else {
+        sandbox.home.path().join("xdg-state/pepino")
+    };
+    assert_eq!(values["data_dir"]["value"], json!(data_dir));
+    assert_eq!(
+        data["files"],
+        json!([{ "path": sandbox.config, "exists": true }])
+    );
+}
+
+#[test]
+fn config_show_filters_one_key_and_suggests_known_keys() {
+    let sandbox = ConfigSandbox::new();
+    let single = sandbox.run(&["config", "show", "network"]);
+    assert_eq!(single.lines().count(), 2);
+    assert!(single.contains("release-team"));
+    assert!(!single.contains("mdns"));
+
+    let data = as_json(&sandbox.run(&["config", "show", "ui.date_format", "--json"]));
+    assert_eq!(data["values"].as_object().unwrap().len(), 1);
+    assert_eq!(data["values"]["ui.date_format"]["value"], "%d %b %Y");
+
+    let unknown = ["config", "show", "netwrok"];
+    let output = sandbox.command().args(unknown).output().unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("Did you mean `network`?")
+    );
+
+    let output = sandbox
+        .command()
+        .args(unknown)
+        .arg("--json")
+        .output()
+        .unwrap();
+    let diagnostic = assert_json_error(output, 3, "not_found");
+    assert_eq!(diagnostic["error"]["hint"], "Did you mean `network`?");
+}
+
+#[test]
+fn config_show_applies_environment_then_global_flags() {
+    let sandbox = ConfigSandbox::new();
+    let output = sandbox
+        .command()
+        .env("PPN_NETWORK", "from-env")
+        .env("PPN_COLOR", "always")
+        .args(["config", "show", "--color=auto", "--json"])
+        .output()
+        .unwrap();
+    let data = as_json(&success(output));
+    assert_eq!(
+        data["values"]["network"],
+        json!({"value": "from-env", "source": "env"})
+    );
+    assert_eq!(
+        data["values"]["ui.color"],
+        json!({"value": "auto", "source": "flag"})
+    );
+}
+
+#[test]
+fn config_path_reports_default_file_presence_without_parsing() {
+    let sandbox = ConfigSandbox::new();
+    std::fs::write(&sandbox.config, "not TOML\n").unwrap();
+    let run = |args: &[&str]| {
+        success(
+            sandbox
+                .command()
+                .env_remove("PPN_CONFIG")
+                .args(args)
+                .output()
+                .unwrap(),
+        )
+    };
+    let human = run(&["config", "path"]);
+    assert!(human.contains(&format!("present  {}", sandbox.config.display())));
+    let data = as_json(&run(&["config", "path", "--json"]));
+    let system = std::path::Path::new("/etc/pepino/config.toml");
+    assert_eq!(
+        data["files"],
+        json!([
+            {"path": system, "exists": system.try_exists().unwrap()},
+            {"path": sandbox.config, "exists": true},
+        ])
+    );
+    std::fs::remove_file(&sandbox.config).unwrap();
+    assert!(run(&["config", "path"]).contains(&format!("missing  {}", sandbox.config.display())));
+}
+
+#[test]
+fn config_path_checks_only_the_explicit_file() {
+    let sandbox = ConfigSandbox::new();
+    let data = as_json(&sandbox.run(&["config", "path", "--json"]));
+    assert_eq!(
+        data["files"],
+        json!([{"path": sandbox.config, "exists": true}])
+    );
+    std::fs::remove_file(&sandbox.config).unwrap();
+    let output = sandbox
+        .command()
+        .args(["config", "path", "--json"])
+        .output()
+        .unwrap();
+    let diagnostic = assert_json_error(output, 1, "invalid_config");
+    assert!(
+        diagnostic["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(sandbox.config.to_str().unwrap())
+    );
+}
+
+#[test]
+fn config_check_validates_only_the_named_file_when_given() {
+    let sandbox = ConfigSandbox::new();
+    let file = sandbox.config.to_str().unwrap();
+    assert_eq!(
+        sandbox.run(&["config", "check"]),
+        format!("Valid  {file}\n")
+    );
+
+    let output = sandbox
+        .command()
+        .env("PPN_CONFIG", sandbox.home.path().join("missing.toml"))
+        .env("PPN_MDNS", "invalid")
+        .args(["config", "check", file, "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        as_json(&success(output)),
+        json!({
+            "schema": 1, "valid": true, "files": [{"path": file, "exists": true}],
+        })
+    );
+}
+
+#[test]
+fn config_check_reports_all_errors_with_locations() {
+    let sandbox = ConfigSandbox::new();
+    let invalid = sandbox.home.path().join("bad.toml");
+    let text = "netwrok = 'oops'\nrelay_urls = ['http://relay.example']\n[ui]\ncolor = 'rainbow'\n";
+    std::fs::write(&invalid, text).unwrap();
+    let file = invalid.to_str().unwrap();
+
+    let run = || {
+        let mut command = sandbox.command();
+        command.args(["config", "check", file]);
+        command
+    };
+    let human = run().output().unwrap();
+    assert_eq!(human.status.code(), Some(1));
+    assert!(human.stdout.is_empty());
+    let stderr = String::from_utf8(human.stderr).unwrap();
+
+    let json = assert_json_error(run().arg("--json").output().unwrap(), 1, "invalid_config");
+    let message = json["error"]["message"].as_str().unwrap();
+    for problem in [
+        "1:1: netwrok: unknown key; did you mean `network`?",
+        "2:15: relay_urls[0]: expected an HTTPS URL",
+        "4:9: ui.color: expected auto, always, or never",
+    ] {
+        let expected = format!("{file}:{problem}");
+        assert!(stderr.contains(&expected), "{stderr}");
+        assert!(message.contains(&expected), "{message}");
+    }
+    assert_eq!(message.lines().count(), 3);
+    assert_eq!(std::fs::read_to_string(invalid).unwrap(), text);
+}
+
+#[test]
+fn config_show_replaces_selected_files_with_the_flag_path() {
+    let sandbox = ConfigSandbox::new();
+    std::fs::write(
+        sandbox.home.path().join("alternate.toml"),
+        "network = 'alternate'\n",
+    )
+    .unwrap();
+    let run = |file| {
+        sandbox
+            .command()
+            .current_dir(sandbox.home.path())
+            .args(["config", "show", "--config", file, "--json"])
+            .output()
+            .unwrap()
+    };
+    let data = as_json(&success(run("alternate.toml")));
+    assert_eq!(
+        data["files"],
+        json!([{"path": sandbox.home.path().join("alternate.toml"), "exists": true}])
+    );
+    assert_eq!(data["values"]["network"]["value"], "alternate");
+    assert_eq!(
+        data["values"]["network"]["path"],
+        json!(sandbox.home.path().join("alternate.toml"))
+    );
+    assert_eq!(data["values"]["relay_urls"]["source"], "default");
+    assert_eq!(data["values"]["trusted_devices"]["value"], json!([]));
+    let diagnostic = assert_json_error(run("missing.toml"), 1, "invalid_config");
+    assert!(
+        diagnostic["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(sandbox.home.path().join("missing.toml").to_str().unwrap())
+    );
+}
+
+#[test]
+fn commands_load_configuration_only_when_needed() {
+    let sandbox = ConfigSandbox::new();
+    std::fs::write(&sandbox.config, "network = ?").unwrap();
+    for args in [&["version"][..], &["help"], &[]] {
+        success(
+            sandbox
+                .command()
+                .env_remove("PPN_CONFIG")
+                .env("PPN_MDNS", "maybe")
+                .args(args)
+                .output()
+                .unwrap(),
+        );
+    }
+    let output = sandbox
+        .command()
+        .env_remove("PPN_CONFIG")
+        .args(["config", "show", "--json"])
+        .output()
+        .unwrap();
+    assert_json_error(output, 1, "invalid_config");
+}
+
+#[test]
+fn config_show_reports_file_and_environment_errors_together() {
+    let sandbox = ConfigSandbox::new();
+    std::fs::write(&sandbox.config, "network = ?").unwrap();
+    let output = sandbox
+        .command()
+        .env("PPN_MDNS", "maybe")
+        .args(["config", "show", "--json"])
+        .output()
+        .unwrap();
+    let diagnostic = assert_json_error(output, 1, "invalid_config");
+    let message = diagnostic["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains(&format!("{}:1:11: network:", sandbox.config.display())),
+        "{message}"
+    );
+    assert!(
+        message.contains("PPN_MDNS: mdns: expected a boolean"),
+        "{message}"
+    );
+}
+
+#[test]
+fn config_show_ignores_empty_environment_values() {
+    let sandbox = ConfigSandbox::new();
+    let output = sandbox
+        .command()
+        .env("PPN_CONFIG", "")
+        .env("PPN_NETWORK", "")
+        .env("PPN_MDNS", "")
+        .env("PPN_DATA_DIR", "")
+        .args(["config", "show", "--json"])
+        .output()
+        .unwrap();
+    let data = as_json(&success(output));
+    assert_eq!(data["values"]["network"]["value"], "release-team");
+    assert_eq!(data["values"]["network"]["source"], "user_file");
+    assert_eq!(data["values"]["data_dir"]["source"], "default");
+}
+
+#[cfg(unix)]
+#[test]
+fn config_show_names_non_utf8_environment_variables() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let sandbox = ConfigSandbox::new();
+    let output = sandbox
+        .command()
+        .env("PPN_CONFIG", OsStr::from_bytes(b"bad\xff"))
+        .env("PPN_MDNS", OsStr::from_bytes(b"bad\xff"))
+        .args(["config", "show", "--json"])
+        .output()
+        .unwrap();
+    let diagnostic = assert_json_error(output, 1, "invalid_config");
+    let message = diagnostic["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("PPN_CONFIG: expected a UTF-8 value"),
+        "{message}"
+    );
+    assert!(
+        message.contains("PPN_MDNS: mdns: expected a UTF-8 value"),
+        "{message}"
+    );
+}
+
+#[test]
+fn explicit_config_check_accepts_an_unset_or_relative_home() {
+    let sandbox = ConfigSandbox::new();
+    let file = sandbox.home.path().join("sandbox.toml");
+    std::fs::write(&file, "network = 'release-team'").unwrap();
+    for home in [None, Some("relative")] {
+        let command = || {
+            let mut command = sandbox.command();
+            command
+                .env_remove("HOME")
+                .env_remove("XDG_CONFIG_HOME")
+                .env_remove("XDG_STATE_HOME");
+            if let Some(home) = home {
+                command.env("HOME", home);
+            }
+            command
+        };
+        for args in [&["version"][..], &["help"], &[]] {
+            success(command().args(args).output().unwrap());
+        }
+        let output = command()
+            .args(["config", "check"])
+            .arg(&file)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert_eq!(as_json(&success(output))["valid"], true);
+    }
+}
+
+#[test]
+fn config_help_lists_environment_variables_from_the_settings_table() {
+    let help = run_ppn(&["config", "--help"]);
+    assert!(help.contains("empty values are unset"));
+    let document = as_json(&run_ppn(&["help", "config", "--json"]));
+    let entries = document["environment"].as_array().unwrap();
+    for entry in entries {
+        assert!(help.contains(entry["variable"].as_str().unwrap()));
+        assert!(help.contains(entry["value"].as_str().unwrap()));
+    }
+    let bootstrap = entries
+        .iter()
+        .find(|entry| entry["variable"] == "PPN_BOOTSTRAP_NODES")
+        .unwrap();
+    assert_eq!(bootstrap["key"], "bootstrap_nodes");
+    assert!(
+        bootstrap["value"]
+            .as_str()
+            .unwrap()
+            .contains("node_id=https://relay.example")
+    );
+}
