@@ -17,6 +17,7 @@ pub enum ErrorKind {
     AmbiguousId,
     PermissionDenied,
     DaemonUnreachable,
+    SyncTimeout,
     ConfirmationRequired,
     InvalidConfig,
     InvalidInput,
@@ -38,6 +39,7 @@ impl ErrorKind {
             Self::AmbiguousId => "The identifier matches multiple items.",
             Self::PermissionDenied => "The operation is not permitted.",
             Self::DaemonUnreachable => "The daemon or network could not be reached.",
+            Self::SyncTimeout => "Sync timed out with work pending.",
             Self::ConfirmationRequired => "The operation needs explicit confirmation.",
             Self::InvalidConfig => "Configuration could not be read or is invalid.",
             Self::InvalidInput => "The request input is invalid.",
@@ -49,6 +51,7 @@ impl ErrorKind {
     pub const fn status(self) -> u8 {
         match self {
             Self::Failure
+            | Self::SyncTimeout
             | Self::ConfirmationRequired
             | Self::InvalidConfig
             | Self::Conflict
@@ -71,6 +74,7 @@ impl ErrorKind {
             Self::AmbiguousId => "ambiguous_id",
             Self::PermissionDenied => "permission_denied",
             Self::DaemonUnreachable => "daemon_unreachable",
+            Self::SyncTimeout => "sync_timeout",
             Self::ConfirmationRequired => "confirmation_required",
             Self::InvalidConfig => "invalid_config",
             Self::InvalidInput => "invalid_input",

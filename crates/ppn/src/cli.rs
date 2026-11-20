@@ -75,6 +75,7 @@ enum Command {
     Link(commands::link::Args),
     Unlink(commands::unlink::Args),
     Daemon(commands::daemon::Args),
+    Sync(commands::sync::Args),
     Debug(debug::Args),
 }
 
@@ -171,6 +172,10 @@ fn execute(inputs: &ProcessInputs) -> (Result<CommandResult, CliError>, bool, Te
 }
 
 impl ProcessInputs {
+    fn daemon_enabled(&self) -> bool {
+        config::env_value(&self.env, "PPN_NO_DAEMON").ok().flatten() != Some("1")
+    }
+
     pub(crate) fn files(
         &self,
         config: Option<std::path::PathBuf>,
@@ -252,6 +257,12 @@ fn dispatch(
         Some(Command::Daemon(args)) => {
             commands::daemon::run(context, args, cli.globals.config.as_deref())
         }
+        Some(Command::Sync(args)) => commands::sync::run(
+            context,
+            args,
+            cli.globals.config.as_deref(),
+            inputs.daemon_enabled(),
+        ),
         Some(Command::Debug(args)) => debug::run(context, args),
         None => Ok(help::run(context, definition(), None)),
     }

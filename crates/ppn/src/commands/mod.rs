@@ -23,3 +23,4 @@ pub mod version;
 pub mod view;
 
 pub mod daemon;
+pub mod sync;
