@@ -18,6 +18,19 @@ pub enum FilterInput {
 }
 
 impl FilterInput {
+    /// Combines a filter string and already-split arguments using their respective grammars.
+    pub fn combine(text: String, argv: Vec<String>) -> Result<Self, AppError> {
+        let text = Self::Text(text);
+        if argv.is_empty() {
+            return Ok(text);
+        }
+        Ok(Self::Text(format!(
+            "{} {}",
+            text.parse()?,
+            Self::Argv(argv).parse()?
+        )))
+    }
+
     /// Checks whether the supplied filter explicitly selects a status or state.
     pub fn has_status_term(&self) -> Result<bool, AppError> {
         Ok(self
@@ -279,6 +292,19 @@ impl<'a> ViewFilters<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn combining_filters_preserves_negated_phrases_and_positional_values() {
+        let input = FilterInput::combine(
+            r#"tag:hardware -"bad hinge""#.into(),
+            vec!["assignee:Ana Maria".into(), "fix the fence".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            input.parse().unwrap().to_string(),
+            r#"tag:hardware -"bad hinge" assignee:"Ana Maria" "fix the fence""#
+        );
+    }
 
     #[test]
     fn status_detection_uses_the_filter_grammar() {
