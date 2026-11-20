@@ -4,12 +4,14 @@ use std::{
     path::PathBuf,
     process::{Child, Command, Output, Stdio},
     thread,
-    time::{Duration, Instant},
 };
 
 use serde_json::Value;
 
-use crate::common::{ConfigSandbox, as_json, success};
+use crate::{
+    common::{ConfigSandbox, as_json, success},
+    wait::{WAIT, until},
+};
 
 pub struct Fixture {
     pub sandbox: ConfigSandbox,
@@ -69,26 +71,31 @@ impl Fixture {
     }
 
     pub fn ready(&self) -> Value {
-        eventually(|| {
-            let output = self
-                .command()
-                .args(["daemon", "status", "--json"])
-                .output()
-                .ok()?;
-            let value: Value = serde_json::from_slice(&output.stdout).ok()?;
-            (value["running"] == true).then_some(value)
-        })
+        let output = until(
+            || {
+                self.command()
+                    .args(["daemon", "status", "--json"])
+                    .output()
+                    .unwrap()
+            },
+            |output| {
+                serde_json::from_slice::<Value>(&output.stdout)
+                    .is_ok_and(|value| value["running"] == true)
+            },
+            WAIT,
+        );
+        as_json(&success(output))
     }
 
     pub fn wait_foreground(&mut self) -> Output {
         let child = self.foreground.as_mut().unwrap();
-        eventually(|| child.try_wait().unwrap());
+        until(|| child.try_wait().unwrap(), Option::is_some, WAIT);
         self.foreground.take().unwrap().wait_with_output().unwrap()
     }
 
     pub fn assert_stopped(&self) {
         assert!(!self.socket.exists());
-        eventually(|| (!self.lease_held()).then_some(()));
+        until(|| self.lease_held(), |held| !held, WAIT);
         assert_eq!(
             as_json(&self.run(&["daemon", "status", "--json"]))["running"],
             false
@@ -116,17 +123,6 @@ impl Drop for Fixture {
     }
 }
 
-fn eventually<T>(mut poll: impl FnMut() -> Option<T>) -> T {
-    let start = Instant::now();
-    loop {
-        if let Some(result) = poll() {
-            return result;
-        }
-        assert!(start.elapsed() < Duration::from_secs(12));
-        thread::sleep(Duration::from_millis(25));
-    }
-}
-
 impl Fixture {
     pub fn signal(&self, signal: nix::sys::signal::Signal) {
         let pid = i32::try_from(self.foreground.as_ref().unwrap().id()).unwrap();
@@ -140,9 +136,7 @@ impl Fixture {
         };
 
         let mut stream = UnixStream::connect(&self.socket).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(3)))
-            .unwrap();
+        stream.set_read_timeout(Some(WAIT)).unwrap();
         writeln!(stream, "{request}").unwrap();
         let mut reply = String::new();
         BufReader::new(stream).read_line(&mut reply).unwrap();

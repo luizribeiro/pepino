@@ -23,6 +23,10 @@ fn daemon_commands_report_missing_initialization_without_creating_state() {
 mod support;
 
 #[cfg(pepino_network_tests)]
+#[path = "common/wait.rs"]
+mod wait;
+
+#[cfg(pepino_network_tests)]
 mod network {
     use super::support::Fixture;
     use super::*;
