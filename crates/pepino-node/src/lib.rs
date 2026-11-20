@@ -8,6 +8,8 @@ mod membership;
 mod node;
 mod receipt;
 mod settings;
+#[cfg(test)]
+mod status;
 mod worker;
 
 pub use ack::Ack;
@@ -21,6 +23,8 @@ pub use settings::{BootstrapNode, MdnsMode, NodeSettings};
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    #[error("missed {0} node status events")]
+    StatusLagged(u64),
     #[error("invalid member info: {0}")]
     Member(String),
     #[error("the board's event stream has already been taken")]
