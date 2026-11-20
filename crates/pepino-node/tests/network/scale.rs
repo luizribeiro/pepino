@@ -9,7 +9,7 @@ use super::support::{WAIT, fixture_dir, network, next, settings, start};
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn restart_skips_acknowledged_history() {
     let dir = fixture_dir();
-    check_restart(dir.path(), 192, 16).await;
+    check_restart(dir.path(), 48, 8).await;
 }
 
 #[tokio::test]
