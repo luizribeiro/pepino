@@ -26,6 +26,7 @@ pub(super) enum Change {
 pub(super) struct Edit {
     pub(super) writer: DeviceId,
     pub(super) parents: BTreeSet<EventId>,
+    pub(super) generation: u64,
     pub(super) change: Change,
 }
 
@@ -33,7 +34,7 @@ pub(super) struct Edit {
 pub(crate) struct SignedEdit {
     pub(super) edit: Edit,
     #[serde(with = "serde_bytes")]
-    signature: [u8; 64],
+    pub(super) signature: [u8; 64],
 }
 
 impl SignedEdit {
@@ -81,6 +82,7 @@ fn edits_are_bound_to_the_writer_causal_parents_and_catalog() {
     let edit = Edit {
         writer: keys.device_id(),
         parents: [parent].into(),
+        generation: 3,
         change: Change::RenameIdentity("Ada Gardener".into()),
     };
     let mut signed = SignedEdit::sign(edit, board, identity, &keys).unwrap();
