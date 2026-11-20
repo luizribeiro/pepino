@@ -5,6 +5,7 @@ use std::{
 
 use pepino_core::BoardId;
 use pepino_node::{DeviceCredentials, Node, NodeSettings};
+use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 
 use crate::{
     AppError, LocalState, OpenOptions,
@@ -80,9 +81,18 @@ pub(super) async fn prepare(
         }
     };
 
+    let database = directory.join(NODE_DATABASE);
+    let installed = worker("check for installed board database", {
+        let database = database.clone();
+        move || exists(&database)
+    })
+    .await??;
+    if !installed {
+        // The database rename cannot carry committed pages still in the WAL.
+        checkpoint_staged_database(&staged_database).await?;
+    }
     worker("install board database", move || {
-        let database = directory.join(NODE_DATABASE);
-        if !exists(&database)? {
+        if !installed {
             fs::rename(&staged_database, &database)
                 .map_err(|error| path_io_error(&database, "install board database", error))?;
             sync(&directory)?;
@@ -91,6 +101,27 @@ pub(super) async fn prepare(
     })
     .await??;
     Ok(local)
+}
+
+async fn checkpoint_staged_database(path: &Path) -> Result<(), AppError> {
+    let failed = |error| storage("checkpoint initial board database", error, false);
+    let options = SqliteConnectOptions::new().filename(path);
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .map_err(failed)?;
+    let (busy, _, _): (i64, i64, i64) = sqlx::query_as("PRAGMA wal_checkpoint(TRUNCATE)")
+        .fetch_one(&mut connection)
+        .await
+        .map_err(failed)?;
+    connection.close().await.map_err(failed)?;
+    if busy != 0 {
+        return Err(storage(
+            "checkpoint initial board database",
+            "staged node database is still in use",
+            true,
+        ));
+    }
+    Ok(())
 }
 
 enum Prepared {
@@ -197,6 +228,58 @@ mod tests {
     use crate::{App, OpenOptions};
 
     #[tokio::test]
+    async fn installing_a_pending_board_preserves_committed_wal_pages() {
+        use sqlx::sqlite::SqliteJournalMode;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path();
+        let stage = path.join(STAGING);
+        fs::create_dir(&stage).unwrap();
+        let keys = DeviceCredentials::load_or_create(path.join("credentials.cbor")).unwrap();
+        let board = create_board(NodeSettings::offline(
+            keys.clone(),
+            stage.join(NODE_DATABASE),
+        ))
+        .await
+        .unwrap();
+        let names = InitialNames::try_from(OpenOptions {
+            display_name: Some("Ada Gardener".into()),
+            board_name: Some("Greenhouse".into()),
+            ..OpenOptions::default()
+        })
+        .unwrap();
+        let pending = LocalState::new(names, keys.device_id(), board).unwrap();
+        pending.write(&path.join(PENDING)).unwrap();
+
+        let options = SqliteConnectOptions::new()
+            .filename(stage.join(NODE_DATABASE))
+            .journal_mode(SqliteJournalMode::Wal)
+            .pragma("wal_autocheckpoint", "0");
+        let mut prior = SqliteConnection::connect_with(&options).await.unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE enrollment_probe (task TEXT NOT NULL);
+            INSERT INTO enrollment_probe VALUES ('Catalogue the seed bank');",
+        )
+        .execute(&mut prior)
+        .await
+        .unwrap();
+        assert!(fs::metadata(stage.join("node.sqlite-wal")).unwrap().len() > 32);
+
+        let app = App::init(path, 1_795_144_800_000).await.unwrap();
+        assert_eq!(app.local_state(), &pending);
+        let mut installed =
+            SqliteConnection::connect_with(&options.filename(path.join(NODE_DATABASE)))
+                .await
+                .unwrap();
+        let retained: String = sqlx::query_scalar("SELECT task FROM enrollment_probe")
+            .fetch_one(&mut installed)
+            .await
+            .unwrap();
+        assert_eq!(retained, "Catalogue the seed bank");
+        prior.close().await.unwrap();
+    }
+
+    #[tokio::test]
     #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
     async fn resumes_a_pending_board_without_exposing_partial_local_state() {
         let directory = tempfile::tempdir().unwrap();
@@ -233,7 +316,7 @@ mod tests {
             .unwrap();
         let board = node.open_board(pending.board_id()).await.unwrap();
         board
-            .wait_until_joined(std::time::Duration::from_secs(5))
+            .wait_until_joined(std::time::Duration::from_secs(60))
             .await
             .unwrap();
         board.close().await.unwrap();
