@@ -31,7 +31,7 @@ pub use edges::{EdgeExclusion, EdgeRecord};
 pub use error::{DatabaseErrorKind, StoreError};
 pub use history::EventRecord;
 pub use log::{AppendOutcome, IdSource, RebuildReport, SkipReason};
-pub use prefix::PrefixResolution;
+pub use prefix::{PrefixResolution, TaskPrefixResolution};
 pub use task::TaskRecord;
 pub use traversal::{Dependencies, Dependency, SubtreeEntry};
 

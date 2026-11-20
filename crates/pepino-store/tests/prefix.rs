@@ -1,5 +1,5 @@
 use pepino_core::{BoardId, DeviceId, Envelope, Event, EventId, Hlc, InitialFields, TaskId};
-use pepino_store::{IdSource, PrefixResolution, Store, StoreError};
+use pepino_store::{IdSource, PrefixResolution, Store, StoreError, TaskPrefixResolution};
 
 #[tokio::test]
 async fn prefix_matches_only_live_tasks_in_the_requested_board() {
@@ -60,6 +60,7 @@ async fn prefix_matches_only_live_tasks_in_the_requested_board() {
             Err(StoreError::InvalidPrefix)
         ));
     }
+    let snapshot = store.board(board).await.unwrap();
     let delete = Envelope::new(author, hlc, Event::TaskDeleted { task: first }).unwrap();
     store
         .append(
@@ -76,6 +77,41 @@ async fn prefix_matches_only_live_tasks_in_the_requested_board() {
     assert_eq!(
         store.resolve_prefix(other, "a1a1").await.unwrap(),
         PrefixResolution::One(first)
+    );
+    let view = store.board(board).await.unwrap();
+    assert_eq!(
+        view.resolve_task_prefix("A1A1").unwrap(),
+        TaskPrefixResolution::Live(second)
+    );
+    assert_eq!(
+        view.resolve_task_prefix("a1a101").unwrap(),
+        TaskPrefixResolution::Deleted { id: Some(first) }
+    );
+    assert_eq!(
+        view.resolve_task_prefix("a1a103").unwrap(),
+        TaskPrefixResolution::Unknown
+    );
+    assert_eq!(
+        snapshot.resolve_task_prefix("a1a1").unwrap(),
+        TaskPrefixResolution::Ambiguous {
+            count: 2,
+            candidates: vec![first, second],
+        }
+    );
+
+    let delete = Envelope::new(author, hlc, Event::TaskDeleted { task: second }).unwrap();
+    store
+        .append(board, &delete.encode().unwrap(), IdSource::Content)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .board(board)
+            .await
+            .unwrap()
+            .resolve_task_prefix("a1a1")
+            .unwrap(),
+        TaskPrefixResolution::Deleted { id: None },
     );
 }
 

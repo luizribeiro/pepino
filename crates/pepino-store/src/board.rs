@@ -1,12 +1,12 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::slice;
 
 use pepino_core::{BoardId, TaskId};
 use sqlx::Connection;
 
 use crate::{
-    CommentRecord, Dependencies, EdgeRecord, PrefixResolution, Store, StoreError, SubtreeEntry,
-    TaskRecord, comment, edges, task,
+    BoardKey, CommentRecord, Dependencies, EdgeRecord, PrefixResolution, Store, StoreError,
+    SubtreeEntry, TaskRecord, comment, edges, task,
 };
 
 /// An owned snapshot of a board's live tasks, present edges, and optional comments.
@@ -14,6 +14,7 @@ use crate::{
 pub struct BoardView {
     tasks: Vec<TaskRecord>,
     by_id: BTreeMap<TaskId, usize>,
+    pub(crate) deleted_ids: BTreeSet<TaskId>,
     edges: Vec<EdgeRecord>,
     incident: HashMap<TaskId, Vec<usize>>,
     comments: Option<HashMap<TaskId, Vec<CommentRecord>>>,
@@ -79,10 +80,16 @@ impl Store {
         board: BoardId,
         with_comments: bool,
     ) -> Result<BoardView, StoreError> {
-        let (task_rows, edge_rows, comment_records) = self
+        let (task_rows, edge_rows, deleted_ids, comment_records) = self
             .read(async move |connection| {
                 let mut tx = connection.begin().await?;
                 let tasks = task::task_rows(&mut tx, board).await?;
+                let deleted = sqlx::query_scalar::<_, [u8; 32]>(
+                    "SELECT task FROM task_state WHERE board = ? AND deleted = 1 AND created IS NOT NULL",
+                )
+                .bind(BoardKey(board))
+                .fetch_all(&mut *tx)
+                .await?;
                 let edges = edges::edge_rows(&mut tx, board).await?;
                 let comments = if with_comments {
                     Some(comment::records(&mut tx, board, None).await?)
@@ -90,7 +97,7 @@ impl Store {
                     None
                 };
                 tx.commit().await?;
-                Ok((tasks, edges, comments))
+                Ok((tasks, edges, deleted, comments))
             })
             .await?;
         let projected = edges::project(&edge_rows)?;
@@ -117,6 +124,7 @@ impl Store {
         Ok(BoardView {
             tasks,
             by_id,
+            deleted_ids: deleted_ids.into_iter().map(TaskId::from_bytes).collect(),
             edges,
             incident,
             comments,
