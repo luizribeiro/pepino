@@ -272,11 +272,9 @@ impl From<AppError> for CliError {
                 reason,
                 diagnostic: filter,
             } => {
-                if reason.starts_with("invalid ") {
-                    diagnostic.message = reason.clone();
-                }
+                diagnostic.message = reason.clone();
                 diagnostic.hint = if filter.is_some() {
-                    Some("Run `ppn ls --help` for filter examples.".into())
+                    Some("Run `ppn help filters` for filter syntax and examples.".into())
                 } else {
                     input_hint(field, reason).map(str::to_owned)
                 };
@@ -289,7 +287,11 @@ impl From<AppError> for CliError {
                 details.extend(task);
             }
             if let Some(Value::String(hint)) = details.remove("hint") {
-                diagnostic.hint = Some(hint);
+                diagnostic.hint = Some(if hint == "Use list_views to see available saved views" {
+                    "Run `ppn view ls` to see available saved views.".into()
+                } else {
+                    hint
+                });
             }
             if details
                 .get("position")
@@ -304,6 +306,9 @@ impl From<AppError> for CliError {
                     Some(hint) => format!("{hint} {advice}"),
                     None => advice.into(),
                 });
+            }
+            if details.get("reason").and_then(Value::as_str) == Some(&diagnostic.message) {
+                details.remove("reason");
             }
             diagnostic.details = details;
         }
@@ -365,7 +370,7 @@ mod tests {
             ExitCode::from(2)
         );
         assert!(String::from_utf8(stderr).unwrap().ends_with(
-            "  term \"tag:\"\n  at argument 1, byte 4\nhint: Run `ppn ls --help` for filter examples.\n"
+            "  term \"tag:\"\n  at argument 1, byte 4\nhint: Run `ppn help filters` for filter syntax and examples.\n"
         ));
     }
 

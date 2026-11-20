@@ -149,3 +149,17 @@ fn view_save_accepts_a_full_filter_with_or_without_positional_terms() {
     assert_eq!(combined["view"]["filter"], format!("{filter} is:open"));
     assert_eq!(combined["replaced"], true);
 }
+
+#[test]
+fn an_unknown_view_suggests_a_cli_command_without_repeating_the_reason() {
+    let (sandbox, _) = task_sandbox();
+    let args = ["ls", "@missing"];
+    let human = sandbox.command().args(args).output().unwrap();
+    assert_eq!(human.status.code(), Some(2));
+    let stderr = String::from_utf8(human.stderr).unwrap();
+    assert!(stderr.contains("ppn view ls"));
+    assert!(!stderr.contains("list_views"));
+    let json = sandbox.command().args(args).arg("--json").output().unwrap();
+    let error = task_error(json, 2, "invalid_input");
+    assert!(error.get("reason").is_none());
+}

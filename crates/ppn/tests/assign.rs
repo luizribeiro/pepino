@@ -105,9 +105,11 @@ fn assign_and_filters_agree_on_names_prefixes_and_ambiguity() {
         .unwrap();
     let write = task_error(write, 2, "invalid_input");
     let query = task_error(query, 2, "invalid_input");
-    assert_eq!(write["reason"], query["reason"]);
+    assert_eq!(write["message"], query["message"]);
+    assert!(write.get("reason").is_none());
+    assert!(query.get("reason").is_none());
     assert!(
-        write["reason"]
+        write["message"]
             .as_str()
             .unwrap()
             .contains("ambiguous person")
