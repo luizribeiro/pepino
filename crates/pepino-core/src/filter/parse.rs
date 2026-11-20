@@ -82,9 +82,7 @@ fn parse_keyed(key: String, raw: &str, today: Date) -> Result<Clause, ErrorKind>
                 .map(|item| {
                     let (operator, value) = item?;
                     let value = if field == FieldKind::Date {
-                        Value::Date(
-                            date::resolve(&value, today).ok_or(ErrorKind::InvalidDate { value })?,
-                        )
+                        Value::Date(date::resolve(&value, today)?)
                     } else {
                         Value::Text(value)
                     };

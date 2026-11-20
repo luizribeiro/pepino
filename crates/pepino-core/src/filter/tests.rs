@@ -50,7 +50,7 @@ fn dates_resolve_across_weeks_and_years() {
         super::parse(relative, today).unwrap(),
         super::parse(absolute, today).unwrap()
     );
-    for value in ["+3", "-1m", "+9223372036854775807w", "next week"] {
+    for value in ["+3", "-1m", "next week", "+ 3d", "2026-1-1"] {
         let error = super::parse_argv(&[format!("due:>{value}")], today).unwrap_err();
         assert_eq!(
             error.kind,
@@ -59,7 +59,29 @@ fn dates_resolve_across_weeks_and_years() {
             }
         );
     }
-    assert!(super::parse("due:tomorrow", Date::MAX).is_err());
+    for (input, today) in [
+        ("due:tomorrow", Date::MAX),
+        ("due:-1d", Date::MIN),
+        ("due:+9223372036854775807w", today),
+        ("due:+99999999999999999999999d", today),
+        ("due:+99999999999999999999999-01-01", today),
+    ] {
+        assert_eq!(
+            super::parse(input, today).unwrap_err().kind,
+            ErrorKind::DateOutOfRange {
+                value: input[4..].into()
+            }
+        );
+    }
+    for (value, lowercase) in [("Fri", "fri"), ("+1W", "+1w")] {
+        assert_eq!(
+            parse(&format!("due:{value}")).unwrap_err().kind,
+            ErrorKind::LowercaseKeyword {
+                value: value.into(),
+                lowercase: lowercase.into()
+            }
+        );
+    }
 }
 
 #[test]
@@ -294,5 +316,53 @@ fn invalid_text_terms_include_the_source() {
         assert_eq!(error.position, Position::Byte(6));
         assert_eq!(error.term, input[6..]);
         assert_eq!(error.kind, kind);
+    }
+}
+
+#[test]
+fn weekdays_include_today_from_each_weekday() {
+    let monday: Date = "2028-02-28".parse().unwrap();
+    let weekdays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    let dates = [
+        monday,
+        monday.succ_opt().unwrap(),
+        "2028-03-01".parse().unwrap(),
+        "2028-03-02".parse().unwrap(),
+        "2028-03-03".parse().unwrap(),
+        "2028-03-04".parse().unwrap(),
+        "2028-03-05".parse().unwrap(),
+    ];
+    for (start, today) in dates.into_iter().enumerate() {
+        for (target, weekday) in weekdays.into_iter().enumerate() {
+            let mut expected = dates[target];
+            if target < start {
+                expected += chrono::TimeDelta::days(7);
+            }
+            assert_eq!(
+                super::parse(&format!("due:{weekday}"), today)
+                    .unwrap()
+                    .to_string(),
+                format!("due:{expected}")
+            );
+        }
+    }
+}
+
+#[test]
+fn offsets_cross_calendar_boundaries() {
+    for (today, relative, absolute) in [
+        ("2028-02-28", "+1d", "2028-02-29"),
+        ("2028-03-01", "-1d", "2028-02-29"),
+        ("2027-02-28", "+1d", "2027-03-01"),
+        ("2028-04-30", "+1d", "2028-05-01"),
+        ("2028-01-02", "-1w", "2027-12-26"),
+    ] {
+        let today = today.parse().unwrap();
+        assert_eq!(
+            super::parse(&format!("due:{relative}"), today)
+                .unwrap()
+                .to_string(),
+            format!("due:{absolute}")
+        );
     }
 }
