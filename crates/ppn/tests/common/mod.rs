@@ -309,7 +309,7 @@ fn fixture_runtime() -> tokio::runtime::Runtime {
 
 pub fn ambiguous_tasks(data: &std::path::Path) -> (String, [String; 2]) {
     use pepino_core::{DeviceId, Envelope, Event, Hlc, InitialFields};
-    use pepino_store::{IdSource, Store};
+    use pepino_store::Store;
 
     seed_tasks(data, async |app| {
         let board = app.local_state().board_id;
@@ -335,7 +335,7 @@ pub fn ambiguous_tasks(data: &std::path::Path) -> (String, [String; 2]) {
             )
             .unwrap();
             store
-                .append(board, &event.encode().unwrap(), IdSource::Content)
+                .append(board, &event.encode().unwrap(), None)
                 .await
                 .unwrap();
             ids.push(event.id().to_string());

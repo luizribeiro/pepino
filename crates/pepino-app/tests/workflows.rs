@@ -779,7 +779,6 @@ async fn graph_reads_render_the_project_forest_and_transitive_dependencies() {
 #[tokio::test]
 async fn status_reports_local_context_and_counts_from_the_log() {
     use pepino_app::OpenOptions;
-    use pepino_store::IdSource;
     let directory = tempfile::tempdir().unwrap();
     let mut app = App::init_with_options(
         directory.path(),
@@ -812,10 +811,7 @@ async fn status_reports_local_context_and_counts_from_the_log() {
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();
-    store
-        .append(board, &[0x82, 2, 0xf6], IdSource::Content)
-        .await
-        .unwrap();
+    store.append(board, &[0x82, 2, 0xf6], None).await.unwrap();
     expected["counts"] = json!({"open":1,"closed":1,"events":3,"applied":2,"skipped":{"unknown_version":1,"unknown_event":0,"unknown_value":0,"invalid":0}});
     read_golden(&mut app, json!({"op":"status"}), json!({"ok":expected})).await;
 }
@@ -823,7 +819,6 @@ async fn status_reports_local_context_and_counts_from_the_log() {
 #[tokio::test]
 async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
     use ciborium::Value as Cbor;
-    use pepino_store::IdSource;
     let directory = tempfile::tempdir().unwrap();
     let mut app = App::init(directory.path(), NOW).await.unwrap();
     let board = app.local_state().board_id;
@@ -839,10 +834,7 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();
-    let future = store
-        .append(board, &[0x82, 2, 0xf6], IdSource::Content)
-        .await
-        .unwrap();
+    let future = store.append(board, &[0x82, 2, 0xf6], None).await.unwrap();
     let pepino_store::AppendOutcome::Skipped { id: future_id, .. } = future else {
         panic!("expected a skip")
     };
@@ -863,10 +855,8 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
     event.as_map_mut().unwrap()[0].0 = Cbor::from("reminder_added");
     bytes.clear();
     ciborium::into_writer(&frame, &mut bytes).unwrap();
-    let pepino_store::AppendOutcome::Skipped { id: skip_id, .. } = store
-        .append(board, &bytes, IdSource::Content)
-        .await
-        .unwrap()
+    let pepino_store::AppendOutcome::Skipped { id: skip_id, .. } =
+        store.append(board, &bytes, None).await.unwrap()
     else {
         panic!("expected a skip")
     };
@@ -1257,7 +1247,6 @@ async fn listing_errors_report_source_positions_and_saved_view_chains() {
 async fn history_describes_invalid_events_and_preserves_unknown_value_targets() {
     use ciborium::Value as Cbor;
     use pepino_core::{DeviceId, Envelope, Event, FieldName, FieldValue, Hlc, Status};
-    use pepino_store::IdSource;
 
     let directory = tempfile::tempdir().unwrap();
     let mut app = App::init(directory.path(), NOW).await.unwrap();
@@ -1312,7 +1301,7 @@ async fn history_describes_invalid_events_and_preserves_unknown_value_targets() 
         let mut raw = Vec::new();
         ciborium::into_writer(&frame, &mut raw).unwrap();
         let pepino_store::AppendOutcome::Skipped { id, .. } =
-            store.append(board, &raw, IdSource::Content).await.unwrap()
+            store.append(board, &raw, None).await.unwrap()
         else {
             panic!("expected a skip")
         };
@@ -1447,7 +1436,6 @@ async fn saving_rejects_missing_and_cyclic_references_without_persisting() {
 async fn an_invalid_creation_lists_its_implicit_task_id_without_a_title() {
     use ciborium::Value as Cbor;
     use pepino_core::{DeviceId, Envelope, Event, Hlc, InitialFields};
-    use pepino_store::IdSource;
 
     let dir = tempfile::tempdir().unwrap();
     let mut app = App::init(dir.path(), NOW).await.unwrap();
@@ -1484,10 +1472,8 @@ async fn an_invalid_creation_lists_its_implicit_task_id_without_a_title() {
     let mut bytes = Vec::new();
     ciborium::into_writer(&frame, &mut bytes).unwrap();
     let board = app.local_state().board_id;
-    let pepino_store::AppendOutcome::Skipped { id, .. } = store
-        .append(board, &bytes, IdSource::Content)
-        .await
-        .unwrap()
+    let pepino_store::AppendOutcome::Skipped { id, .. } =
+        store.append(board, &bytes, None).await.unwrap()
     else {
         panic!("expected a skipped invalid task creation");
     };

@@ -1,6 +1,6 @@
 use pepino_app::{App, Response, TaskRecord, TaskSummary};
 use pepino_core::BoardId;
-use pepino_store::{EventRecord, IdSource, Store};
+use pepino_store::{EventRecord, Store};
 use proptest::prelude::*;
 use serde_json::{Value, json};
 
@@ -45,7 +45,7 @@ async fn get(app: &mut App, id: &str) -> TaskRecord {
 async fn receive(store: &Store, board: BoardId, events: &[EventRecord]) {
     let raw: Vec<_> = events
         .iter()
-        .map(|event| (event.bytes.as_slice(), IdSource::Content))
+        .map(|event| (event.bytes.as_slice(), Some(event.author)))
         .collect();
     store.append_batch(board, &raw).await.unwrap();
 }
@@ -180,7 +180,7 @@ async fn unlink_reports_activation_of_a_dormant_remote_blocker() {
     )
     .unwrap();
     store
-        .append(board, &remote.encode().unwrap(), IdSource::Content)
+        .append(board, &remote.encode().unwrap(), None)
         .await
         .unwrap();
 
@@ -234,7 +234,7 @@ async fn deleting_a_live_task_cleans_up_edges_to_already_deleted_batch_targets()
     )
     .unwrap();
     store
-        .append(board, &remote.encode().unwrap(), IdSource::Content)
+        .append(board, &remote.encode().unwrap(), None)
         .await
         .unwrap();
 
@@ -308,7 +308,7 @@ async fn deletion_reports_roots_created_when_older_parent_edges_activate() {
         )
         .unwrap();
         store
-            .append(board, &envelope.encode().unwrap(), IdSource::Content)
+            .append(board, &envelope.encode().unwrap(), None)
             .await
             .unwrap();
     }

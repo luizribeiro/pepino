@@ -53,7 +53,7 @@ fn unlink_validates_both_endpoints() {
 
 fn append_remote(data: &std::path::Path, event: pepino_core::Event) {
     use pepino_core::{Clock, DeviceId, Envelope};
-    use pepino_store::{IdSource, Store};
+    use pepino_store::Store;
 
     seed_tasks(data, async |app| {
         let board = app.local_state().board_id;
@@ -66,7 +66,7 @@ fn append_remote(data: &std::path::Path, event: pepino_core::Event) {
         )
         .unwrap();
         store
-            .append(board, &event.encode().unwrap(), IdSource::Content)
+            .append(board, &event.encode().unwrap(), None)
             .await
             .unwrap();
     });

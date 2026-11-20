@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use pepino_app::{App, AppError, AppErrorKind, OpenOptions};
 use pepino_core::{DeviceId, Envelope, Event, Hlc, InitialFields};
-use pepino_store::{IdSource, Store};
+use pepino_store::Store;
 use serde_json::{Value, json};
 
 const NOW: u64 = 1_795_144_800_000;
@@ -97,7 +97,7 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
         )
         .unwrap();
         store
-            .append(board, &envelope.encode().unwrap(), IdSource::Content)
+            .append(board, &envelope.encode().unwrap(), None)
             .await
             .unwrap();
         ids.push(envelope.id().to_string());
