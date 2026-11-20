@@ -450,3 +450,74 @@ async fn batch_rolls_back_on_later_decode_or_projection_failure() {
         assert_eq!(log_count, 0);
     }
 }
+
+#[tokio::test]
+async fn file_reader_cannot_observe_a_partial_batch() {
+    use std::{sync::mpsc, time::Duration};
+
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path().join("pepino.sqlite"))
+        .await
+        .unwrap();
+    let board = BoardId::from_bytes([19; 32]);
+    let envelope = creation();
+    let task = envelope.created_task().unwrap();
+    let bytes = envelope.encode().unwrap();
+    let tag = latch_tag(&envelope).encode().unwrap();
+    let (paused, reached) = tokio::sync::oneshot::channel();
+    let (resume, wait) = mpsc::channel();
+    {
+        let mut connection = store.connection.lock().await;
+        // SQLite update hooks fire only for rowid tables.
+        sqlx::raw_sql(
+            "CREATE TEMP TABLE append_probe (marker INTEGER);
+             CREATE TEMP TRIGGER watch_append AFTER INSERT ON main.event_log
+             BEGIN INSERT INTO append_probe VALUES (1); END;",
+        )
+        .execute(&mut *connection)
+        .await
+        .unwrap();
+        let mut inserts = 0;
+        let mut paused = Some(paused);
+        connection
+            .lock_handle()
+            .await
+            .unwrap()
+            .set_update_hook(move |row| {
+                if row.table == "append_probe" {
+                    inserts += 1;
+                    if inserts == 2
+                        && let Some(paused) = paused.take()
+                    {
+                        let _ = paused.send(());
+                        let _ = wait.recv_timeout(Duration::from_secs(5));
+                    }
+                }
+            });
+    }
+
+    let events = [
+        (&bytes[..], IdSource::Content),
+        (&tag[..], IdSource::Content),
+    ];
+    let (written, during) = tokio::join!(store.append_batch(board, &events), async {
+        tokio::time::timeout(Duration::from_secs(5), reached)
+            .await
+            .unwrap()
+            .unwrap();
+        let snapshot = tokio::time::timeout(Duration::from_secs(3), store.board(board)).await;
+        resume.send(()).unwrap();
+        snapshot.unwrap().unwrap()
+    });
+    assert_eq!(written.unwrap().len(), 2);
+    assert!(during.tasks().is_empty());
+    assert!(
+        store
+            .task(board, task)
+            .await
+            .unwrap()
+            .unwrap()
+            .tags
+            .contains("greenhouse")
+    );
+}
