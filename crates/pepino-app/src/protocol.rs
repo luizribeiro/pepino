@@ -79,10 +79,30 @@ pub enum Response {
         #[serde(skip_serializing_if = "Option::is_none")]
         created: Option<String>,
         tasks: Vec<TaskRecord>,
+        edges: Vec<EdgeEffect>,
     },
     Task {
         task: Box<TaskRecord>,
     },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EdgeEffect {
+    pub from: String,
+    pub kind: EdgeKind,
+    pub to: String,
+    pub effective: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<EdgeExclusionReason>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum EdgeExclusionReason {
+    MissingEndpoint,
+    SupersededParent,
+    Cycle,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

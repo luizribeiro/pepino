@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use pepino_app::{AppError, Request, Response};
+use pepino_app::{AppError, EdgeExclusionReason, Request, Response};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
 
@@ -60,11 +60,24 @@ fn errors_and_write_responses_have_stable_tags() {
         changed: true,
         created: Some("97ad".repeat(16)),
         tasks: Vec::new(),
+        edges: Vec::new(),
     };
     let json = serde_json::to_value(&response).unwrap();
     assert_eq!(
         json,
-        json!({"kind":"write","changed":true,"created":"97ad".repeat(16),"tasks":[]})
+        json!({"kind":"write","changed":true,"created":"97ad".repeat(16),"tasks":[],"edges":[]})
     );
     round_trip(&response);
+}
+
+#[test]
+fn exclusion_reasons_have_stable_names() {
+    for (reason, expected) in [
+        (EdgeExclusionReason::MissingEndpoint, "missing_endpoint"),
+        (EdgeExclusionReason::SupersededParent, "superseded_parent"),
+        (EdgeExclusionReason::Cycle, "cycle"),
+    ] {
+        assert_eq!(serde_json::to_value(reason).unwrap(), expected);
+        round_trip(&reason);
+    }
 }

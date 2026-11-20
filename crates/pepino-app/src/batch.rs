@@ -3,11 +3,11 @@ use std::collections::BTreeSet;
 use pepino_core::{
     Clock, DeviceId, Envelope, Event, EventId, InvalidEvent, NewEnvelopeError, TaskId,
 };
-use pepino_store::{AppendOutcome, BoardView, IdSource};
+use pepino_store::{AppendOutcome, BoardView, EdgeExclusion, IdSource};
 
 use crate::app::{invalid, store_error};
 use crate::state::storage;
-use crate::{App, AppError, Response};
+use crate::{App, AppError, EdgeEffect, EdgeExclusionReason, Response};
 
 pub(super) struct Batch {
     pub(super) affected: BTreeSet<TaskId>,
@@ -94,7 +94,7 @@ impl App {
     ) -> Result<Response, AppError> {
         if batch.events.is_empty() {
             return self
-                .write_response(before, false, None, batch.affected)
+                .write_response(before, false, None, batch.affected, Vec::new())
                 .await;
         }
         let encoded = batch
@@ -112,16 +112,15 @@ impl App {
             .append_batch(self.local.board_id, &writes)
             .await
             .map_err(store_error)?;
-        let created =
-            batch
-                .events
-                .iter()
-                .zip(&outcomes)
-                .find_map(|(event, outcome)| match outcome {
-                    AppendOutcome::Applied { .. } => event.created_task(),
-                    _ => None,
-                });
-        for event in batch.events {
+        let applied: Vec<_> = batch
+            .events
+            .iter()
+            .zip(&outcomes)
+            .filter_map(|(event, outcome)| {
+                matches!(outcome, AppendOutcome::Applied { .. }).then_some(event)
+            })
+            .collect();
+        for event in &batch.events {
             let hlc = event.hlc();
             self.clock.observe(hlc, batch.now.max(hlc.wall_ms));
         }
@@ -135,12 +134,9 @@ impl App {
                 false,
             ));
         }
-        let changed = outcomes
-            .iter()
-            .any(|outcome| matches!(outcome, AppendOutcome::Applied { .. }));
-        if !changed {
+        if applied.is_empty() {
             return self
-                .write_response(before, false, None, batch.affected)
+                .write_response(before, false, None, batch.affected, Vec::new())
                 .await;
         }
 
@@ -155,7 +151,12 @@ impl App {
                 .filter(|task| before.task(task.id) != Some(*task))
                 .map(|task| task.id),
         );
-        self.write_response(&after, true, created, batch.affected)
+        let created = applied.iter().find_map(|event| event.created_task());
+        let edges = applied
+            .iter()
+            .filter_map(|event| edge_effect(&after, event.event()))
+            .collect();
+        self.write_response(&after, true, created, batch.affected, edges)
             .await
             .map_err(committed_error)
     }
@@ -166,6 +167,7 @@ impl App {
         changed: bool,
         created: Option<TaskId>,
         affected: BTreeSet<TaskId>,
+        edges: Vec<EdgeEffect>,
     ) -> Result<Response, AppError> {
         let mut tasks = Vec::new();
         for id in &affected {
@@ -177,6 +179,7 @@ impl App {
             changed,
             created: created.map(|id| id.to_string()),
             tasks,
+            edges,
         })
     }
 }
@@ -187,4 +190,30 @@ fn committed_error(error: impl std::fmt::Display) -> AppError {
         error,
         false,
     )
+}
+
+fn edge_effect(view: &BoardView, event: &Event) -> Option<EdgeEffect> {
+    let (from, kind, to) = match *event {
+        Event::EdgeAdded { from, kind, to } | Event::EdgeRemoved { from, kind, to } => {
+            (from, kind, to)
+        }
+        _ => return None,
+    };
+    let edge = view
+        .edges(from)
+        .into_iter()
+        .find(|edge| (edge.from, edge.kind, edge.to) == (from, kind, to));
+    Some(EdgeEffect {
+        from: from.to_string(),
+        kind,
+        to: to.to_string(),
+        effective: edge.is_some_and(|edge| edge.is_effective()),
+        reason: edge
+            .and_then(|edge| edge.exclusion)
+            .map(|reason| match reason {
+                EdgeExclusion::MissingEndpoint => EdgeExclusionReason::MissingEndpoint,
+                EdgeExclusion::NewerParent => EdgeExclusionReason::SupersededParent,
+                EdgeExclusion::Cycle => EdgeExclusionReason::Cycle,
+            }),
+    })
 }
