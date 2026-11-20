@@ -70,6 +70,21 @@ impl LocalState {
                 }
             }
         }
+        if let Some(pending) = self.catalog.pending_cards.remove(&board) {
+            for (id, card) in pending {
+                if let Some(person) = people.get_mut(&card.id) {
+                    if !person.merge(&card)? {
+                        self.catalog.invalid_board_cards.insert(id);
+                    }
+                } else {
+                    self.catalog
+                        .pending_cards
+                        .entry(board)
+                        .or_default()
+                        .insert(id, card);
+                }
+            }
+        }
         self.catalog.shared.entry(board).or_insert(access);
         Ok(())
     }
@@ -119,7 +134,15 @@ async fn admission_binds_two_people_and_cannot_replace_an_identity() {
         device: invitee.device_id,
         at: chrono::DateTime::from_timestamp(1795145000, 0).unwrap(),
     };
+    let pending = pepino_core::EventId::from_bytes([95; 32]);
+    owner
+        .catalog
+        .pending_cards
+        .entry(id)
+        .or_default()
+        .insert(pending, admission.invitee.clone());
     owner.admit_person(id, owner.device_id, &admission).unwrap();
+    assert!(!owner.catalog.pending_cards.contains_key(&id));
     assert_eq!(owner.board_people(id).count(), 2);
     admission.invitee.root = owner.device_id;
     assert!(owner.admit_person(id, owner.device_id, &admission).is_err());

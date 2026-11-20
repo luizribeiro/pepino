@@ -119,12 +119,7 @@ fn document(
     } else {
         ""
     };
-    let rejected_board_card_entries: usize = local
-        .boards()
-        .iter()
-        .flat_map(|board| local.board_people(board.id))
-        .map(pepino_app::BoardPerson::rejected_entries)
-        .sum();
+    let rejected_board_card_entries = local.rejected_board_cards();
     let labels = local.person_labels();
     let boards = local
         .boards()
