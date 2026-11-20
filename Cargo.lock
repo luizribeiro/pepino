@@ -938,6 +938,7 @@ version = "0.1.0"
 name = "pepino-store"
 version = "0.1.0"
 dependencies = [
+ "ciborium",
  "pepino-core",
  "sqlx",
  "tempfile",

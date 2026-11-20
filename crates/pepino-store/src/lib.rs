@@ -1,6 +1,8 @@
+mod log;
+
 use std::path::Path;
 
-use pepino_core::{BoardId, Hlc};
+use pepino_core::{BoardId, DecodeError, Hlc};
 use sqlx::{
     Connection, SqliteConnection,
     migrate::Migrator,
@@ -9,10 +11,16 @@ use sqlx::{
 use thiserror::Error;
 use tokio::sync::Mutex;
 
+pub use log::{AppendOutcome, IdSource, SkipReason};
+
 static MIGRATOR: Migrator = sqlx::migrate!();
 
 #[derive(Debug, Error)]
 pub enum StoreError {
+    #[error("invalid event bytes: {0}")]
+    Decode(#[from] DecodeError),
+    #[error("the store does not support this decoded event")]
+    UnsupportedEvent,
     #[error("SQLite operation failed: {0}")]
     Database(String),
     #[error("SQLite migration failed: {0}")]
