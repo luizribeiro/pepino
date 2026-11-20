@@ -554,3 +554,32 @@ async fn removing_a_parent_can_activate_an_older_candidate() {
     );
     assert_eq!(view.task(frame).unwrap().parent, Some(door));
 }
+
+#[tokio::test]
+async fn board_retains_known_assignee_ids_after_removal() {
+    let (store, [greenhouse, _, _, _]) = setup().await;
+    let who = pepino_core::IdentityId::from_bytes([87; 32]);
+    append(
+        &store,
+        12,
+        1,
+        Event::AssigneeAdded {
+            task: greenhouse,
+            who,
+        },
+    )
+    .await;
+    append(
+        &store,
+        13,
+        2,
+        Event::AssigneeRemoved {
+            task: greenhouse,
+            who,
+        },
+    )
+    .await;
+    let view = store.board(BOARD).await.unwrap();
+    assert!(view.task(greenhouse).unwrap().assignees.is_empty());
+    assert_eq!(view.assignee_ids(), &[who].into());
+}

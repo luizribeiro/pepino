@@ -312,14 +312,15 @@ fn resolve_comparisons<T, U>(
         .collect()
 }
 
-fn resolve_person(
-    context: &Context<'_>,
+pub fn resolve_person(
+    me: Option<IdentityId>,
+    people: &dyn PersonResolver,
     assignee: &Assignee,
 ) -> Result<IdentityId, QueryErrorKind> {
     let Assignee::Person(text) = assignee else {
-        return context.me.ok_or(QueryErrorKind::MissingIdentity);
+        return me.ok_or(QueryErrorKind::MissingIdentity);
     };
-    let mut candidates = context.people.resolve(text);
+    let mut candidates = people.resolve(text);
     candidates.sort_unstable();
     candidates.dedup();
     match candidates.as_slice() {
@@ -388,11 +389,11 @@ impl<'a> Operands<'a> {
             if let Some(&id) = self.people.get(text) {
                 return Ok(id);
             }
-            let id = resolve_person(self.context, assignee)?;
+            let id = resolve_person(self.context.me, self.context.people, assignee)?;
             self.people.insert(text.clone(), id);
             Ok(id)
         } else {
-            resolve_person(self.context, assignee)
+            resolve_person(self.context.me, self.context.people, assignee)
         }
     }
 

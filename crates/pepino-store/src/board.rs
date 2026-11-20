@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::slice;
 
-use pepino_core::{BoardId, TaskId};
+use pepino_core::{BoardId, IdentityId, TaskId};
 use sqlx::Connection;
 
 use crate::{
@@ -14,6 +14,7 @@ use crate::{
 pub struct BoardView {
     tasks: Vec<TaskRecord>,
     by_id: BTreeMap<TaskId, usize>,
+    assignee_ids: BTreeSet<IdentityId>,
     pub(crate) deleted_ids: BTreeSet<TaskId>,
     edges: Vec<EdgeRecord>,
     incident: HashMap<TaskId, Vec<usize>>,
@@ -50,6 +51,10 @@ impl BoardView {
 
     pub(crate) fn ids_in_range(&self, first: TaskId, last: TaskId) -> impl Iterator<Item = TaskId> {
         self.by_id.range(first..=last).map(|(&id, _)| id)
+    }
+
+    pub fn assignee_ids(&self) -> &BTreeSet<IdentityId> {
+        &self.assignee_ids
     }
 
     pub fn edge_records(&self) -> &[EdgeRecord] {
@@ -102,7 +107,7 @@ impl Store {
         board: BoardId,
         with_comments: bool,
     ) -> Result<BoardView, StoreError> {
-        let (task_rows, edge_rows, deleted_ids, comment_records, comment_counts) = self
+        let (task_rows, edge_rows, deleted_ids, assignees, comment_records, comment_counts) = self
             .read(async move |connection| {
                 let mut tx = connection.begin().await?;
                 let tasks = task::task_rows(&mut tx, board).await?;
@@ -113,6 +118,12 @@ impl Store {
                 .fetch_all(&mut *tx)
                 .await?;
                 let edges = edges::edge_rows(&mut tx, board).await?;
+                let assignees = sqlx::query_scalar::<_, [u8; 32]>(
+                    "SELECT DISTINCT member FROM task_register WHERE board = ? AND kind = 'assignee'",
+                )
+                .bind(BoardKey(board))
+                .fetch_all(&mut *tx)
+                .await?;
                 let (comments, counts) = if with_comments {
                     let records = comment::records(&mut tx, board, None).await?;
                     let mut counts = HashMap::new();
@@ -124,7 +135,7 @@ impl Store {
                     (None, comment::counts(&mut tx, board).await?)
                 };
                 tx.commit().await?;
-                Ok((tasks, edges, deleted, comments, counts))
+                Ok((tasks, edges, deleted, assignees, comments, counts))
             })
             .await?;
         let projected = edges::project(&edge_rows)?;
@@ -154,6 +165,7 @@ impl Store {
         Ok(BoardView {
             tasks,
             by_id,
+            assignee_ids: assignees.into_iter().map(IdentityId::from_bytes).collect(),
             deleted_ids: deleted_ids.into_iter().map(TaskId::from_bytes).collect(),
             edges,
             incident,
