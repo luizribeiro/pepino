@@ -16,6 +16,12 @@ pub struct NamedRecord {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkStatus {
+    Offline,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct StatusCounts {
     pub open: u64,
     pub closed: u64,
@@ -30,6 +36,7 @@ pub struct SkippedCounts {
     pub unknown_event: u64,
     pub unknown_value: u64,
     pub invalid: u64,
+    pub forged_author: u64,
 }
 
 impl App {
@@ -55,6 +62,8 @@ impl App {
                 name: self.local.board_name.clone(),
             },
             data_dir: self.directory.to_string_lossy().into_owned(),
+            credentials_file: self.credentials_file.to_string_lossy().into_owned(),
+            network: NetworkStatus::Offline,
             counts: StatusCounts {
                 open: open as u64,
                 closed: (board.tasks().len() - open) as u64,
@@ -65,6 +74,7 @@ impl App {
                     unknown_event: events.unknown_event as u64,
                     unknown_value: events.unknown_value as u64,
                     invalid: events.invalid as u64,
+                    forged_author: events.forged_author as u64,
                 },
             },
             protocol_version: PROTOCOL_VERSION,

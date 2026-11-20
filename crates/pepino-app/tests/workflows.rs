@@ -801,8 +801,8 @@ async fn status_reports_local_context_and_counts_from_the_log() {
         "identity":{"id":local.identity_id.to_string(),"display_name":"Ada Gardener"},
         "device":{"id":local.device_id.to_string(),"name":local.device_name},
         "board":{"id":board.to_string(),"name":"Greenhouse"},
-        "data_dir":directory.path(),"protocol_version":1,
-        "counts":{"open":0,"closed":0,"events":0,"applied":0,"skipped":{"unknown_version":0,"unknown_event":0,"unknown_value":0,"invalid":0}}
+        "data_dir":directory.path(),"credentials_file":directory.path().join("credentials.cbor"),"network":"offline","protocol_version":1,
+        "counts":{"open":0,"closed":0,"events":0,"applied":0,"skipped":{"unknown_version":0,"unknown_event":0,"unknown_value":0,"invalid":0,"forged_author":0}}
     });
     read_golden(&mut app, json!({"op":"status"}), json!({"ok":expected})).await;
     add(&mut app, "Clean the greenhouse gutters").await;
@@ -815,8 +815,42 @@ async fn status_reports_local_context_and_counts_from_the_log() {
         .await
         .unwrap();
     store.append(board, &[0x82, 2, 0xf6], None).await.unwrap();
-    expected["counts"] = json!({"open":1,"closed":1,"events":3,"applied":2,"skipped":{"unknown_version":1,"unknown_event":0,"unknown_value":0,"invalid":0}});
+    let forged = pepino_core::Envelope::new(
+        pepino_core::DeviceId::from_bytes([28; 32]),
+        pepino_core::Hlc {
+            wall_ms: NOW,
+            counter: 8,
+        },
+        pepino_core::Event::TaskCreated {
+            title: "Impersonated greenhouse task".into(),
+            fields: Default::default(),
+        },
+    )
+    .unwrap();
+    store
+        .append(
+            board,
+            &forged.encode().unwrap(),
+            Some(pepino_core::DeviceId::from_bytes([29; 32])),
+        )
+        .await
+        .unwrap();
+    expected["counts"] = json!({"open":1,"closed":1,"events":4,"applied":2,"skipped":{"unknown_version":1,"unknown_event":0,"unknown_value":0,"invalid":0,"forged_author":1}});
     read_golden(&mut app, json!({"op":"status"}), json!({"ok":expected})).await;
+    let log = handle(&mut app, json!({"op":"log","limit":1}))
+        .await
+        .unwrap();
+    let Response::Log { events, .. } = log else {
+        panic!("expected log");
+    };
+    let event = &events[0];
+    assert_eq!(event.id, forged.id().to_string());
+    assert_eq!(
+        event.classification,
+        pepino_app::EventClassification::ForgedAuthor
+    );
+    assert_eq!(event.kind, "task_created");
+    assert_eq!(event.change.action, None);
 }
 
 #[tokio::test]

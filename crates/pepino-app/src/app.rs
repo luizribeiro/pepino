@@ -19,6 +19,7 @@ pub struct App {
     pub(super) store: Store,
     pub(super) local: LocalState,
     pub(super) directory: PathBuf,
+    pub(super) credentials_file: PathBuf,
     lock_timeout: Duration,
     pub(super) clock: Clock,
 }
@@ -137,6 +138,7 @@ impl App {
             store,
             local,
             directory,
+            credentials_file,
             lock_timeout,
         })
     }

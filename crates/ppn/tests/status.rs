@@ -23,8 +23,9 @@ fn status_renders_empty_local_state_through_the_binary() {
         json!({
             "schema":1, "kind":"status", "identity": status["identity"], "device": status["device"],
             "board":{"id": status["board"]["id"], "name":"Personal"}, "data_dir":data,
+            "credentials_file":data.join("credentials.cbor"), "network":"offline",
             "counts":{"open":0,"closed":0,"events":0,"applied":0,"skipped":{
-                "unknown_version":0,"unknown_event":0,"unknown_value":0,"invalid":0
+                "unknown_version":0,"unknown_event":0,"unknown_value":0,"invalid":0,"forged_author":0
             }},
             "protocol_version":1
         })

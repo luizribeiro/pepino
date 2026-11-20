@@ -199,6 +199,8 @@ pub enum Response {
         device: NamedRecord,
         board: NamedRecord,
         data_dir: String,
+        credentials_file: String,
+        network: crate::NetworkStatus,
         counts: StatusCounts,
         protocol_version: u32,
     },

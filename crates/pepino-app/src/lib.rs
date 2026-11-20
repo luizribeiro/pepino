@@ -31,7 +31,7 @@ pub use log::{
 };
 pub use pepino_core::filter::keyword_groups as filter_keyword_groups;
 pub use state::{LocalState, OpenOptions};
-pub use status::{IdentityRecord, NamedRecord, SkippedCounts, StatusCounts};
+pub use status::{IdentityRecord, NamedRecord, NetworkStatus, SkippedCounts, StatusCounts};
 
 pub use protocol::{
     AppError, AppErrorKind, CommentRecord, ConflictReference, DependencyRecord, EdgeEffect,
