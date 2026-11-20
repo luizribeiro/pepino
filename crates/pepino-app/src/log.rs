@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use pepino_core::{Event, InitialFields};
+use pepino_core::{DecodeOutcome, Event, InitialFields};
+use pepino_store::{EventClassification as StoredClassification, HistoryEvent};
 use serde::{Deserialize, Serialize};
 
 use crate::{AppError, Date, EdgeKind, FieldValue, Hlc, Status};
@@ -77,6 +78,54 @@ pub struct InitialTaskFields {
     pub tags: BTreeSet<String>,
     pub assignees: BTreeSet<String>,
     pub fields: BTreeMap<String, FieldValue>,
+}
+
+impl From<StoredClassification> for EventClassification {
+    fn from(value: StoredClassification) -> Self {
+        match value {
+            StoredClassification::Applied => Self::Applied,
+            StoredClassification::UnknownVersion => Self::UnknownVersion,
+            StoredClassification::UnknownEvent => Self::UnknownEvent,
+            StoredClassification::UnknownValue => Self::UnknownValue,
+            StoredClassification::Invalid => Self::Invalid,
+        }
+    }
+}
+
+impl TryFrom<HistoryEvent> for EventRecord {
+    type Error = AppError;
+
+    fn try_from(record: HistoryEvent) -> Result<Self, Self::Error> {
+        let decoded = &record.decoded;
+        let (kind, version, reason) = match decoded {
+            DecodeOutcome::UnknownVersion { version, .. } => ("unknown", Some(*version), None),
+            DecodeOutcome::UnknownEvent { variant, .. }
+            | DecodeOutcome::UnknownValue { variant, .. } => (variant.as_str(), None, None),
+            DecodeOutcome::InvalidEvent { reason, .. } => {
+                ("unknown", None, Some(reason.to_string()))
+            }
+            _ => ("unknown", None, None),
+        };
+        let (kind, change) = match record.event {
+            Some(event) => (event.kind(), EventChange::try_from(event)?),
+            None => (
+                kind,
+                EventChange::Skipped {
+                    tasks: record.tasks.into_iter().map(|id| id.to_string()).collect(),
+                    version,
+                },
+            ),
+        };
+        Ok(Self {
+            id: decoded.id().to_string(),
+            author: decoded.author().map(|id| id.to_string()),
+            hlc: decoded.hlc().map(Into::into),
+            classification: record.classification.into(),
+            kind: kind.into(),
+            change,
+            reason,
+        })
+    }
 }
 
 impl TryFrom<Event> for EventChange {
