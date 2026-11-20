@@ -61,6 +61,7 @@ impl BoardTask {
         joined: impl Future<Output = Result<Space<Payload>, SpacesManagerError>>,
     ) -> Result<(), Error> {
         let mut joined = std::pin::pin!(joined);
+        let mut stopping = self.lease.stopping();
         let mut space = None;
         let mut initial_error = self.observe_removal().await.err();
         let result = loop {
@@ -70,6 +71,7 @@ impl BoardTask {
             tokio::select! {
                 biased;
                 _ = &mut self.stop => break Ok(()),
+                _ = async { let _ = stopping.wait_for(|state| *state).await; } => break Ok(()),
                 state = &mut joined, if space.is_none() => match state {
                     Ok(state) => {
                         let state = Arc::new(state);

@@ -108,9 +108,15 @@ impl Node {
     }
 
     pub async fn shutdown(self) -> Result<(), Error> {
-        let Self { inner, worker, .. } = self;
+        let Self {
+            inner,
+            worker,
+            boards,
+            ..
+        } = self;
+        let closed = boards.stop().await;
         drop(inner);
-        worker.shutdown().await
+        worker.shutdown().await.and(closed)
     }
 }
 
