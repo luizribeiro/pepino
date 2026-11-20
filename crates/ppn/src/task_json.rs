@@ -27,13 +27,17 @@ pub fn request(source: &Path, today: Date) -> Result<WriteRequest, CliError> {
     if *operation != "add_task" {
         return Err(invalid("expected an add_task object"));
     }
-    if let Some(due) = fields.get_mut("due")
-        && let Some(text) = due.as_str()
-    {
-        *due = resolve_date(text, today)
-            .map_err(|error| invalid(&error.to_string()))?
-            .to_string()
-            .into();
+    if let Some(due) = fields.get_mut("due") {
+        resolve(due, today).map_err(|error| invalid(&error.to_string()))?;
+    }
+    if let Some(custom) = fields.get_mut("fields").and_then(Value::as_object_mut) {
+        for (key, field) in custom {
+            if field["type"] == "date"
+                && let Some(value) = field.get_mut("value")
+            {
+                resolve(value, today).map_err(|error| invalid(&format!("{key:?}: {error}")))?;
+            }
+        }
     }
     let mut request = serde_json::from_value(Value::Object(fields)).map_err(parse_error)?;
     if let WriteRequest::AddTask {
@@ -44,4 +48,11 @@ pub fn request(source: &Path, today: Date) -> Result<WriteRequest, CliError> {
         trim_trailing_newlines(description);
     }
     Ok(request)
+}
+
+fn resolve(value: &mut Value, today: Date) -> Result<(), CliError> {
+    if let Some(text) = value.as_str() {
+        *value = resolve_date(text, today)?.to_string().into();
+    }
+    Ok(())
 }

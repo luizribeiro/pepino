@@ -51,7 +51,8 @@ tags, assignees, fields, parent, blocks and blocked_by. An optional op must be
 Priority is a signed 64-bit integer. Tags, assignees, blocks and blocked_by
 are string arrays. Parent, blocks and blocked_by use task IDs or prefixes.
 Each entry of fields is a typed value such as {"type":"integer","value":3}.
-Other value types are text, date, status or unset. Omit value for unset.
+Other value types are text, date, status or unset. Date values may be relative.
+Omit value for unset.
 Explicit flags override scalar values and append tags, assignees and dependencies.
 The --json flag selects output only. ppn add - reads literal title text.
 
