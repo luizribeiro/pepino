@@ -18,7 +18,8 @@ pub struct BoardStatus {
     pub active_syncs: BTreeMap<(DeviceId, u64), SyncCounts>,
 }
 
-#[cfg(test)]
+pub(crate) use tracking::Status;
+
 mod tracking {
     use super::*;
     use crate::{NodeEvent, NodeEvents, status};
@@ -111,6 +112,7 @@ mod tracking {
             let _ = self.changes.send(event);
         }
 
+        #[cfg(test)]
         pub(crate) fn pending(&self, board: BoardId, increase: bool) {
             let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             if let Some(item) = state.boards.get_mut(&board) {
@@ -127,6 +129,7 @@ mod tracking {
         }
     }
 
+    #[cfg(test)]
     #[tokio::test]
     async fn late_subscriber_gets_current_state_then_changes() {
         let status = Status::default();

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use futures_util::{StreamExt, stream::BoxStream};
 use p2panda::{
     NodeId,
@@ -8,7 +10,7 @@ use pepino_core::{BoardId, DeviceId};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::{Error, NodeStatus, receipt::Payload};
+use crate::{Error, NodeStatus, receipt::Payload, status_state::Status};
 
 pub type NodeEvents = BoxStream<'static, Result<NodeEvent, Error>>;
 
@@ -84,21 +86,39 @@ pub(crate) fn subscribe(events: &broadcast::Sender<NodeEvent>) -> NodeEvents {
         .boxed()
 }
 
-pub(crate) fn peer_seen(event: SystemEvent) -> Option<NodeEvent> {
-    let SystemEvent::Discovery(DiscoveryEvent::SessionStarted { remote_node_id, .. }) = event
-    else {
-        return None;
+pub(crate) fn peer_session(
+    status: &Status,
+    active: &mut HashMap<DeviceId, usize>,
+    event: SystemEvent,
+) {
+    let SystemEvent::Discovery(event) = event else {
+        return;
     };
-    Some(NodeEvent::PeerSeen {
-        peer: device(remote_node_id),
-    })
+    match event {
+        DiscoveryEvent::SessionStarted { remote_node_id, .. } => {
+            let peer = device(remote_node_id);
+            let count = active.entry(peer).or_default();
+            if *count == 0 {
+                status.send(NodeEvent::PeerConnected { peer });
+            }
+            *count += 1;
+            status.send(NodeEvent::PeerSeen { peer });
+        }
+        DiscoveryEvent::SessionEnded { remote_node_id, .. }
+        | DiscoveryEvent::SessionFailed { remote_node_id, .. } => {
+            let peer = device(remote_node_id);
+            if let Some(count) = active.get_mut(&peer) {
+                *count -= 1;
+                if *count == 0 {
+                    active.remove(&peer);
+                    status.send(NodeEvent::PeerDisconnected { peer });
+                }
+            }
+        }
+    }
 }
 
-pub(crate) fn board_status(
-    events: &broadcast::Sender<NodeEvent>,
-    board: BoardId,
-    event: &StreamEvent<Payload>,
-) {
+pub(crate) fn board_status(events: &Status, board: BoardId, event: &StreamEvent<Payload>) {
     let status = match *event {
         StreamEvent::SyncStarted {
             remote_node_id,
@@ -110,7 +130,7 @@ pub(crate) fn board_status(
             topic_sessions,
         } => {
             let peer = device(remote_node_id);
-            let _ = events.send(NodeEvent::PeerSeen { peer });
+            events.send(NodeEvent::PeerSeen { peer });
             NodeEvent::SyncStarted {
                 board,
                 peer,
@@ -145,9 +165,27 @@ pub(crate) fn board_status(
             },
             error: error.as_ref().map(ToString::to_string),
         },
+        StreamEvent::ReplayStarted { total_operations } => NodeEvent::ReplayStarted {
+            board,
+            operations: total_operations,
+        },
+        StreamEvent::ReplayEnded => NodeEvent::ReplayEnded { board, error: None },
+        StreamEvent::ReplayFailed { ref error } => NodeEvent::ReplayEnded {
+            board,
+            error: Some(error.to_string()),
+        },
         _ => return,
     };
-    let _ = events.send(status);
+    let caught_up = match &status {
+        NodeEvent::SyncEnded {
+            peer, error: None, ..
+        } => Some(*peer),
+        _ => None,
+    };
+    events.send(status);
+    if let Some(peer) = caught_up {
+        events.send(NodeEvent::CaughtUp { board, peer });
+    }
 }
 
 fn device(key: NodeId) -> DeviceId {
@@ -165,17 +203,45 @@ mod tests {
         let peer = NodeEvent::PeerSeen {
             peer: device(remote),
         };
-        assert_eq!(
-            peer_seen(SystemEvent::Discovery(DiscoveryEvent::SessionStarted {
+        let board = BoardId::from_bytes([27; 32]);
+        let tx = Status::default();
+        let mut events = tx.subscribe();
+        assert!(matches!(
+            events.next().await.unwrap().unwrap(),
+            NodeEvent::Snapshot(_)
+        ));
+        let mut active = HashMap::new();
+        peer_session(
+            &tx,
+            &mut active,
+            SystemEvent::Discovery(DiscoveryEvent::SessionStarted {
                 role: SessionRole::Accepted,
                 remote_node_id: remote,
-            })),
-            Some(peer.clone())
+            }),
         );
-
-        let board = BoardId::from_bytes([27; 32]);
-        let (tx, _) = broadcast::channel(8);
-        let mut events = subscribe(&tx);
+        assert_eq!(
+            events.next().await.unwrap().unwrap(),
+            NodeEvent::PeerConnected {
+                peer: device(remote)
+            }
+        );
+        assert_eq!(events.next().await.unwrap().unwrap(), peer);
+        peer_session(
+            &tx,
+            &mut active,
+            SystemEvent::Discovery(DiscoveryEvent::SessionFailed {
+                role: SessionRole::Accepted,
+                remote_node_id: remote,
+                duration: std::time::Duration::from_millis(50),
+                reason: "connection closed".into(),
+            }),
+        );
+        assert_eq!(
+            events.next().await.unwrap().unwrap(),
+            NodeEvent::PeerDisconnected {
+                peer: device(remote)
+            }
+        );
         board_status(
             &tx,
             board,

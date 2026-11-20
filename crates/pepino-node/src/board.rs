@@ -12,7 +12,7 @@ use p2panda::{
 use pepino_core::{BoardId, EventId};
 use tokio::{
     runtime::Handle,
-    sync::{broadcast, mpsc, oneshot, watch},
+    sync::{mpsc, oneshot, watch},
     task::JoinHandle,
     time::timeout,
 };
@@ -26,6 +26,7 @@ use crate::{
     delivery::DeliveryWriter,
     events::subscribe,
     receipt::{Payload, Receipts},
+    status_state::Status,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -38,7 +39,7 @@ pub struct OpenBoardOptions {
 
 struct BoardConfig {
     acks: AckStore,
-    status: broadcast::Sender<NodeEvent>,
+    status: Status,
     confirmation_timeout: Duration,
     replaying: bool,
 }
@@ -151,6 +152,10 @@ impl BoardHandle {
             replaying,
         } = config;
         let id = lease.id;
+        status.send(NodeEvent::BoardOpened {
+            board: id,
+            replaying,
+        });
         let lease = lease.attached();
         let (events_tx, events) = DeliveryWriter::start(id, acks.1.clone(), acks.clone());
         let (ready, state) = watch::channel(JoinState::Pending);

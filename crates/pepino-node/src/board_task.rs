@@ -9,7 +9,7 @@ use p2panda::{
     streams::{Source, StreamEvent},
 };
 use pepino_core::EventId;
-use tokio::sync::{broadcast, oneshot, watch};
+use tokio::sync::{oneshot, watch};
 
 use crate::{
     Error, NodeEvent,
@@ -20,6 +20,7 @@ use crate::{
     events::pipeline_error,
     receipt::{Payload, Receipts},
     status::board_status,
+    status_state::Status,
 };
 
 pub(crate) enum JoinState {
@@ -41,7 +42,7 @@ impl JoinState {
 pub(crate) struct BoardTask {
     pub(crate) lease: BoardLease,
     pub(crate) acks: AckStore,
-    pub(crate) status: broadcast::Sender<NodeEvent>,
+    pub(crate) status: Status,
     pub(crate) ready: watch::Sender<JoinState>,
     pub(crate) replay_status: watch::Sender<bool>,
     pub(crate) stop: oneshot::Receiver<()>,
@@ -87,6 +88,9 @@ impl BoardTask {
         if let Err(error) = &result {
             self.events.fail(error);
         }
+        self.status.send(NodeEvent::BoardClosed {
+            board: self.lease.id,
+        });
         self.receipts.close();
         if let Some(space) = space.and_then(|space| Arc::try_unwrap(space).ok()) {
             space.close().await.map_err(Error::node)?;
@@ -152,7 +156,7 @@ mod tests {
         let task = BoardTask {
             lease,
             acks,
-            status: broadcast::channel(4).0,
+            status: Status::default(),
             ready,
             replay_status: watch::channel(false).0,
             stop: stop_rx,

@@ -3,14 +3,10 @@ use std::{sync::Arc, time::Duration};
 use futures_util::StreamExt;
 use pepino_core::DeviceId;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-use tokio::sync::broadcast;
 
 use crate::{
-    Error, NodeEvent, NodeEvents, NodeSettings,
-    ack::AckStore,
-    board_lease::OpenBoards,
-    status::{peer_seen, subscribe},
-    worker::Worker,
+    Error, NodeEvents, NodeSettings, ack::AckStore, board_lease::OpenBoards, status::peer_session,
+    status_state::Status, worker::Worker,
 };
 
 /// A running transport node. Await [`Node::shutdown`] before opening its data directory again.
@@ -20,7 +16,7 @@ pub struct Node {
     pub(crate) worker: Worker,
     pub(crate) acks: AckStore,
     pub(crate) boards: OpenBoards,
-    pub(crate) status: broadcast::Sender<NodeEvent>,
+    pub(crate) status: Status,
     pub(crate) publish_confirmation_timeout: Duration,
 }
 
@@ -53,13 +49,12 @@ impl Node {
                     .await
                     .map_err(Error::node)?;
                 let mut system = inner.event_stream().await.map_err(Error::node)?;
-                let (status, _) = broadcast::channel(128);
+                let status = Status::default();
                 let broadcaster = status.clone();
                 tokio::spawn(async move {
+                    let mut peers = std::collections::HashMap::new();
                     while let Some(event) = system.next().await {
-                        if let Some(event) = peer_seen(event) {
-                            let _ = broadcaster.send(event);
-                        }
+                        peer_session(&broadcaster, &mut peers, event);
                     }
                 });
                 Ok((Arc::new(inner), acks, status))
@@ -80,7 +75,7 @@ impl Node {
     }
 
     pub fn events(&self) -> NodeEvents {
-        subscribe(&self.status)
+        self.status.subscribe()
     }
 
     pub async fn shutdown(self) -> Result<(), Error> {
