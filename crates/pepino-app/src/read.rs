@@ -33,6 +33,9 @@ impl App {
             ReadRequest::Log { task, limit } => self.log(task.as_deref(), limit).await,
             ReadRequest::BoardList => self.board_list().await,
             ReadRequest::BoardShow { board } => self.board_show(board.as_deref()).await,
+            ReadRequest::IdentityShow => Ok(Response::Identity {
+                identity: self.identity_record(),
+            }),
             ReadRequest::Status => self.status().await,
             ReadRequest::GetTask { task } => self.get_task(&task).await,
             ReadRequest::Tree { task } => self.tree(task.as_deref()).await,
@@ -118,7 +121,7 @@ impl App {
             .then(|| {
                 (
                     self.local.identity_id.to_string(),
-                    self.local.display_name.clone(),
+                    self.local.display_name().to_owned(),
                 )
             })
             .into_iter()

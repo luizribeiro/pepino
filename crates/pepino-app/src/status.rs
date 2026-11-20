@@ -7,6 +7,12 @@ use crate::{App, AppError, PROTOCOL_VERSION, Response};
 pub struct IdentityRecord {
     pub id: String,
     pub display_name: String,
+    #[serde(default)]
+    pub roster: Vec<crate::RosterDevice>,
+    #[serde(default)]
+    pub cache_stale: bool,
+    #[serde(default)]
+    pub rejected_roster_entries: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -40,6 +46,16 @@ pub struct SkippedCounts {
 }
 
 impl App {
+    pub(super) fn identity_record(&self) -> IdentityRecord {
+        IdentityRecord {
+            id: self.local.identity_id.to_string(),
+            display_name: self.local.display_name().to_owned(),
+            roster: self.local.roster().into_values().collect(),
+            cache_stale: !self.local.roster_ready(),
+            rejected_roster_entries: self.local.rejected_roster_entries(),
+        }
+    }
+
     pub(super) async fn status(&self) -> Result<Response, AppError> {
         let board = self.board().await?;
         let open = board.iter().filter(|task| task.status.is_open()).count();
@@ -49,13 +65,10 @@ impl App {
             .await
             .map_err(store_error)?;
         Ok(Response::Status {
-            identity: IdentityRecord {
-                id: self.local.identity_id.to_string(),
-                display_name: self.local.display_name.clone(),
-            },
+            identity: Box::new(self.identity_record()),
             device: NamedRecord {
                 id: self.local.device_id.to_string(),
-                name: self.local.device_name.clone(),
+                name: self.local.device_name().to_owned(),
             },
             board: NamedRecord {
                 id: self.selected_board().id.to_string(),

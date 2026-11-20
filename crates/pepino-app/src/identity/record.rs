@@ -14,8 +14,10 @@ pub enum RosterState {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RosterDevice {
+    #[serde(with = "wire_id")]
     pub id: DeviceId,
     pub name: String,
+    #[serde(with = "wire_id::optional")]
     pub added_by: Option<DeviceId>,
     pub added_at: Option<crate::Hlc>,
     pub state: RosterState,
@@ -117,4 +119,38 @@ fn renaming_preserves_the_device_admission() {
         1795144900000
     );
     assert_eq!(record.devices[&peer].state, RosterState::Active);
+}
+
+mod wire_id {
+    use pepino_core::DeviceId;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+
+    pub(super) fn serialize<S: Serializer>(id: &DeviceId, writer: S) -> Result<S::Ok, S::Error> {
+        writer.collect_str(id)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(reader: D) -> Result<DeviceId, D::Error> {
+        String::deserialize(reader)?
+            .parse()
+            .map_err(de::Error::custom)
+    }
+
+    pub(super) mod optional {
+        use super::*;
+
+        pub(in crate::identity::record) fn serialize<S: Serializer>(
+            id: &Option<DeviceId>,
+            writer: S,
+        ) -> Result<S::Ok, S::Error> {
+            id.map(|value| value.to_string()).serialize(writer)
+        }
+
+        pub(in crate::identity::record) fn deserialize<'de, D: Deserializer<'de>>(
+            reader: D,
+        ) -> Result<Option<DeviceId>, D::Error> {
+            Option::<String>::deserialize(reader)?
+                .map(|value| value.parse().map_err(de::Error::custom))
+                .transpose()
+        }
+    }
 }

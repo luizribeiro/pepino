@@ -30,6 +30,7 @@ pub enum ReadRequest {
         task: String,
     },
     Status,
+    IdentityShow,
     Log {
         task: Option<String>,
         limit: Option<usize>,
@@ -211,8 +212,11 @@ pub enum Response {
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         names: BTreeMap<String, String>,
     },
-    Status {
+    Identity {
         identity: IdentityRecord,
+    },
+    Status {
+        identity: Box<IdentityRecord>,
         device: NamedRecord,
         board: NamedRecord,
         data_dir: String,
