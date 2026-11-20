@@ -52,9 +52,18 @@ impl Daemon {
         Self(Some(child))
     }
 
-    fn stop(mut self, signal: Signal) {
-        let child = self.0.as_mut().unwrap();
+    fn stop(self, signal: Signal) {
+        self.interrupt(signal);
+        self.wait_stopped(signal);
+    }
+
+    fn interrupt(&self, signal: Signal) {
+        let child = self.0.as_ref().unwrap();
         kill(Pid::from_raw(i32::try_from(child.id()).unwrap()), signal).unwrap();
+    }
+
+    fn wait_stopped(mut self, signal: Signal) {
+        let child = self.0.as_mut().unwrap();
         until(|| child.try_wait().unwrap().is_some());
         let output = self.0.take().unwrap().wait_with_output().unwrap();
         if signal == Signal::SIGKILL {
@@ -273,4 +282,95 @@ fn sigterm_during_join_recovers_membership() {
 #[test]
 fn sigkill_during_join_recovers_membership() {
     recover_join(Signal::SIGKILL);
+}
+
+fn write_tasks(rt: &tokio::runtime::Runtime, home: &Path, range: std::ops::Range<usize>) {
+    rt.block_on(async {
+        let mut app = pepino_app::App::open(home.join("board"), 0).await.unwrap();
+        for item in range {
+            let request = serde_json::json!({
+                "op": "add_task",
+                "title": format!("Inspect greenhouse vent {item}"),
+            });
+            app.handle(serde_json::from_value(request).unwrap(), 1_795_144_800_000)
+                .await
+                .unwrap();
+        }
+    });
+}
+
+fn wait_for_views(rt: &tokio::runtime::Runtime, pair: &Pair, count: usize) {
+    let paths = [pair.owner.path(), pair.peer.path()];
+    let [owner, peer] = paths.map(|home| {
+        rt.block_on(pepino_app::App::open(home.join("board"), 0))
+            .unwrap()
+    });
+    until(|| {
+        rt.block_on(async {
+            let views = tokio::join!(
+                owner.store().tasks(pair.board),
+                peer.store().tasks(pair.board),
+            );
+            let (left, right) = (views.0.unwrap(), views.1.unwrap());
+            left.len() == count && left == right
+        })
+    });
+    for home in paths {
+        let client = pair.client(home);
+        assert!(matches!(
+            client
+                .call_with(
+                    super::protocol::Operation::WaitIdle { timeout_ms: 20_000 },
+                    WAIT
+                )
+                .unwrap(),
+            super::protocol::Outcome::Synced { idle: true, .. }
+        ));
+    }
+}
+
+fn recover_active_sync(signal: Signal) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (pair, owner, device) = start_pair(&rt);
+    grant_membership(&pair, device);
+    let peer = Daemon::start(pair.peer.path(), &pair.network);
+    pair.joined();
+    let sender = pair.client(pair.owner.path());
+    let receiver = pair.client(pair.peer.path());
+    let board = pair.board.to_string();
+    write_tasks(&rt, pair.owner.path(), 0..1);
+    sender.nudge().unwrap();
+    wait_for_views(&rt, &pair, 1);
+
+    write_tasks(&rt, pair.owner.path(), 1..25);
+    let lock = std::fs::File::open(pair.owner.path().join("board/local.lock")).unwrap();
+    lock.lock().unwrap();
+    sender.nudge().unwrap();
+    until(|| {
+        receiver.status().is_ok_and(|status| {
+            status.is_some_and(|status| status.network.boards[&board].received >= 2)
+        })
+    });
+    random_delay(1);
+    owner.interrupt(signal);
+    let lock_until_exit = (signal == Signal::SIGKILL).then_some(lock);
+    owner.wait_stopped(signal);
+    drop(lock_until_exit);
+    let owner = Daemon::start(pair.owner.path(), &pair.network);
+    wait_for_views(&rt, &pair, 25);
+    peer.stop(Signal::SIGTERM);
+    owner.stop(Signal::SIGTERM);
+}
+
+#[test]
+fn sigterm_recovers_events_during_publishing() {
+    recover_active_sync(Signal::SIGTERM);
+}
+
+#[test]
+fn sigkill_recovers_events_during_publishing() {
+    recover_active_sync(Signal::SIGKILL);
 }
