@@ -38,13 +38,24 @@ fn mixed_filter_has_one_canonical_spelling() {
 #[test]
 fn dates_resolve_across_weeks_and_years() {
     let today = "2027-12-31".parse().unwrap();
-    let relative =
-        "due:today,tomorrow,yesterday,fri,friday,mon,monday,+3d,-1w updated:<sunday created:>=+1w";
-    let absolute = "due:2027-12-31,2028-01-01,2027-12-30,2027-12-31,2027-12-31,2028-01-03,2028-01-03,2028-01-03,2027-12-24 updated:<2028-01-02 created:>=2028-01-07";
-    assert_eq!(
-        super::parse(relative, today).unwrap(),
-        super::parse(absolute, today).unwrap()
-    );
+    for (relative, absolute) in [
+        ("today", "2027-12-31"),
+        ("tomorrow", "2028-01-01"),
+        ("yesterday", "2027-12-30"),
+        ("fri", "2027-12-31"),
+        ("friday", "2027-12-31"),
+        ("mon", "2028-01-03"),
+        ("monday", "2028-01-03"),
+        ("+3d", "2028-01-03"),
+        ("-1w", "2027-12-24"),
+        ("sunday", "2028-01-02"),
+        ("+1w", "2028-01-07"),
+    ] {
+        assert_eq!(
+            relative.parse::<DateOperand>().unwrap().resolve(today),
+            Ok(absolute.parse().unwrap()),
+        );
+    }
     for value in ["+3", "-1m", "next week", "+ 3d", "2026-1-1"] {
         let error = super::parse_argv(&[format!("due:>{value}")], today).unwrap_err();
         assert_eq!(
@@ -55,19 +66,29 @@ fn dates_resolve_across_weeks_and_years() {
         );
     }
     for (input, today) in [
-        ("due:tomorrow", Date::MAX),
-        ("due:-1d", Date::MIN),
-        ("due:+9223372036854775807w", today),
-        ("due:+99999999999999999999999d", today),
-        ("due:+99999999999999999999999-01-01", today),
+        ("tomorrow", Date::MAX),
+        ("-1d", Date::MIN),
+        ("+9223372036854775807w", today),
+        ("+99999999999999999999999d", today),
     ] {
         assert_eq!(
-            super::parse(input, today).unwrap_err().kind,
+            input
+                .parse::<DateOperand>()
+                .unwrap()
+                .resolve(today)
+                .unwrap_err(),
             ErrorKind::DateOutOfRange {
-                value: input[4..].into()
+                value: input.into()
             }
         );
     }
+    let value = "+99999999999999999999999-01-01";
+    assert_eq!(
+        parse(&format!("due:{value}")).unwrap_err().kind,
+        ErrorKind::DateOutOfRange {
+            value: value.into()
+        }
+    );
     for (value, lowercase) in [("Fri", "fri"), ("+1W", "+1w")] {
         assert_eq!(
             parse(&format!("due:{value}")).unwrap_err().kind,
@@ -487,10 +508,8 @@ fn weekdays_include_today_from_each_weekday() {
                 expected += chrono::TimeDelta::days(7);
             }
             assert_eq!(
-                super::parse(&format!("due:{weekday}"), today)
-                    .unwrap()
-                    .to_string(),
-                format!("due:{expected}")
+                weekday.parse::<DateOperand>().unwrap().resolve(today),
+                Ok(expected)
             );
         }
     }
@@ -507,10 +526,8 @@ fn offsets_cross_calendar_boundaries() {
     ] {
         let today = today.parse().unwrap();
         assert_eq!(
-            super::parse(&format!("due:{relative}"), today)
-                .unwrap()
-                .to_string(),
-            format!("due:{absolute}")
+            relative.parse::<DateOperand>().unwrap().resolve(today),
+            Ok(absolute.parse().unwrap())
         );
     }
 }
