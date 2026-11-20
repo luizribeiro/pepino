@@ -331,6 +331,7 @@ dependencies = [
  "blake3",
  "chrono",
  "ciborium",
+ "ciborium-ll",
  "hex",
  "proptest",
  "serde",

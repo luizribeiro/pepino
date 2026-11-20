@@ -1,7 +1,7 @@
 use ciborium::Value;
 use serde::de::DeserializeOwned;
 
-use crate::{EdgeKind, Status};
+use crate::{EdgeKind, FieldValue, Status};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UnknownValue {
@@ -25,14 +25,20 @@ pub(crate) fn substitute_unknown_values(event: &mut Value) -> Vec<UnknownValue> 
                 }
                 if let Some(custom) = member(fields, "custom").and_then(|v| untag(v).as_map_mut()) {
                     for (_, value) in custom {
-                        field_value(value, &mut unknown);
+                        field_value(value, FieldValue::Unset, &mut unknown);
                     }
                 }
             }
         }
         "task_field_set" => {
+            let placeholder =
+                match member(payload, "field").and_then(|field| untag(field).as_text()) {
+                    Some("title") => FieldValue::Text("Unknown value".into()),
+                    Some("status") => FieldValue::Status(Status::Todo),
+                    _ => FieldValue::Unset,
+                };
             if let Some(value) = member(payload, "value") {
-                field_value(value, &mut unknown);
+                field_value(value, placeholder, &mut unknown);
             }
         }
         "edge_added" | "edge_removed" => {
@@ -57,8 +63,7 @@ fn substitute_unknown_enum<T: DeserializeOwned>(
     value: &mut Value,
     placeholder: &str,
 ) -> Option<String> {
-    let value = untag(value);
-    let tag = variant_tag(value)?;
+    let tag = variant_tag(untag(value))?;
     if Value::Text(tag.into()).deserialized::<T>().is_ok() {
         return None;
     }
@@ -67,9 +72,8 @@ fn substitute_unknown_enum<T: DeserializeOwned>(
     Some(tag)
 }
 
-fn field_value(value: &mut Value, unknown: &mut Vec<UnknownValue>) {
-    let value = untag(value);
-    let Some(tag) = variant_tag(value) else {
+fn field_value(value: &mut Value, placeholder: FieldValue, unknown: &mut Vec<UnknownValue>) {
+    let Some(tag) = variant_tag(untag(value)) else {
         return;
     };
     match tag {
@@ -81,7 +85,8 @@ fn field_value(value: &mut Value, unknown: &mut Vec<UnknownValue>) {
         "text" | "integer" | "date" | "unset" => {}
         _ => {
             unknown.push(UnknownValue::FieldValue(tag.into()));
-            *value = "unset".into();
+            *value =
+                Value::serialized(&placeholder).expect("field values serialize to CBOR values");
         }
     }
 }

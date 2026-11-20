@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use ciborium::Value;
+use ciborium_ll::{Encoder, Header};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
@@ -175,11 +176,7 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
         return Err(DecodeError::InvalidFrame);
     };
 
-    let Content {
-        author,
-        hlc,
-        mut event,
-    }: Content<Value> = content
+    let Content { author, hlc, event }: Content<Value> = content
         .deserialized()
         .map_err(|_| content_error(content, DecodeError::InvalidContent))?;
     let variant = match &event {
@@ -199,26 +196,39 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
             bytes: bytes.to_vec(),
         });
     }
-    let event = match event.deserialized::<Event>() {
-        Ok(event) => event,
+    let (event, unknown) = match event.deserialized::<Event>() {
+        Ok(event) => (event, None),
         Err(_) => {
-            let variant = variant.clone();
-            let values = substitute_unknown_values(&mut event);
-            if values.is_empty() || event.deserialized::<Event>().is_err() {
+            let mut substituted = event.clone();
+            let values = substitute_unknown_values(&mut substituted);
+            if values.is_empty() {
                 return Err(content_error(&event, DecodeError::InvalidContent));
             }
-            return Ok(DecodeOutcome::UnknownValue {
-                id,
-                author,
-                hlc,
-                variant,
-                values,
-                bytes: bytes.to_vec(),
-            });
+            let decoded = substituted
+                .deserialized::<Event>()
+                .map_err(|_| content_error(&event, DecodeError::InvalidContent))?;
+            (decoded, Some((variant.clone(), values, substituted)))
         }
     };
     let canonical = encode_content(author, hlc, &event).map_err(|_| DecodeError::InvalidContent)?;
-    if canonical != bytes {
+    let is_canonical = if let Some((_, _, substituted)) = &unknown {
+        let mut normalized = frame.clone();
+        if let Value::Map(entries) = &mut normalized[1] {
+            for (key, value) in entries {
+                if key.as_text() == Some("event") {
+                    *value = substituted.clone();
+                }
+            }
+        }
+        let normalized = Value::Array(normalized);
+        let mut remaining = bytes;
+        cbor_bytes(&normalized) == canonical
+            && compare_known_bytes(&Value::Array(frame), &normalized, &mut remaining).is_some()
+            && remaining.is_empty()
+    } else {
+        canonical == bytes
+    };
+    if !is_canonical {
         return Err(DecodeError::NonCanonical);
     }
     if let Err(reason) = event.validate() {
@@ -229,9 +239,62 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
             reason,
         });
     }
+    if let Some((variant, values, _)) = unknown {
+        return Ok(DecodeOutcome::UnknownValue {
+            id,
+            author,
+            hlc,
+            variant,
+            values,
+            bytes: bytes.to_vec(),
+        });
+    }
     Ok(DecodeOutcome::Known(Envelope::with_id(
         id, author, hlc, event,
     )))
+}
+
+fn cbor_bytes(value: &Value) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    ciborium::into_writer(value, &mut bytes).expect("CBOR values serialize to a vector");
+    bytes
+}
+
+// Value loses alternate wire encodings such as overlong lengths. Check the
+// original bytes as well, treating substituted discriminant slots as opaque.
+fn compare_known_bytes(original: &Value, substituted: &Value, bytes: &mut &[u8]) -> Option<()> {
+    if original == substituted {
+        *bytes = bytes.strip_prefix(cbor_bytes(original).as_slice())?;
+        return Some(());
+    }
+    let mut prefix = Vec::new();
+    let mut encoder = Encoder::from(&mut prefix);
+    match (original, substituted) {
+        (Value::Array(original), Value::Array(substituted)) => {
+            encoder.push(Header::Array(Some(original.len()))).ok()?;
+            *bytes = bytes.strip_prefix(prefix.as_slice())?;
+            for (original, substituted) in original.iter().zip(substituted) {
+                compare_known_bytes(original, substituted, bytes)?;
+            }
+        }
+        (Value::Map(original), Value::Map(substituted))
+            if original
+                .iter()
+                .map(|(key, _)| key)
+                .eq(substituted.iter().map(|(key, _)| key)) =>
+        {
+            encoder.push(Header::Map(Some(original.len()))).ok()?;
+            *bytes = bytes.strip_prefix(prefix.as_slice())?;
+            for ((key, original), (_, substituted)) in original.iter().zip(substituted) {
+                *bytes = bytes.strip_prefix(cbor_bytes(key).as_slice())?;
+                compare_known_bytes(original, substituted, bytes)?;
+            }
+        }
+        _ => {
+            ciborium::from_reader::<Value, _>(bytes).ok()?;
+        }
+    }
+    Some(())
 }
 
 fn future_metadata<T: DeserializeOwned>(content: Option<&Value>, name: &str) -> Option<T> {
