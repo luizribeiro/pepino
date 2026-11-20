@@ -5,7 +5,7 @@ use pepino_app::Response;
 use serde_json::{Map, Value, json};
 
 use crate::error::{CliError, ErrorKind};
-use crate::terminal::{Color, Terminal};
+use crate::terminal::{Context, RenderSettings, Terminal};
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -39,12 +39,13 @@ impl CommandResult {
         )
     }
     pub fn app_document(
+        context: &Context<'_>,
         response: Response,
-        color: Color,
-        human: impl FnOnce(&Response, &Terminal) -> Result<String, CliError> + 'static,
-    ) -> Self {
-        Self(
-            Box::new(move |json, terminal, stdout| {
+        human: impl FnOnce(&Response, &RenderSettings) -> Result<String, CliError> + 'static,
+    ) -> Result<Self, CliError> {
+        let settings = context.render_settings()?;
+        Ok(Self(
+            Box::new(move |json, _, stdout| {
                 let result = if json {
                     match serde_json::to_value(response) {
                         Ok(Value::Object(fields)) => write_json(fields, stdout),
@@ -52,12 +53,12 @@ impl CommandResult {
                         Err(error) => Err(error.into()),
                     }
                 } else {
-                    write_text(&human(&response, &terminal.task_output(color))?, stdout)
+                    write_text(&human(&response, &settings)?, stdout)
                 };
                 flush_output(result, stdout).map(|_| ())
             }),
             Vec::new(),
-        )
+        ))
     }
     pub fn with_warnings(mut self, warnings: impl IntoIterator<Item = String>) -> Self {
         self.1.extend(warnings);
@@ -192,9 +193,38 @@ mod tests {
         let fixture = json!({"kind":"tasks","tasks":[],"total":0,"filter":"due:tomorrow",
             "sort":"due","resolved_dates":{"tomorrow":"2026-11-21"}});
         let response = serde_json::from_value(fixture.clone()).unwrap();
-        let output = CommandResult::app_document(response, Color::Never, |_, _| {
-            panic!("JSON rendered as text")
-        });
+        let context = Context::new(
+            Terminal::fixed(None, false),
+            false,
+            None,
+            crate::app::InvocationTime {
+                today: "2026-11-20".parse().unwrap(),
+                now_ms: 1_795_149_900_000,
+                offset: chrono::FixedOffset::west_opt(18_000).unwrap(),
+            },
+            || {
+                use crate::config::{Config, LoadedConfig, Platform, PlatformDirs};
+                let dirs = PlatformDirs::new(
+                    Platform::Linux,
+                    std::path::Path::new("/home/ada"),
+                    None,
+                    None,
+                );
+                Ok(LoadedConfig {
+                    config: Config::defaults(&dirs).unwrap(),
+                    files: vec![],
+                })
+            },
+        );
+        let settings = context.render_settings().unwrap();
+        assert_eq!(
+            settings.dates().calendar("2026-11-21".parse().unwrap()),
+            "2026-11-21"
+        );
+        assert!(!settings.terminal.color);
+        let output =
+            CommandResult::app_document(&context, response, |_, _| panic!("JSON rendered as text"))
+                .unwrap();
         let mut stdout = Vec::new();
         (output.0)(true, &Terminal::fixed(None, false), &mut stdout).unwrap();
         let mut expected = fixture;

@@ -9,6 +9,7 @@ use serde::Serialize;
 use crate::app::InvocationTime;
 use crate::config::{Env, LoadedConfig};
 use crate::error::{CliError, ErrorKind};
+use crate::render::Dates;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
@@ -83,6 +84,21 @@ impl Terminal {
     }
 }
 
+pub struct RenderSettings {
+    pub terminal: Terminal,
+    time: InvocationTime,
+    date_format: String,
+}
+
+impl RenderSettings {
+    pub fn dates(&self) -> Dates<'_> {
+        Dates {
+            time: self.time,
+            format: &self.date_format,
+        }
+    }
+}
+
 pub struct Context<'a> {
     pub terminal: Terminal,
     config: OnceCell<Result<LoadedConfig, CliError>>,
@@ -115,6 +131,15 @@ impl<'a> Context<'a> {
             .get_or_init(&self.load_config)
             .as_ref()
             .map_err(Clone::clone)
+    }
+
+    pub fn render_settings(&self) -> Result<RenderSettings, CliError> {
+        let ui = &self.config()?.config.ui;
+        Ok(RenderSettings {
+            terminal: self.terminal.task_output(ui.color.value),
+            time: self.time,
+            date_format: ui.date_format.value.as_str().to_owned(),
+        })
     }
 
     pub fn confirm(&self, prompt: &str) -> Result<bool, CliError> {

@@ -31,9 +31,8 @@ pub fn run(
     };
     let request = args.apply_to_add(request, context.time.today)?;
     let response = AppClient::open(context)?.call(Request::Write(request))?;
-    let color = context.config()?.config.ui.color.value;
     let (message, warnings) = created_output(&response)?;
-    Ok(CommandResult::app_document(response, color, |_, _| Ok(message)).with_warnings(warnings))
+    Ok(CommandResult::app_document(context, response, |_, _| Ok(message))?.with_warnings(warnings))
 }
 
 fn created_output(response: &Response) -> Result<(String, Vec<String>), CliError> {
