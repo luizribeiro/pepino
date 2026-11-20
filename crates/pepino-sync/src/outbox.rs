@@ -12,6 +12,7 @@ pub(crate) async fn run(
     app: &App,
     id: BoardId,
     board: &impl TransportBoard,
+    node_instance: [u8; 16],
     status: &watch::Sender<Status>,
     mut nudges: watch::Receiver<u64>,
     poll_interval: Duration,
@@ -21,7 +22,7 @@ pub(crate) async fn run(
         let generation = *nudges.borrow_and_update();
         let page = match app
             .store()
-            .outbox(id, app.local_state().device_id, PAGE)
+            .outbox_for(id, app.local_state().device_id, PAGE, Some(node_instance))
             .await
         {
             Ok(page) => page,
@@ -52,7 +53,7 @@ pub(crate) async fn run(
             }
         }
         for event in page.events {
-            publish(app, id, board, status, event).await;
+            publish(app, id, board, node_instance, status, event).await;
         }
     }
 }

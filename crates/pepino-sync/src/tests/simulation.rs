@@ -60,3 +60,46 @@ async fn a_restarted_simulated_device_keeps_its_publication_history() {
     assert_eq!(device.node.published(), sent);
     device.engine.take().unwrap().shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn replacing_the_replication_database_republishes_confirmed_local_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([90; 32]);
+    let signer = DeviceId::from_bytes([91; 32]);
+    let mut sender = Device::new(dir.path().join("sender"), board, signer).await;
+    let mut peer = Device::new(
+        dir.path().join("peer"),
+        board,
+        DeviceId::from_bytes([92; 32]),
+    )
+    .await;
+    for title in ["Count the tomato starts", "Label the seed trays"] {
+        directory::write(
+            &mut sender.app,
+            serde_json::json!({"op":"add_task","title":title}),
+        )
+        .await;
+    }
+    sender.start().await;
+    sender.drain().await;
+    let original = sender.node.published();
+    assert_eq!(original.len(), 2);
+    sender.engine.take().unwrap().shutdown().await.unwrap();
+
+    sender.node = Arc::new(Stub::new(signer));
+    sender.start().await;
+    sender.drain().await;
+    assert_eq!(sender.node.published(), original);
+    peer.start().await;
+    for bytes in sender.node.published() {
+        peer.node.deliver(board, signer, bytes);
+    }
+    peer.drain().await;
+    assert_eq!(peer.app.store().statistics(board).await.unwrap().total, 2);
+    assert_eq!(
+        sender.app.store().board_with_comments(board).await.unwrap(),
+        peer.app.store().board_with_comments(board).await.unwrap(),
+    );
+    sender.engine.take().unwrap().shutdown().await.unwrap();
+    peer.engine.take().unwrap().shutdown().await.unwrap();
+}

@@ -9,6 +9,7 @@ pub(crate) async fn publish(
     app: &App,
     id: BoardId,
     board: &impl TransportBoard,
+    node_instance: [u8; 16],
     status: &watch::Sender<Status>,
     event: OutboxEvent,
 ) {
@@ -23,7 +24,10 @@ pub(crate) async fn publish(
         }
     };
     let mut retry = Retry::new();
-    while let Err(error) = app.record_publication(id, event.id, operation).await {
+    while let Err(error) = app
+        .record_publication_for(id, event.id, operation, Some(node_instance))
+        .await
+    {
         record_error(
             status,
             id,

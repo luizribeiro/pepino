@@ -98,7 +98,10 @@ async fn rejected_head_retries_before_its_receipt_is_recorded() {
         node.reject(false);
     };
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        tokio::join!(publish(&app, id, &board, &status, event), release);
+        tokio::join!(
+            publish(&app, id, &board, node.instance_id(), &status, event),
+            release
+        );
     })
     .await
     .unwrap();

@@ -86,6 +86,7 @@ impl<T: Transport> SyncEngine<T> {
             ..Default::default()
         });
         let mut workers = JoinSet::new();
+        let node_instance = node.instance_id();
         for id in boards {
             let mut board = node.open_board_for_store(id, store_instance).await?;
             let stream = board.deliveries()?;
@@ -98,7 +99,7 @@ impl<T: Transport> SyncEngine<T> {
                 let result = tokio::select! {
                     biased;
                     _ = stopping.changed() => Ok(()),
-                    _ = crate::outbox::run(&app, id, &board, &status, nudged, poll) => Ok(()),
+                    _ = crate::outbox::run(&app, id, &board, node_instance, &status, nudged, poll) => Ok(()),
                     result = crate::inbox::run(&app, id, stream, &status) => result,
                 };
                 status.send_modify(|status| {
