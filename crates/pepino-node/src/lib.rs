@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod ack;
+#[cfg(test)]
+mod board_lease;
 mod credentials;
 mod node;
 #[cfg(test)]
@@ -14,6 +16,10 @@ pub use settings::{BootstrapNode, MdnsMode, NodeSettings};
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    #[error("board {0} is already open")]
+    BoardOpen(pepino_core::BoardId),
+    #[error("restart the node before reopening board {0}")]
+    BoardRestartRequired(pepino_core::BoardId),
     #[error("the node or board is closed")]
     Closed,
     #[error("node runtime: {0}")]
