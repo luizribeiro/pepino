@@ -19,3 +19,16 @@ dbg_macro = "deny"
 
 [profile.dev.package."*"]
 opt-level = 1
+
+[workspace.dependencies]
+p2panda = "=0.8.1"
+p2panda-auth = "=0.8.1"
+p2panda-blobs = "=0.8.1"
+p2panda-core = "=0.8.1"
+p2panda-discovery = "=0.8.1"
+p2panda-encryption = "=0.8.1"
+p2panda-net = "=0.8.1"
+p2panda-spaces = "=0.8.1"
+p2panda-store = "=0.8.1"
+p2panda-stream = "=0.8.1"
+p2panda-sync = "=0.8.1"
