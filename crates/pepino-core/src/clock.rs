@@ -9,6 +9,26 @@ pub struct Hlc {
     pub counter: u32,
 }
 
+impl Hlc {
+    /// Encodes the timestamp as a 12-byte key that sorts in HLC order.
+    pub const fn to_key(self) -> [u8; 12] {
+        let mut key = [0; 12];
+        let (wall_ms, counter) = key.split_at_mut(8);
+        wall_ms.copy_from_slice(&self.wall_ms.to_be_bytes());
+        counter.copy_from_slice(&self.counter.to_be_bytes());
+        key
+    }
+
+    /// Reads the big-endian wall time and counter from a storage key.
+    pub const fn from_key(key: [u8; 12]) -> Self {
+        let [a, b, c, d, e, f, g, h, i, j, k, l] = key;
+        Self {
+            wall_ms: u64::from_be_bytes([a, b, c, d, e, f, g, h]),
+            counter: u32::from_be_bytes([i, j, k, l]),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Clock {
     latest: Option<Hlc>,
@@ -71,6 +91,17 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
+
+    #[test]
+    fn storage_key_preserves_unsigned_wall_times() {
+        let hlc = Hlc {
+            wall_ms: 0x8001_0203_0405_0607,
+            counter: 0x0809_0a0b,
+        };
+        let key = [0x80, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+        assert_eq!(hlc.to_key(), key);
+        assert_eq!(Hlc::from_key(key), hlc);
+    }
 
     #[test]
     fn resumes_from_persisted_timestamp() {
@@ -141,6 +172,21 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn storage_keys_round_trip_and_match_timestamp_order(
+            (a_wall, a_counter, b_wall, b_counter) in any::<(u64, u32, u64, u32)>(),
+        ) {
+            let a = Hlc { wall_ms: a_wall, counter: a_counter };
+            let a_key = a.to_key();
+            prop_assert_eq!(Hlc::from_key(a_key), a);
+            for wall_ms in [a_wall, b_wall] {
+                let b = Hlc { wall_ms, counter: b_counter };
+                let b_key = b.to_key();
+                prop_assert_eq!(Hlc::from_key(b_key), b);
+                prop_assert_eq!(a_key.cmp(&b_key), a.cmp(&b));
+            }
+        }
+
         #[test]
         fn skew_limit_preserves_local_progress(
             wall_ms in prop_oneof![any::<u64>(), Just(0), (u64::MAX - MAX_CLOCK_SKEW_MS - 1)..=u64::MAX],
