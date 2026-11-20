@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -31,7 +32,7 @@ pub(super) struct Stub {
     publisher: Arc<Publisher>,
     device: DeviceId,
     instance: [u8; 16],
-    queue: Arc<Mutex<Option<Queue>>>,
+    queues: Arc<Mutex<BTreeMap<BoardId, Queue>>>,
     signals: broadcast::Sender<NodeEvent>,
     status: Arc<Mutex<NodeStatus>>,
 }
@@ -55,7 +56,7 @@ impl Stub {
             device,
             instance,
             publisher: Arc::default(),
-            queue: Arc::default(),
+            queues: Arc::default(),
             signals: broadcast::channel(128).0,
             status: Arc::default(),
         }
@@ -64,7 +65,7 @@ impl Stub {
 
 pub(super) struct Board {
     publisher: Arc<Publisher>,
-    queue: Arc<Mutex<Option<Queue>>>,
+    queues: Arc<Mutex<BTreeMap<BoardId, Queue>>>,
     deliveries: Option<mpsc::UnboundedReceiver<Delivery<Receipt>>>,
     signals: broadcast::Sender<NodeEvent>,
     id: BoardId,
@@ -99,7 +100,7 @@ impl Receipt {
 
 impl Stub {
     pub(super) fn stop_deliveries(&self) {
-        self.queue.lock().unwrap().take();
+        self.queues.lock().unwrap().clear();
     }
 
     pub(super) fn connect(&self, peer: DeviceId) {
@@ -179,10 +180,10 @@ impl Stub {
         ack: Receipt,
     ) {
         pending(&self.status, &self.signals, id, true);
-        self.queue
+        self.queues
             .lock()
             .unwrap()
-            .as_ref()
+            .get(&id)
             .unwrap()
             .send(Delivery {
                 operation,
@@ -273,7 +274,7 @@ impl TransportBoard for Board {
     }
 
     async fn close(self) -> Result<(), Error> {
-        self.queue.lock().unwrap().take();
+        self.queues.lock().unwrap().remove(&self.id);
         self.status.lock().unwrap().boards.remove(&self.id);
         Ok(())
     }
@@ -297,10 +298,10 @@ impl Transport for Stub {
         }
         status.boards.insert(id, Default::default());
         let (sender, receiver) = mpsc::unbounded_channel();
-        *self.queue.lock().unwrap() = Some(sender);
+        self.queues.lock().unwrap().insert(id, sender);
         Ok(Board {
             publisher: self.publisher.clone(),
-            queue: self.queue.clone(),
+            queues: self.queues.clone(),
             deliveries: Some(receiver),
             signals: self.signals.clone(),
             id,

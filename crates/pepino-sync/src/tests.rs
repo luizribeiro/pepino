@@ -8,7 +8,7 @@ mod stub;
 mod wire;
 
 #[tokio::test]
-async fn opens_only_the_local_board_and_joins_shutdown() {
+async fn opens_all_local_boards_and_joins_shutdown() {
     use crate::{Error, SyncEngine, Transport};
     use std::sync::Arc;
 
@@ -16,6 +16,17 @@ async fn opens_only_the_local_board_and_joins_shutdown() {
     let board = pepino_core::BoardId::from_bytes([16; 32]);
     let device = pepino_core::DeviceId::from_bytes([11; 32]);
     directory::prepare(dir.path(), board, device).await;
+    let second = pepino_core::BoardId::from_bytes([17; 32]);
+    let path = dir.path().join("local.json");
+    let mut local: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    local["boards"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "id": second, "name": "Workshop"
+        }));
+    std::fs::write(path, local.to_string()).unwrap();
     let other = Arc::new(stub::Stub::new(pepino_core::DeviceId::from_bytes([12; 32])));
     assert!(matches!(
         SyncEngine::start(Default::default(), other, dir.path()).await,
@@ -27,7 +38,7 @@ async fn opens_only_the_local_board_and_joins_shutdown() {
         .unwrap();
     assert_eq!(
         engine.status().boards.keys().copied().collect::<Vec<_>>(),
-        [board]
+        [board, second]
     );
     assert!(node.status().boards.contains_key(&board));
     use futures_util::StreamExt;

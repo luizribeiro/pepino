@@ -79,12 +79,12 @@ impl<T: Transport> SyncEngine<T> {
             });
         }
         let store_instance = app.store().instance_id().await?;
-        let boards = [app.local_state().board_id()];
+        let boards = app.local_state().boards().iter().map(|board| board.id);
         let (stop, stopping) = watch::channel(());
         let (nudges, nudged) = watch::channel(0);
         let (changes, status) = watch::channel(Status {
             boards: boards
-                .into_iter()
+                .clone()
                 .map(|board| (board, Default::default()))
                 .collect(),
             node: node.status(),
