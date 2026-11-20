@@ -33,9 +33,78 @@ fn read_error(source: &str, error: io::Error) -> CliError {
     CliError::new(kind, format!("Could not read {source}: {error}"))
 }
 
+#[cfg(unix)]
+pub fn edit_text(text: &str) -> Result<String, CliError> {
+    let editor = ["VISUAL", "EDITOR"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .find(|value| !value.to_string_lossy().trim().is_empty())
+        .ok_or_else(|| {
+            CliError::new(ErrorKind::Usage, "No editor is configured.")
+                .with_hint("Set VISUAL or EDITOR, or use the edit flags.")
+        })?;
+    run_editor(&editor, text)
+}
+
+#[cfg(unix)]
+fn run_editor(editor: &std::ffi::OsStr, text: &str) -> Result<String, CliError> {
+    use std::ffi::OsString;
+    use std::process::{Command, Stdio};
+
+    let directory = tempfile::tempdir().map_err(|error| read_error("editor directory", error))?;
+    let file = directory.path().join("task.json");
+    fs::write(&file, text).map_err(|error| read_error("editor file", error))?;
+    let mut command = if Path::new(editor).is_file() {
+        Command::new(editor)
+    } else {
+        let mut command = Command::new("sh");
+        let mut shell_command = OsString::from("exec ");
+        shell_command.push(editor);
+        shell_command.push(r#" "$1""#);
+        command.arg("-c").arg(shell_command).arg("ppn-editor");
+        command
+    };
+    let output = fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/tty")
+        .map_or_else(|_| Stdio::from(io::stderr()), Stdio::from);
+    let status = command
+        .arg(&file)
+        .stdout(output)
+        .status()
+        .map_err(|error| {
+            CliError::new(
+                ErrorKind::Failure,
+                format!("Could not start the editor: {error}"),
+            )
+        })?;
+    if !status.success() {
+        return Err(CliError::new(
+            ErrorKind::Failure,
+            format!("The editor exited unsuccessfully ({status})."),
+        ));
+    }
+    fs::read_to_string(file).map_err(|error| read_error("editor file", error))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn editor_receives_a_file_and_reports_unsuccessful_exit() {
+        use std::ffi::OsStr;
+
+        let title = "Order stainless fittings";
+        let command = r#"sh -c 'test "$(cat "$1")" = "Order stainless fittings" && printf "%s" "Order brass fittings" > "$1"' editor"#;
+        assert_eq!(
+            run_editor(OsStr::new(command), title).unwrap(),
+            "Order brass fittings"
+        );
+        let error = run_editor(OsStr::new("false"), title).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Failure);
+    }
 
     #[test]
     fn keeps_literal_text_intact() {

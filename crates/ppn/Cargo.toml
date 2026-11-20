@@ -25,8 +25,6 @@ terminal_size = "0.4"
 tokio = { version = "1", features = ["rt", "time"] }
 unicode-segmentation = "1"
 unicode-width = "0.2"
-
-[dev-dependencies]
 tempfile = "3"
 
 [target.'cfg(unix)'.dev-dependencies]
