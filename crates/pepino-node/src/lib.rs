@@ -37,6 +37,8 @@ pub enum Error {
     NotPermitted,
     #[error("the board must retain a manager")]
     LastManager,
+    #[error("removing another manager requires explicit confirmation")]
+    ManagerRemovalRequiresConfirmation,
     #[error("the target device is not a direct board member")]
     NotMember,
     #[error("device member info has expired")]

@@ -73,6 +73,12 @@ async fn two_devices_exchange_events_and_a_late_member_gets_history() {
         board_a.set_role(a.device_id(), Role::Read).await,
         Err(Error::LastManager)
     ));
+    assert!(matches!(
+        board_b.remove_member(a.device_id(), true).await,
+        Err(Error::NotPermitted)
+    ));
+    assert!(matches!(board_b.leave().await, Err(Error::NotPermitted)));
+    assert!(matches!(board_a.leave().await, Err(Error::LastManager)));
     let second = board_b.publish(REVIEW.to_vec()).await.unwrap();
     let third = board_a.publish(DONE.to_vec()).await.unwrap();
     let history = [
@@ -135,6 +141,17 @@ async fn two_devices_exchange_events_and_a_late_member_gets_history() {
             .await
             .unwrap()
             .contains(&(c.device_id(), Role::Write))
+    );
+    board_a.set_role(b.device_id(), Role::Manage).await.unwrap();
+    assert!(matches!(
+        board_a.remove_member(b.device_id(), false).await,
+        Err(Error::ManagerRemovalRequiresConfirmation)
+    ));
+    board_a.remove_member(c.device_id(), false).await.unwrap();
+    board_a.leave().await.unwrap();
+    assert_eq!(
+        board_a.members().await.unwrap(),
+        vec![(b.device_id(), Role::Manage)]
     );
     c.shutdown().await.unwrap();
     b.shutdown().await.unwrap();

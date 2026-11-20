@@ -96,6 +96,40 @@ impl BoardHandle {
         .await
     }
 
+    /// Remove a direct member and rotate the board's encryption keys. The removed
+    /// device keeps everything it already decrypted and can still receive ciphertext.
+    ///
+    /// Removing another manager requires `allow_manager_removal`. Concurrent mutual
+    /// removal by managers can leave the board unrecoverable.
+    pub async fn remove_member(
+        &self,
+        member: DeviceId,
+        allow_manager_removal: bool,
+    ) -> Result<(), Error> {
+        let space = self.space_for_management()?;
+        let device = self.node.upgrade().ok_or(Error::Closed)?.id();
+        let lock = self.membership_lock.clone();
+        self.run(async move {
+            let _guard = lock.lock().await;
+            let actors = space.actors().await.map_err(Error::node)?;
+            require_manager(&actors, device)?;
+            let (member, role) = find_actor(&actors, member).ok_or(Error::NotMember)?;
+            keep_manager(&actors, role)?;
+            if role == AccessLevel::Manage && member != device && !allow_manager_removal {
+                return Err(Error::ManagerRemovalRequiresConfirmation);
+            }
+            space.remove(member).await.map_err(Error::node)
+        })
+        .await
+    }
+
+    /// Leave the board. p2panda 0.8.1 requires manager access for self-removal.
+    pub async fn leave(&self) -> Result<(), Error> {
+        let device = self.node.upgrade().ok_or(Error::Closed)?.id();
+        self.remove_member(DeviceId::from_bytes(*device.as_bytes()), false)
+            .await
+    }
+
     fn space_for_management(
         &self,
     ) -> Result<std::sync::Arc<p2panda::spaces::Space<crate::receipt::Payload>>, Error> {
