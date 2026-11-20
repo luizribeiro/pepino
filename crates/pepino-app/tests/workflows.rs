@@ -1409,3 +1409,35 @@ async fn an_invalid_creation_lists_its_implicit_task_id_without_a_title() {
     assert_eq!(change["task"], id);
     assert_eq!(titles.get(&id), Some(&None));
 }
+
+#[tokio::test]
+async fn titles_are_normalized_on_creation_and_edit() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let (_, id, tasks, _) = write(
+        &mut app,
+        json!({
+            "op":"add_task","title":"  Replace the greenhouse latch  "
+        }),
+    )
+    .await;
+    let id = id.unwrap();
+    assert_eq!(tasks[0].title, "Replace the greenhouse latch");
+    let edit = |title| {
+        json!({
+            "op":"set_fields","task":id,"changes":{"title":{"type":"text","value":title}}
+        })
+    };
+    assert!(
+        !write(&mut app, edit(" Replace the greenhouse latch "))
+            .await
+            .0
+    );
+    for bad in ["  ", "Oil the hinges\nCheck the latch"] {
+        for request in [json!({"op":"add_task","title":bad}), edit(bad)] {
+            let error = handle(&mut app, request).await.unwrap_err();
+            assert_eq!(error.kind().code(), "invalid_input");
+            assert!(error.to_string().contains(&format!("{bad:?}")));
+        }
+    }
+}

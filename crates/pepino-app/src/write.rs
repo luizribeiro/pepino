@@ -44,6 +44,7 @@ impl App {
                     assignees: self.identities(assignees)?,
                     custom: custom_fields(fields)?,
                 };
+                let title = normalize_title(&title, "title")?;
                 let creation = Event::TaskCreated { title, fields };
                 creation.validate().map_err(|error| {
                     invalid_event(&creation_path(&creation, &tags, &error), error)
@@ -184,8 +185,13 @@ fn set_fields(
 ) -> Result<(), AppError> {
     batch.affected.insert(current.id);
     for (name, value) in changes {
-        let value = value.into();
         let path = field_path("changes", &name);
+        let value = match value {
+            crate::FieldValue::Text(title) if name == "title" => {
+                FieldValue::Text(normalize_title(&title, &path)?)
+            }
+            value => value.into(),
+        };
         let field = FieldName::new(&name).map_err(|error| invalid(&path, error))?;
         let changed = current_value(current, &field) != value;
         batch.stage(
@@ -199,6 +205,23 @@ fn set_fields(
         )?;
     }
     Ok(())
+}
+
+fn normalize_title(title: &str, path: &str) -> Result<String, AppError> {
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        return Err(invalid(
+            path,
+            format!("invalid title {title:?}: expected a non-empty title"),
+        ));
+    }
+    if trimmed.contains(['\n', '\r', '\u{2028}', '\u{2029}']) {
+        return Err(invalid(
+            path,
+            format!("invalid title {title:?}: expected a single line"),
+        ));
+    }
+    Ok(trimmed.to_owned())
 }
 
 fn current_value(task: &TaskRecord, field: &FieldName) -> FieldValue {
