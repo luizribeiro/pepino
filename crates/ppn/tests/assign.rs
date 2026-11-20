@@ -115,3 +115,18 @@ fn assign_and_filters_agree_on_names_prefixes_and_ambiguity() {
             .contains("ambiguous person")
     );
 }
+
+#[test]
+fn display_names_match_case_insensitively_in_writes_and_filters() {
+    let (sandbox, _) = common::uninitialized_task_sandbox();
+    sandbox.run(&["init", "--name", "Luiz da Vitória"]);
+    let id = create_task(&sandbox, "Fit the greenhouse latch", &[]);
+    let assigned = sandbox.run(&["assign", &id, "luiz da vitória"]);
+    assert!(assigned.starts_with("Assigned "));
+    let listing = as_json(&sandbox.run(&["ls", "assignee:LUIZ DA VITÓRIA", "--json"]));
+    assert_eq!(listing["total"], 1);
+    assert_eq!(listing["tasks"][0]["id"], id);
+    let removed = as_json(&sandbox.run(&["unassign", &id, "LuiZ da vitória", "--json"]));
+    assert_write(&removed, true);
+    assert_eq!(removed["tasks"][0]["assignees"], serde_json::json!([]));
+}

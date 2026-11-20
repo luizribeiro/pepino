@@ -70,7 +70,8 @@ fn test(order: Ordering, operator: Operator) -> bool {
     }
 }
 
-pub(super) fn fold(text: &str) -> String {
+/// Applies the same Unicode case folding used for free-text search.
+pub fn fold(text: &str) -> String {
     folded_chars(text).collect()
 }
 

@@ -66,7 +66,7 @@ pub(super) fn all() -> BTreeMap<&'static str, String> {
     BTreeMap::from([
         ("filters", format!("{keywords}\n\n{DATES}\n\n{FILTERS}")),
         ("dates", DATES.into()),
-        ("ids", "Task IDs are 64 hexadecimal digits. Use any unambiguous prefix of at least four digits. Assignees accept me, a display name, a full identity ID or an unambiguous prefix.".into()),
+        ("ids", "Task IDs are 64 hexadecimal digits. Use any unambiguous prefix of at least four digits. Assignees accept me, a display name, a full identity ID or an unambiguous prefix. Display names match case-insensitively.".into()),
         ("json", JSON.into()),
     ])
 }

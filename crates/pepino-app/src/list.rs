@@ -5,7 +5,7 @@ use pepino_core::{
     filter::{Clause, Filter, State, Term},
 };
 use pepino_store::BoardView;
-use pepino_store::query::{Context, Query, QueryError, QueryErrorKind, Sort};
+use pepino_store::query::{Context, Query, QueryError, QueryErrorKind, Sort, fold_text};
 
 use crate::app::{invalid, store_error};
 use crate::filter::ViewFilters;
@@ -128,7 +128,7 @@ impl LocalState {
         if let Ok(id) = name.parse() {
             return vec![id];
         }
-        let named = (name == self.display_name).then_some(self.identity_id);
+        let named = (fold_text(name) == fold_text(&self.display_name)).then_some(self.identity_id);
         if name.len() < 4 || !name.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return named.into_iter().collect();
         }
