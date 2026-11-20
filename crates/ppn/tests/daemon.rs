@@ -4,7 +4,7 @@ use common::*;
 #[test]
 fn daemon_commands_report_missing_initialization_without_creating_state() {
     let (sandbox, data) = uninitialized_task_sandbox();
-    for action in ["run", "status"] {
+    for action in ["run", "start", "stop", "status"] {
         let output = sandbox
             .command()
             .args(["daemon", action, "--json"])

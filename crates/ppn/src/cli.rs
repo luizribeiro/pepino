@@ -249,7 +249,9 @@ fn dispatch(
         Some(Command::Comment(args)) => commands::comment::run(context, args),
         Some(Command::Link(args)) => commands::link::run(context, args),
         Some(Command::Unlink(args)) => commands::unlink::run(context, args),
-        Some(Command::Daemon(args)) => commands::daemon::run(context, args),
+        Some(Command::Daemon(args)) => {
+            commands::daemon::run(context, args, cli.globals.config.as_deref())
+        }
         Some(Command::Debug(args)) => debug::run(context, args),
         None => Ok(help::run(context, definition(), None)),
     }
