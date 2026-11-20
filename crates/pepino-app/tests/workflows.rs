@@ -1214,3 +1214,62 @@ async fn saving_rejects_missing_and_cyclic_references_without_persisting() {
     read_golden(&mut app, save("first", "@last"), json!({"error":{"kind":"invalid_input","field":"filter","reason":"saved view cycle: first -> last -> first","term":"@first","position":{"kind":"byte","byte":8},"view_chain":["first","last","first"]}})).await;
     read_golden(&mut app, json!({"op":"list_views"}), json!({"ok":{"kind":"views","views":[{"name":"first","filter":"tag:hardware"},{"name":"last","filter":"is:open @first"}]}})).await;
 }
+
+#[tokio::test]
+async fn an_invalid_creation_lists_its_implicit_task_id_without_a_title() {
+    use ciborium::Value as Cbor;
+    use pepino_core::{DeviceId, Envelope, Event, Hlc, InitialFields};
+    use pepino_store::IdSource;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::open(dir.path(), NOW).await.unwrap();
+    let store = Store::open(dir.path().join("pepino.sqlite")).await.unwrap();
+    let creation = Envelope::new(
+        DeviceId::from_bytes([31; 32]),
+        Hlc {
+            wall_ms: NOW,
+            counter: 3,
+        },
+        Event::TaskCreated {
+            title: "Seal the greenhouse frame".into(),
+            fields: InitialFields::default(),
+        },
+    )
+    .unwrap()
+    .encode()
+    .unwrap();
+    let mut frame: Cbor = ciborium::from_reader(creation.as_slice()).unwrap();
+    let (_, event) = frame.as_array_mut().unwrap()[1]
+        .as_map_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|(key, _)| key.as_text() == Some("event"))
+        .unwrap();
+    let (_, title) = event.as_map_mut().unwrap()[0]
+        .1
+        .as_map_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|(key, _)| key.as_text() == Some("title"))
+        .unwrap();
+    *title = Cbor::from("");
+    let mut bytes = Vec::new();
+    ciborium::into_writer(&frame, &mut bytes).unwrap();
+    let board = app.local_state().board_id;
+    let pepino_store::AppendOutcome::Skipped { id, .. } = store
+        .append(board, &bytes, IdSource::Content)
+        .await
+        .unwrap()
+    else {
+        panic!("expected a skipped invalid task creation");
+    };
+
+    let Response::Log { events, titles, .. } = handle(&mut app, json!({"op":"log"})).await.unwrap()
+    else {
+        panic!("expected log");
+    };
+    let id = id.to_string();
+    let change = serde_json::to_value(&events[0].change).unwrap();
+    assert_eq!(change["task"], id);
+    assert_eq!(titles.get(&id), Some(&None));
+}

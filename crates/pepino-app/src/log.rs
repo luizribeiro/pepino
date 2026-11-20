@@ -161,7 +161,11 @@ impl App {
             .events
             .iter()
             .chain(&history.unordered)
-            .flat_map(|record| record.tasks.iter().copied())
+            .flat_map(|record| {
+                let created = matches!(record.event, Some(Event::TaskCreated { .. }))
+                    .then(|| TaskId(record.decoded.id()));
+                record.tasks.iter().copied().chain(created)
+            })
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
