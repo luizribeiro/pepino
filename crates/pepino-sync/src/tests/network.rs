@@ -4,19 +4,13 @@ use fixture::pair;
 
 #[tokio::test]
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
-async fn enrolled_devices_share_a_board_and_keep_distinct_credentials() {
+async fn enrolled_engines_share_a_board_keep_distinct_credentials_and_report_idle() {
     let (_dir, a, b) = pair().await;
     assert_eq!(a.board(), b.board());
     assert_ne!(
         a.settings.credentials.device_id(),
         b.settings.credentials.device_id()
     );
-}
-
-#[tokio::test]
-#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
-async fn freshly_enrolled_engines_report_idle_and_shut_down() {
-    let (_dir, a, b) = pair().await;
     let (left, right) = tokio::join!(a.start(), b.start());
     tokio::try_join!(left.engine.wait_idle(WAIT), right.engine.wait_idle(WAIT)).unwrap();
     fixture::views_match(&a, &b).await;
