@@ -36,6 +36,7 @@ pub struct Args {
 
 pub fn run(context: &Context<'_>, args: Args, json: bool) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
+    let unset = args.fields.unset.clone();
     let changes = args.fields.changes(context.time.today)?;
     if changes.is_empty() && args.membership.is_empty() && args.relations.is_empty() {
         return edit_interactively(context, &mut client, &args.task, json);
@@ -55,7 +56,7 @@ pub fn run(context: &Context<'_>, args: Args, json: bool) -> Result<CommandResul
             },
         );
     }
-    apply(context, &mut client, requests, relations)
+    apply(context, &mut client, requests, relations, &unset)
 }
 
 fn apply(
@@ -63,6 +64,7 @@ fn apply(
     client: &mut AppClient,
     requests: Vec<WriteRequest>,
     relations: Vec<relations::Change>,
+    unset: &[String],
 ) -> Result<CommandResult, CliError> {
     let mut responses = requests
         .into_iter()
@@ -74,12 +76,18 @@ fn apply(
                 WriteRequest::Unassign { .. } => Some(("assignees", "--unassign")),
                 _ => None,
             };
-            client
-                .call(Request::Write(request))
-                .map_err(|error| match membership {
-                    Some((field, input)) => error.map_input(field, input),
-                    None => error,
-                })
+            client.call(Request::Write(request)).map_err(|error| {
+                if error
+                    .input_key("changes")
+                    .is_some_and(|key| unset.iter().any(|unset_key| *unset_key == key))
+                {
+                    error.map_input("changes", "--unset")
+                } else if let Some((field, input)) = membership {
+                    error.map_input(field, input)
+                } else {
+                    error
+                }
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
     for relation in relations {
@@ -111,7 +119,7 @@ fn edit_interactively(
             changes: after.changes_from(before)?,
         },
     );
-    apply(context, client, requests, vec![])
+    apply(context, client, requests, vec![], &[])
 }
 
 #[cfg_attr(test, derive(Deserialize))]

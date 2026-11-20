@@ -363,3 +363,15 @@ fn membership_errors_use_the_option_names_when_editing() {
         assert_eq!(task_error(output, 2, "invalid_input")["input"], flag);
     }
 }
+
+#[test]
+fn an_invalid_key_being_cleared_points_to_unset() {
+    let (sandbox, _) = task_sandbox();
+    let id = create_task(&sandbox, "Replace the hinge", &[]);
+    let output = sandbox
+        .command()
+        .args(["edit", &id, "--unset", "Bad field", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(task_error(output, 2, "invalid_input")["input"], "--unset");
+}
