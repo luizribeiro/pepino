@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use pepino_app::Response;
 use serde_json::{Map, json};
@@ -62,6 +62,14 @@ pub fn write_documents(
     )
 }
 
+pub fn merge_write_responses(responses: &[Response]) -> Result<Response, CliError> {
+    let writes = responses
+        .iter()
+        .map(ResponseExt::write)
+        .collect::<Result<Vec<_>, _>>()?;
+    combine_responses(responses, &writes)
+}
+
 fn combine_responses(
     responses: &[Response],
     writes: &[crate::response::Write<'_>],
@@ -83,9 +91,12 @@ fn combine_responses(
     {
         *changed = writes.iter().any(|write| *write.changed);
         *created = None;
+        let mut seen = BTreeSet::new();
         *targets = writes
             .iter()
-            .flat_map(|write| write.targets.iter().cloned())
+            .flat_map(|write| write.targets)
+            .filter(|id| seen.insert(id.as_str()))
+            .cloned()
             .collect();
         let snapshots: BTreeMap<_, _> = writes
             .iter()
@@ -240,14 +251,10 @@ mod tests {
         let changed: Response = serde_json::from_value(changed).unwrap();
         let (message, _) = write_output(&changed, "Done").unwrap();
         assert_eq!(message, "Done 97ad97  Install the greenhouse latch");
-        let responses = [serde_json::from_value(response.clone()).unwrap(), changed];
-        let writes = responses
-            .iter()
-            .map(ResponseExt::write)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        let combined = combine_responses(&responses, &writes).unwrap();
+        let responses = [changed.clone(), changed];
+        let combined = merge_write_responses(&responses).unwrap();
         let write = combined.write().unwrap();
+        assert_eq!(write.targets, [id]);
         assert_eq!(write.tasks.len(), 2);
         assert_eq!(write.tasks[0].title, "Install the greenhouse latch");
         let ids = ShortIds::new([id, peer]);
