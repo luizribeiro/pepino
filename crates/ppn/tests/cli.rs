@@ -1176,3 +1176,96 @@ fn add_accepts_protocol_fields_on_json_stdin() {
     assert_eq!(error["error"]["field"], "stdin");
     assert_eq!(error["error"]["code"], "invalid_input");
 }
+
+fn create_task(sandbox: &ConfigSandbox, title: &str, flags: &[&str]) -> String {
+    as_json(&sandbox.run(&[&["add", title, "--json"], flags].concat()))["created"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[test]
+fn task_flags_round_trip_through_add_show_and_status() {
+    let (sandbox, _) = task_sandbox();
+    let parent = create_task(&sandbox, "Renovate the greenhouse", &[]);
+    let blocker = create_task(&sandbox, "Order stainless fittings", &[]);
+    let downstream = create_task(&sandbox, "Test the new latch", &[]);
+    let description = "Use stainless hardware.\nReuse the right hinge.";
+    let file = sandbox.home.path().join("description.txt");
+    std::fs::write(&file, description).unwrap();
+    let foreign = "f0".repeat(32);
+    let status = as_json(&sandbox.run(&["status", "--json"]));
+    let me = status["identity"]["id"].as_str().unwrap();
+    let write = as_json(&sandbox.run(&[
+        "add",
+        "Replace the greenhouse latch",
+        "-t",
+        "greenhouse",
+        "--tag",
+        "hardware",
+        "--due",
+        "2026-12-01",
+        "--priority",
+        "2",
+        "--assign",
+        "me",
+        "--assign",
+        &foreign,
+        "--set",
+        "estimate=3",
+        "--set",
+        "delivery=2026-11-30",
+        "--set",
+        "finish=stainless",
+        "--set",
+        "obsolete=5",
+        "--unset",
+        "obsolete",
+        "--parent",
+        &parent,
+        "--blocks",
+        &downstream,
+        "--blocked-by",
+        &blocker,
+        "--from-file",
+        file.to_str().unwrap(),
+        "--json",
+    ]));
+    let id = write["created"].as_str().unwrap();
+    let task = write["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["id"] == id)
+        .unwrap();
+    let mut assignees = [me, foreign.as_str()];
+    assignees.sort_unstable();
+    assert_eq!(
+        *task,
+        json!({
+            "id":id,"title":"Replace the greenhouse latch","description":description,
+            "status":"todo","due":"2026-12-01","priority":2,"tags":["greenhouse","hardware"],
+            "assignees":assignees,"fields":{"estimate":{"type":"integer","value":3},
+                "delivery":{"type":"date","value":"2026-11-30"},"finish":{"type":"text","value":"stainless"}},
+            "created":task["created"],"updated":task["updated"],"author":status["device"]["id"],
+            "parent":parent,"children":[],"blocks":[downstream],"blocked_by":[blocker],"relates":[],
+            "blocked":true,"ready":false,"comment_count":0
+        })
+    );
+    for clock in [&task["created"], &task["updated"]] {
+        assert_eq!(clock.as_object().unwrap().len(), 3);
+        let utc = chrono::DateTime::parse_from_rfc3339(clock["utc"].as_str().unwrap()).unwrap();
+        assert!(clock["utc"].as_str().unwrap().ends_with('Z'));
+        assert_eq!(clock["wall_ms"], utc.timestamp_millis());
+        assert!(clock["counter"].is_u64());
+    }
+    assert_eq!(write.as_object().unwrap().len(), 6);
+    assert_eq!(write["edges"].as_array().unwrap().len(), 3);
+    assert!(
+        write["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|edge| edge["effective"] == true)
+    );
+}
