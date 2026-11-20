@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use pepino_core::InitialFields;
+use pepino_core::{Event, InitialFields};
 use serde::{Deserialize, Serialize};
 
 use crate::{AppError, Date, EdgeKind, FieldValue, Hlc, Status};
@@ -77,6 +77,52 @@ pub struct InitialTaskFields {
     pub tags: BTreeSet<String>,
     pub assignees: BTreeSet<String>,
     pub fields: BTreeMap<String, FieldValue>,
+}
+
+impl TryFrom<Event> for EventChange {
+    type Error = AppError;
+
+    fn try_from(value: Event) -> Result<Self, Self::Error> {
+        Ok(match value {
+            Event::TaskCreated { title, fields } => Self::Creation {
+                title,
+                fields: fields.try_into()?,
+            },
+            Event::TaskFieldSet { task, field, value } => Self::Field {
+                task: task.to_string(),
+                field: field.as_str().into(),
+                value: value.try_into()?,
+            },
+            Event::TagAdded { task, tag } | Event::TagRemoved { task, tag } => Self::Tag {
+                task: task.to_string(),
+                tag,
+            },
+            Event::AssigneeAdded { task, who } | Event::AssigneeRemoved { task, who } => {
+                Self::Assignee {
+                    task: task.to_string(),
+                    who: who.to_string(),
+                }
+            }
+            Event::EdgeAdded { from, kind, to } | Event::EdgeRemoved { from, kind, to } => {
+                Self::Edge {
+                    from: from.to_string(),
+                    kind: kind.try_into()?,
+                    to: to.to_string(),
+                }
+            }
+            Event::CommentAdded { task, text } => Self::Comment {
+                task: task.to_string(),
+                text,
+            },
+            Event::TaskDeleted { task } => Self::Deletion {
+                task: task.to_string(),
+            },
+            _ => Self::Skipped {
+                tasks: value.referenced_tasks().map(|id| id.to_string()).collect(),
+                version: None,
+            },
+        })
+    }
 }
 
 impl TryFrom<InitialFields> for InitialTaskFields {
