@@ -969,6 +969,7 @@ dependencies = [
  "pepino-core",
  "proptest",
  "rand",
+ "serde",
  "sqlx",
  "tempfile",
  "thiserror",

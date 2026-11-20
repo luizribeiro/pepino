@@ -180,6 +180,53 @@ fn status_rank(status: Status) -> u8 {
         Status::Doing => 1,
         Status::Done => 2,
         Status::Cancelled => 3,
-        _ => 4,
+        _ => u8::MAX,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::{
+        Deserialize,
+        de::{self, IntoDeserializer},
+    };
+
+    use super::*;
+
+    #[test]
+    fn each_known_status_has_an_explicit_rank() {
+        struct StatusVariants;
+
+        impl<'de> de::Deserializer<'de> for StatusVariants {
+            type Error = de::value::Error;
+
+            fn deserialize_any<V: de::Visitor<'de>>(self, _: V) -> Result<V::Value, Self::Error> {
+                Err(de::Error::custom(
+                    "expected Status to deserialize as an enum",
+                ))
+            }
+
+            fn deserialize_enum<V: de::Visitor<'de>>(
+                self,
+                _: &'static str,
+                variants: &'static [&'static str],
+                visitor: V,
+            ) -> Result<V::Value, Self::Error> {
+                for (index, name) in variants.iter().enumerate() {
+                    let status =
+                        Status::deserialize(de::value::StrDeserializer::<Self::Error>::new(name))?;
+                    assert_eq!(usize::from(status_rank(status)), index, "{name}");
+                }
+                visitor.visit_enum("todo".into_deserializer())
+            }
+
+            serde::forward_to_deserialize_any! {
+                bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes byte_buf
+                option unit unit_struct newtype_struct seq tuple tuple_struct map struct
+                identifier ignored_any
+            }
+        }
+
+        assert_eq!(Status::deserialize(StatusVariants).unwrap(), Status::Todo);
     }
 }
