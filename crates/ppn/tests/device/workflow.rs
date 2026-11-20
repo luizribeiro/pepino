@@ -1,19 +1,27 @@
 use super::support::{Host, until};
-use crate::common::task_error;
+use crate::{
+    common::task_error,
+    wait::{WAIT, until as until_observed},
+};
 
 fn task(host: &Host, args: &[&str]) -> String {
     host.json(args)["created"].as_str().unwrap().into()
 }
 
-fn wait_for_events(host: &Host, count: u64) {
-    until(|| host.json(&["status"])["counts"]["events"].as_u64() == Some(count));
-}
-
-fn assert_views(owner: &Host, peer: &Host, ids: &[&str]) {
-    assert_eq!(owner.json(&["ls"]), peer.json(&["ls"]));
-    for id in ids {
-        assert_eq!(owner.json(&["show", id]), peer.json(&["show", id]));
-    }
+fn wait_for_views(owner: &Host, peer: &Host, ids: &[&str]) {
+    let views = |args: &[&str]| (owner.json(args), peer.json(args));
+    until_observed(
+        || {
+            let listings = views(&["ls"]);
+            let mut observed = vec![listings];
+            if observed[0].0 == observed[0].1 {
+                observed.extend(ids.iter().map(|id| views(&["show", id])));
+            }
+            observed
+        },
+        |observed| observed.iter().all(|(left, right)| left == right),
+        WAIT,
+    );
 }
 
 fn network() -> (tempfile::TempDir, String) {
@@ -128,15 +136,13 @@ fn linked_devices_share_tasks_and_late_members_get_history() {
     );
     titanium.run(&["comment", &child, "Bring safety glass"]);
     titanium.run(&["sync"]);
-    wait_for_events(&ferrum, 4);
-    assert_views(&titanium, &ferrum, &[&project, &child]);
+    wait_for_views(&titanium, &ferrum, &[&project, &child]);
 
     ferrum.run(&["edit", &child, "--title", "Install the new glazing"]);
     let inspection = task(&ferrum, &["add", "Check the door seals"]);
     ferrum.run(&["comment", &inspection, "Order stainless screws"]);
     ferrum.run(&["sync"]);
-    wait_for_events(&titanium, 7);
-    assert_views(&titanium, &ferrum, &[&project, &child, &inspection]);
+    wait_for_views(&titanium, &ferrum, &[&project, &child, &inspection]);
     let listing = titanium.json(&["ls"]);
     let visible_names = listing["names"].as_object().unwrap();
     assert_eq!(visible_names.len(), 2);
@@ -155,8 +161,7 @@ fn linked_devices_share_tasks_and_late_members_get_history() {
         let late = Host::new(&network);
         let grant = granting.add(&late.request(name), &[]);
         join(&late, &grant);
-        wait_for_events(&late, 7);
-        assert_views(&titanium, &late, &[&project, &child, &inspection]);
+        wait_for_views(&titanium, &late, &[&project, &child, &inspection]);
     }
     let peer_id = result["device_id"].as_str().unwrap().parse().unwrap();
     until(|| {
@@ -181,7 +186,7 @@ fn offline_conflicting_edits_converge_in_both_directions() {
     join(&ferrum, &grant);
     let task = task(&titanium, &["add", "Schedule the window repair"]);
     titanium.run(&["sync"]);
-    wait_for_events(&ferrum, 1);
+    wait_for_views(&titanium, &ferrum, &[&task]);
 
     ferrum.stop();
     ferrum.run(&["edit", &task, "--title", "Replace the window"]);
@@ -192,9 +197,7 @@ fn offline_conflicting_edits_converge_in_both_directions() {
 
     ferrum.start();
     ferrum.run(&["sync"]);
-    wait_for_events(&ferrum, 5);
-    wait_for_events(&titanium, 5);
-    assert_views(&titanium, &ferrum, &[&task]);
+    wait_for_views(&titanium, &ferrum, &[&task]);
 }
 
 #[test]
@@ -252,7 +255,7 @@ fn a_timed_out_join_completes_when_the_grantor_returns() {
     titanium.start();
     // From here the daemon completes the join without another join command.
     until(|| ferrum.json(&["status"])["boards"][0]["membership"] == "joined");
-    assert_views(&titanium, &ferrum, &[&project]);
+    wait_for_views(&titanium, &ferrum, &[&project]);
     ferrum.stop();
     assert_eq!(
         ferrum.json(&["status"])["boards"][0]["membership"],

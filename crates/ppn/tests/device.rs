@@ -105,6 +105,10 @@ fn device_ls_reports_the_current_device_in_human_and_json_output() {
 mod support;
 
 #[cfg(pepino_network_tests)]
+#[path = "common/wait.rs"]
+mod wait;
+
+#[cfg(pepino_network_tests)]
 #[path = "device/workflow.rs"]
 mod workflow;
 
