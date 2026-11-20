@@ -29,12 +29,7 @@ pub struct ConfigFile {
 
 impl ConfigFile {
     pub fn explicit(path: &Path, dirs: &PlatformDirs) -> Result<Self, CliError> {
-        let expanded = dirs.expand_home(path).map_err(|error| {
-            CliError::new(
-                ErrorKind::InvalidConfig,
-                format!("{}: {error}", path.display()),
-            )
-        })?;
+        let expanded = dirs.resolve_config_path(path)?;
         Ok(Self {
             source: Source::ExplicitFile {
                 path: expanded.clone(),
@@ -133,6 +128,20 @@ pub fn paths(
 mod tests {
     use super::*;
     use crate::config::Platform;
+
+    #[test]
+    fn reports_relative_explicit_paths_against_injected_working_directory() {
+        let dirs = PlatformDirs::from_env(
+            Platform::Linux,
+            &Env::new(),
+            || panic!("relative paths do not consume HOME"),
+            || Ok("/srv/release".into()),
+        );
+        let file = ConfigFile::explicit(Path::new("profile.toml"), &dirs).unwrap();
+        let path = PathBuf::from("/srv/release/profile.toml");
+        assert_eq!(file.path, path);
+        assert_eq!(file.source, Source::ExplicitFile { path });
+    }
 
     #[test]
     fn explicit_selection_replaces_both_default_paths() {

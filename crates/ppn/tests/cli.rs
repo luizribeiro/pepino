@@ -843,9 +843,13 @@ fn config_show_replaces_selected_files_with_the_flag_path() {
     let data = as_json(&success(run("alternate.toml")));
     assert_eq!(
         data["files"],
-        json!([{"path": "alternate.toml", "exists": true}])
+        json!([{"path": sandbox.home.path().join("alternate.toml"), "exists": true}])
     );
     assert_eq!(data["values"]["network"]["value"], "alternate");
+    assert_eq!(
+        data["values"]["network"]["path"],
+        json!(sandbox.home.path().join("alternate.toml"))
+    );
     assert_eq!(data["values"]["relay_urls"]["source"], "default");
     assert_eq!(data["values"]["trusted_devices"]["value"], json!([]));
     let diagnostic = assert_json_error(run("missing.toml"), 1, "invalid_config");
@@ -853,7 +857,7 @@ fn config_show_replaces_selected_files_with_the_flag_path() {
         diagnostic["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("missing.toml")
+            .contains(sandbox.home.path().join("missing.toml").to_str().unwrap())
     );
 }
 

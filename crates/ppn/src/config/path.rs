@@ -23,6 +23,10 @@ impl AbsolutePath {
         &self.0
     }
 
+    pub(crate) fn into_path(self) -> PathBuf {
+        self.0
+    }
+
     pub(crate) fn join(&self, suffix: &str) -> Self {
         Self(self.0.join(suffix))
     }

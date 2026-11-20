@@ -1,5 +1,6 @@
 use std::cell::OnceCell;
 use std::ffi::OsStr;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use super::path::expand_home;
@@ -18,6 +19,7 @@ pub struct PlatformDirs {
     platform: Platform,
     env: Env,
     fallback_home: fn() -> Option<PathBuf>,
+    working_dir: fn() -> io::Result<PathBuf>,
     home: OnceCell<Result<AbsolutePath, ValueError>>,
 }
 
@@ -36,10 +38,20 @@ impl PlatformDirs {
         .into_iter()
         .filter_map(|(name, path)| Some((name.into(), path?.as_os_str().to_owned())))
         .collect();
-        Self::from_env(platform, &env, || None)
+        Self::from_env(
+            platform,
+            &env,
+            || None,
+            || Err(io::Error::other("working directory was not supplied")),
+        )
     }
 
-    pub fn from_env(platform: Platform, env: &Env, fallback_home: fn() -> Option<PathBuf>) -> Self {
+    pub fn from_env(
+        platform: Platform,
+        env: &Env,
+        fallback_home: fn() -> Option<PathBuf>,
+        working_dir: fn() -> io::Result<PathBuf>,
+    ) -> Self {
         Self {
             platform,
             env: ["HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"]
@@ -47,6 +59,7 @@ impl PlatformDirs {
                 .filter_map(|name| Some((name.into(), env.get(OsStr::new(name))?.clone())))
                 .collect(),
             fallback_home,
+            working_dir,
             home: OnceCell::new(),
         }
     }
@@ -68,6 +81,31 @@ impl PlatformDirs {
 
     pub(crate) fn expand_home(&self, path: &Path) -> Result<PathBuf, ValueError> {
         expand_home(path, || self.home().map(AbsolutePath::as_path))
+    }
+
+    pub(crate) fn resolve_config_path(
+        &self,
+        path: &Path,
+    ) -> Result<PathBuf, crate::error::CliError> {
+        use crate::error::{CliError, ErrorKind};
+
+        let invalid = |error: &dyn std::fmt::Display| {
+            CliError::new(
+                ErrorKind::InvalidConfig,
+                format!("{}: {error}", path.display()),
+            )
+        };
+        let expanded = self.expand_home(path).map_err(|error| invalid(&error))?;
+        let absolute = if expanded.is_absolute() {
+            expanded
+        } else {
+            (self.working_dir)()
+                .map_err(|error| invalid(&error))?
+                .join(expanded)
+        };
+        AbsolutePath::new(absolute)
+            .map(AbsolutePath::into_path)
+            .map_err(|error| invalid(&error))
     }
 
     pub fn user_config(&self) -> Result<AbsolutePath, ValueError> {
@@ -160,6 +198,7 @@ mod tests {
                 ("XDG_STATE_HOME".into(), "/srv/release".into()),
             ]),
             || panic!("absolute XDG paths do not consume HOME"),
+            || panic!("absolute XDG paths do not consume the working directory"),
         );
         assert_eq!(
             platform.user_config().unwrap().as_path(),

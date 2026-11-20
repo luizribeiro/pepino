@@ -68,7 +68,7 @@ pub fn run() -> ExitCode {
     };
     let inputs = ProcessInputs {
         args: env::args_os().collect(),
-        dirs: PlatformDirs::from_env(platform, &env, env::home_dir),
+        dirs: PlatformDirs::from_env(platform, &env, env::home_dir, env::current_dir),
         env,
         read: |path| fs::read_to_string(path),
         exists: Path::try_exists,
@@ -245,9 +245,12 @@ mod tests {
         ProcessInputs {
             args: args.iter().map(OsString::from).collect(),
             env: Env::new(),
-            dirs: PlatformDirs::from_env(Platform::Linux, &Env::new(), || {
-                panic!("command requested HOME")
-            }),
+            dirs: PlatformDirs::from_env(
+                Platform::Linux,
+                &Env::new(),
+                || panic!("command requested HOME"),
+                || panic!("command requested the working directory"),
+            ),
             read: |_| panic!("command read a configuration file"),
             exists: |_| panic!("command probed for a configuration file"),
         }
@@ -292,7 +295,12 @@ mod tests {
                 .map(|home| ("HOME".into(), home.into()))
                 .into_iter()
                 .collect();
-            inputs.dirs = PlatformDirs::from_env(Platform::Linux, &env, || None);
+            inputs.dirs = PlatformDirs::from_env(
+                Platform::Linux,
+                &env,
+                || None,
+                || panic!("absolute path requested the working directory"),
+            );
             inputs.read = |path| {
                 assert_eq!(path, Path::new("/srv/release.toml"));
                 Ok("network = 'release-team'".into())
