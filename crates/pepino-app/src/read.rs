@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use pepino_store::{BoardView, Dependency};
 
 use crate::app::store_error;
@@ -39,8 +41,44 @@ impl App {
             .await
             .map_err(store_error)?;
         let task = resolve(&board, "task", reference)?;
-        let edges = board
-            .edges(task.id)
+        let incident = board.edges(task.id);
+        let peers: BTreeSet<_> = incident
+            .iter()
+            .flat_map(|edge| [edge.from, edge.to])
+            .filter(|id| *id != task.id)
+            .collect();
+        let mut relation_titles = BTreeMap::new();
+        let mut missing = Vec::new();
+        for peer in peers {
+            match board.task(peer) {
+                Some(record) => {
+                    relation_titles.insert(peer.to_string(), record.title.clone());
+                }
+                None => missing.push(peer),
+            }
+        }
+        if !missing.is_empty() {
+            relation_titles.extend(
+                self.store
+                    .task_titles(self.local.board_id, &missing)
+                    .await
+                    .map_err(store_error)?
+                    .into_iter()
+                    .map(|(id, title)| (id.to_string(), title)),
+            );
+        }
+        let assignee_names = task
+            .assignees
+            .contains(&self.local.identity_id)
+            .then(|| {
+                (
+                    self.local.identity_id.to_string(),
+                    self.local.display_name.clone(),
+                )
+            })
+            .into_iter()
+            .collect();
+        let edges = incident
             .into_iter()
             .filter(|edge| edge.exclusion.is_some())
             .map(|edge| edge_effect(edge.from, edge.kind, edge.to, Some(edge)))
@@ -48,6 +86,8 @@ impl App {
         Ok(Response::Task {
             task: Box::new(project(task, board.comments(task.id))?),
             edges,
+            relation_titles,
+            assignee_names,
         })
     }
 

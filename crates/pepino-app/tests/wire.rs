@@ -304,6 +304,8 @@ fn task_comments_and_edge_effects_have_stable_shapes() {
     let wire = WireResponse::new(Ok(Response::Task {
         edges: vec![],
         task: Box::new(task),
+        relation_titles: Default::default(),
+        assignee_names: Default::default(),
     }));
     assert_eq!(serde_json::to_value(&wire).unwrap(), response);
     round_trip(&wire);

@@ -309,10 +309,26 @@ async fn link_and_unlink_use_present_edges_including_excluded_ones() {
         reason: Some(EdgeExclusionReason::Cycle),
     };
     assert_eq!(edges, std::slice::from_ref(&excluded));
+    write(
+        &mut app,
+        json!({"op":"assign","task":first,"assignees":["me"]}),
+    )
+    .await;
     let response = handle(&mut app, json!({"op":"get_task","task":first}))
         .await
         .unwrap();
-    assert!(matches!(response, Response::Task { edges, .. } if edges == [excluded.clone()]));
+    let response = serde_json::to_value(response).unwrap();
+    assert_eq!(response["edges"], json!([excluded]));
+    assert_eq!(
+        response["relation_titles"],
+        json!({second.clone(): "Install the latch"})
+    );
+    assert_eq!(
+        response["assignee_names"],
+        json!({
+            app.local_state().identity_id.to_string(): app.local_state().display_name
+        })
+    );
     assert!(get(&mut app, &first).await.blocked_by.is_empty());
     let (changed, _, _, edges) = write(&mut app, link(&second, "blocks", &first)).await;
     assert!(!changed && edges.is_empty());
@@ -384,6 +400,8 @@ async fn comments_are_ordered_and_preserve_repeated_text() {
     let response = Response::Task {
         edges: vec![],
         task: Box::new(task),
+        relation_titles: Default::default(),
+        assignee_names: Default::default(),
     };
     let json = serde_json::to_vec(&response).unwrap();
     assert_eq!(serde_json::from_slice::<Response>(&json).unwrap(), response);

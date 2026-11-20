@@ -129,6 +129,10 @@ pub enum Response {
         task: Box<TaskRecord>,
         #[serde(default)]
         edges: Vec<EdgeEffect>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        relation_titles: BTreeMap<String, String>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        assignee_names: BTreeMap<String, String>,
     },
     Tree {
         nodes: Vec<TreeNode>,
