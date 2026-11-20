@@ -15,7 +15,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode},
 };
 
-use super::support::{WAIT, fixture_dir, network, next, settings, start, until};
+use super::support::{WAIT, enroll, fixture_dir, network, next, settings, start, until};
 
 const EVENTS: usize = 24;
 
@@ -36,17 +36,8 @@ async fn abort_recovers_exactly_the_random_unacknowledged_subset() {
     let mut owner = a.create_board().await.unwrap();
     let board_id = owner.id();
     let owner_info = owner_peer_info(&config, &a).await;
-    let (b, c) = tokio::join!(
-        start_peer(&ben, &owner_info, board_id),
-        start_peer(&chloe, &owner_info, board_id),
-    );
-    let (other, third) = tokio::try_join!(b.open_board(board_id), c.open_board(board_id)).unwrap();
-    for member in [&b, &c] {
-        owner
-            .add_member(&member.member_info().await.unwrap(), Role::Write)
-            .await
-            .unwrap();
-    }
+    let b = start_peer(&ben, &owner_info, board_id).await;
+    let other = enroll(&owner, &b, Role::Write).await;
     let ticket = b.member_info().await.unwrap();
     assert_eq!(ticket.device_id().unwrap(), b.device_id());
     owner.add_member(&ticket, Role::Write).await.unwrap();
@@ -54,7 +45,8 @@ async fn abort_recovers_exactly_the_random_unacknowledged_subset() {
         owner.add_member(&ticket, Role::Read).await,
         Err(pepino_node::Error::Member(_))
     ));
-    tokio::try_join!(other.wait_until_joined(WAIT), third.wait_until_joined(WAIT)).unwrap();
+    let c = start_peer(&chloe, &owner_info, board_id).await;
+    let third = enroll(&owner, &c, Role::Write).await;
 
     let mut events = owner.events().unwrap();
     let (first, second, third) = tokio::join!(

@@ -73,7 +73,14 @@ pub async fn enroll(owner: &BoardHandle, device: &Node, role: Role) -> BoardHand
         .add_member(&device.member_info().await.unwrap(), role)
         .await
         .unwrap();
-    board.wait_until_joined(WAIT).await.unwrap();
+    board.wait_until_joined(WAIT).await.unwrap_or_else(|error| {
+        panic!(
+            "{} joining board {} failed with {error}. Last status was {:?}",
+            device.device_id(),
+            owner.id(),
+            device.status()
+        )
+    });
     board
 }
 
