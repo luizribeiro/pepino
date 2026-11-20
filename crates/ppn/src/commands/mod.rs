@@ -21,3 +21,5 @@ pub mod tree;
 pub mod unlink;
 pub mod version;
 pub mod view;
+
+pub mod daemon;

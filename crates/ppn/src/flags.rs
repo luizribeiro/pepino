@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use clap::{Args, ValueEnum};
 
-use crate::config::{Env, env_value};
+use crate::config::{Env, LogLevel, env_value};
 use crate::error::{CliError, ErrorKind};
 use crate::terminal::Color;
 
@@ -23,6 +23,10 @@ pub struct Globals {
     /// Limit the time spent waiting, for example 5 seconds, 500ms, or 2m.
     #[arg(long, global = true, value_name = "DURATION", value_parser = parse_timeout)]
     pub timeout: Option<Duration>,
+
+    /// Set the daemon log level.
+    #[arg(long, global = true, value_enum)]
+    pub log_level: Option<LogLevel>,
 
     /// Use this file in place of the user and system files. PPN_CONFIG also selects a file.
     #[arg(long, global = true, value_name = "PATH")]
@@ -69,6 +73,7 @@ impl Globals {
         Self {
             json,
             config: None,
+            log_level: None,
             yes: options(args).iter().any(|arg| arg == "--yes"),
             color: option_values(args, "--color")
                 .filter_map(|value| Color::from_str(value, false).ok())

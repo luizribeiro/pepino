@@ -74,6 +74,7 @@ enum Command {
     Comment(commands::comment::Args),
     Link(commands::link::Args),
     Unlink(commands::unlink::Args),
+    Daemon(commands::daemon::Args),
     Debug(debug::Args),
 }
 
@@ -193,12 +194,22 @@ impl ProcessInputs {
             config: globals.config.clone(),
             color: explicit_color.then_some(globals.color),
         };
+        let level = globals.log_level;
         Context::new(
             Terminal::detect(globals.color, &self.env),
             globals.yes,
             globals.timeout,
             self.time,
-            move || config::load(&flags, &self.env, self.read, &self.dirs),
+            move || {
+                let mut loaded = config::load(&flags, &self.env, self.read, &self.dirs)?;
+                if let Some(value) = level {
+                    loaded.config.log_level = config::Setting {
+                        value,
+                        source: config::Source::Flag,
+                    };
+                }
+                Ok(loaded)
+            },
         )
     }
 }
@@ -238,6 +249,7 @@ fn dispatch(
         Some(Command::Comment(args)) => commands::comment::run(context, args),
         Some(Command::Link(args)) => commands::link::run(context, args),
         Some(Command::Unlink(args)) => commands::unlink::run(context, args),
+        Some(Command::Daemon(args)) => commands::daemon::run(context, args),
         Some(Command::Debug(args)) => debug::run(context, args),
         None => Ok(help::run(context, definition(), None)),
     }
