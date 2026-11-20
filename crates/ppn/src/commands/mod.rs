@@ -1,11 +1,14 @@
 pub mod add;
+pub mod assign;
 pub mod cancel;
+pub mod comment;
 pub mod config;
 pub mod debug;
 pub mod deps;
 pub mod done;
 pub mod edit;
 pub mod help;
+pub mod link;
 pub mod log;
 pub mod ls;
 pub mod ready;
