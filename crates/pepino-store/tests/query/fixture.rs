@@ -1,8 +1,8 @@
 use std::sync::OnceLock;
 
 use pepino_core::{
-    BoardId, Date, DeviceId, Envelope, Event, EventId, FieldName, FieldValue, Hlc, IdentityId,
-    InitialFields, Status, TaskId,
+    BoardId, Date, DeviceId, EdgeKind, Envelope, Event, EventId, FieldName, FieldValue, Hlc,
+    IdentityId, InitialFields, Status, TaskId,
 };
 use pepino_store::{AppendOutcome, BoardView, IdSource, Store};
 
@@ -162,6 +162,44 @@ async fn load() -> BoardView {
                 title: title.into(),
                 fields,
             },
+        )
+        .await;
+    }
+    let edge = |from, kind, to| Event::EdgeAdded {
+        from: id(from),
+        kind,
+        to: id(to),
+    };
+    for (index, event) in (40u8..).zip([
+        edge(1, EdgeKind::Parent, 0),
+        edge(1, EdgeKind::Parent, 7),
+        edge(6, EdgeKind::Parent, 0),
+        edge(9, EdgeKind::Parent, 14),
+        edge(1, EdgeKind::Blocks, 0),
+        edge(0, EdgeKind::Blocks, 6),
+        edge(6, EdgeKind::Blocks, 1),
+        edge(2, EdgeKind::Blocks, 8),
+        edge(14, EdgeKind::Blocks, 9),
+        Event::CommentAdded {
+            task: id(0),
+            text: "Bring galvanized bolts".into(),
+        },
+        Event::CommentAdded {
+            task: id(7),
+            text: "Use the Straße marker".into(),
+        },
+        Event::CommentAdded {
+            task: id(14),
+            text: "Discard the greenhouse glass".into(),
+        },
+        Event::TaskDeleted { task: id(14) },
+    ]) {
+        record(
+            &store,
+            index,
+            midnight,
+            EventId::from_bytes([index; 32]),
+            event,
         )
         .await;
     }
