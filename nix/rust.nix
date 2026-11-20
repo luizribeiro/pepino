@@ -27,6 +27,8 @@ in
       cargoClippyExtraArgs = "--all-targets -- -D warnings";
     });
     test = craneLib.cargoTest (shared // { cargoExtraArgs = testArgs; } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+      # The sandbox does not inherit CI, which the network opt-in assertion reads.
+      env.CI = "true";
       env.PEPINO_NETWORK_TESTS = "1";
       env.RUST_TEST_THREADS = "1";
       # The sandbox's loopback has no IPv4 multicast route. Keep the network tests isolated.
@@ -38,7 +40,11 @@ in
           ${lib.getExe' pkgs.iproute2 "ip"} link set lo up multicast on
           ${lib.getExe' pkgs.iproute2 "ip"} route add 224.0.0.0/4 dev lo
           cargoWithProfile test "$@"
-        ' bash ${testArgs}
+        ' bash ${testArgs} || {
+          echo 'Linux network tests failed. If namespace setup failed above, enable unprivileged user namespaces for the Nix build users.' >&2
+          echo 'On Ubuntu, allow UID mapping through AppArmor (on a disposable runner: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0).' >&2
+          exit 1
+        }
         runHook postCheck
       '';
     });

@@ -24,6 +24,10 @@ jobs:
       - name: Enable KVM for the NixOS test
         if: runner.os == 'Linux'
         run: sudo chmod a+rw /dev/kvm
+      - name: Allow unprivileged user namespaces for Linux network tests
+        if: runner.os == 'Linux'
+        # Ubuntu restricts UID mapping in unprivileged user namespaces by default.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:

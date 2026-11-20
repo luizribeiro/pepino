@@ -65,10 +65,13 @@ pkgs.testers.runNixOSTest {
     laptop.succeed(f"{ppn} add 'Check the door seals'")
     laptop.succeed(f"{ppn} sync")
 
-    request = server.succeed(f"{node} device request --name Server").strip()
+    request = json.loads(server.succeed(f"{node} device request --name Server --json"))
     server.fail(f"systemctl is-active {service}")
-    grant = laptop.succeed(f"{ppn} device add {quote(request)}").strip()
-    joined = json.loads(server.succeed(f"{node} device join {quote(grant)} --timeout 60s --json"))
+    request_code = quote(request["request"])
+    fingerprint = quote(request["fingerprint"])
+    grant = laptop.succeed(f"printf '%s' {request_code} | {ppn} device add - --fingerprint {fingerprint}").strip()
+    join = f"printf '%s' {quote(grant)} | {node} device join - --timeout 60s --json"
+    joined = json.loads(server.wait_until_succeeds(join, timeout=deadline))
     assert joined["joined"], joined
     server.wait_for_unit(service)
     server.succeed(f"test -S /run/pepino/control.sock && {node} status")
@@ -78,19 +81,27 @@ pkgs.testers.runNixOSTest {
     def listing(machine, command):
         return json.loads(machine.succeed(f"{command} ls --json"))
 
-    assert listing(laptop, ppn) == listing(server, node)
+    def listings_match(last_try):
+        laptop_listing = listing(laptop, ppn)
+        server_listing = listing(server, node)
+        matches = laptop_listing == server_listing
+        if last_try:
+            assert matches, (laptop_listing, server_listing)
+        return matches
+
+    retry(listings_match, timeout=deadline)
     server.succeed(f"{node} edit {quote(first)} --title 'Install the new glazing'")
     laptop.wait_until_succeeds(f"{ppn} ls --json | grep -q 'Install the new glazing'", timeout=deadline)
-    assert listing(laptop, ppn) == listing(server, node)
+    retry(listings_match, timeout=deadline)
 
     boot_id = server.succeed("cat /proc/sys/kernel/random/boot_id")
     server.reboot()
     assert server.succeed("cat /proc/sys/kernel/random/boot_id") != boot_id
     server.wait_for_unit("multi-user.target")
     server.wait_for_unit(service)
-    assert listing(laptop, ppn) == listing(server, node)
+    retry(listings_match, timeout=deadline)
     laptop.succeed(f"{ppn} add 'Label the spare panes'")
     server.wait_until_succeeds(f"{node} ls --json | grep -q 'Label the spare panes'", timeout=deadline)
-    assert listing(laptop, ppn) == listing(server, node)
+    retry(listings_match, timeout=deadline)
   '';
 }
