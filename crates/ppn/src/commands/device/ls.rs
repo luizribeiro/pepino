@@ -16,6 +16,14 @@ struct Device {
     this_device: bool,
     state: &'static str,
     last_seen: Option<chrono::DateTime<chrono::Utc>>,
+    boards: Vec<DeviceBoard>,
+}
+
+#[derive(Serialize)]
+struct DeviceBoard {
+    id: pepino_core::BoardId,
+    name: String,
+    membership: &'static str,
 }
 
 pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
@@ -38,10 +46,38 @@ pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
             let label = id.to_string();
             let seen_on_board = local.saw_device_on_board(id)
                 || network.is_some_and(|network| network.peers_synced.contains(&label));
+            let boards = local
+                .boards()
+                .iter()
+                .map(|board| {
+                    let membership = if this_device {
+                        match network
+                            .and_then(|network| network.board_joins.get(&board.id).copied())
+                            .unwrap_or_else(|| local.board_join_state(board.id))
+                        {
+                            BoardJoinState::Joined => "joined",
+                            BoardJoinState::WaitingToBeAdded => "waiting_to_be_added",
+                            _ => "waiting_for_first_sync",
+                        }
+                    } else {
+                        match network.and_then(|network| network.board_members.get(&board.id)) {
+                            Some(members) if members.contains(&id) => "member",
+                            Some(_) => "pending",
+                            None => "unknown",
+                        }
+                    };
+                    DeviceBoard {
+                        id: board.id,
+                        name: board.name.clone(),
+                        membership,
+                    }
+                })
+                .collect();
             Device {
                 id,
                 name,
                 this_device,
+                boards,
                 state: match (this_device, complete, seen_on_board) {
                     (true, false, _) => "pending",
                     (true, true, _) => "joined",
@@ -84,6 +120,14 @@ impl Render for Devices {
                     text.push_str(&format!(
                         " · last seen {}",
                         self.1.dates().timestamp(time, terminal)
+                    ));
+                }
+                for board in &device.boards {
+                    text.push_str(&format!(
+                        "\n  {} ({}) · {}",
+                        single_line(&board.name),
+                        short_id(&board.id.to_string()),
+                        board.membership.replace('_', " ")
                     ));
                 }
                 text
