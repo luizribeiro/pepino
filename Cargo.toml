@@ -16,3 +16,6 @@ print_stdout = "deny"
 print_stderr = "deny"
 exit = "deny"
 dbg_macro = "deny"
+
+[profile.dev.package."*"]
+opt-level = 1
