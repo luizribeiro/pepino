@@ -34,10 +34,18 @@ impl Dates<'_> {
     }
 
     pub fn local_date(self, clock: Hlc) -> String {
+        self.local_stamp(clock, self.format)
+    }
+
+    pub fn local_date_time(self, clock: Hlc) -> String {
+        self.local_stamp(clock, &format!("{} %T", self.format))
+    }
+
+    fn local_stamp(self, clock: Hlc, format: &str) -> String {
         let Some(time) = wall_time(clock.wall_ms) else {
             return format!("{} ms since the Unix epoch", clock.wall_ms);
         };
-        format_calendar(time.with_timezone(&self.time.offset), self.format)
+        format_calendar(time.with_timezone(&self.time.offset), format)
     }
 
     pub fn relative_time(self, clock: Hlc, terminal: &Terminal) -> String {
@@ -104,6 +112,7 @@ mod tests {
             counter: 2,
         };
         assert_eq!(dates.local_date(clock), "19/11/2026");
+        assert_eq!(dates.local_date_time(clock), "19/11/2026 23:45:00");
         assert_eq!(
             dates.relative_time(clock, &Terminal::fixed(None, false)),
             "19/11/2026"
