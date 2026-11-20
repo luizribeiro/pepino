@@ -121,10 +121,6 @@ pub fn unreachable(error: std::io::Error) -> CliError {
 }
 
 pub fn notify_write(context: &Context<'_>, selection: Option<&Path>, verbose: bool) {
-    use ppn::daemon::{
-        client::unavailable,
-        protocol::{Operation, Outcome},
-    };
     use std::io::Write as _;
 
     let Ok(loaded) = context.config() else { return };
@@ -135,14 +131,13 @@ pub fn notify_write(context: &Context<'_>, selection: Option<&Path>, verbose: bo
     let client = Client {
         path: socket_path(config),
     };
-    let result = match client.call(Operation::Nudge) {
-        Ok(Outcome::Nudged) => Ok(()),
-        Ok(_) => Err(std::io::Error::other("Unexpected daemon response")),
-        Err(error) if unavailable(&error) => {
-            process::spawn(config, selection, config.log_level.value).map(|_| ())
+    let result = client.nudge().or_else(|error| {
+        if !unavailable(&error) {
+            return Err(error);
         }
-        Err(error) => Err(error),
-    };
+        let child = process::spawn(config, selection, config.log_level.value)?;
+        process::nudge_on_startup(&client, child)
+    });
     if let Err(error) = result
         && verbose
     {

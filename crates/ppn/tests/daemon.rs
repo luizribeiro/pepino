@@ -219,6 +219,19 @@ fn writes_stay_successful_and_fast_with_an_unreachable_socket() {
     assert!(start.elapsed() < std::time::Duration::from_secs(2));
     assert!(!absent.exists());
     assert!(!data.join("daemon.log").exists());
+    let verbose = sandbox
+        .command()
+        .env_remove("PPN_NO_DAEMON")
+        .env("PPN_DAEMON_SOCKET_PATH", &absent)
+        .args(["add", "Fit the latch on the door", "--verbose"])
+        .output()
+        .unwrap();
+    assert!(verbose.status.success());
+    assert!(
+        String::from_utf8(verbose.stderr)
+            .unwrap()
+            .contains("Could not notify the daemon")
+    );
 }
 
 #[cfg(pepino_network_tests)]

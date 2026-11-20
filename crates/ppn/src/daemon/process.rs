@@ -10,7 +10,7 @@ use std::{
 use crate::config::{Config, LogLevel};
 
 use super::{
-    client::Client,
+    client::{Client, unavailable},
     protocol::{DaemonStatus, Operation, Outcome},
     socket,
 };
@@ -85,6 +85,25 @@ pub fn wait_started(
         let _ = child.wait();
     }
     result
+}
+
+pub fn nudge_on_startup(client: &Client, mut child: Child) -> io::Result<()> {
+    let deadline = Instant::now() + Duration::from_millis(100);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let result = client.nudge_with(remaining);
+        match result {
+            Err(error) if unavailable(&error) && !remaining.is_zero() => {
+                if child.try_wait()?.is_some() {
+                    return Err(io::Error::other(
+                        "The daemon exited during startup. See daemon.log",
+                    ));
+                }
+                thread::sleep(remaining.min(POLL_INTERVAL));
+            }
+            result => return result,
+        }
+    }
 }
 
 fn lease_held(data: &Path) -> bool {

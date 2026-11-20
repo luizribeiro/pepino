@@ -33,6 +33,20 @@ impl Client {
             })
     }
 
+    pub fn nudge(&self) -> io::Result<()> {
+        self.nudge_with(RPC_TIMEOUT)
+    }
+
+    pub fn nudge_with(&self, limit: Duration) -> io::Result<()> {
+        match self.call_with(Operation::Nudge, limit)? {
+            Outcome::Nudged => Ok(()),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Expected a daemon nudge receipt",
+            )),
+        }
+    }
+
     pub fn status(&self) -> io::Result<Option<DaemonStatus>> {
         match self.call(Operation::Status) {
             Ok(Outcome::Status { status }) => Ok(Some(status)),
@@ -87,6 +101,6 @@ mod tests {
             path: dir.path().join("release.sock"),
         };
         assert!(client.status().unwrap().is_none());
-        assert!(unavailable(&client.call(Operation::Nudge).unwrap_err()));
+        assert!(unavailable(&client.nudge().unwrap_err()));
     }
 }

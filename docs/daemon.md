@@ -34,9 +34,10 @@ directory must already exist. Use the same path and data-directory settings for
 the CLI and daemon.
 
 A successful local write asks the daemon to scan for pending events. If the
-daemon is down, the CLI launches it and the new engine scans on startup.
+daemon is down, the CLI launches it and briefly retries the notification. The engine also scans
+on startup.
 Set `PPN_NO_DAEMON=1` or set the following in your TOML configuration to
-disable automatic starts and notifications after writes:
+disable automatic starts and notifications after writes.
 
 ```toml
 [daemon]
