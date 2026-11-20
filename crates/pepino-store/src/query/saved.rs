@@ -14,6 +14,7 @@ pub(super) type IndexedTerm<'a> = (usize, &'a Term);
 
 pub(super) struct SavedViews<'a, T> {
     resolver: &'a dyn ViewResolver,
+    enforce_board_rules: bool,
     chain: Vec<String>,
     cache: BTreeMap<String, Expanded<T>>,
 }
@@ -22,6 +23,7 @@ impl<'a, T: Clone> SavedViews<'a, T> {
     pub(super) fn new(resolver: &'a dyn ViewResolver) -> Self {
         Self {
             resolver,
+            enforce_board_rules: true,
             chain: Vec::new(),
             cache: BTreeMap::new(),
         }
@@ -58,7 +60,7 @@ impl<'a, T: Clone> SavedViews<'a, T> {
                 expanded
             }
         };
-        if term.1.negated && expanded.has_boards {
+        if self.enforce_board_rules && term.1.negated && expanded.has_boards {
             return Err(self.error(
                 term,
                 QueryErrorKind::NegatedViewWithBoards { name: name.into() },
@@ -106,6 +108,15 @@ pub(super) fn board_terms(
     let mut boards = Vec::new();
     collect_boards(filter, &mut SavedViews::new(resolver), &mut boards)?;
     Ok(boards)
+}
+
+pub(super) fn validate_views(
+    filter: &Filter,
+    resolver: &dyn ViewResolver,
+) -> Result<(), QueryError> {
+    let mut saved = SavedViews::new(resolver);
+    saved.enforce_board_rules = false;
+    collect_boards(filter, &mut saved, &mut Vec::new()).map(|_| ())
 }
 
 fn collect_boards(

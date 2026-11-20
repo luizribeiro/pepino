@@ -12,6 +12,11 @@ pub use sort::{Direction, InvalidSortKey, Sort, SortKey};
 
 use pepino_core::filter::{Clause, Filter, Term};
 
+/// Validates that saved references can be expanded without cycles.
+pub fn validate_views(filter: &Filter, resolver: &dyn ViewResolver) -> Result<(), QueryError> {
+    saved::validate_views(filter, resolver)
+}
+
 /// Splits out top-level board terms, retaining order, alternatives and negation.
 pub fn split_board_terms(filter: &Filter) -> (Vec<Term>, Filter) {
     let (boards, tasks) = filter
@@ -50,5 +55,26 @@ mod tests {
             split_board_terms(&Filter::from_terms(boards.clone())),
             (boards, Filter::default())
         );
+    }
+}
+
+#[cfg(test)]
+mod graph_tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use pepino_core::{Date, filter::parse};
+
+    #[test]
+    fn validating_references_is_independent_of_board_selection() {
+        let today = Date::from_ymd_opt(2026, 11, 19).unwrap();
+        let mut views = BTreeMap::from([("shed", parse("board:Workshop", today).unwrap())]);
+        let filter = parse("-@shed", today).unwrap();
+        assert!(validate_views(&filter, &views).is_ok());
+        views.insert("shed", parse("@shed", today).unwrap());
+        assert!(matches!(
+            validate_views(&filter, &views).unwrap_err().kind,
+            QueryErrorKind::ViewCycle { .. }
+        ));
     }
 }
