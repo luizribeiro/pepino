@@ -1,4 +1,6 @@
-use pepino_app::{AppError, BoardAdmission, BoardCards, BoardRequest, BoardRole, IdentityCard};
+use pepino_app::{
+    AppError, BoardAdmission, BoardCards, BoardRequest, BoardRole, CardExchange, IdentityCard,
+};
 use pepino_core::{BoardId, DeviceId};
 
 use crate::{Error, SyncEngine, TransportBoard};
@@ -14,7 +16,7 @@ impl SyncEngine {
         id: BoardId,
         request: BoardRequest,
         role: BoardRole,
-    ) -> Result<IdentityCard, Error> {
+    ) -> Result<(IdentityCard, Option<BoardId>), Error> {
         let member = request.device.member_info()?;
         request.name()?;
         let mut workers = self.boards.lock().await;
@@ -55,10 +57,42 @@ impl SyncEngine {
             .record_board_admission(id, local.device_id, admission.clone())
             .await?;
         handle
-            .publish(BoardCards::Introduce(admission).encode()?)
+            .publish(BoardCards::Introduce(admission.clone()).encode()?)
             .await?;
+        let channel = if role == BoardRole::Read {
+            let exchange = CardExchange {
+                board: id,
+                person: admission.invitee.id,
+            };
+            Some(self.create_card_exchange(&local, exchange, &member).await?)
+        } else {
+            None
+        };
         self.nudge();
-        Ok(owner)
+        Ok((owner, channel))
+    }
+
+    async fn create_card_exchange(
+        &self,
+        local: &pepino_app::LocalState,
+        exchange: CardExchange,
+        member: &pepino_node::MemberInfo,
+    ) -> Result<BoardId, Error> {
+        if let Some((&channel, _)) = local
+            .card_exchanges()
+            .iter()
+            .find(|(_, saved)| **saved == exchange)
+        {
+            return Ok(channel);
+        }
+        let handle = self.node.create_board().await?;
+        let channel = handle.id();
+        let enroll = handle.add_member(member, pepino_node::Role::Write).await;
+        let closed = handle.close().await;
+        enroll?;
+        closed?;
+        self.app.register_card_exchange(channel, exchange).await?;
+        Ok(channel)
     }
 }
 

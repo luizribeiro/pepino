@@ -1,3 +1,4 @@
+mod card_exchange;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Weak},
@@ -78,7 +79,7 @@ impl<T: Transport> BoardWorkers<T> {
                 self.start_board(local, board.id, handle)?;
             }
         }
-        Ok(())
+        self.open_card_exchanges(local).await
     }
 
     pub fn start_board(

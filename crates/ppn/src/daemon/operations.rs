@@ -103,7 +103,10 @@ pub(super) async fn operate(
             request,
             role,
         } => match engine.invite_board(board, *request, role).await {
-            Ok(owner) => Outcome::BoardInvited { owner },
+            Ok((owner, card_exchange)) => Outcome::BoardInvited {
+                owner,
+                card_exchange,
+            },
             Err(Error::EnrollmentAccess { board }) => Outcome::MemberAccessDenied { board },
             Err(Error::App(error @ pepino_app::AppError::InvalidInput { .. })) => {
                 Outcome::error("invalid_input", &error.to_string())

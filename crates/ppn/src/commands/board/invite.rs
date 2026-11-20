@@ -66,8 +66,11 @@ pub(super) fn run(
             Duration::from_secs(20),
         )
         .map_err(unreachable)?;
-    let owner = match outcome {
-        Outcome::BoardInvited { owner } => owner,
+    let (owner, card_exchange) = match outcome {
+        Outcome::BoardInvited {
+            owner,
+            card_exchange,
+        } => (owner, card_exchange),
         Outcome::MemberAccessDenied { board } => {
             return Err(CliError::new(
                 ErrorKind::PermissionDenied,
@@ -89,7 +92,7 @@ pub(super) fn run(
         board: board.clone(),
         role,
         owner,
-        card_exchange: None,
+        card_exchange,
         peer: PeerHint {
             id: keys.device_id(),
             relay_url: config

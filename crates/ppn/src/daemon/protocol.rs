@@ -114,6 +114,8 @@ pub enum Outcome {
     },
     BoardInvited {
         owner: IdentityCard,
+        #[serde(default)]
+        card_exchange: Option<BoardId>,
     },
     Stopping,
     Error {
