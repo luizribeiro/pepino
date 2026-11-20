@@ -16,7 +16,7 @@ pub trait Render {
 
 type WriteOutput = dyn FnOnce(bool, &Terminal, &mut dyn Write) -> Result<(), CliError>;
 
-pub struct CommandResult(Box<WriteOutput>);
+pub struct CommandResult(Box<WriteOutput>, Vec<String>);
 
 impl CommandResult {
     pub fn document(value: impl Render + 'static) -> Self {
@@ -26,32 +26,42 @@ impl CommandResult {
     pub fn stream<T: Render + 'static>(
         rows: impl Iterator<Item = Result<T, CliError>> + 'static,
     ) -> Self {
-        Self(Box::new(move |json, terminal, stdout| {
-            for row in rows {
-                if !flush_output(write_row(row?, json, terminal, stdout), stdout)? {
-                    break;
+        Self(
+            Box::new(move |json, terminal, stdout| {
+                for row in rows {
+                    if !flush_output(write_row(row?, json, terminal, stdout), stdout)? {
+                        break;
+                    }
                 }
-            }
-            Ok(())
-        }))
+                Ok(())
+            }),
+            Vec::new(),
+        )
     }
     pub fn app_document(
         response: Response,
         color: Color,
         human: impl FnOnce(&Response, &Terminal) -> Result<String, CliError> + 'static,
     ) -> Self {
-        Self(Box::new(move |json, terminal, stdout| {
-            let result = if json {
-                match serde_json::to_value(response) {
-                    Ok(Value::Object(fields)) => write_json(fields, stdout),
-                    Ok(_) => Err(io::Error::other("Expected an app response object.")),
-                    Err(error) => Err(error.into()),
-                }
-            } else {
-                write_text(&human(&response, &terminal.task_output(color))?, stdout)
-            };
-            flush_output(result, stdout).map(|_| ())
-        }))
+        Self(
+            Box::new(move |json, terminal, stdout| {
+                let result = if json {
+                    match serde_json::to_value(response) {
+                        Ok(Value::Object(fields)) => write_json(fields, stdout),
+                        Ok(_) => Err(io::Error::other("Expected an app response object.")),
+                        Err(error) => Err(error.into()),
+                    }
+                } else {
+                    write_text(&human(&response, &terminal.task_output(color))?, stdout)
+                };
+                flush_output(result, stdout).map(|_| ())
+            }),
+            Vec::new(),
+        )
+    }
+    pub fn with_warnings(mut self, warnings: impl IntoIterator<Item = String>) -> Self {
+        self.1.extend(warnings);
+        self
     }
 }
 
@@ -60,9 +70,34 @@ pub fn finish(
     json: bool,
     terminal: &Terminal,
 ) -> ExitCode {
-    match result.and_then(|output| (output.0)(json, terminal, &mut io::stdout().lock())) {
+    finish_to(
+        result,
+        json,
+        terminal,
+        &mut io::stdout().lock(),
+        &mut io::stderr().lock(),
+    )
+}
+
+fn finish_to(
+    result: Result<CommandResult, CliError>,
+    json: bool,
+    terminal: &Terminal,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> ExitCode {
+    let result = result.and_then(|CommandResult(write, warnings)| {
+        write(json, terminal, stdout)?;
+        if !json {
+            for warning in warnings {
+                let _ = writeln!(stderr, "warning: {warning}");
+            }
+        }
+        Ok(())
+    });
+    match result {
         Ok(()) => ExitCode::SUCCESS,
-        Err(error) => error.report(json, io::stderr().lock()),
+        Err(error) => error.report(json, stderr),
     }
 }
 
@@ -124,6 +159,31 @@ mod tests {
 
         fn json_fields(self) -> Map<String, Value> {
             Map::from_iter([("title".into(), json!(self.title))])
+        }
+    }
+
+    #[test]
+    fn emits_success_warnings_to_human_stderr() {
+        let terminal = Terminal::fixed(None, false);
+        for json in [false, true] {
+            let result = CommandResult::document(Task {
+                title: "Order a replacement screw",
+            })
+            .with_warnings(["The dependency would create a cycle.".into()]);
+            let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+            assert_eq!(
+                finish_to(Ok(result), json, &terminal, &mut stdout, &mut stderr),
+                ExitCode::SUCCESS
+            );
+            assert!(!stdout.is_empty());
+            assert_eq!(
+                stderr,
+                if json {
+                    b"".as_slice()
+                } else {
+                    b"warning: The dependency would create a cycle.\n"
+                }
+            );
         }
     }
 
