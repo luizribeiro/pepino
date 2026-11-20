@@ -215,3 +215,79 @@ pub fn seed_tasks<T>(
             seed(&mut app).await
         })
 }
+
+pub fn ambiguous_tasks(data: &std::path::Path) -> (String, [String; 2]) {
+    use pepino_app::{Request, Response};
+    use ppn::write_args::new_task;
+    use std::collections::BTreeMap;
+
+    seed_tasks(data, async |app| {
+        let mut seen = BTreeMap::new();
+        for number in 0..=65_536 {
+            let input = new_task(format!("Inspect hinge assembly {number}"));
+            let Response::Write {
+                created: Some(id), ..
+            } = app.handle(Request::Write(input), SEED_NOW).await.unwrap()
+            else {
+                panic!("expected a created task");
+            };
+            let prefix = id[..4].to_owned();
+            if let Some(previous) = seen.insert(prefix.clone(), id.clone()) {
+                let mut candidates = [previous, id];
+                candidates.sort();
+                return (prefix, candidates);
+            }
+        }
+        panic!("65,537 tasks must share a four-digit prefix");
+    })
+}
+
+pub fn assert_task_reference_errors(
+    sandbox: &ConfigSandbox,
+    data: &std::path::Path,
+    mut invoke: impl FnMut(&str) -> Output,
+) {
+    use pepino_app::{Request, WriteRequest};
+
+    let deleted = create_task(sandbox, "Remove the broken planter", &[]);
+    seed_tasks(data, async |app| {
+        app.handle(
+            Request::Write(WriteRequest::Delete {
+                task: deleted.clone(),
+            }),
+            SEED_NOW,
+        )
+        .await
+        .unwrap();
+    });
+    let (ambiguous, candidates) = ambiguous_tasks(data);
+    for (reference, status, code) in [
+        ("latch", 2, "invalid_input"),
+        ("ffffffffffffffff", 3, "not_found"),
+        (&deleted[..8], 1, "conflict"),
+        (&ambiguous, 4, "ambiguous_id"),
+    ] {
+        let error = task_error(invoke(reference), status, code);
+        assert!(
+            error["message"].as_str().unwrap().contains(reference),
+            "{error}"
+        );
+        if code == "ambiguous_id" {
+            assert_eq!(error["candidates"], serde_json::json!(candidates));
+        }
+    }
+}
+
+pub fn show_task(sandbox: &ConfigSandbox, id: &str) -> Value {
+    let detail = as_json(&sandbox.run(&["show", id, "--json"]));
+    assert_eq!(detail["kind"], "task");
+    detail["task"].clone()
+}
+
+pub fn assert_write(json: &Value, changed: bool) {
+    assert_eq!(json["schema"], 1);
+    assert_eq!(json["kind"], "write");
+    assert_eq!(json["changed"], changed);
+    assert!(json["tasks"].is_array());
+    assert!(json["edges"].is_array());
+}

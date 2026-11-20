@@ -75,29 +75,8 @@ fn show_reports_deleted_tasks_as_conflicts() {
 
 #[test]
 fn show_reports_ambiguous_ids_with_sorted_candidates() {
-    use pepino_app::{Request, Response};
-    use ppn::write_args::new_task;
-    use std::collections::BTreeMap;
-
     let (sandbox, data) = task_sandbox();
-    let (prefix, mut expected) = seed_tasks(&data, async |app| {
-        let mut seen = BTreeMap::new();
-        for number in 0..=65_536 {
-            let input = new_task(format!("Inspect hinge assembly {number}"));
-            let Response::Write {
-                created: Some(id), ..
-            } = app.handle(Request::Write(input), SEED_NOW).await.unwrap()
-            else {
-                panic!("expected a created task");
-            };
-            let prefix = id[..4].to_owned();
-            if let Some(previous) = seen.insert(prefix.clone(), id.clone()) {
-                return (prefix, [previous, id]);
-            }
-        }
-        panic!("65,537 tasks must share a four-digit prefix");
-    });
-    expected.sort();
+    let (prefix, expected) = ambiguous_tasks(&data);
     let output = sandbox
         .command()
         .args(["show", &prefix, "--json"])
