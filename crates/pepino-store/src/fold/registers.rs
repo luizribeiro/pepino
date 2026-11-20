@@ -62,7 +62,7 @@ impl Registers<'_> {
                     )
                     .await;
             }
-            _ => return Ok(()),
+            Event::TaskDeleted { .. } => return Ok(()),
         };
         self.presence(member, present).await
     }

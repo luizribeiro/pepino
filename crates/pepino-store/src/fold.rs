@@ -16,7 +16,6 @@ pub(crate) fn target(envelope: &Envelope) -> Option<TaskId> {
         | Event::TaskDeleted { task }
         | Event::EdgeAdded { from: task, .. }
         | Event::EdgeRemoved { from: task, .. } => Some(*task),
-        _ => None,
     }
 }
 

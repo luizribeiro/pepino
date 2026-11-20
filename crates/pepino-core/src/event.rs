@@ -27,7 +27,6 @@ pub struct InitialFields {
 macro_rules! define_events {
     ($($tag:literal => $variant:ident { $($(#[$attr:meta])* $field:ident: $ty:ty),+ }),+ $(,)?) => {
         #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-        #[non_exhaustive]
         pub enum Event {
             $(#[serde(rename = $tag)] $variant { $($(#[$attr])* $field: $ty),+ }),+
         }

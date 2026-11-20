@@ -191,10 +191,6 @@ impl TryFrom<Event> for EventChange {
             Event::TaskDeleted { task } => Self::Deletion {
                 task: task.to_string(),
             },
-            _ => Self::Skipped {
-                tasks: value.referenced_tasks().map(|id| id.to_string()).collect(),
-                version: None,
-            },
         })
     }
 }
