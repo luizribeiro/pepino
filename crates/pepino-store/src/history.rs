@@ -3,6 +3,8 @@ use sqlx::{FromRow, SqliteConnection};
 
 use crate::{BoardKey, Store, StoreError};
 
+mod metadata;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventRecord {
     pub id: EventId,
@@ -50,8 +52,6 @@ pub(crate) async fn index(
     }
     Ok(())
 }
-
-mod metadata;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, sqlx::Type)]
 #[sqlx(rename_all = "snake_case")]
@@ -126,29 +126,17 @@ impl Store {
         board: BoardId,
         task: TaskId,
     ) -> Result<Vec<EventRecord>, StoreError> {
-        let rows = self
-            .read(async |connection| {
-                sqlx::query_as::<_, HistoryRow<Vec<u8>>>(
-                    "SELECT t.id, e.author, t.hlc, e.bytes AS payload FROM event_task t
-                     JOIN event_log e USING (board, id)
-                     WHERE t.board = ? AND t.task = ? ORDER BY t.hlc, t.id",
-                )
-                .bind(BoardKey(board))
-                .bind(task.as_bytes().as_slice())
-                .fetch_all(connection)
-                .await
-            })
-            .await?;
-        Ok(rows
+        Ok(self
+            .history_rows(board, Some(task), None)
+            .await?
             .into_iter()
-            .map(|row| {
-                let (id, author, hlc, bytes) = row.into_parts();
-                EventRecord {
-                    id,
-                    author,
-                    hlc,
-                    bytes,
-                }
+            .filter_map(|(row, event)| {
+                Some(EventRecord {
+                    id: event.decoded.id(),
+                    author: event.decoded.author()?,
+                    hlc: event.decoded.hlc()?,
+                    bytes: row.bytes,
+                })
             })
             .collect())
     }
