@@ -76,6 +76,28 @@ impl LocalState {
         names
     }
 
+    pub(super) fn new(
+        names: InitialNames,
+        device_id: DeviceId,
+        board_id: BoardId,
+    ) -> Result<Self, AppError> {
+        let InitialNames {
+            display_name,
+            board_name,
+            device_name,
+        } = names;
+        Ok(Self {
+            version: VERSION,
+            device_id,
+            identity_id: IdentityId::from_bytes(random_id()?),
+            display_name,
+            device_name,
+            board_id,
+            board_name,
+            saved_views: SavedViews::default(),
+        })
+    }
+
     pub(crate) fn load_or_create(directory: &Path, options: OpenOptions) -> Result<Self, AppError> {
         let path = directory.join(FILE_NAME);
         match fs::read(&path) {
@@ -83,39 +105,11 @@ impl LocalState {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(path_io_error(&path, "read local state", error)),
         }
-        let display_name = match options.display_name {
-            Some(name) => name,
-            None => {
-                whoami::username().map_err(|error| storage("get OS user name", error, false))?
-            }
-        };
-        let board_name = options.board_name.unwrap_or_else(|| "Personal".into());
-        let device_name = match options.device_name {
-            Some(name) => name,
-            None => whoami::hostname().map_err(|error| storage("get hostname", error, false))?,
-        };
-        for (field, value) in [
-            ("display_name", &display_name),
-            ("device_name", &device_name),
-            ("board_name", &board_name),
-        ] {
-            if value.trim().is_empty() {
-                return Err(invalid(
-                    field,
-                    "name must contain a non-whitespace character",
-                ));
-            }
-        }
-        let state = Self {
-            version: VERSION,
-            device_id: DeviceId::from_bytes(random_id()?),
-            identity_id: IdentityId::from_bytes(random_id()?),
-            display_name,
-            device_name,
-            board_id: BoardId::from_bytes(random_id()?),
-            board_name,
-            saved_views: SavedViews::default(),
-        };
+        let state = Self::new(
+            InitialNames::try_from(options)?,
+            DeviceId::from_bytes(random_id()?),
+            BoardId::from_bytes(random_id()?),
+        )?;
         save(directory, &path, state)
             .map_err(|error| path_io_error(&path, "save local state", error))
     }
@@ -171,6 +165,47 @@ impl LocalState {
                 .map_err(|error| storage("decode local state", error, false)),
             version => Err(storage("unsupported local state version", version, false)),
         }
+    }
+}
+
+pub(super) struct InitialNames {
+    display_name: String,
+    device_name: String,
+    board_name: String,
+}
+
+impl TryFrom<OpenOptions> for InitialNames {
+    type Error = AppError;
+
+    fn try_from(options: OpenOptions) -> Result<Self, AppError> {
+        let display_name = match options.display_name {
+            Some(name) => name,
+            None => {
+                whoami::username().map_err(|error| storage("get OS user name", error, false))?
+            }
+        };
+        let board_name = options.board_name.unwrap_or_else(|| "Personal".into());
+        let device_name = match options.device_name {
+            Some(name) => name,
+            None => whoami::hostname().map_err(|error| storage("get hostname", error, false))?,
+        };
+        for (field, value) in [
+            ("display_name", &display_name),
+            ("device_name", &device_name),
+            ("board_name", &board_name),
+        ] {
+            if value.trim().is_empty() {
+                return Err(invalid(
+                    field,
+                    "name must contain a non-whitespace character",
+                ));
+            }
+        }
+        Ok(Self {
+            display_name,
+            device_name,
+            board_name,
+        })
     }
 }
 
