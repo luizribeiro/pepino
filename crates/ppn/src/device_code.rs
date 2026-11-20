@@ -7,12 +7,14 @@ use serde::{Serialize, de::DeserializeOwned};
 const VERSION: u8 = 2;
 const CHECKSUM_LEN: usize = 8;
 const MAX_PAYLOAD: usize = 64 * 1024;
-pub const MAX_CODE_TEXT: usize = 2 * (MAX_PAYLOAD + CHECKSUM_LEN) + "PPN-REQUEST-".len();
+pub const MAX_CODE_TEXT: usize = 2 * (MAX_PAYLOAD + CHECKSUM_LEN) + "PPN-BOARD-REQUEST-".len();
 
 #[derive(Clone, Copy)]
 pub enum Kind {
     Request,
     Grant,
+    BoardRequest,
+    BoardGrant,
 }
 
 impl Kind {
@@ -20,6 +22,8 @@ impl Kind {
         match self {
             Self::Request => "PPN-REQUEST-",
             Self::Grant => "PPN-GRANT-",
+            Self::BoardRequest => "PPN-BOARD-REQUEST-",
+            Self::BoardGrant => "PPN-BOARD-GRANT-",
         }
     }
 
@@ -163,4 +167,21 @@ fn round_trips_and_detects_wrong_kind_version_and_checksum() {
     let version = Kind::Grant.format(vec![1, 0xf6]);
     assert_eq!(Kind::Grant.decode::<String>(&version), Err(Error::Version));
     assert!(text.starts_with("PPN-REQUEST-AJTEM-"));
+}
+
+#[cfg(test)]
+#[test]
+fn device_and_board_codes_have_distinct_types_and_checksums() {
+    let invite = Kind::BoardRequest.encode(&"Garden tablet").unwrap();
+    assert_eq!(Kind::Request.decode::<String>(&invite), Err(Error::Kind));
+    assert_eq!(Kind::BoardGrant.decode::<String>(&invite), Err(Error::Kind));
+    assert_eq!(
+        Kind::BoardRequest.decode::<String>(&invite).unwrap(),
+        "Garden tablet"
+    );
+    let relabeled = invite.replacen("PPN-BOARD-REQUEST-", "PPN-REQUEST-", 1);
+    assert_eq!(
+        Kind::Request.decode::<String>(&relabeled),
+        Err(Error::Checksum)
+    );
 }
