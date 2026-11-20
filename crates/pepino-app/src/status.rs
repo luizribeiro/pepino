@@ -17,18 +17,19 @@ pub struct NamedRecord {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct StatusCounts {
-    pub open: usize,
-    pub closed: usize,
-    pub events: i64,
+    pub open: u64,
+    pub closed: u64,
+    pub events: u64,
+    pub applied: u64,
     pub skipped: SkippedCounts,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SkippedCounts {
-    pub unknown_version: i64,
-    pub unknown_event: i64,
-    pub unknown_value: i64,
-    pub invalid: i64,
+    pub unknown_version: u64,
+    pub unknown_event: u64,
+    pub unknown_value: u64,
+    pub invalid: u64,
 }
 
 impl App {
@@ -55,14 +56,15 @@ impl App {
             },
             data_dir: self.directory.to_string_lossy().into_owned(),
             counts: StatusCounts {
-                open,
-                closed: board.tasks().len() - open,
-                events: events.total,
+                open: open as u64,
+                closed: (board.tasks().len() - open) as u64,
+                events: events.total as u64,
+                applied: events.applied as u64,
                 skipped: SkippedCounts {
-                    unknown_version: events.unknown_version,
-                    unknown_event: events.unknown_event,
-                    unknown_value: events.unknown_value,
-                    invalid: events.invalid,
+                    unknown_version: events.unknown_version as u64,
+                    unknown_event: events.unknown_event as u64,
+                    unknown_value: events.unknown_value as u64,
+                    invalid: events.invalid as u64,
                 },
             },
             protocol_version: PROTOCOL_VERSION,
