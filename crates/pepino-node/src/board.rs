@@ -166,6 +166,7 @@ impl Node {
                 };
                 let replaying = cursor::needs_replay(&acks.pool, id, node.id()).await?;
                 let membership = read_members(acks.pool.clone(), id).await?;
+                lease.check_open()?;
                 let (pending, subscription) = node
                     .space_from::<Payload>(Hash::from_bytes(*id.as_bytes()), from)
                     .await

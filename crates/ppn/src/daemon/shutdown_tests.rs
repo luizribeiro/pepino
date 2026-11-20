@@ -18,6 +18,8 @@ mod wait;
 
 use wait::{WAIT, until};
 
+mod boards;
+
 fn app_options() -> pepino_app::OpenOptions {
     pepino_app::OpenOptions {
         lock_timeout: WAIT,
@@ -303,6 +305,15 @@ fn sigkill_during_join_recovers_membership() {
 }
 
 fn write_tasks(rt: &tokio::runtime::Runtime, home: &Path, range: std::ops::Range<usize>) {
+    write_board_tasks(rt, home, None, range);
+}
+
+fn write_board_tasks(
+    rt: &tokio::runtime::Runtime,
+    home: &Path,
+    board: Option<&str>,
+    range: std::ops::Range<usize>,
+) {
     rt.block_on(async {
         let mut app = pepino_app::App::open_with_options(home.join("board"), 0, app_options())
             .await
@@ -312,14 +323,28 @@ fn write_tasks(rt: &tokio::runtime::Runtime, home: &Path, range: std::ops::Range
                 "op": "add_task",
                 "title": format!("Inspect greenhouse vent {item}"),
             });
-            app.handle(serde_json::from_value(request).unwrap(), 1_795_144_800_000)
-                .await
-                .unwrap();
+            app.handle_on(
+                serde_json::from_value(request).unwrap(),
+                1_795_144_800_000,
+                board.map(|name| (name, "board")),
+                false,
+            )
+            .await
+            .unwrap();
         }
     });
 }
 
 fn wait_for_views(rt: &tokio::runtime::Runtime, pair: &Pair, count: usize) {
+    wait_for_board_views(rt, pair, pair.board, count);
+}
+
+fn wait_for_board_views(
+    rt: &tokio::runtime::Runtime,
+    pair: &Pair,
+    board: pepino_core::BoardId,
+    count: usize,
+) {
     let paths = [pair.owner.path(), pair.peer.path()];
     let [owner, peer] = paths.map(|home| {
         rt.block_on(pepino_app::App::open_with_options(
@@ -329,10 +354,10 @@ fn wait_for_views(rt: &tokio::runtime::Runtime, pair: &Pair, count: usize) {
         ))
         .unwrap()
     });
-    let expected = rt.block_on(owner.store().tasks(pair.board)).unwrap();
+    let expected = rt.block_on(owner.store().tasks(board)).unwrap();
     assert_eq!(expected.len(), count);
     until(
-        || rt.block_on(peer.store().tasks(pair.board)).unwrap(),
+        || rt.block_on(peer.store().tasks(board)).unwrap(),
         |tasks| tasks == &expected,
         WAIT,
     );

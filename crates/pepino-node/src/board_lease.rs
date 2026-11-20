@@ -152,6 +152,10 @@ pub(crate) struct BoardLease {
 }
 
 impl BoardLease {
+    pub(crate) fn check_open(&self) -> Result<(), Error> {
+        self.boards.check_open()
+    }
+
     pub(crate) fn stopping(&self) -> watch::Receiver<bool> {
         self.boards.0.stopping.subscribe()
     }
@@ -198,6 +202,7 @@ mod tests {
         let closing = async {
             stopping.wait_for(|value| *value).await.unwrap();
             assert!(matches!(open.reserve(support), Err(Error::Closed)));
+            assert!(matches!(lease.check_open(), Err(Error::Closed)));
             drop(lease);
         };
         let (result, ()) = tokio::join!(open.stop(), closing);

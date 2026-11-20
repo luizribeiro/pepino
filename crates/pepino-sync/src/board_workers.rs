@@ -56,6 +56,9 @@ impl<T: Transport> BoardWorkers<T> {
 
     pub async fn open_missing(&mut self, local: &LocalState) -> Result<(), Error> {
         for board in local.boards() {
+            if self.stopping.has_changed().is_err() {
+                return Ok(());
+            }
             if !self.handles.contains_key(&board.id) {
                 let handle = self
                     .node
