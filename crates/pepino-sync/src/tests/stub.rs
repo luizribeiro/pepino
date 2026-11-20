@@ -400,7 +400,7 @@ async fn a_closed_delivery_stream_signals_that_the_daemon_must_restart() {
         .unwrap();
     let changes = engine.status_changes().boxed();
     node.stop_deliveries();
-    let failure = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    let failure = tokio::time::timeout(super::WAIT, async {
         changes
             .filter_map(|status| async move { status.restart_required })
             .boxed()

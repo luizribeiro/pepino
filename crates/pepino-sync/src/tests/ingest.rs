@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use pepino_core::{BoardId, DeviceId};
 use serde_json::json;
 
-use super::{directory, stub::Stub};
+use super::{WAIT, directory, stub::Stub};
 use crate::SyncEngine;
 
 #[tokio::test]
@@ -34,7 +34,7 @@ async fn malformed_payloads_are_retained_before_acknowledging_and_ingest_continu
     let malformed = vec![0xff];
     for (payload, total) in [(malformed.clone(), 1), (bytes, 2)] {
         let mut receipt = node.deliver(board, peer, payload);
-        tokio::time::timeout(Duration::from_secs(5), receipt.wait_for(|done| *done))
+        tokio::time::timeout(WAIT, receipt.wait_for(|done| *done))
             .await
             .unwrap()
             .unwrap();
@@ -64,8 +64,6 @@ async fn malformed_payloads_are_retained_before_acknowledging_and_ingest_continu
 
 #[tokio::test]
 async fn waits_for_the_local_lock_before_acknowledging() {
-    use futures_util::StreamExt;
-
     let dir = tempfile::tempdir().unwrap();
     let board = BoardId::from_bytes([21; 32]);
     let device = DeviceId::from_bytes([22; 32]);
@@ -81,32 +79,24 @@ async fn waits_for_the_local_lock_before_acknowledging() {
     )
     .await
     .unwrap();
-    let mut updates = engine.status_changes().boxed();
     let lock = std::fs::File::options()
         .write(true)
         .open(dir.path().join("local.lock"))
         .unwrap();
     lock.try_lock().unwrap();
     let mut receipt = node.deliver(board, device, vec![0x82, 2, 0xf6]);
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while let Some(status) = updates.next().await {
-            if status.boards[&board]
-                .last_error
-                .as_deref()
-                .is_some_and(|error| error.contains("holds the data directory"))
-            {
-                assert!(status.boards[&board].ingest_pending);
-                return;
-            }
-        }
-        panic!("no lock failure observed");
+    let busy = super::wait_for_status(&engine, |status| {
+        status.boards[&board]
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("holds the data directory"))
     })
-    .await
-    .unwrap();
+    .await;
+    assert!(busy.boards[&board].ingest_pending);
     assert!(!*receipt.borrow());
     assert_eq!(app.store().statistics(board).await.unwrap().total, 0);
     drop(lock);
-    tokio::time::timeout(Duration::from_secs(5), receipt.wait_for(|done| *done))
+    tokio::time::timeout(WAIT, receipt.wait_for(|done| *done))
         .await
         .unwrap()
         .unwrap();
@@ -143,20 +133,18 @@ async fn a_crash_after_commit_redelivers_as_a_duplicate() {
         .await
         .unwrap();
     let (mut attempting, receipt) = node.pause_before_ack(board, peer, bytes.clone());
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        attempting.wait_for(|started| *started),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    tokio::time::timeout(WAIT, attempting.wait_for(|started| *started))
+        .await
+        .unwrap()
+        .unwrap();
     assert!(!*receipt.borrow());
     let before = app.store().board_with_comments(board).await.unwrap();
     assert_eq!(before.tasks()[0].title, "Repair the awning");
-    assert!(matches!(
-        engine.wait_idle(Duration::from_millis(20)).await,
-        Err(crate::Error::Timeout)
-    ));
+    {
+        let idle = engine.sync_once();
+        tokio::pin!(idle);
+        assert!(futures_util::poll!(&mut idle).is_pending());
+    }
     drop(engine);
 
     let restarted = Arc::new(Stub::new(local));
@@ -164,11 +152,11 @@ async fn a_crash_after_commit_redelivers_as_a_duplicate() {
         .await
         .unwrap();
     let mut redelivered = restarted.deliver(board, peer, bytes);
-    tokio::time::timeout(Duration::from_secs(5), redelivered.wait_for(|done| *done))
+    tokio::time::timeout(WAIT, redelivered.wait_for(|done| *done))
         .await
         .unwrap()
         .unwrap();
-    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+    engine.wait_idle(WAIT).await.unwrap();
     assert_eq!(
         app.store().board_with_comments(board).await.unwrap(),
         before
@@ -193,7 +181,7 @@ async fn waits_for_a_connected_peers_first_pull_and_ingests_its_events() {
     let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
         .await
         .unwrap();
-    let limit = Duration::from_secs(5);
+    let limit = WAIT;
     engine.wait_idle(limit).await.unwrap();
     assert!(engine.status().is_idle());
     assert!(engine.status().node.connected_peers.is_empty());
@@ -321,7 +309,7 @@ async fn retries_ack_without_appending_again() {
         app.store().statistics(board).await.unwrap().unknown_version,
         1
     );
-    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+    engine.wait_idle(WAIT).await.unwrap();
     assert!(ack.is_acked());
     assert_eq!(app.store().statistics(board).await.unwrap().total, 1);
     engine.shutdown().await.unwrap();

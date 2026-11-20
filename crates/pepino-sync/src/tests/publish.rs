@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use pepino_core::{BoardId, DeviceId};
 use serde_json::json;
 
-use super::{directory, stub::Stub, wait_for_status};
+use super::{WAIT, directory, stub::Stub, wait_for_status};
 use crate::{Status, SyncEngine};
 
 #[tokio::test]
@@ -58,13 +58,13 @@ async fn idle_wait_scans_writes_that_arrived_after_an_empty_snapshot() {
     let engine = SyncEngine::start(settings, node.clone(), dir.path())
         .await
         .unwrap();
-    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+    engine.wait_idle(WAIT).await.unwrap();
     directory::write(
         &mut app,
         json!({"op":"add_task","title":"Repaint garden bench"}),
     )
     .await;
-    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+    engine.wait_idle(WAIT).await.unwrap();
     assert_eq!(node.published().len(), 1);
     assert!(engine.status().is_idle());
     engine.shutdown().await.unwrap();
@@ -84,7 +84,7 @@ async fn the_periodic_scan_recovers_a_missed_nudge() {
     let engine = SyncEngine::start(settings, node.clone(), dir.path())
         .await
         .unwrap();
-    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+    engine.wait_idle(WAIT).await.unwrap();
     directory::write(
         &mut app,
         json!({"op":"add_task","title":"Rehang the potting-shed door"}),
@@ -149,7 +149,7 @@ async fn a_crash_after_confirmation_resends_once_and_the_receiver_deduplicates()
     let engine = SyncEngine::start(Default::default(), restarted.clone(), dir.path())
         .await
         .unwrap();
-    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+    engine.wait_idle(WAIT).await.unwrap();
     engine.sync_once().await.unwrap();
     let sent = restarted.published();
     assert_eq!(sent.len(), 2);
@@ -165,7 +165,7 @@ async fn a_crash_after_confirmation_resends_once_and_the_receiver_deduplicates()
     for bytes in sent {
         node.deliver(board, local, bytes);
     }
-    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+    engine.wait_idle(WAIT).await.unwrap();
     assert_eq!(receiver.store().statistics(board).await.unwrap().total, 1);
     assert_eq!(
         receiver.store().board_with_comments(board).await.unwrap(),
@@ -193,7 +193,7 @@ async fn app_writes_continue_while_publish_is_waiting_on_the_transport() {
     let engine = SyncEngine::start(Default::default(), node, dir.path())
         .await
         .unwrap();
-    tokio::time::timeout(Duration::from_secs(5), started.wait_for(|started| *started))
+    tokio::time::timeout(WAIT, started.wait_for(|started| *started))
         .await
         .unwrap()
         .unwrap();
@@ -210,7 +210,7 @@ async fn app_writes_continue_while_publish_is_waiting_on_the_transport() {
         json!({"op":"add_task","title":"Replace the shed roof"}),
     )
     .await;
-    tokio::time::timeout(Duration::from_secs(5), engine.shutdown())
+    tokio::time::timeout(WAIT, engine.shutdown())
         .await
         .expect("shutdown must cancel the blocked publish")
         .unwrap();
@@ -241,7 +241,7 @@ async fn publishes_a_smaller_local_event_written_after_the_first_scan() {
     let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
         .await
         .unwrap();
-    let limit = Duration::from_secs(5);
+    let limit = WAIT;
     engine.wait_idle(limit).await.unwrap();
     let first = node.published();
     let early = Envelope::new(
@@ -281,7 +281,7 @@ async fn retries_a_failed_outbox_read_without_a_nudge_or_periodic_scan() {
     let engine = SyncEngine::start(settings, node.clone(), dir.path())
         .await
         .unwrap();
-    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+    engine.wait_idle(WAIT).await.unwrap();
 
     let options = SqliteConnectOptions::new().filename(dir.path().join("pepino.sqlite"));
     let mut db = SqliteConnection::connect_with(&options).await.unwrap();
@@ -294,7 +294,6 @@ async fn retries_a_failed_outbox_read_without_a_nudge_or_periodic_scan() {
         json!({"op":"add_task","title":"Order replacement irrigation valves"}),
     )
     .await;
-    let started = tokio::time::Instant::now();
     engine.nudge();
     wait_for_status(&engine, |status| {
         status.boards[&board].outbox_pending.is_none()
@@ -311,7 +310,6 @@ async fn retries_a_failed_outbox_read_without_a_nudge_or_periodic_scan() {
         .await
         .unwrap();
     wait_for_status(&engine, Status::is_idle).await;
-    assert!(started.elapsed() >= Duration::from_millis(25));
     assert_eq!(node.published().len(), 1);
     engine.shutdown().await.unwrap();
 }

@@ -1,3 +1,5 @@
+use super::WAIT;
+
 use std::{fs, path::Path};
 
 use pepino_app::{App, Response};
@@ -79,7 +81,7 @@ async fn commits_skipped_events_before_acknowledging() {
     let deliveries = board.deliveries().unwrap();
     tokio::select! {
         result = inbox::run(&app, id, deliveries, &status) => panic!("{result:?}"),
-        result = tokio::time::timeout(std::time::Duration::from_secs(5), receipt.wait_for(|acked| *acked)) => {
+        result = tokio::time::timeout(WAIT, receipt.wait_for(|acked| *acked)) => {
             result.unwrap().unwrap();
             assert_eq!(app.store().statistics(id).await.unwrap().unknown_version, 1);
         }
