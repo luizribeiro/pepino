@@ -15,7 +15,8 @@ use ppn::output::{CommandResult, finish};
 use ppn::terminal::{Context, Terminal};
 
 use crate::commands::add;
-use crate::{config_command, debug, help, show, status, version};
+use crate::commands::show;
+use crate::{config_command, debug, help, status, version};
 
 #[derive(Parser)]
 #[command(
@@ -53,12 +54,7 @@ enum Command {
     #[command(after_help = example_help(&["ppn status", "ppn status --json"]))]
     Status,
     Add(add::Args),
-    /// Show a task, its relationships, and comments.
-    #[command(after_help = example_help(&["ppn show 97ad97", "ppn show 97ad97 --json"]))]
-    Show {
-        /// Task ID or unambiguous prefix.
-        task: String,
-    },
+    Show(show::Args),
     /// Exercise CLI behavior.
     #[command(
         hide = true,
@@ -192,7 +188,7 @@ fn dispatch(
     json: bool,
 ) -> Result<CommandResult, CliError> {
     match cli.command {
-        Some(Command::Show { task }) => show::run(context, task),
+        Some(Command::Show(args)) => show::run(context, args),
         Some(Command::Add(args)) => add::run(context, args, json),
         Some(Command::Status) => status::run(context),
         Some(Command::Version) => Ok(version::run(context)),
