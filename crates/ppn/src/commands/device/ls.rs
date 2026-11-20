@@ -36,8 +36,8 @@ pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
         .map(|(id, name)| {
             let this_device = id == local.device_id;
             let label = id.to_string();
-            let seen_on_board =
-                network.is_some_and(|network| network.peers_synced.contains(&label));
+            let seen_on_board = local.saw_device_on_board(id)
+                || network.is_some_and(|network| network.peers_synced.contains(&label));
             Device {
                 id,
                 name,

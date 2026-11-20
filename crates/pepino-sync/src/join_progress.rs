@@ -52,8 +52,29 @@ pub(crate) async fn track(
     changes: &watch::Sender<Status>,
     mut updates: watch::Receiver<Status>,
 ) {
+    let mut recorded = std::collections::BTreeSet::new();
     loop {
-        let progress = updates.borrow_and_update().new_join_progress();
+        let (progress, seen) = {
+            let status = updates.borrow_and_update();
+            let seen = status
+                .node
+                .synced_peers
+                .difference(&recorded)
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>();
+            (status.new_join_progress(), seen)
+        };
+        if !seen.is_empty() {
+            if app
+                .record_devices_seen_on_boards(seen.clone())
+                .await
+                .is_err()
+            {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
+            recorded.extend(seen);
+        }
         if !progress.is_empty() {
             if app.record_board_joins(progress.clone()).await.is_ok() {
                 changes.send_modify(|state| state.board_joins.extend(progress));
