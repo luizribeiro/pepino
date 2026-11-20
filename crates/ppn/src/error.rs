@@ -118,6 +118,19 @@ impl CliError {
         self
     }
 
+    pub fn map_input(mut self, field: &str, input: &str) -> Self {
+        if self
+            .details
+            .get("field")
+            .and_then(Value::as_str)
+            .is_some_and(|path| input_root(path) == field)
+        {
+            self.details
+                .insert("input".into(), Value::String(input.into()));
+        }
+        self
+    }
+
     pub fn usage(error: clap::Error) -> Self {
         let rendered = error.to_string();
         let rendered = rendered.trim();
@@ -166,6 +179,9 @@ impl CliError {
         }
         if let Some(term) = term {
             writeln!(stderr, "  term {:?}", display_ids(term, &ids))?;
+        }
+        if let Some(input) = self.details.get("input").and_then(Value::as_str) {
+            writeln!(stderr, "  input {input}")?;
         }
         if let Some(position) = self.details.get("position")
             && let Some(byte) = position.get("byte").and_then(Value::as_u64)
@@ -310,10 +326,53 @@ impl From<AppError> for CliError {
             if details.get("reason").and_then(Value::as_str) == Some(&diagnostic.message) {
                 details.remove("reason");
             }
+            if let Some(input) = input_name(&details) {
+                details.insert("input".into(), input.into());
+            }
             diagnostic.details = details;
         }
         diagnostic
     }
+}
+
+fn input_root(path: &str) -> &str {
+    path.split(['.', '[']).next().unwrap_or(path)
+}
+
+fn input_name(details: &Map<String, Value>) -> Option<&'static str> {
+    let field = details.get("field")?.as_str()?;
+    Some(match input_root(field) {
+        "title" => "<TITLE>",
+        "task" | "tasks" => "<TASK>",
+        "from" => "<FROM>",
+        "to" => "<TO>",
+        "name" => "<NAME>",
+        "text" => "<TEXT>",
+        "tags" => "<TAG>",
+        "assignees" => "<WHO>",
+        "parent" => "--parent",
+        "blocks" => "--blocks",
+        "blocked_by" => "--blocked-by",
+        "description" | "changes" if matches!(field, "description" | "changes.description") => {
+            "--description"
+        }
+        "changes" if field == "changes.title" => "--title",
+        "due" | "changes" if matches!(field, "due" | "changes.due") => "--due",
+        "priority" | "changes" if matches!(field, "priority" | "changes.priority") => "--priority",
+        "status" | "changes" if matches!(field, "status" | "changes.status") => "--status",
+        "fields" | "changes" => "--set",
+        "sort" => "--sort",
+        "filter" if details.get("view_chain").is_some() => "saved view filter",
+        "filter"
+            if details
+                .get("position")
+                .is_some_and(|position| position["kind"] == "byte") =>
+        {
+            "--filter"
+        }
+        "filter" => "filter term",
+        _ => return None,
+    })
 }
 
 fn input_hint(field: &str, reason: &str) -> Option<&'static str> {
@@ -346,7 +405,7 @@ mod tests {
         assert!(
             String::from_utf8(buffer)
                 .unwrap()
-                .contains("term \"tags:hardware\"\n  at byte 2\nhint: Use tag")
+                .contains("term \"tags:hardware\"\n  input --filter\n  at byte 2\nhint: Use tag")
         );
         let mut buffer = Vec::new();
         assert_eq!(error.report(true, &mut buffer), ExitCode::from(2));
@@ -370,7 +429,7 @@ mod tests {
             ExitCode::from(2)
         );
         assert!(String::from_utf8(stderr).unwrap().ends_with(
-            "  term \"tag:\"\n  at argument 1, byte 4\nhint: Run `ppn help filters` for filter syntax and examples.\n"
+            "  term \"tag:\"\n  input filter term\n  at argument 1, byte 4\nhint: Run `ppn help filters` for filter syntax and examples.\n"
         ));
     }
 

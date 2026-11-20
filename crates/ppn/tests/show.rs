@@ -86,7 +86,7 @@ fn show_reports_deleted_tasks_as_not_found() {
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
         format!(
-            "error: Task {} \"Order the new mounting plate\" was deleted\n",
+            "error: Task {} \"Order the new mounting plate\" was deleted\n  input <TASK>\n",
             &id[..6]
         )
     );
@@ -112,7 +112,7 @@ fn show_reports_ambiguous_ids_with_sorted_candidates() {
     assert_eq!(
         human,
         format!(
-            "error: Task reference {prefix} matches 2 tasks\n  {}\n  {}\nhint: Use a longer task ID.\n",
+            "error: Task reference {prefix} matches 2 tasks\n  {}\n  {}\n  input <TASK>\nhint: Use a longer task ID.\n",
             ids.get(&expected[0]),
             ids.get(&expected[1])
         )
@@ -155,22 +155,22 @@ fn validation_and_lookup_errors_have_one_message() {
         (
             &["add", "   "][..],
             2,
-            "error: invalid title \"   \": expected a non-empty title\n",
+            "error: invalid title \"   \": expected a non-empty title\n  input <TITLE>\n",
         ),
         (
             &["ls", "--board", "Workshop"],
             3,
-            "error: board Workshop was not found\n",
+            "error: board Workshop was not found\n  input filter term\n",
         ),
         (
             &["view", "rm", "weekend"],
             3,
-            "error: view weekend was not found\n",
+            "error: view weekend was not found\n  input <NAME>\n",
         ),
         (
             &["show", "latch"],
             2,
-            "error: invalid task reference \"latch\": expected 4 to 64 hexadecimal digits\nhint: Use an id shown by `ppn ls`, at least 4 hex digits.\n",
+            "error: invalid task reference \"latch\": expected 4 to 64 hexadecimal digits\n  input <TASK>\nhint: Use an id shown by `ppn ls`, at least 4 hex digits.\n",
         ),
     ] {
         let output = sandbox.command().args(args).output().unwrap();
@@ -187,7 +187,7 @@ fn human_errors_shorten_full_ids_while_json_keeps_them() {
     assert_eq!(output.status.code(), Some(3));
     assert_eq!(
         output.stderr,
-        b"error: No task matches 012345\nhint: Run `ppn ls` to list tasks.\n"
+        b"error: No task matches 012345\n  input <TASK>\nhint: Run `ppn ls` to list tasks.\n"
     );
     let output = sandbox
         .command()
@@ -210,16 +210,19 @@ fn write_diagnostics_keep_one_prefix_and_short_edge_endpoints() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
-        format!("error: link would create a cycle through {}\n", &id[..6])
+        format!(
+            "error: link would create a cycle through {}\n  input <TO>\n",
+            &id[..6]
+        )
     );
     for (args, message) in [
         (
             &["edit", &id, "--title", "   "][..],
-            "error: invalid title \"   \": expected a non-empty title\n",
+            "error: invalid title \"   \": expected a non-empty title\n  input --title\n",
         ),
         (
             &["tag", &id, "Hardware"],
-            "error: invalid tag \"Hardware\": expected a lowercase tag of at most 64 bytes\nhint: Use a tag matching [a-z][a-z0-9_./-]* with at most 64 bytes.\n",
+            "error: invalid tag \"Hardware\": expected a lowercase tag of at most 64 bytes\n  input <TAG>\nhint: Use a tag matching [a-z][a-z0-9_./-]* with at most 64 bytes.\n",
         ),
     ] {
         let output = sandbox.command().args(args).output().unwrap();
@@ -236,7 +239,7 @@ fn write_diagnostics_keep_one_prefix_and_short_edge_endpoints() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
-    assert_eq!(output.stderr, b"error: view weekend is referenced by maintenance\nhint: Pass `--force` to remove the referenced view.\n");
+    assert_eq!(output.stderr, b"error: view weekend is referenced by maintenance\n  input <NAME>\nhint: Pass `--force` to remove the referenced view.\n");
 }
 
 #[test]
