@@ -10,7 +10,6 @@ mod app;
 mod batch;
 mod filter;
 mod hlc;
-#[cfg(test)]
 mod initialize;
 mod list;
 mod log;

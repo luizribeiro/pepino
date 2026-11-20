@@ -32,7 +32,9 @@ impl AppClient {
         mut options: OpenOptions,
         initialize: bool,
     ) -> Result<Self, CliError> {
-        let directory = context.config()?.config.data_dir.value.as_path();
+        let config = &context.config()?.config;
+        let directory = config.data_dir.value.as_path();
+        options.credentials_file = Some(config.credentials_file.value.as_path().to_owned());
         if let Some(timeout) = context.timeout {
             options.lock_timeout = timeout;
         }

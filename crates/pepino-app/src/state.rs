@@ -100,22 +100,6 @@ impl LocalState {
         })
     }
 
-    pub(crate) fn load_or_create(directory: &Path, options: OpenOptions) -> Result<Self, AppError> {
-        let path = directory.join(FILE_NAME);
-        match fs::read(&path) {
-            Ok(bytes) => return Self::decode(&bytes),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(path_io_error(&path, "read local state", error)),
-        }
-        let state = Self::new(
-            InitialNames::try_from(options)?,
-            DeviceId::from_bytes(random_id()?),
-            BoardId::from_bytes(random_id()?),
-        )?;
-        save(directory, &path, state)
-            .map_err(|error| path_io_error(&path, "save local state", error))
-    }
-
     pub(crate) fn load(directory: &Path) -> Result<Self, AppError> {
         Self::read(&directory.join(FILE_NAME))
     }
@@ -231,22 +215,6 @@ fn create_directory(directory: &Path) -> io::Result<()> {
     builder.create(directory)
 }
 
-fn save(directory: &Path, path: &Path, state: LocalState) -> io::Result<LocalState> {
-    create_directory(directory)?;
-    let file = stage(directory, &state)?;
-    match file.persist_noclobber(path) {
-        Ok(_) => {
-            sync_directory(directory)?;
-            Ok(state)
-        }
-        Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
-            let bytes = fs::read(path)?;
-            LocalState::decode(&bytes).map_err(io::Error::other)
-        }
-        Err(error) => Err(error.error),
-    }
-}
-
 fn stage(directory: &Path, state: &LocalState) -> io::Result<tempfile::NamedTempFile> {
     let mut file = tempfile::NamedTempFile::new_in(directory)?;
     #[cfg(unix)]
@@ -306,23 +274,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn open_persists_private_state_and_preserves_first_names() {
+    fn persists_private_state_with_the_supplied_ids() {
         let directory = tempfile::tempdir().unwrap();
-        let options = OpenOptions {
+        let names = OpenOptions {
             display_name: Some("Ada Gardener".into()),
             device_name: Some("garden tablet".into()),
             board_name: Some("Greenhouse".into()),
             ..OpenOptions::default()
-        };
-        let state = LocalState::load_or_create(directory.path(), options).unwrap();
+        }
+        .try_into()
+        .unwrap();
+        let device = DeviceId::from_bytes([13; 32]);
+        let board = BoardId::from_bytes([17; 32]);
+        let state = LocalState::new(names, device, board).unwrap();
         let path = directory.path().join(FILE_NAME);
-        assert_eq!(state.display_name, "Ada Gardener");
-        assert_eq!(state.board_name, "Greenhouse");
-        assert_eq!(state.device_name, "garden tablet");
-        assert_eq!(
-            LocalState::load_or_create(directory.path(), OpenOptions::default()).unwrap(),
-            state
-        );
+        state.write(&path).unwrap();
+        let restored = LocalState::load(directory.path()).unwrap();
+        assert_eq!(restored, state);
+        assert_eq!(restored.device_id, device);
+        assert_eq!(restored.board_id, board);
+        assert_eq!(restored.display_name, "Ada Gardener");
+        assert_eq!(restored.board_name, "Greenhouse");
+        assert_eq!(restored.device_name, "garden tablet");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -331,48 +304,5 @@ mod tests {
                 0o600
             );
         }
-        let other = tempfile::tempdir().unwrap();
-        let other = LocalState::load_or_create(other.path(), OpenOptions::default()).unwrap();
-        assert_eq!(other.display_name, whoami::username().unwrap());
-        assert_eq!(other.board_name, "Personal");
-        assert_eq!(other.device_name, whoami::hostname().unwrap());
-        assert_ne!(state.device_id, other.device_id);
-        assert_ne!(state.identity_id, other.identity_id);
-        assert_ne!(state.board_id, other.board_id);
-        fs::write(
-            path,
-            br#"{"version":4294967296,"credentials":{"device":"future"}}"#,
-        )
-        .unwrap();
-        assert!(matches!(
-            LocalState::load_or_create(directory.path(), OpenOptions::default()),
-            Err(AppError::Storage {
-                retryable: false,
-                reason,
-            }) if reason == "unsupported local state version: 4294967296"
-        ));
-    }
-
-    #[test]
-    fn racing_creators_use_the_same_state() {
-        let directory = tempfile::tempdir().unwrap();
-        let start = std::sync::Barrier::new(2);
-        let create = |name: &str| {
-            start.wait();
-            LocalState::load_or_create(
-                directory.path(),
-                OpenOptions {
-                    display_name: Some(name.into()),
-                    ..OpenOptions::default()
-                },
-            )
-            .unwrap()
-        };
-        let [left, right] = std::thread::scope(|scope| {
-            let left = scope.spawn(|| create("Ada Gardener"));
-            let right = scope.spawn(|| create("Ben Gardener"));
-            [left.join().unwrap(), right.join().unwrap()]
-        });
-        assert_eq!(left, right);
     }
 }

@@ -193,23 +193,49 @@ fn sync(directory: &Path) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{App, OpenOptions};
 
     #[tokio::test]
     #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
-    async fn stages_a_real_encrypted_board_before_publishing_state() {
+    async fn resumes_a_pending_board_without_exposing_partial_local_state() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path();
-        let keys = path.join("credentials.cbor");
-        let state = prepare(path.to_owned(), keys.clone(), OpenOptions::default())
+        let credentials = path.join("credentials.cbor");
+        let now = 1_795_144_800_000;
+        let abandoned = path.join(STAGING);
+        fs::create_dir(&abandoned).unwrap();
+        fs::write(abandoned.join(NODE_DATABASE), b"interrupted").unwrap();
+        let pending = prepare(path.to_owned(), credentials.clone(), OpenOptions::default())
             .await
             .unwrap();
+        assert_eq!(LocalState::read(&path.join(PENDING)).unwrap(), pending);
+        assert!(matches!(
+            App::open(path, now).await,
+            Err(AppError::NotInitialized { .. })
+        ));
         assert!(!path.join(FILE_NAME).exists());
-        assert_eq!(LocalState::read(&path.join(PENDING)).unwrap(), state);
-        let resumed = prepare(path.to_owned(), keys, OpenOptions::default())
+        assert!(!path.join(DATABASE).exists());
+        assert!(!abandoned.exists());
+
+        fs::create_dir(path.join(DATABASE)).unwrap();
+        assert!(App::init(path, now).await.is_err());
+        assert!(!path.join(FILE_NAME).exists());
+        fs::remove_dir(path.join(DATABASE)).unwrap();
+
+        let app = App::init(path, now).await.unwrap();
+        assert_eq!(app.local_state(), &pending);
+        assert!(!path.join(PENDING).exists());
+        let keys = DeviceCredentials::load_or_create(&credentials).unwrap();
+        assert_eq!(keys.device_id(), pending.device_id);
+        let node = Node::spawn(NodeSettings::offline(keys, path.join(NODE_DATABASE)))
             .await
             .unwrap();
-        assert_eq!(resumed, state);
-        finish(path).unwrap();
-        assert_eq!(LocalState::load(path).unwrap(), state);
+        let board = node.open_board(pending.board_id).await.unwrap();
+        board
+            .wait_until_joined(std::time::Duration::from_secs(5))
+            .await
+            .unwrap();
+        board.close().await.unwrap();
+        node.shutdown().await.unwrap();
     }
 }

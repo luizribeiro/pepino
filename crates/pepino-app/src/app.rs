@@ -63,23 +63,44 @@ impl App {
                 LocalState::prepare_directory(&directory)?;
             }
             if !exists(&directory.join("local.lock"))? {
+                if exists(&directory.join(crate::state::FILE_NAME))? {
+                    LocalState::load(&directory)?;
+                }
                 missing_pair(&directory, initialize)?;
             }
             Ok::<_, AppError>(directory)
         })
         .await??;
         let _guard = lock(&directory, lock_timeout).await?;
+        let credentials_file = options
+            .credentials_file
+            .as_ref()
+            .map(|path| {
+                std::path::absolute(path)
+                    .map_err(|error| io_error("resolve credentials file", error))
+            })
+            .transpose()?
+            .unwrap_or_else(|| directory.join("credentials.cbor"));
         let state_dir = directory.clone();
-        let (local, fresh) = worker("open local state", move || {
-            let fresh = missing_pair(&state_dir, initialize)?;
-            let local = if fresh {
-                LocalState::load_or_create(&state_dir, options)?
+        let existing = worker("open local state", move || {
+            if exists(&state_dir.join(crate::state::FILE_NAME))? {
+                let local = LocalState::load(&state_dir)?;
+                missing_pair(&state_dir, initialize)?;
+                Ok::<_, AppError>(Some(local))
             } else {
-                LocalState::load(&state_dir)?
-            };
-            Ok::<_, AppError>((local, fresh))
+                missing_pair(&state_dir, initialize)?;
+                Ok(None)
+            }
         })
         .await??;
+        let fresh = existing.is_none();
+        let local = match existing {
+            Some(local) => local,
+            None => {
+                crate::initialize::prepare(directory.clone(), credentials_file.clone(), options)
+                    .await?
+            }
+        };
         let database = directory.join(DATABASE);
         let runtime = tokio::runtime::Handle::current();
         // Store startup borrows its migration connection through a non-Send future.
@@ -106,6 +127,13 @@ impl App {
                 wall_ms: now,
                 counter: 0,
             });
+        if fresh {
+            let state_dir = directory.clone();
+            worker("publish local state", move || {
+                crate::initialize::finish(&state_dir)
+            })
+            .await??;
+        }
         Ok(Self {
             clock: Clock::from_hlc(hlc),
             store,
@@ -187,7 +215,17 @@ pub(super) fn exists(path: &Path) -> Result<bool, AppError> {
 fn missing_pair(directory: &Path, initialize: bool) -> Result<bool, AppError> {
     let state = directory.join(crate::state::FILE_NAME);
     let database = directory.join(DATABASE);
-    match (exists(&state)?, exists(&database)?) {
+    let state_exists = exists(&state)?;
+    if !state_exists && exists(&directory.join(crate::initialize::PENDING))? {
+        return if initialize {
+            Ok(true)
+        } else {
+            Err(AppError::NotInitialized {
+                directory: directory.display().to_string(),
+            })
+        };
+    }
+    match (state_exists, exists(&database)?) {
         (true, true) => Ok(false),
         (false, false) if initialize => Ok(true),
         (false, false) => Err(AppError::NotInitialized {
