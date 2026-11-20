@@ -132,7 +132,7 @@ impl LocalState {
         })
     }
 
-    pub(crate) fn load(directory: &Path) -> Result<Self, AppError> {
+    pub fn load(directory: &Path) -> Result<Self, AppError> {
         Self::read(&directory.join(FILE_NAME))
     }
 

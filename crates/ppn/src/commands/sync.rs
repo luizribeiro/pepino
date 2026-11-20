@@ -51,7 +51,10 @@ pub fn run(
     let Outcome::Synced { idle, network } = outcome else {
         return Err(protocol_error());
     };
-    let summary = Summary(network);
+    let devices = pepino_app::LocalState::load(config.data_dir.value.as_path())
+        .map(|local| local.devices())
+        .unwrap_or_default();
+    let summary = Summary(network, devices);
     if !idle {
         return Err(CliError::new(
             ErrorKind::SyncTimeout,

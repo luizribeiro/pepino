@@ -145,7 +145,7 @@ fn sync_drains_the_local_outbox_without_peers() {
     let human = success(output);
     assert!(human.contains("Published 1 events"), "{human}");
     assert!(
-        human.contains("no other device reachable; 0 events waiting to be sent"),
+        human.contains("Synced with 0 devices.\n0 events waiting to be sent"),
         "{human}"
     );
     let result = as_json(&fixture.run(&["sync", "--json"]));
