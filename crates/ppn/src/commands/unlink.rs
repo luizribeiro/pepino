@@ -18,11 +18,18 @@ pub struct Args {
 }
 
 pub fn run(context: &Context<'_>, Args { relation }: Args) -> Result<CommandResult, CliError> {
+    let (from_input, to_input) = relation.input_names();
     let (from, kind, to) = relation.endpoints();
-    let response = AppClient::open(context)?.call(Request::Write(WriteRequest::Unlink {
-        from: from.clone(),
-        kind,
-        to: to.clone(),
-    }))?;
+    let response = AppClient::open(context)?
+        .call(Request::Write(WriteRequest::Unlink {
+            from: from.clone(),
+            kind,
+            to: to.clone(),
+        }))
+        .map_err(|error| {
+            error
+                .map_input("from", from_input)
+                .map_input("to", to_input)
+        })?;
     relation_document(context, response, "Unlinked", (&from, kind, &to))
 }

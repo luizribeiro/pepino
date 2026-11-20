@@ -38,6 +38,14 @@ enum Relation {
 }
 
 impl RelationArgs {
+    pub(super) fn input_names(&self) -> (&'static str, &'static str) {
+        if matches!(self.kind, Relation::BlockedBy) {
+            ("<TO>", "<FROM>")
+        } else {
+            ("<FROM>", "<TO>")
+        }
+    }
+
     pub(super) fn endpoints(self) -> (String, EdgeKind, String) {
         let Self { from, kind, to } = self;
         match kind {
@@ -50,11 +58,18 @@ impl RelationArgs {
 }
 
 pub fn run(context: &Context<'_>, Args { relation }: Args) -> Result<CommandResult, CliError> {
+    let (from_input, to_input) = relation.input_names();
     let (from, kind, to) = relation.endpoints();
-    let response = AppClient::open(context)?.call(Request::Write(WriteRequest::Link {
-        from: from.clone(),
-        kind,
-        to: to.clone(),
-    }))?;
+    let response = AppClient::open(context)?
+        .call(Request::Write(WriteRequest::Link {
+            from: from.clone(),
+            kind,
+            to: to.clone(),
+        }))
+        .map_err(|error| {
+            error
+                .map_input("from", from_input)
+                .map_input("to", to_input)
+        })?;
     relation_document(context, response, "Linked", (&from, kind, &to))
 }

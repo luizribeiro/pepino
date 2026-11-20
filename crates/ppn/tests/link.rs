@@ -123,3 +123,21 @@ fn changing_parent_removes_the_previous_link() {
         serde_json::Value::Null
     );
 }
+
+#[test]
+fn reverse_relation_errors_identify_the_argument_as_typed() {
+    let (sandbox, _) = task_sandbox();
+    let id = create_task(&sandbox, "Repair the shed door", &[]);
+    for command in ["link", "unlink"] {
+        let args = [command, &id, "blocked-by", "hinge"];
+        let output = sandbox.command().args(args).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .contains("input <TO>")
+        );
+        let output = sandbox.command().args(args).arg("--json").output().unwrap();
+        assert_eq!(task_error(output, 2, "invalid_input")["input"], "<TO>");
+    }
+}
