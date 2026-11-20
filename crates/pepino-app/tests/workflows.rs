@@ -603,13 +603,53 @@ async fn read_golden(app: &mut App, request: Value, expected: Value) {
 }
 
 #[tokio::test]
-async fn tree_starts_with_an_empty_forest() {
+async fn graph_reads_render_the_project_forest_and_transitive_dependencies() {
     let directory = tempfile::tempdir().unwrap();
     let mut app = App::open(directory.path(), NOW).await.unwrap();
     read_golden(
         &mut app,
         json!({"op":"tree","task":null}),
         json!({"ok":{"kind":"tree","nodes":[]}}),
+    )
+    .await;
+    let root = add(&mut app, "Winterize the greenhouse").await;
+    let order = add(&mut app, "Order the latch").await;
+    let (_, install, _, _) = write(
+        &mut app,
+        json!({"op":"add_task","title":"Install the latch","parent":root,"blocked_by":[order]}),
+    )
+    .await;
+    let install = install.unwrap();
+    let (_, test, _, _) = write(&mut app, json!({"op":"add_task","title":"Test the door seal","parent":install,"blocked_by":[install]})).await;
+    let test = test.unwrap();
+    write(
+        &mut app,
+        json!({"op":"comment","task":test,"text":"Check the corners with a feeler gauge"}),
+    )
+    .await;
+    let [root_record, order_record, install_record, test_record] = [
+        get(&mut app, &root).await,
+        get(&mut app, &order).await,
+        get(&mut app, &install).await,
+        get(&mut app, &test).await,
+    ];
+    let branch = json!([
+        {"depth":0,"task":root_record},
+        {"depth":1,"task":install_record},
+        {"depth":2,"task":test_record}
+    ]);
+    read_golden(
+        &mut app,
+        json!({"op":"tree","task":root}),
+        json!({"ok":{"kind":"tree","nodes":branch}}),
+    )
+    .await;
+    let mut nodes = branch.as_array().unwrap().clone();
+    nodes.push(json!({"depth":0,"task":order_record}));
+    read_golden(
+        &mut app,
+        json!({"op":"tree","task":null}),
+        json!({"ok":{"kind":"tree","nodes":nodes}}),
     )
     .await;
 }
