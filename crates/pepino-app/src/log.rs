@@ -157,6 +157,23 @@ impl App {
             .history(self.local.board_id, task, limit)
             .await
             .map_err(store_error)?;
+        let task_ids: Vec<_> = history
+            .events
+            .iter()
+            .chain(&history.unordered)
+            .flat_map(|record| record.tasks.iter().copied())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let mut titles = self
+            .store
+            .task_titles(self.local.board_id, &task_ids)
+            .await
+            .map_err(store_error)?;
+        let titles = task_ids
+            .into_iter()
+            .map(|id| (id.to_string(), titles.remove(&id)))
+            .collect();
         let events = history
             .events
             .into_iter()
@@ -167,7 +184,11 @@ impl App {
             .into_iter()
             .map(EventRecord::try_from)
             .collect::<Result<_, _>>()?;
-        Ok(Response::Log { events, unordered })
+        Ok(Response::Log {
+            titles,
+            events,
+            unordered,
+        })
     }
 }
 

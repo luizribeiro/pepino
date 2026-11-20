@@ -146,6 +146,7 @@ pub enum Response {
         protocol_version: u32,
     },
     Log {
+        titles: BTreeMap<String, Option<String>>,
         events: Vec<EventRecord>,
         unordered: Vec<EventRecord>,
     },

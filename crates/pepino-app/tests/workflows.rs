@@ -796,19 +796,19 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
     read_golden(
         &mut app,
         json!({"op":"log","task":null,"limit":null}),
-        json!({"ok":{"kind":"log","unordered":unordered,"events":events}}),
+        json!({"ok":{"kind":"log","titles":{(task.as_str()):"Replace the greenhouse latch"},"unordered":unordered,"events":events}}),
     )
     .await;
     read_golden(
         &mut app,
         json!({"op":"log","task":null,"limit":0}),
-        json!({"ok":{"kind":"log","unordered":unordered,"events":[]}}),
+        json!({"ok":{"kind":"log","titles":{},"unordered":unordered,"events":[]}}),
     )
     .await;
     read_golden(
         &mut app,
         json!({"op":"log","task":task,"limit":2}),
-        json!({"ok":{"kind":"log","unordered":[],"events":&events.as_array().unwrap()[1..]}}),
+        json!({"ok":{"kind":"log","titles":{(task.as_str()):"Replace the greenhouse latch"},"unordered":[],"events":&events.as_array().unwrap()[1..]}}),
     )
     .await;
     read_golden(
@@ -1102,7 +1102,7 @@ async fn history_describes_invalid_events_and_preserves_unknown_value_targets() 
         ));
     }
     let wire_clock = pepino_app::Hlc::from(hlc);
-    read_golden(&mut app, json!({"op":"log","task":app_task,"limit":2}), json!({"ok":{"kind":"log","unordered":[],"events":[
+    read_golden(&mut app, json!({"op":"log","task":app_task,"limit":2}), json!({"ok":{"kind":"log","titles":{(app_task.as_str()):"Refit the greenhouse door"},"unordered":[],"events":[
         {"id":invalid.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"invalid","kind":"tag_added","reason":"invalid tag \"Hardware\"","change":{"type":"tag","action":"added","summary":"Added tag Hardware","task":app_task,"tag":"Hardware"}},
         {"id":unknown.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"unknown_value","kind":"task_field_set","change":{"type":"skipped","summary":"Skipped event","tasks":[app_task]}}
     ]}})).await;
@@ -1122,12 +1122,16 @@ async fn log_actions_distinguish_sets_unsets_and_presence_changes() {
     ] {
         handle(&mut app, request).await.unwrap();
     }
-    let Response::Log { events, .. } = handle(&mut app, json!({"op":"log","task":task}))
+    let Response::Log { events, titles, .. } = handle(&mut app, json!({"op":"log","task":task}))
         .await
         .unwrap()
     else {
         panic!("expected log");
     };
+    assert_eq!(
+        titles[&task].as_deref(),
+        Some("Replace the greenhouse latch")
+    );
     use pepino_app::EventAction::*;
     assert_eq!(
         events
@@ -1150,12 +1154,14 @@ async fn an_edge_change_identifies_its_source_task() {
     )
     .await
     .unwrap();
-    let Response::Log { events, .. } = handle(&mut app, json!({"op":"log","limit":1}))
+    let Response::Log { events, titles, .. } = handle(&mut app, json!({"op":"log","limit":1}))
         .await
         .unwrap()
     else {
         panic!("expected log");
     };
+    assert_eq!(titles[&from].as_deref(), Some("Order latches"));
+    assert_eq!(titles[&to].as_deref(), Some("Repair greenhouse door"));
     let change = serde_json::to_value(&events[0].change).unwrap();
     assert_eq!(change["task"], from);
     assert_eq!(change["from"], from);
