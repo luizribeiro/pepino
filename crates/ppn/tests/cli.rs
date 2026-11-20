@@ -1,37 +1,8 @@
 use ppn::error::ErrorKind;
-use std::path::PathBuf;
-use std::process::{Command, Output};
-
 use serde_json::{Value, json};
 
-fn ppn() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ppn"));
-    for (name, _) in std::env::vars_os() {
-        if name.to_string_lossy().starts_with("PPN_") {
-            command.env_remove(name);
-        }
-    }
-    command.env_remove("NO_COLOR").env(
-        "PPN_CONFIG",
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/default-config.toml"
-        ),
-    );
-    command
-}
-
-fn run_ppn(args: &[&str]) -> String {
-    let output = ppn()
-        .args(args)
-        .output()
-        .unwrap_or_else(|error| panic!("run ppn {args:?}: {error}"));
-
-    assert!(output.status.success(), "ppn {args:?}: {output:?}");
-    assert!(output.stderr.is_empty(), "ppn {args:?}: {output:?}");
-    String::from_utf8(output.stdout)
-        .unwrap_or_else(|error| panic!("ppn {args:?} stdout is not UTF-8: {error}"))
-}
+mod common;
+use common::*;
 
 #[test]
 fn prints_version() {
@@ -291,22 +262,6 @@ fn help_can_describe_a_command_or_nested_subcommand() {
     assert_json_error(unknown, 2, "usage");
 }
 
-fn assert_json_error(output: std::process::Output, status: i32, code: &str) -> serde_json::Value {
-    assert_eq!(output.status.code(), Some(status), "{output:?}");
-    assert!(output.stdout.is_empty(), "{output:?}");
-    let diagnostic: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
-    let error = diagnostic["error"].as_object().unwrap();
-    assert_eq!(error.len(), 3, "{diagnostic}");
-    assert_eq!(error["code"], code);
-    assert!(
-        error["message"]
-            .as_str()
-            .is_some_and(|message| !message.is_empty())
-    );
-    assert!(error.contains_key("hint"));
-    diagnostic
-}
-
 #[test]
 fn unknown_command_respects_json_even_when_clap_stops_before_the_flag() {
     for output in [
@@ -539,81 +494,6 @@ fn no_color_disables_automatic_color_on_a_terminal() {
         let plain = tty_output(&[command, "--color", "never"], None);
         assert_eq!(suppressed, plain);
     }
-}
-
-#[cfg(unix)]
-fn tty_output(args: &[&str], no_color: Option<&str>) -> Vec<u8> {
-    use nix::{errno::Errno, pty::openpty};
-    use std::{fs::File, io::Read, process::Stdio};
-
-    let pty = openpty(None, None).unwrap();
-    let mut command = ppn();
-    command
-        .args(args)
-        .env("TERM", "xterm")
-        .stdout(File::from(pty.slave))
-        .stderr(Stdio::piped());
-    if let Some(value) = no_color {
-        command.env("NO_COLOR", value);
-    }
-    let child = command.spawn().unwrap();
-    drop(command);
-
-    let mut stdout = Vec::new();
-    if let Err(error) = File::from(pty.master).read_to_end(&mut stdout) {
-        // Linux reports EIO when the last slave descriptor closes.
-        assert_eq!(error.raw_os_error(), Some(Errno::EIO as i32));
-    }
-    let output = child.wait_with_output().unwrap();
-    assert!(output.status.success(), "{output:?}");
-    assert!(output.stderr.is_empty(), "{output:?}");
-    stdout
-}
-
-struct ConfigSandbox {
-    home: tempfile::TempDir,
-    config: PathBuf,
-}
-
-impl ConfigSandbox {
-    fn new() -> Self {
-        let home = tempfile::tempdir().unwrap();
-        let config_dir = if cfg!(target_os = "macos") {
-            home.path().join("Library/Application Support/pepino")
-        } else {
-            home.path().join("xdg-config/pepino")
-        };
-        std::fs::create_dir_all(&config_dir).unwrap();
-        let config = config_dir.join("config.toml");
-        std::fs::write(&config, include_str!("fixtures/release-config.toml")).unwrap();
-        Self { home, config }
-    }
-
-    fn command(&self) -> Command {
-        let mut command = ppn();
-        command
-            .env("HOME", self.home.path())
-            .env("XDG_CONFIG_HOME", self.home.path().join("xdg-config"))
-            .env("XDG_STATE_HOME", self.home.path().join("xdg-state"))
-            .env("PPN_CONFIG", &self.config);
-        command
-    }
-
-    fn run(&self, args: &[&str]) -> String {
-        success(self.command().args(args).output().unwrap())
-    }
-}
-
-fn success(output: Output) -> String {
-    assert!(output.status.success(), "{output:?}");
-    assert!(output.stderr.is_empty(), "{output:?}");
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(!stdout.contains('\x1b'));
-    stdout
-}
-
-fn as_json(text: &str) -> Value {
-    serde_json::from_str(text).unwrap()
 }
 
 #[test]
@@ -1011,17 +891,6 @@ fn config_help_lists_environment_variables_from_the_settings_table() {
     );
 }
 
-fn task_sandbox() -> (ConfigSandbox, PathBuf) {
-    let sandbox = ConfigSandbox::new();
-    let data = sandbox.home.path().join("board");
-    std::fs::write(
-        &sandbox.config,
-        "data_dir = '~/board'\n[ui]\ndate_format = '%d %b %Y'\n",
-    )
-    .unwrap();
-    (sandbox, data)
-}
-
 #[test]
 fn status_renders_empty_local_state_through_the_binary() {
     let (sandbox, data) = task_sandbox();
@@ -1106,27 +975,6 @@ fn show_renders_the_protocol_task_and_configured_due_date() {
     );
 }
 
-fn task_stdin(sandbox: &ConfigSandbox, args: &[&str], input: &str) -> Output {
-    use std::io::Write;
-    use std::process::Stdio;
-
-    let mut child = sandbox
-        .command()
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(input.as_bytes())
-        .unwrap();
-    child.wait_with_output().unwrap()
-}
-
 #[test]
 fn add_reads_title_or_description_from_stdin() {
     let (sandbox, _) = task_sandbox();
@@ -1185,13 +1033,6 @@ fn add_accepts_protocol_fields_on_json_stdin() {
     let error = serde_json::from_slice::<Value>(&malformed.stderr).unwrap();
     assert_eq!(error["error"]["field"], "stdin");
     assert_eq!(error["error"]["code"], "invalid_input");
-}
-
-fn create_task(sandbox: &ConfigSandbox, title: &str, flags: &[&str]) -> String {
-    as_json(&sandbox.run(&[&["add", title, "--json"], flags].concat()))["created"]
-        .as_str()
-        .unwrap()
-        .to_owned()
 }
 
 #[test]
@@ -1380,14 +1221,6 @@ fn add_warns_for_a_recorded_exclusion_and_succeeds() {
     assert_eq!(detail["edges"][0]["effective"], false);
 }
 
-fn task_error(output: Output, status: i32, code: &str) -> Value {
-    assert_eq!(output.status.code(), Some(status), "{output:?}");
-    assert!(output.stdout.is_empty(), "{output:?}");
-    let diagnostic: Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(diagnostic["error"]["code"], code);
-    diagnostic["error"].clone()
-}
-
 #[test]
 fn show_diagnostics_distinguish_malformed_and_missing_references() {
     let (sandbox, _) = task_sandbox();
@@ -1432,19 +1265,6 @@ fn add_diagnostics_report_invalid_values_and_hints() {
     );
     assert_eq!(due["field"], "due");
     assert!(due["hint"].as_str().unwrap().contains("lowercase weekday"));
-}
-
-const SEED_NOW: u64 = 1_795_149_900_000;
-
-fn seed_tasks<T>(data: &std::path::Path, seed: impl AsyncFnOnce(&mut pepino_app::App) -> T) -> T {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let mut app = pepino_app::App::open(data, SEED_NOW).await.unwrap();
-            seed(&mut app).await
-        })
 }
 
 #[test]
