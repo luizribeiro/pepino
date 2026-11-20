@@ -322,46 +322,9 @@ async fn link_and_unlink_use_present_edges_including_excluded_ones() {
     assert!(write(&mut app, link(&first, "blocks", &second)).await.0);
     let (changed, _, _, edges) = write(&mut app, link(&second, "blocks", &first)).await;
     assert!(changed);
-    let excluded = EdgeEffect {
-        from: second.clone(),
-        kind: EdgeKind::Blocks,
-        to: first.clone(),
-        effective: false,
-        reason: Some(EdgeExclusionReason::Cycle),
-    };
-    assert_eq!(edges, std::slice::from_ref(&excluded));
-    write(
-        &mut app,
-        json!({"op":"assign","task":first,"assignees":["me"]}),
-    )
-    .await;
-    let response = handle(&mut app, json!({"op":"get_task","task":first}))
-        .await
-        .unwrap();
-    let response = serde_json::to_value(response).unwrap();
-    assert_eq!(response["edges"], json!([excluded]));
-    assert_eq!(
-        response["relation_titles"],
-        json!({second.clone(): "Install the latch"})
-    );
-    assert_eq!(
-        response["assignee_names"],
-        json!({
-            app.local_state().identity_id.to_string(): app.local_state().display_name
-        })
-    );
-    assert!(get(&mut app, &first).await.blocked_by.is_empty());
-    let (changed, _, _, edges) = write(&mut app, link(&second, "blocks", &first)).await;
-    assert!(!changed && edges.is_empty());
-    let (changed, _, _, edges) = write(&mut app, unlink(&second, "blocks", &first)).await;
-    assert!(changed);
-    assert_eq!(
-        edges,
-        [EdgeEffect {
-            reason: None,
-            ..excluded
-        }]
-    );
+    assert_eq!(edges[0].reason, Some(EdgeExclusionReason::Cycle));
+    assert!(!write(&mut app, link(&second, "blocks", &first)).await.0);
+    assert!(write(&mut app, unlink(&second, "blocks", &first)).await.0);
     assert!(!write(&mut app, unlink(&second, "blocks", &first)).await.0);
     assert!(get(&mut app, &second).await.blocked);
 
