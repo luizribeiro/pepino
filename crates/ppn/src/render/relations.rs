@@ -50,20 +50,18 @@ pub fn task_relations(
 ) -> String {
     let mut output = String::new();
     let groups = [
-        ("Parent", task.parent.iter().collect::<Vec<_>>()),
-        ("Children", task.children.iter().collect()),
-        ("Blocks", task.blocks.iter().collect()),
-        ("Blocked by", task.blocked_by.iter().collect()),
-        ("Relates", task.relates.iter().collect()),
+        ("parent", task.parent.iter().collect::<Vec<_>>()),
+        ("children", task.children.iter().collect()),
+        ("blocks", task.blocks.iter().collect()),
+        ("blocked by", task.blocked_by.iter().collect()),
+        ("relates to", task.relates.iter().collect()),
     ];
     for (name, related) in groups {
         let labels = related
             .into_iter()
             .map(|id| label(id, ids, titles))
             .collect::<Vec<_>>();
-        if labels.is_empty() {
-            let _ = writeln!(output, "{name}: -");
-        } else {
+        if !labels.is_empty() {
             let _ = writeln!(output, "{name}: {}", labels.join(", "));
         }
     }
@@ -71,10 +69,31 @@ pub fn task_relations(
         .iter()
         .filter_map(|edge| Some((edge, edge_reason(edge)?)))
     {
+        let (relation, peer) = if edge.from == task.id {
+            (
+                match edge.kind {
+                    EdgeKind::Parent => "parent",
+                    EdgeKind::Blocks => "blocks",
+                    EdgeKind::Relates => "relates to",
+                    _ => "links to",
+                },
+                &edge.to,
+            )
+        } else {
+            (
+                match edge.kind {
+                    EdgeKind::Parent => "child",
+                    EdgeKind::Blocks => "blocked by",
+                    EdgeKind::Relates => "relates to",
+                    _ => "linked from",
+                },
+                &edge.from,
+            )
+        };
         let _ = writeln!(
             output,
-            "Excluded link: {} ({reason})",
-            link_description(edge, ids, titles)
+            "not effective: {relation} {} ({reason})",
+            ids.get(peer)
         );
     }
     output
