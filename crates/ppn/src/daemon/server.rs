@@ -58,7 +58,7 @@ async fn respond(mut stream: UnixStream, stop: &Notify, engine: &SyncEngine, sta
     };
     let outcome = match decode(frame) {
         Ok(operation) => operate(engine, operation, started).await,
-        Err(error) => error,
+        Err(error) => *error,
     };
     let stopping = matches!(outcome, Outcome::Stopping);
     let response = Response {
@@ -71,18 +71,23 @@ async fn respond(mut stream: UnixStream, stop: &Notify, engine: &SyncEngine, sta
     }
 }
 
-fn decode(frame: io::Result<serde_json::Value>) -> Result<Operation, Outcome> {
-    let invalid = || Outcome::error("invalid_request", "Expected a control protocol request.");
+fn decode(frame: io::Result<serde_json::Value>) -> Result<Operation, Box<Outcome>> {
+    let invalid = || {
+        Box::new(Outcome::error(
+            "invalid_request",
+            "Expected a control protocol request.",
+        ))
+    };
     let frame = frame.map_err(|_| invalid())?;
     if frame
         .get("v")
         .and_then(serde_json::Value::as_u64)
         .is_some_and(|v| v != u64::from(VERSION))
     {
-        return Err(Outcome::error(
+        return Err(Box::new(Outcome::error(
             "unsupported_version",
             "Unsupported control protocol version.",
-        ));
+        )));
     }
     serde_json::from_value::<Request>(frame)
         .map(|request| request.request)
@@ -94,7 +99,7 @@ fn decode(frame: io::Result<serde_json::Value>) -> Result<Operation, Outcome> {
 fn rejects_an_unknown_version_before_reading_the_operation() {
     let request = serde_json::json!({"v": 2, "request": {"op": "future_operation"}});
     let outcome = decode(Ok(request)).err().unwrap();
-    assert!(matches!(outcome, Outcome::Error { code, .. } if code == "unsupported_version"));
+    assert!(matches!(*outcome, Outcome::Error { code, .. } if code == "unsupported_version"));
 }
 
 #[cfg(test)]
@@ -102,5 +107,5 @@ fn rejects_an_unknown_version_before_reading_the_operation() {
 fn rejects_an_invalid_timeout_in_the_current_protocol() {
     let request = serde_json::json!({"v": 1, "request": {"op": "wait_idle", "timeout_ms": -1}});
     let outcome = decode(Ok(request)).err().unwrap();
-    assert!(matches!(outcome, Outcome::Error { code, .. } if code == "invalid_request"));
+    assert!(matches!(*outcome, Outcome::Error { code, .. } if code == "invalid_request"));
 }
