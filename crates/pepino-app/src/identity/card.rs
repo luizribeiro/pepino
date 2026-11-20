@@ -13,10 +13,26 @@ pub struct IdentityCard {
 }
 
 impl IdentityCard {
-    pub(super) fn record(&self) -> Result<IdentityCatalog, AppError> {
+    pub(crate) fn record(&self) -> Result<IdentityCatalog, AppError> {
         let mut record = IdentityCatalog::with_root(self.root);
-        record.merge(portable_scope(), self.id, self.edits.iter().cloned())?;
+        self.merge_into(&mut record)?;
         Ok(record)
+    }
+
+    pub(crate) fn merge_into(&self, record: &mut IdentityCatalog) -> Result<(), AppError> {
+        record.merge(portable_scope(), self.id, self.edits.iter().cloned())
+    }
+
+    pub(crate) fn from_ledger(
+        id: IdentityId,
+        record: &IdentityCatalog,
+        fallback: DeviceId,
+    ) -> Self {
+        Self {
+            id,
+            root: record.root.unwrap_or(fallback),
+            edits: record.edits().cloned().collect(),
+        }
     }
 
     pub fn name_for(&self, member: DeviceId) -> Result<String, AppError> {

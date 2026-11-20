@@ -14,7 +14,7 @@ use super::{
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct IdentityCatalog {
-    pub(super) root: Option<DeviceId>,
+    pub(crate) root: Option<DeviceId>,
     pub(super) edits: BTreeMap<EventId, SignedEdit>,
     invalid: BTreeSet<EventId>,
     rejected: BTreeSet<EventId>,
@@ -31,10 +31,16 @@ impl IdentityCatalog {
         }
     }
 
-    pub(super) fn name(&self) -> Option<&str> {
+    pub(crate) fn name(&self) -> Option<&str> {
         self.record
             .as_ref()
             .map(|record| record.display_name.as_str())
+    }
+
+    pub(crate) fn devices(&self) -> impl Iterator<Item = &crate::RosterDevice> {
+        self.record
+            .iter()
+            .flat_map(|record| record.devices.values())
     }
 
     pub(crate) fn device(&self, id: DeviceId) -> Option<&super::record::RosterDevice> {
@@ -45,7 +51,7 @@ impl IdentityCatalog {
         self.edits.values()
     }
 
-    pub(super) fn rejected_count(&self) -> usize {
+    pub(crate) fn rejected_count(&self) -> usize {
         self.invalid.len() + self.rejected.len()
     }
 
