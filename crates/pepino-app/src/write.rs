@@ -18,6 +18,10 @@ impl App {
         request: WriteRequest,
     ) -> Result<(), AppError> {
         match request {
+            WriteRequest::SaveView { .. } => {
+                unreachable!("saved views are handled before event planning")
+            }
+
             WriteRequest::AddTask {
                 title,
                 description,

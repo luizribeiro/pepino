@@ -11,7 +11,6 @@ pub enum FilterInput {
     Argv(Vec<String>),
 }
 
-#[allow(dead_code)]
 impl FilterInput {
     pub(super) fn parse(&self, today: Date) -> Result<Filter, AppError> {
         match self {

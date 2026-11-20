@@ -8,7 +8,7 @@ use pepino_store::{DatabaseErrorKind, Store, StoreError};
 use tokio::time::{Instant, sleep};
 
 use crate::state::{io_error, storage};
-use crate::{AppError, LocalState, OpenOptions, Request, Response};
+use crate::{AppError, LocalState, OpenOptions, Request, Response, WriteRequest};
 
 pub struct App {
     pub(super) store: Store,
@@ -73,9 +73,14 @@ impl App {
     }
 
     pub async fn handle(&mut self, request: Request, now: u64) -> Result<Response, AppError> {
-        let _lock = lock(&self.directory, self.lock_timeout).await?;
+        let guard = lock(&self.directory, self.lock_timeout).await?;
         match request {
             Request::Read(request) => self.read(request).await,
+            Request::Write(WriteRequest::SaveView {
+                name,
+                filter,
+                today,
+            }) => self.save_view(name, &filter, today, guard).await,
             Request::Write(request) => {
                 let board = self.board().await?;
                 let mut batch = self.batch(now).await?;

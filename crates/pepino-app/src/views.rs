@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fs::File;
 
 use serde::{Deserialize, Serialize};
 
@@ -12,10 +13,13 @@ impl SavedViews {
             .iter()
             .map(|(name, filter)| (name.as_str(), filter.as_str()))
     }
+    pub(crate) fn insert(&mut self, name: String, filter: String) -> bool {
+        self.0.insert(name, filter).is_some()
+    }
 }
 
-use crate::app::worker;
-use crate::{App, AppError, Response};
+use crate::app::{invalid, worker};
+use crate::{App, AppError, Date, FilterInput, Response};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SavedView {
@@ -33,6 +37,43 @@ impl App {
         Ok(())
     }
 
+    async fn persist_views(
+        &mut self,
+        saved_views: SavedViews,
+        guard: File,
+    ) -> Result<(), AppError> {
+        let mut local = self.local.clone();
+        local.saved_views = saved_views;
+        let directory = self.directory.clone();
+        self.local = worker("persist saved views", move || {
+            // The blocking write can outlive the request future.
+            let _guard = guard;
+            local.replace(&directory)?;
+            Ok::<_, AppError>(local)
+        })
+        .await??;
+        Ok(())
+    }
+
+    pub(super) async fn save_view(
+        &mut self,
+        name: String,
+        filter: &FilterInput,
+        today: Date,
+        guard: File,
+    ) -> Result<Response, AppError> {
+        validate_name(&name)?;
+        let filter = filter.parse(today)?.to_string();
+        self.reload_state().await?;
+        let mut views = self.local.saved_views.clone();
+        let replaced = views.insert(name.clone(), filter.clone());
+        self.persist_views(views, guard).await?;
+        Ok(Response::ViewSaved {
+            view: SavedView { name, filter },
+            replaced,
+        })
+    }
+
     pub(super) async fn list_views(&mut self) -> Result<Response, AppError> {
         self.reload_state().await?;
         Ok(Response::Views {
@@ -46,5 +87,42 @@ impl App {
                 })
                 .collect(),
         })
+    }
+}
+fn validate_name(name: &str) -> Result<(), AppError> {
+    let mut bytes = name.bytes();
+    if name.len() <= 64
+        && bytes.next().is_some_and(|first| first.is_ascii_lowercase())
+        && bytes.all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        })
+    {
+        Ok(())
+    } else {
+        Err(invalid("name", "expected [a-z][a-z0-9_-]* within 64 bytes"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Request, WriteRequest};
+
+    #[tokio::test]
+    async fn saving_a_view_persists_its_canonical_filter() {
+        let directory = tempfile::tempdir().unwrap();
+        let now = 1_795_144_800_000;
+        let mut app = App::open(directory.path(), now).await.unwrap();
+        let request = Request::Write(WriteRequest::SaveView {
+            name: "weekend".into(),
+            filter: FilterInput::Text("due:tomorrow tag:hardware".into()),
+            today: "2026-11-20".parse().unwrap(),
+        });
+        app.handle(request, now).await.unwrap();
+        let disk = crate::LocalState::load(directory.path()).unwrap();
+        assert_eq!(
+            disk.saved_views.iter().next(),
+            Some(("weekend", "due:2026-11-21 tag:hardware")),
+        );
     }
 }

@@ -5,8 +5,8 @@ use thiserror::Error;
 
 use crate::views::SavedView;
 use crate::{
-    Date, EdgeKind, EventRecord, FieldValue, FilterDiagnostic, Hlc, IdentityRecord, NamedRecord,
-    Status, StatusCounts,
+    Date, EdgeKind, EventRecord, FieldValue, FilterDiagnostic, FilterInput, Hlc, IdentityRecord,
+    NamedRecord, Status, StatusCounts,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -98,6 +98,11 @@ pub enum WriteRequest {
     Delete {
         task: String,
     },
+    SaveView {
+        name: String,
+        filter: FilterInput,
+        today: Date,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -134,6 +139,10 @@ pub enum Response {
     },
     Log {
         events: Vec<EventRecord>,
+    },
+    ViewSaved {
+        view: SavedView,
+        replaced: bool,
     },
     Views {
         views: Vec<SavedView>,
