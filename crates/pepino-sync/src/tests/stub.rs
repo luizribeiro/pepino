@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use futures_util::{StreamExt, stream};
 use pepino_core::{BoardId, DeviceId, EventId};
@@ -10,7 +13,14 @@ use crate::{Acknowledgement, Delivery, DeliveryStream, Transport, TransportBoard
 
 type Queue = mpsc::UnboundedSender<Delivery<Receipt>>;
 
+#[derive(Default)]
+struct Publisher {
+    reject: AtomicBool,
+    operations: Mutex<Vec<Vec<u8>>>,
+}
+
 pub(super) struct Stub {
+    publisher: Arc<Publisher>,
     device: DeviceId,
     queue: Arc<Mutex<Option<Queue>>>,
     signals: broadcast::Sender<NodeEvent>,
@@ -21,6 +31,7 @@ impl Stub {
     pub(super) fn new(device: DeviceId) -> Self {
         Self {
             device,
+            publisher: Arc::default(),
             queue: Arc::default(),
             signals: broadcast::channel(128).0,
             status: Arc::default(),
@@ -29,6 +40,7 @@ impl Stub {
 }
 
 pub(super) struct Board {
+    publisher: Arc<Publisher>,
     queue: Arc<Mutex<Option<Queue>>>,
     deliveries: Option<mpsc::UnboundedReceiver<Delivery<Receipt>>>,
     signals: broadcast::Sender<NodeEvent>,
@@ -39,6 +51,14 @@ pub(super) struct Board {
 pub(super) struct Receipt(watch::Sender<bool>);
 
 impl Stub {
+    pub(super) fn reject(&self, reject: bool) {
+        self.publisher.reject.store(reject, Ordering::Relaxed);
+    }
+
+    pub(super) fn published(&self) -> Vec<Vec<u8>> {
+        self.publisher.operations.lock().unwrap().clone()
+    }
+
     pub(super) fn deliver(
         &self,
         id: BoardId,
@@ -106,10 +126,15 @@ impl TransportBoard for Board {
             .boxed())
     }
 
-    async fn publish(&self, _: Vec<u8>) -> Result<EventId, Error> {
-        Err(Error::PublishNotSubmitted(
-            "test transport is offline".into(),
-        ))
+    async fn publish(&self, bytes: Vec<u8>) -> Result<EventId, Error> {
+        if self.publisher.reject.load(Ordering::Relaxed) {
+            return Err(Error::PublishNotSubmitted("test rejection".into()));
+        }
+        let mut operations = self.publisher.operations.lock().unwrap();
+        operations.push(bytes);
+        let mut id = [0; 32];
+        id[..8].copy_from_slice(&(operations.len() as u64).to_le_bytes());
+        Ok(EventId::from_bytes(id))
     }
 
     async fn close(self) -> Result<(), Error> {
@@ -135,6 +160,7 @@ impl Transport for Stub {
         let (sender, receiver) = mpsc::unbounded_channel();
         *self.queue.lock().unwrap() = Some(sender);
         Ok(Board {
+            publisher: self.publisher.clone(),
             queue: self.queue.clone(),
             deliveries: Some(receiver),
             signals: self.signals.clone(),
@@ -185,4 +211,23 @@ async fn queues_verified_bytes_with_an_independent_ack() {
     assert!(!*receipt.borrow());
     item.ack.ack().await.unwrap();
     assert!(*receipt.borrow());
+}
+
+#[tokio::test]
+async fn rejection_does_not_change_the_transport_log() {
+    let node = Stub::new(DeviceId::from_bytes([43; 32]));
+    let board = node
+        .open_board(BoardId::from_bytes([12; 32]))
+        .await
+        .unwrap();
+    let bytes = b"Replace the balcony door".to_vec();
+    node.reject(true);
+    assert!(matches!(
+        board.publish(bytes.clone()).await,
+        Err(Error::PublishNotSubmitted(_))
+    ));
+    assert!(node.published().is_empty());
+    node.reject(false);
+    board.publish(bytes.clone()).await.unwrap();
+    assert_eq!(node.published(), [bytes]);
 }
