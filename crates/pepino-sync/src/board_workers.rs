@@ -6,6 +6,7 @@ use std::{
 
 use pepino_app::{App, LocalState};
 use pepino_core::BoardId;
+use pepino_node::DeviceCredentials;
 use tokio::{sync::watch, task::JoinSet};
 
 use crate::{BoardFailure, Error, Status, Transport, TransportBoard};
@@ -13,6 +14,7 @@ use crate::{BoardFailure, Error, Status, Transport, TransportBoard};
 pub(crate) struct BoardWorkers<T: Transport> {
     pub node: Arc<T>,
     pub app: Arc<App>,
+    pub authority: Option<(std::path::PathBuf, DeviceCredentials)>,
     pub changes: watch::Sender<Status>,
     pub stopping: watch::Receiver<()>,
     pub nudged: watch::Receiver<u64>,
@@ -35,6 +37,7 @@ impl<T: Transport> BoardWorkers<T> {
         Self {
             node,
             app,
+            authority: None,
             changes,
             stopping,
             nudged,

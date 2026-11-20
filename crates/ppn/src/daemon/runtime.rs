@@ -107,7 +107,7 @@ async fn cycle(
     let engine = tokio::select! {
         _ = terminate.recv() => None,
         _ = interrupt.recv() => None,
-        result = timeout(STARTUP_LIMIT, SyncEngine::start(Default::default(), node.clone(), settings.database_path.parent().unwrap_or(std::path::Path::new(".")))) => Some(result),
+        result = timeout(STARTUP_LIMIT, SyncEngine::start_with_node_settings(node.clone(), settings)) => Some(result),
     };
     let outcome = match engine {
         Some(Ok(Ok(engine))) => {

@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 use futures_util::{Stream, StreamExt};
 use pepino_app::{App, DeviceRequest, OpenOptions, PeerHint};
 use pepino_core::{BoardId, DeviceId};
-use pepino_node::{Node, Role};
+use pepino_node::{DeviceCredentials, Node, NodeSettings, Role};
 use tokio::{
     sync::{Mutex, watch},
     task::JoinSet,
@@ -76,6 +76,24 @@ impl<T: Transport> SyncEngine<T> {
         node: Arc<T>,
         data_dir: impl AsRef<Path>,
     ) -> Result<Self, Error> {
+        let directory = data_dir.as_ref();
+        Self::start_with_authority(
+            settings,
+            node,
+            directory,
+            directory.join("node.sqlite"),
+            None,
+        )
+        .await
+    }
+
+    async fn start_with_authority(
+        settings: Settings,
+        node: Arc<T>,
+        data_dir: &Path,
+        database: std::path::PathBuf,
+        keys: Option<DeviceCredentials>,
+    ) -> Result<Self, Error> {
         if settings.poll_interval.is_zero() {
             return Err(Error::PollInterval);
         }
@@ -109,6 +127,9 @@ impl<T: Transport> SyncEngine<T> {
             settings.poll_interval,
             store_instance,
         );
+        board_workers.authority = keys
+            .or_else(|| app.identity_credentials().ok())
+            .map(|keys| (database, keys));
         board_workers.open_missing(app.local_state()).await?;
         let boards = Arc::new(Mutex::new(board_workers));
         workers.spawn(crate::discover::run(boards.clone(), stopping.clone()));
@@ -221,6 +242,22 @@ impl<T: Transport> SyncEngine<T> {
 }
 
 impl SyncEngine {
+    pub async fn start_with_node_settings(
+        node: Arc<Node>,
+        settings: &NodeSettings,
+    ) -> Result<Self, Error> {
+        let database = &settings.database_path;
+        let directory = database.parent().unwrap_or_else(|| Path::new("."));
+        Self::start_with_authority(
+            Settings::default(),
+            node,
+            directory,
+            database.clone(),
+            Some(settings.credentials.clone()),
+        )
+        .await
+    }
+
     pub async fn add_member(
         &self,
         device: DeviceRequest,

@@ -52,7 +52,7 @@ async fn reconcile<T: Transport>(
     published: &mut Option<Publication>,
     generation: u64,
 ) -> Result<(), Error> {
-    let local = boards.app.fresh_local_state().await?;
+    let local = reconcile_roster(boards, boards.app.fresh_local_state().await?).await?;
     boards.open_missing(&local).await?;
     let node_status = boards.node.status();
     let mut members = BTreeMap::new();
@@ -124,4 +124,33 @@ async fn reconcile<T: Transport>(
         advanced || cleared
     });
     Ok(())
+}
+
+async fn reconcile_roster<T: Transport>(
+    boards: &BoardWorkers<T>,
+    local: pepino_app::LocalState,
+) -> Result<pepino_app::LocalState, Error> {
+    let Some((database, keys)) = &boards.authority else {
+        return Ok(local);
+    };
+    if !local.needs_roster_reconciliation() {
+        return Ok(local);
+    }
+    let root = if let Some(root) = local
+        .roster_root()
+        .or_else(|| local.peer_hint().is_none().then_some(local.device_id))
+    {
+        Some(root)
+    } else {
+        crate::catalog_authority::creator(database, local.catalog_board())
+            .await
+            .map_err(|error| pepino_app::AppError::Storage {
+                retryable: true,
+                reason: error.to_string(),
+            })?
+    };
+    match root {
+        Some(root) => Ok(boards.app.reconcile_identity(root, keys).await?),
+        None => Ok(local),
+    }
 }
