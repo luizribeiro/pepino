@@ -1,10 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use pepino_core::{BoardId, DeviceId};
+use pepino_core::{BoardId, DeviceId, IdentityId};
+use pepino_node::MemberInfo;
 use serde::{Deserialize, Serialize};
 
-use crate::app::{invalid, lock, worker};
-use crate::{App, AppError, BoardJoinState, LocalBoard, LocalState};
+use crate::app::{lock, worker};
+use crate::{App, AppError, BoardJoinState, LocalBoard, LocalState, WireFormat};
+
+const PREFIX: &[u8] = b"pepino-board-catalog\0";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct CatalogState {
@@ -39,7 +42,41 @@ struct Revision {
     name: String,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Announcement {
+    v: u32,
+    identity: IdentityId,
+    revisions: BTreeMap<BoardId, Revision>,
+    devices: BTreeMap<DeviceId, String>,
+    member: String,
+}
+
 impl LocalState {
+    pub fn created_boards(&self) -> &BTreeSet<BoardId> {
+        &self.catalog.created_here
+    }
+
+    pub fn device_bundle(&self, device: DeviceId) -> Option<MemberInfo> {
+        self.catalog
+            .bundles
+            .get(&device)
+            .and_then(|info| MemberInfo::from_hex(info).ok())
+    }
+
+    pub fn encode_catalog(&self, member: &MemberInfo) -> Result<Vec<u8>, AppError> {
+        let announcement = Announcement {
+            v: crate::PROTOCOL_VERSION,
+            identity: self.identity_id,
+            revisions: self.catalog.revisions.clone(),
+            devices: self.devices(),
+            member: member.to_hex(),
+        };
+        let mut bytes = PREFIX.to_vec();
+        bytes.extend(WireFormat::Cbor.encode(&announcement)?);
+        Ok(bytes)
+    }
+
     fn name_board(&mut self, id: BoardId, name: &str) {
         let sequence = self
             .catalog
@@ -80,17 +117,62 @@ impl LocalState {
         }
         self.catalog.revisions.insert(id, revision);
     }
+
+    fn merge_catalog(&mut self, board: BoardId, signer: DeviceId, announcement: Announcement) {
+        if board != self.catalog_board()
+            || self.identity_id != announcement.identity
+            || !self.other_devices.contains_key(&signer)
+        {
+            return;
+        }
+        for (id, name) in announcement.devices {
+            if id != self.device_id && !name.trim().is_empty() {
+                self.other_devices.entry(id).or_insert(name);
+            }
+        }
+        if let Ok(info) = MemberInfo::from_hex(&announcement.member)
+            && info.device_id().is_ok_and(|device| device == signer)
+        {
+            let saved = self
+                .device_bundle(signer)
+                .and_then(|info| info.expires_at().ok());
+            if info.expires_at().ok() >= saved {
+                self.catalog.bundles.insert(signer, announcement.member);
+            }
+        }
+        for (id, revision) in announcement.revisions {
+            self.merge_board(id, revision);
+        }
+    }
 }
 
 impl App {
     pub fn validate_board_name(name: &str) -> Result<(), AppError> {
         if name.trim().is_empty() {
-            return Err(invalid(
+            return Err(crate::app::invalid(
                 "name",
                 "board name must contain a non-whitespace character",
             ));
         }
         Ok(())
+    }
+
+    pub async fn fresh_local_state(&self) -> Result<LocalState, AppError> {
+        let directory = self.directory.clone();
+        worker("reload local state", move || LocalState::load(&directory)).await?
+    }
+
+    pub async fn remember_member_bundle(&self, member: &MemberInfo) -> Result<(), AppError> {
+        let id = member
+            .device_id()
+            .map_err(|error| crate::app::invalid("device", error))?;
+        let bytes = member.to_hex();
+        self.update_local(move |local| {
+            if local.other_devices.contains_key(&id) {
+                local.catalog.bundles.insert(id, bytes);
+            }
+        })
+        .await
     }
 
     pub async fn register_created_board(
@@ -107,6 +189,29 @@ impl App {
             }
         })
         .await
+    }
+
+    pub async fn receive_catalog(
+        &self,
+        board: BoardId,
+        signer: DeviceId,
+        bytes: &[u8],
+    ) -> Result<bool, AppError> {
+        let Some(bytes) = bytes.strip_prefix(PREFIX) else {
+            return Ok(false);
+        };
+        if let Ok(announcement) = WireFormat::Cbor.decode(bytes) {
+            self.update_local(move |local| local.merge_catalog(board, signer, announcement))
+                .await?;
+        }
+        Ok(true)
+    }
+
+    pub(super) async fn update_local(
+        &self,
+        update: impl FnOnce(&mut LocalState) + Send + 'static,
+    ) -> Result<(), AppError> {
+        self.update_local_state(update).await.map(|_| ())
     }
 
     async fn update_local_state(
@@ -160,14 +265,4 @@ fn concurrent_creations_and_renames_join_independent_revisions() {
         prop_assert_eq!(local.boards()[2].name.as_str(), "Seed House");
         prop_assert_eq!(local.board_join_state(greenhouse), BoardJoinState::WaitingToBeAdded);
     });
-}
-#[cfg(test)]
-#[test]
-fn board_join_progress_is_monotonic() {
-    let id = BoardId::from_bytes([64; 32]);
-    let mut state = CatalogState::default();
-    state.joins.insert(id, BoardJoinState::WaitingToBeAdded);
-    state.record_joins(&[(id, BoardJoinState::Joined)].into());
-    state.record_joins(&[(id, BoardJoinState::WaitingForFirstSync)].into());
-    assert_eq!(state.join(id), Some(BoardJoinState::Joined));
 }

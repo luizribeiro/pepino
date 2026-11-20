@@ -2,10 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use pepino_core::{BoardId, DeviceId};
 
-use crate::{
-    App, AppError, BoardJoinState, LocalState,
-    app::{invalid, lock, worker},
-};
+#[cfg(test)]
+use crate::LocalState;
+
+use crate::{App, AppError, BoardJoinState, app::invalid};
 
 impl App {
     pub async fn remember_device(
@@ -21,7 +21,7 @@ impl App {
                 "expected a different device with a non-blank name",
             ));
         }
-        self.update_devices(move |local| {
+        self.update_local(move |local| {
             local.devices_added_here.insert(id);
             if let Some(name) = override_name {
                 local.other_devices.insert(id, name);
@@ -36,7 +36,7 @@ impl App {
         &self,
         devices: BTreeSet<DeviceId>,
     ) -> Result<(), AppError> {
-        self.update_devices(move |local| {
+        self.update_local(move |local| {
             local.devices_seen_on_boards.extend(
                 devices
                     .into_iter()
@@ -50,7 +50,7 @@ impl App {
         &self,
         progress: BTreeMap<BoardId, BoardJoinState>,
     ) -> Result<(), AppError> {
-        self.update_devices(move |local| {
+        self.update_local(move |local| {
             local.catalog.record_joins(&progress);
             if let Some(link) = &mut local.link {
                 for (id, state) in progress {
@@ -61,25 +61,6 @@ impl App {
             }
         })
         .await
-    }
-
-    async fn update_devices(
-        &self,
-        update: impl FnOnce(&mut LocalState) + Send + 'static,
-    ) -> Result<(), AppError> {
-        let guard = lock(&self.directory, self.lock_timeout).await?;
-        let directory = self.directory.clone();
-        worker("update device state", move || {
-            let _guard = guard;
-            let previous = LocalState::load(&directory)?;
-            let mut local = previous.clone();
-            update(&mut local);
-            if local != previous {
-                local.replace(&directory)?;
-            }
-            Ok(())
-        })
-        .await?
     }
 }
 
