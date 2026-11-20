@@ -18,7 +18,7 @@ let
           warnings = list;
           environment.etc = mkOption { type = types.attrsOf types.attrs; default = { }; };
           environment.systemPackages = list;
-          users.users = attrs;
+          users.users = mkOption { type = types.attrsOf types.attrs; default = { }; };
           users.groups = mkOption { type = types.attrsOf types.attrs; default = { }; };
           users.knownUsers = list;
           users.knownGroups = list;
@@ -27,9 +27,6 @@ let
           system.activationScripts.postActivation.text = mkOption { type = types.str; default = ""; };
         };
       }
-      ({ config, ... }: lib.mkIf config.services.pepino.enable {
-        users.groups.${config.services.pepino.group}.gid = 450;
-      })
       settings
     ];
   }).config;
@@ -55,13 +52,21 @@ let
 
   linux = evaluate self.nixosModules.default;
   darwin = evaluate self.darwinModules.default;
+  darwinWithAccount = settings:
+    let node = settings.services.pepino or { };
+    in darwin (lib.recursiveUpdate settings {
+      users.users.${node.user or "pepino"}.uid = 451;
+      users.groups.${node.group or "pepino"}.gid = 450;
+    });
   fullLinux = linux fixtures.full;
   fullDarwinSettings = lib.recursiveUpdate fixtures.full { services.pepino.openFirewall = false; };
-  fullDarwin = darwin fullDarwinSettings;
+  fullDarwin = darwinWithAccount fullDarwinSettings;
 in
-assert verify linux fixtures.full && verify darwin fullDarwinSettings;
+assert verify linux fixtures.full && verify darwinWithAccount fullDarwinSettings;
 assert rejects linux fixtures.invalidLinux;
-assert rejects darwin fixtures.invalidDarwinFirewall;
+assert rejects darwinWithAccount fixtures.invalidDarwinFirewall;
+assert rejects darwin fixtures.missingDarwinUid;
+assert rejects darwin fixtures.missingDarwinGid;
 assert (linux fixtures.empty).environment.systemPackages == [ package ];
 assert (linux fixtures.typical).services.pepino.package == package;
 assert (linux fixtures.empty).services.pepino.configFile == null;
@@ -74,6 +79,7 @@ assert fullLinux.users.users.pepino-relay.isSystemUser;
 assert fullLinux.systemd.tmpfiles.settings.pepino."/srv/pepino".d.mode == "0700";
 assert fullDarwin.users.knownUsers == [ "pepino-relay" ];
 assert fullDarwin.users.knownGroups == [ "pepino-relay" ];
+assert fullDarwin.users.users.pepino-relay.uid == 451;
 assert fullDarwin.users.users.pepino-relay.gid == 450;
 assert lib.hasInfix "/srv/pepino" fullDarwin.system.activationScripts.postActivation.text;
 pkgs.runCommand "pepino-config-check"
@@ -83,9 +89,9 @@ pkgs.runCommand "pepino-config-check"
   cleared = (linux fixtures.cleared).environment.etc."pepino/config.toml".source;
   client = fullLinux.environment.etc."pepino/config.toml".source;
   node = fullDarwin.services.pepino.configFile;
-  typicalClient = (darwin fixtures.typical).environment.etc."pepino/config.toml".source;
+  typicalClient = (darwinWithAccount fixtures.typical).environment.etc."pepino/config.toml".source;
   typicalNode = (linux fixtures.typical).services.pepino.configFile;
-  untrustedNode = (darwin fixtures.untrusted).services.pepino.configFile;
+  untrustedNode = (darwinWithAccount fixtures.untrusted).services.pepino.configFile;
 }
   ''
     export HOME="$TMPDIR"

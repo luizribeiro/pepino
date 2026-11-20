@@ -68,6 +68,14 @@ in
   };
   invalidLinux = { services.pepino = { enable = true; openFirewall = true; }; };
   invalidDarwinFirewall = { services.pepino = { enable = true; openFirewall = true; port = 44123; }; };
+  missingDarwinUid = {
+    services.pepino = { enable = true; user = "pepino-relay"; };
+    users.groups.pepino.gid = 450;
+  };
+  missingDarwinGid = {
+    services.pepino = { enable = true; group = "pepino-relay"; };
+    users.users.pepino.uid = 451;
+  };
   invalid =
     map (node: { programs.pepino = node; }) (lib.attrValues invalidNode)
     ++ map (node: { services.pepino = node; }) (lib.attrValues invalidNode)
