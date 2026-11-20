@@ -27,7 +27,7 @@ mod wire;
 mod write;
 
 pub use app::{App, SyncStoreError};
-pub use device_grant::{DeviceGrant, PeerHint};
+pub use device_grant::{BoardJoinState, DeviceGrant, PeerHint};
 pub use device_request::DeviceRequest;
 pub use filter::{FilterDiagnostic, FilterInput, FilterPosition, FilterWarning};
 pub use hlc::Hlc;

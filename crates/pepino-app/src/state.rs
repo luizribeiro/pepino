@@ -48,7 +48,7 @@ pub struct LocalState {
     pub(super) boards: Vec<LocalBoard>,
     pub(crate) saved_views: SavedViews,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) link: Option<crate::device_grant::Link>,
+    pub(super) link: Option<Box<crate::device_grant::Link>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

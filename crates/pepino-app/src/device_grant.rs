@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use pepino_core::{DeviceId, IdentityId};
+use pepino_core::{BoardId, DeviceId, IdentityId};
 use serde::{Deserialize, Serialize};
 
 use crate::{AppError, LocalBoard, LocalState, app::invalid, state::VERSION};
@@ -24,11 +24,20 @@ pub struct DeviceGrant {
     pub peer: PeerHint,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BoardJoinState {
+    WaitingToBeAdded,
+    WaitingForFirstSync,
+    Joined,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(super) struct Link {
     pub(super) request: String,
     pub(super) peer_id: DeviceId,
     pub(super) relay_url: Option<String>,
+    pub(super) progress: BTreeMap<BoardId, BoardJoinState>,
 }
 
 impl DeviceGrant {
@@ -59,6 +68,10 @@ impl DeviceGrant {
         let device_name = devices
             .remove(&recipient)
             .ok_or_else(|| invalid("grant", "the requesting device is missing from the grant"))?;
+        let progress = boards
+            .iter()
+            .map(|board| (board.id, BoardJoinState::WaitingToBeAdded))
+            .collect();
         Ok(LocalState {
             version: VERSION,
             device_id: recipient,
@@ -68,16 +81,24 @@ impl DeviceGrant {
             other_devices: devices,
             boards,
             saved_views: Default::default(),
-            link: Some(Link {
+            link: Some(Box::new(Link {
                 request,
                 peer_id: peer.id,
                 relay_url: peer.relay_url,
-            }),
+                progress,
+            })),
         })
     }
 }
 
 impl LocalState {
+    pub fn board_join_state(&self, id: BoardId) -> BoardJoinState {
+        self.link
+            .as_ref()
+            .and_then(|link| link.progress.get(&id).copied())
+            .unwrap_or(BoardJoinState::Joined)
+    }
+
     pub fn peer_hint(&self) -> Option<PeerHint> {
         self.link.as_ref().map(|link| PeerHint {
             id: link.peer_id,
@@ -89,7 +110,6 @@ impl LocalState {
 #[cfg(test)]
 #[test]
 fn a_grant_installs_the_recipient_and_all_named_boards() {
-    use pepino_core::BoardId;
     let issuer = DeviceId::from_bytes([17; 32]);
     let recipient = DeviceId::from_bytes([18; 32]);
     let mut grant = DeviceGrant {
@@ -121,6 +141,10 @@ fn a_grant_installs_the_recipient_and_all_named_boards() {
     let local = grant.into_local_state().unwrap();
     assert_eq!(local.board_name(), "Greenhouse");
     assert_eq!(local.boards().len(), 2);
+    assert_eq!(
+        local.board_join_state(local.board_id()),
+        BoardJoinState::WaitingToBeAdded
+    );
     assert_eq!(local.devices()[&recipient], "Ferrum");
     assert_eq!(local.peer_hint().unwrap().id, issuer);
 }
