@@ -92,7 +92,14 @@ impl Decoded {
     ) -> Result<bool, StoreError> {
         let result = sqlx::query(
             "INSERT INTO event_log (board, id, hlc, author, decoded_classification, bytes, verified_signer)
-             VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (board, id) DO NOTHING",
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (board, id) DO UPDATE SET
+                hlc = excluded.hlc,
+                author = excluded.author,
+                decoded_classification = excluded.decoded_classification,
+                verified_signer = excluded.verified_signer
+             WHERE event_log.classification = 'forged_author'
+               AND excluded.verified_signer = excluded.author",
         )
         .bind(BoardKey(board))
         .bind(self.id.as_bytes().as_slice())

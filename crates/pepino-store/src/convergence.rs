@@ -4,7 +4,7 @@ mod model;
 use std::collections::BTreeMap;
 
 use history::{History, histories};
-use pepino_core::{BoardId, EventId, Hlc, TaskId};
+use pepino_core::{BoardId, DeviceId, Envelope, EventId, Hlc, TaskId};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 
@@ -151,6 +151,42 @@ proptest! {
             }
             let duplicate = history.store(&duplicated).await;
             prop_assert_eq!(history.snapshot(&original).await, history.snapshot(&duplicate).await);
+            Ok(())
+        })?;
+    }
+
+    #[test]
+    fn verified_copies_win_regardless_of_forged_delivery_order(input in histories(), seed in any::<u64>()) {
+        runtime().block_on(async {
+            let history = History::new(input);
+            let order = history.order(seed);
+            let expected = history.store(&order).await;
+            let first = Store::open_in_memory().await.unwrap();
+            let second = Store::open_in_memory().await.unwrap();
+            for &index in &order {
+                let bytes = &history.events[index].bytes;
+                let author = Envelope::decode(bytes).unwrap().author();
+                let forged = author.map(|author| {
+                    let mut key = *author.as_bytes();
+                    key[0] ^= 1;
+                    DeviceId::from_bytes(key)
+                });
+                for board in [BOARD, OTHER].into_iter().filter(|&board| on_board(board, index)) {
+                    let initial = first.append(board, bytes, forged).await.unwrap();
+                    if forged.is_some() {
+                        prop_assert!(matches!(initial, AppendOutcome::Skipped {
+                            reason: crate::SkipReason::ForgedAuthor, ..
+                        } | AppendOutcome::Duplicate { .. }), "expected a forged classification or a duplicate");
+                    }
+                    first.append(board, bytes, author).await.unwrap();
+                    second.append(board, bytes, author).await.unwrap();
+                    let duplicate = second.append(board, bytes, forged).await.unwrap();
+                    prop_assert!(matches!(duplicate, AppendOutcome::Duplicate { .. }), "expected a duplicate");
+                }
+            }
+            let expected = history.snapshot(&expected).await;
+            prop_assert_eq!(&expected, &history.snapshot(&first).await);
+            prop_assert_eq!(expected, history.snapshot(&second).await);
             Ok(())
         })?;
     }
