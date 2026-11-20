@@ -4,6 +4,7 @@ use thiserror::Error;
 pub use chrono::NaiveDate as Date;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     #[default]
@@ -20,6 +21,7 @@ impl Status {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 #[serde(rename_all = "snake_case")]
 pub enum EdgeKind {
     Parent,
@@ -87,6 +89,7 @@ pub(crate) fn valid_name(name: &str, extra: &[u8]) -> bool {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 #[serde(rename_all = "snake_case")]
 pub enum FieldValue {
     Text(String),
