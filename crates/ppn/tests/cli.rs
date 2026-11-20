@@ -1399,3 +1399,79 @@ fn task_diagnostics_include_request_locations_and_validation_hints() {
     assert_eq!(due["field"], "due");
     assert!(due["hint"].as_str().unwrap().contains("lowercase weekday"));
 }
+
+const SEED_NOW: u64 = 1_795_149_900_000;
+
+fn seed_tasks<T>(data: &std::path::Path, seed: impl AsyncFnOnce(&mut pepino_app::App) -> T) -> T {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut app = pepino_app::App::open(data, SEED_NOW).await.unwrap();
+            seed(&mut app).await
+        })
+}
+
+#[test]
+fn show_reports_deleted_tasks_as_conflicts() {
+    use pepino_app::{Request, WriteRequest};
+    let (sandbox, data) = task_sandbox();
+    let id = create_task(&sandbox, "Order the new mounting plate", &[]);
+    seed_tasks(&data, async |app| {
+        app.handle(
+            Request::Write(WriteRequest::Delete { task: id.clone() }),
+            SEED_NOW,
+        )
+        .await
+        .unwrap();
+    });
+    let output = sandbox
+        .command()
+        .args(["show", &id[..6], "--json"])
+        .output()
+        .unwrap();
+    let error = task_error(output, 1, "conflict");
+    assert_eq!(error["field"], "task");
+    assert_eq!(error["task"], id);
+}
+
+#[test]
+fn show_reports_ambiguous_ids_with_sorted_candidates() {
+    use pepino_app::{Request, Response};
+    use ppn::write_args::new_task;
+    use std::collections::BTreeMap;
+
+    let (sandbox, data) = task_sandbox();
+    let (prefix, mut expected) = seed_tasks(&data, async |app| {
+        let mut seen = BTreeMap::new();
+        for number in 0..=65_536 {
+            let input = new_task(format!("Inspect hinge assembly {number}"));
+            let Response::Write {
+                created: Some(id), ..
+            } = app.handle(Request::Write(input), SEED_NOW).await.unwrap()
+            else {
+                panic!("expected a created task");
+            };
+            let prefix = id[..4].to_owned();
+            if let Some(previous) = seen.insert(prefix.clone(), id.clone()) {
+                return (prefix, [previous, id]);
+            }
+        }
+        panic!("65,537 tasks must share a four-digit prefix");
+    });
+    expected.sort();
+    let output = sandbox
+        .command()
+        .args(["show", &prefix, "--json"])
+        .output()
+        .unwrap();
+    let error = task_error(output, 4, "ambiguous_id");
+    assert_eq!(error["field"], "task");
+    assert_eq!(error["count"], 2);
+    assert_eq!(error["candidates"], json!(expected));
+    let human = sandbox.command().args(["show", &prefix]).output().unwrap();
+    assert_eq!(human.status.code(), Some(4));
+    let human = String::from_utf8(human.stderr).unwrap();
+    assert!(expected.iter().all(|id| human.contains(id)));
+}
