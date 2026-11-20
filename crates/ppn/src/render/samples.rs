@@ -5,7 +5,7 @@ use super::Dates;
 
 pub(super) fn dates() -> Dates<'static> {
     Dates {
-        today: "2026-11-20".parse().unwrap(),
+        time: super::dates::tests_support::invocation_time(),
         format: "%d/%m/%Y",
     }
 }

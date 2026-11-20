@@ -9,7 +9,7 @@ pub fn run(context: &Context<'_>, task: String) -> Result<CommandResult, CliErro
     let response = AppClient::open(context)?.call(Request::Read(ReadRequest::GetTask { task }))?;
     let ui = &context.config()?.config.ui;
     let date_format = ui.date_format.value.clone();
-    let today = context.time.today;
+    let time = context.time;
     Ok(CommandResult::app_document(
         response,
         ui.color.value,
@@ -28,7 +28,7 @@ pub fn run(context: &Context<'_>, task: String) -> Result<CommandResult, CliErro
                 ));
             };
             let dates = Dates {
-                today,
+                time,
                 format: date_format.as_str(),
             };
             Ok(task_detail(
