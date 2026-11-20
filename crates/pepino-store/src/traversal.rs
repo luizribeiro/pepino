@@ -23,7 +23,7 @@ pub struct Dependencies {
 }
 
 impl BoardView {
-    /// Walks a live task and its descendants in pre-order, with siblings ordered by task ID.
+    /// Walks a live task and its descendants in pre-order, with siblings in creation order by HLC and task ID.
     /// A missing or deleted root yields an empty list.
     pub fn subtree(&self, task: TaskId) -> Vec<SubtreeEntry> {
         if self.task(task).is_none() {
@@ -34,8 +34,14 @@ impl BoardView {
         while let Some(entry) = pending.pop() {
             result.push(entry);
             if let Some(record) = self.task(entry.task) {
-                pending.extend(record.children.iter().rev().map(|&task| SubtreeEntry {
-                    task,
+                let mut children: Vec<_> = record
+                    .children
+                    .iter()
+                    .filter_map(|&id| self.task(id))
+                    .collect();
+                children.sort_unstable_by_key(|child| (child.created, child.id));
+                pending.extend(children.into_iter().rev().map(|child| SubtreeEntry {
+                    task: child.id,
                     depth: entry.depth + 1,
                 }));
             }

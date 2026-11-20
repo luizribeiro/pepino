@@ -504,3 +504,29 @@ async fn blocker_with_no_status_register_leaves_its_dependents_ready() {
     assert_eq!((door.blocked, door.ready), (false, true));
     assert!(view.edges(door.id)[0].is_effective());
 }
+
+#[tokio::test]
+async fn siblings_follow_creation_even_when_ids_sort_in_reverse() {
+    let (store, [greenhouse, _, _, _]) = setup().await;
+    let older = TaskId::from_bytes([25; 32]);
+    let younger = TaskId::from_bytes([19; 32]);
+    for (id, tick, title) in [(19, 3, "Fit the draft seal"), (25, 1, "Clean the frame")] {
+        append(
+            &store,
+            id,
+            tick,
+            Event::TaskCreated {
+                title: title.into(),
+                fields: InitialFields::default(),
+            },
+        )
+        .await;
+    }
+    add(&store, 28, 4, younger, EdgeKind::Parent, greenhouse).await;
+    add(&store, 29, 5, older, EdgeKind::Parent, greenhouse).await;
+    let nodes = store.subtree(BOARD, greenhouse).await.unwrap();
+    assert_eq!(
+        nodes.iter().map(|entry| entry.task).collect::<Vec<_>>(),
+        [greenhouse, older, younger]
+    );
+}
