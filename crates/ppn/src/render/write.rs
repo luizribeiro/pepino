@@ -186,10 +186,13 @@ pub fn relation_document(
 fn write_label(changed: bool, verb: &str) -> String {
     if changed {
         verb.into()
-    } else if verb == "Reopened" {
-        "Already open".into()
     } else {
-        format!("Already {}", verb.to_lowercase())
+        match verb {
+            "Edited" => "No changes to".into(),
+            "Started" => "Already doing".into(),
+            "Reopened" => "Already open".into(),
+            _ => format!("Already {}", verb.to_lowercase()),
+        }
     }
 }
 

@@ -9,7 +9,7 @@ fn start_reports_changed_and_unchanged_tasks() {
     assert!(human.starts_with("Started "));
     assert_eq!(show_task(&sandbox, &project.parent)["status"], "doing");
     let mixed = sandbox.run(&["start", &project.parent, &project.blocker]);
-    assert!(mixed.starts_with("Already started "));
+    assert!(mixed.starts_with("Already doing "));
     assert!(mixed.lines().nth(1).unwrap().starts_with("Started "));
     assert_eq!(show_task(&sandbox, &project.blocker)["status"], "doing");
 

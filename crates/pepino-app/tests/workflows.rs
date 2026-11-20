@@ -1702,3 +1702,20 @@ async fn reopening_keeps_open_statuses_and_restarts_closed_tasks() {
         pepino_app::Status::Todo
     );
 }
+
+#[tokio::test]
+async fn repeating_an_edit_and_status_write_preserves_the_task_record() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let task = add(&mut app, "Inspect the greenhouse frame").await;
+    for changes in [
+        json!({"description":{"type":"text","value":"Check the corner joints."}}),
+        json!({"status":{"type":"status","value":"doing"}}),
+    ] {
+        let request = json!({"op":"set_fields","task":task,"changes":changes});
+        let first = write(&mut app, request.clone()).await;
+        let second = write(&mut app, request).await;
+        assert!(first.0 && !second.0);
+        assert_eq!(first.2, second.2);
+    }
+}

@@ -45,7 +45,7 @@ fn edit_applies_scalar_and_membership_flags_in_one_result() {
     let json = as_json(&sandbox.run(&[args.as_slice(), &["--json"]].concat()));
     assert_write(&json, false);
     assert_eq!(json["targets"], serde_json::json!([p.parent]));
-    assert!(sandbox.run(&args).starts_with("Already edited "));
+    assert!(sandbox.run(&args).starts_with("No changes to "));
 }
 
 #[test]
