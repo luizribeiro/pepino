@@ -36,13 +36,16 @@ fn settings(root: &Path, name: &str) -> NodeSettings {
     settings
 }
 
+pub(super) async fn owner(root: &Path) -> Device {
+    Device {
+        app: App::init(root.join("alice"), NOW).await.unwrap(),
+        settings: settings(root, "alice"),
+    }
+}
+
 pub(super) async fn pair() -> (tempfile::TempDir, Device, Device) {
     let dir = tempfile::tempdir().unwrap();
-    let app = App::init(dir.path().join("alice"), NOW).await.unwrap();
-    let owner = Device {
-        app,
-        settings: settings(dir.path(), "alice"),
-    };
+    let owner = owner(dir.path()).await;
     let peer = enroll(dir.path(), &owner, "ben").await;
     (dir, owner, peer)
 }

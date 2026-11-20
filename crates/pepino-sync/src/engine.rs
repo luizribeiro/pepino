@@ -1,10 +1,18 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    sync::{Arc, Weak},
+    time::Duration,
+};
 
 use futures_util::{Stream, StreamExt};
-use pepino_app::{App, OpenOptions};
-use pepino_core::DeviceId;
-use pepino_node::Node;
-use tokio::{sync::watch, task::JoinSet};
+use pepino_app::{App, DeviceRequest, OpenOptions, PeerHint};
+use pepino_core::{BoardId, DeviceId};
+use pepino_node::{Node, Role};
+use tokio::{
+    sync::{Mutex, watch},
+    task::JoinSet,
+};
 use tokio_stream::wrappers::WatchStream;
 
 use crate::{BoardFailure, Status, Transport, TransportBoard};
@@ -51,6 +59,9 @@ pub enum Error {
 /// node, then start both again.
 pub struct SyncEngine<T: Transport = Node> {
     node: Arc<T>,
+    app: Arc<App>,
+    boards: BTreeMap<BoardId, Weak<T::Board>>,
+    membership: Mutex<()>,
     status: watch::Receiver<Status>,
     stop: watch::Sender<()>,
     nudges: watch::Sender<u64>,
@@ -91,10 +102,13 @@ impl<T: Transport> SyncEngine<T> {
             ..Default::default()
         });
         let mut workers = JoinSet::new();
+        let mut handles = BTreeMap::new();
         let node_instance = node.instance_id();
         for id in boards {
             let mut board = node.open_board_for_store(id, store_instance).await?;
             let stream = board.deliveries()?;
+            let board = Arc::new(board);
+            handles.insert(id, Arc::downgrade(&board));
             let mut stopping = stopping.clone();
             let app = app.clone();
             let status = changes.clone();
@@ -104,7 +118,7 @@ impl<T: Transport> SyncEngine<T> {
                 let result = tokio::select! {
                     biased;
                     _ = stopping.changed() => Ok(()),
-                    _ = crate::outbox::run(&app, id, &board, node_instance, &status, nudged, poll) => Err("outbox worker ended".into()),
+                    _ = crate::outbox::run(&app, id, board.as_ref(), node_instance, &status, nudged, poll) => Err("outbox worker ended".into()),
                     result = crate::inbox::run(&app, id, stream, &status) => result.map_err(|error| error.to_string()),
                 };
                 let result = result.map_err(|cause| BoardFailure { board: id, cause });
@@ -116,7 +130,11 @@ impl<T: Transport> SyncEngine<T> {
                         status.restart_required.get_or_insert_with(|| failure.clone());
                     }
                 });
-                result.map_err(Error::from).and(board.close().await.map_err(Error::from))
+                let closed = match Arc::into_inner(board) {
+                    Some(board) => board.close().await,
+                    None => Err(pepino_node::Error::Closed),
+                };
+                result.map_err(Error::from).and(closed.map_err(Error::from))
             });
         }
         changes.send_modify(|status| status.node = node.status());
@@ -127,6 +145,9 @@ impl<T: Transport> SyncEngine<T> {
         });
         Ok(Self {
             node,
+            app,
+            boards: handles,
+            membership: Mutex::new(()),
             status,
             stop,
             nudges,
@@ -205,6 +226,42 @@ impl<T: Transport> SyncEngine<T> {
             result = result.and(outcome);
         }
         result
+    }
+}
+
+impl SyncEngine {
+    pub async fn add_member(
+        &self,
+        device: DeviceRequest,
+        name: Option<String>,
+    ) -> Result<(), Error> {
+        let member = device.member_info()?;
+        if device.id == self.node.device_id()
+            || name.as_deref().is_some_and(|name| name.trim().is_empty())
+        {
+            return Err(Error::App(pepino_app::AppError::InvalidInput {
+                field: "device".into(),
+                reason: "expected a different device and a non-blank name".into(),
+                diagnostic: None,
+            }));
+        }
+        let _guard = self.membership.lock().await;
+        for handle in self.boards.values() {
+            let handle = handle.upgrade().ok_or(pepino_node::Error::Closed)?;
+            handle.wait_until_joined(Duration::from_secs(5)).await?;
+            handle.add_member(&member, Role::Manage).await?;
+        }
+        self.app
+            .remember_device(device.id, device.name, name)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn register_peer_hint(&self, peer: PeerHint) -> Result<(), Error> {
+        self.node
+            .register_peer_hint(peer.id, peer.relay_url.as_deref())
+            .await?;
+        Ok(())
     }
 }
 

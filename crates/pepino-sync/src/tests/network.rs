@@ -236,3 +236,27 @@ async fn restores_a_replaced_event_store_with_its_own_and_peer_events() {
     views_match(&a, &b).await;
     right.stop().await;
 }
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn the_running_engine_enrolls_a_device_without_reopening_its_board() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = fixture::owner(dir.path()).await;
+    let live = owner.start().await;
+    let peer = pepino_app::App::request_device(
+        &dir.path().join("ferrum"),
+        pepino_app::OpenOptions {
+            device_name: Some("Ferrum".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    live.engine.add_member(peer.clone(), None).await.unwrap();
+    live.engine.add_member(peer.clone(), None).await.unwrap();
+    let local = pepino_app::App::open(dir.path().join("alice"), 0)
+        .await
+        .unwrap();
+    assert_eq!(local.local_state().devices()[&peer.id], "Ferrum");
+    live.stop().await;
+}
