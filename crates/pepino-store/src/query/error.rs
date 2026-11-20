@@ -1,4 +1,4 @@
-use pepino_core::TaskId;
+use pepino_core::{IdentityId, TaskId};
 use thiserror::Error;
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -13,6 +13,13 @@ pub struct QueryError {
 pub enum QueryErrorKind {
     #[error("no current identity for me")]
     MissingIdentity,
+    #[error("unknown person {text:?}")]
+    UnknownPerson { text: String },
+    #[error("ambiguous person {text:?}: {candidates:?}")]
+    AmbiguousPerson {
+        text: String,
+        candidates: Vec<IdentityId>,
+    },
     #[error("invalid task ID prefix {prefix:?} (expected 4 to 64 hexadecimal digits)")]
     InvalidTaskPrefix { prefix: String },
     #[error("unknown task ID prefix {prefix:?}")]

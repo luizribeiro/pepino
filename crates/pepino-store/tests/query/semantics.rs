@@ -33,6 +33,16 @@ fn terms_conjoin_alternatives_disjoin_and_negation_applies_to_the_whole_term() {
 }
 
 #[test]
+fn assignees_match_the_current_identity_or_people_resolved_by_the_caller() {
+    check("assignee:me", &[0, 1]);
+    check(r#"assignee:"Ana Maria""#, &[0, 1]);
+    check(r#"assignee:"me""#, &[1, 2]);
+    check("assignee:ana-work", &[0, 1]);
+    check("assignee:ana,bob", &[0, 1, 2]);
+    check("tag:garden -assignee:me,bob", &[7, 11]);
+}
+
+#[test]
 fn compares_priority_numerically_and_due_chronologically() {
     check("priority:<0", &[4]);
     check("priority:>5", &[2]);

@@ -1,7 +1,11 @@
-use pepino_store::query::{Query, QueryError, QueryErrorKind, matches, select};
+use pepino_core::BoardId;
+use pepino_store::{
+    Store,
+    query::{Query, QueryError, QueryErrorKind, matches, select},
+};
 
 use super::{
-    filter,
+    ANA, BOB, filter,
     fixture::{board, id},
     query,
 };
@@ -16,6 +20,54 @@ fn check(query: &Query<'_>, term: &str, kind: QueryErrorKind) {
     let error = matches(board(), task, query).unwrap_err();
     assert_eq!(error, expected);
     assert!(error.to_string().starts_with(term));
+}
+
+#[test]
+fn me_without_a_current_identity_fails_even_in_a_negated_term() {
+    let filter = filter("-assignee:ana,me");
+    let mut query = query(&filter);
+    query.context.me = None;
+    check(&query, "-assignee:ana,me", QueryErrorKind::MissingIdentity);
+}
+
+#[test]
+fn unresolved_person_reports_decoded_text_and_canonical_term() {
+    let term = r#"-assignee:ana,"Missing Person""#;
+    let filter = filter(&format!(r#"tag:absent {term}"#));
+    let kind = QueryErrorKind::UnknownPerson {
+        text: "Missing Person".into(),
+    };
+    check(&query(&filter), term, kind.clone());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let empty = runtime.block_on(async {
+        Store::open_in_memory()
+            .await
+            .unwrap()
+            .board(BoardId::from_bytes([0; 32]))
+            .await
+            .unwrap()
+    });
+    assert_eq!(
+        select(&empty, &query(&filter)),
+        Err(QueryError {
+            term: term.into(),
+            kind
+        })
+    );
+}
+
+#[test]
+fn ambiguous_person_lists_candidate_identities_in_id_order() {
+    check(
+        &query(&filter("assignee:Alex")),
+        "assignee:Alex",
+        QueryErrorKind::AmbiguousPerson {
+            text: "Alex".into(),
+            candidates: vec![ANA, BOB],
+        },
+    );
 }
 
 #[test]

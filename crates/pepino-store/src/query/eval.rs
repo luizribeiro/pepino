@@ -1,6 +1,6 @@
 use pepino_core::{
     IdentityId, TaskId,
-    filter::{Clause, Filter},
+    filter::{Assignee, Clause, Filter},
 };
 
 use crate::{BoardView, PrefixResolution, TaskRecord};
@@ -82,7 +82,7 @@ fn prepare<'a>(
 fn prepare_clause<'a>(
     view: &'a BoardView,
     clause: &'a Clause,
-    _context: &Context<'a>,
+    context: &Context<'a>,
 ) -> Result<Option<Predicate<'a>>, QueryErrorKind> {
     let predicate: Predicate<'a> = match clause {
         Clause::Is(values) => Box::new(move |task| values.iter().any(|value| is(task, *value))),
@@ -91,6 +91,13 @@ fn prepare_clause<'a>(
             Box::new(move |task| values.iter().any(|tag| task.tags.contains(tag)))
         }
         Clause::Status(values) => Box::new(move |task| values.contains(&task.status)),
+        Clause::Assignee(values) => {
+            let ids = values
+                .iter()
+                .map(|value| resolve_person(context, value))
+                .collect::<Result<Vec<_>, _>>()?;
+            Box::new(move |task| ids.iter().any(|id| task.assignees.contains(id)))
+        }
         Clause::Parent(values) => {
             let ids = resolve_prefixes(view, values)?;
             Box::new(move |task| task.parent.is_some_and(|parent| ids.contains(&parent)))
@@ -110,6 +117,26 @@ fn prepare_clause<'a>(
         _ => return Ok(None),
     };
     Ok(Some(predicate))
+}
+
+fn resolve_person(
+    context: &Context<'_>,
+    assignee: &Assignee,
+) -> Result<IdentityId, QueryErrorKind> {
+    let Assignee::Person(text) = assignee else {
+        return context.me.ok_or(QueryErrorKind::MissingIdentity);
+    };
+    let mut candidates = (context.people)(text);
+    candidates.sort_unstable();
+    candidates.dedup();
+    match candidates.as_slice() {
+        [] => Err(QueryErrorKind::UnknownPerson { text: text.clone() }),
+        [person] => Ok(*person),
+        _ => Err(QueryErrorKind::AmbiguousPerson {
+            text: text.clone(),
+            candidates,
+        }),
+    }
 }
 
 fn resolve_prefixes(view: &BoardView, prefixes: &[String]) -> Result<Vec<TaskId>, QueryErrorKind> {

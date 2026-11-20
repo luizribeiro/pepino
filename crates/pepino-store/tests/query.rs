@@ -13,7 +13,7 @@ use pepino_core::{
 };
 use pepino_store::query::{Context, Query, ViewResolver};
 
-use fixture::date;
+use fixture::{ANA, BOB, date};
 
 fn filter(input: &str) -> Filter {
     parse(input, date(19)).unwrap()
@@ -23,15 +23,21 @@ fn query(filter: &Filter) -> Query<'_> {
     Query {
         filter,
         context: Context {
-            me: None,
+            me: Some(ANA),
             people: &people,
             views: &TestViews,
         },
     }
 }
 
-fn people(_: &str) -> Vec<IdentityId> {
-    vec![]
+fn people(text: &str) -> Vec<IdentityId> {
+    match text {
+        "Ana Maria" | "ana" => vec![ANA],
+        "bob" | "me" => vec![BOB],
+        "Alex" => vec![BOB, ANA],
+        "ana-work" => vec![ANA, ANA],
+        _ => vec![],
+    }
 }
 
 struct TestViews;
