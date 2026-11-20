@@ -346,3 +346,91 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
         .unwrap();
     assert_eq!(history.len(), 3);
 }
+
+#[tokio::test]
+async fn reopening_preserves_local_state_tasks_and_clock_across_wall_regression() {
+    use pepino_app::OpenOptions;
+
+    let directory = tempfile::tempdir().unwrap();
+    let later = NOW + 3 * 86_400_000;
+    let mut app = App::open_with_options(
+        directory.path(),
+        later,
+        OpenOptions {
+            display_name: Some("Ada Gardener".into()),
+            board_name: Some("Greenhouse winter prep".into()),
+        },
+    )
+    .await
+    .unwrap();
+    let local = app.local_state().clone();
+    let id = add(&mut app, "Order a replacement latch").await;
+    let recorded = get(&mut app, &id).await;
+    let store = Store::open(directory.path().join("pepino.sqlite"))
+        .await
+        .unwrap();
+    let latest = store.latest_hlc(local.board_id).await.unwrap().unwrap();
+    assert_eq!(latest, recorded.updated);
+    assert_eq!(latest.wall_ms, later);
+    drop(app);
+
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    assert_eq!(app.local_state(), &local);
+    assert_eq!(get(&mut app, &id).await, recorded);
+    assert!(
+        write(
+            &mut app,
+            json!({"op":"comment","task":&id,"text":"The latch arrived."})
+        )
+        .await
+        .0
+    );
+    let after = get(&mut app, &id).await;
+    assert!(after.updated > latest);
+    assert_eq!(after.comments[0].hlc, after.updated);
+    assert_eq!(
+        store.latest_hlc(local.board_id).await.unwrap(),
+        Some(after.updated)
+    );
+}
+
+#[tokio::test]
+async fn a_failed_edge_projection_does_not_leave_a_task_or_advance_the_log() {
+    use sqlx::{ConnectOptions, sqlite::SqliteConnectOptions};
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let parent = add(&mut app, "Prepare the greenhouse for winter").await;
+    let database = directory.path().join("pepino.sqlite");
+    let mut connection = SqliteConnectOptions::new()
+        .filename(&database)
+        .connect()
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER reject_edge BEFORE INSERT ON task_register WHEN NEW.kind = 'edge'
+         BEGIN SELECT RAISE(ABORT, 'injected edge projection failure'); END",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    let before = get(&mut app, &parent).await;
+    let request = json!({"op":"add_task","title":"Replace the greenhouse latch","parent":&parent});
+    let error = handle(&mut app, request.clone()).await.unwrap_err();
+    assert!(
+        matches!(error, AppError::Storage { retryable: false, reason } if reason.contains("injected edge projection failure"))
+    );
+    assert_eq!(get(&mut app, &parent).await, before);
+    let store = Store::open(&database).await.unwrap();
+    let board = app.local_state().board_id;
+    assert_eq!(store.latest_hlc(board).await.unwrap(), Some(before.updated));
+    assert_eq!(store.tasks(board).await.unwrap().len(), 1);
+
+    sqlx::query("DROP TRIGGER reject_edge")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    assert!(write(&mut app, request).await.0);
+    assert_eq!(store.tasks(board).await.unwrap().len(), 2);
+    assert_eq!(get(&mut app, &parent).await.children.len(), 1);
+}
