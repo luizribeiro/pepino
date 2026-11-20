@@ -3,7 +3,7 @@ use std::{
     sync::{Mutex, MutexGuard, PoisonError},
 };
 
-use pepino_core::filter::{self, Clause, Filter, PresenceField, State};
+use pepino_core::filter::{self, Clause, CustomValue, Filter, PresenceField, State};
 use serde::{Deserialize, Serialize};
 
 use crate::AppError;
@@ -112,7 +112,12 @@ fn term_starts(text: &str) -> impl Iterator<Item = usize> {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FilterWarning {
     pub field: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub suggestion: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_tasks: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 const BUILTIN_KEYS: &[&str] = &[
@@ -172,11 +177,15 @@ impl<'a> ViewFilters<'a> {
     pub(super) fn field_warnings<'b>(
         &self,
         filter: &Filter,
-        fields: impl Iterator<Item = &'b str>,
+        fields: impl Iterator<Item = (&'b str, bool)>,
     ) -> Vec<FilterWarning> {
-        let fields: BTreeSet<_> = fields.collect();
+        let mut text_counts = BTreeMap::new();
+        for (field, text) in fields {
+            *text_counts.entry(field).or_insert(0usize) += usize::from(text);
+        }
         let parsed = self.parsed();
-        let mut unknown = BTreeSet::new();
+        let mut referenced = BTreeSet::new();
+        let mut numeric = BTreeSet::new();
         for term in std::iter::once(filter)
             .chain(
                 parsed
@@ -186,11 +195,20 @@ impl<'a> ViewFilters<'a> {
             .flat_map(Filter::terms)
         {
             match &term.clause {
-                Clause::Custom { field, .. } => {
-                    unknown.insert(field.as_str());
+                Clause::Custom {
+                    field,
+                    alternatives,
+                } => {
+                    referenced.insert(field.as_str());
+                    if alternatives
+                        .iter()
+                        .any(|item| matches!(item.value, CustomValue::Integer(_)))
+                    {
+                        numeric.insert(field.as_str());
+                    }
                 }
                 Clause::Has(alternatives) => {
-                    unknown.extend(alternatives.iter().filter_map(|field| match field {
+                    referenced.extend(alternatives.iter().filter_map(|field| match field {
                         PresenceField::Custom(name) => Some(name.as_str()),
                         _ => None,
                     }))
@@ -198,20 +216,27 @@ impl<'a> ViewFilters<'a> {
                 _ => {}
             }
         }
-        unknown
-            .into_iter()
-            .filter(|field| !fields.contains(field))
-            .filter_map(|field| {
+        referenced.into_iter().filter_map(|field| {
+                if let Some(&count) = text_counts.get(field) {
+                    return (count > 0 && numeric.contains(field)).then(|| FilterWarning {
+                        field: field.into(),
+                        suggestion: String::new(),
+                        text_tasks: Some(count),
+                        message: Some(format!("field {field} holds text on {count} tasks; numeric comparison never matches them")),
+                    });
+                }
                 let suggestion = BUILTIN_KEYS
                     .iter()
                     .copied()
-                    .chain(fields.iter().copied())
+                    .chain(text_counts.keys().copied())
                     .min_by_key(|candidate| {
                         (strsim::damerau_levenshtein(field, candidate), *candidate)
                     })?;
                 Some(FilterWarning {
                     field: field.into(),
                     suggestion: suggestion.into(),
+                    text_tasks: None,
+                    message: None,
                 })
             })
             .collect()
@@ -302,15 +327,19 @@ mod tests {
         assert!(views.resolve("weekend").is_some());
         let filter = filter::parse("statuss:doing @weekend").unwrap();
         assert_eq!(
-            views.field_warnings(&filter, ["estimate"].into_iter()),
+            views.field_warnings(&filter, [("estimate", false)].into_iter()),
             [
                 FilterWarning {
                     field: "estmate".into(),
-                    suggestion: "estimate".into()
+                    suggestion: "estimate".into(),
+                    text_tasks: None,
+                    message: None,
                 },
                 FilterWarning {
                     field: "statuss".into(),
-                    suggestion: "status".into()
+                    suggestion: "status".into(),
+                    text_tasks: None,
+                    message: None,
                 },
             ]
         );

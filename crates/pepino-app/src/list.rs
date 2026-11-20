@@ -90,8 +90,14 @@ impl App {
                 .collect();
             let warnings = views.field_warnings(
                 &filter,
-                view.iter()
-                    .flat_map(|task| task.custom.keys().map(|key| key.as_str())),
+                view.iter().flat_map(|task| {
+                    task.custom.iter().map(|(key, value)| {
+                        (
+                            key.as_str(),
+                            matches!(value, pepino_core::FieldValue::Text(_)),
+                        )
+                    })
+                }),
             );
             (tasks, total, resolved_dates, warnings)
         } else {

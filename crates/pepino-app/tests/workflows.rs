@@ -1719,3 +1719,49 @@ async fn repeating_an_edit_and_status_write_preserves_the_task_record() {
         assert_eq!(first.2, second.2);
     }
 }
+
+#[tokio::test]
+async fn numeric_filter_warns_about_text_through_saved_views() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    for (title, field) in [
+        (
+            "Order stainless hinges",
+            json!({"type":"text","value":"12.50"}),
+        ),
+        ("Order brass screws", json!({"type":"integer","value":14})),
+    ] {
+        write(
+            &mut app,
+            json!({"op":"add_task","title":title,"fields":{"cost":field}}),
+        )
+        .await;
+    }
+    handle(
+        &mut app,
+        json!({"op":"save_view","name":"budget","filter":"cost:>10"}),
+    )
+    .await
+    .unwrap();
+    let response = handle(
+        &mut app,
+        json!({"op":"list_tasks","filter":"@budget","today":"2026-11-20"}),
+    )
+    .await
+    .unwrap();
+    let Response::Tasks {
+        tasks, warnings, ..
+    } = response
+    else {
+        panic!("expected a listing")
+    };
+    assert_eq!(tasks[0].title, "Order brass screws");
+    assert_eq!(warnings[0].text_tasks, Some(1));
+    assert!(
+        warnings[0]
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("numeric comparison never matches them")
+    );
+}
