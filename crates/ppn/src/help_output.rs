@@ -42,6 +42,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "board_grant",
             "grant Secret board grant code\nfingerprint Confirmed request fingerprint\ndevice_id Invited device ID",
         ),
+        "board join" => (
+            "board_join",
+            "joined Whether the board finished its first sync",
+        ),
         "board ls" => (
             "boards",
             "boards Known boards with current marker, counts, membership and sync activity\nselected_board Board selected for this invocation and its source",

@@ -182,7 +182,7 @@ pub fn run(
     }
 }
 
-fn local_options<'a>(
+pub(crate) fn local_options<'a>(
     context: &'a Context<'_>,
     name: Option<String>,
 ) -> Result<(&'a Path, OpenOptions), CliError> {
@@ -198,7 +198,7 @@ fn local_options<'a>(
     Ok((config.data_dir.value.as_path(), options))
 }
 
-fn runtime() -> Result<tokio::runtime::Runtime, CliError> {
+pub(crate) fn runtime() -> Result<tokio::runtime::Runtime, CliError> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
