@@ -162,6 +162,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stored_signer_evidence_classifies_mismatched_authors() {
+        let store = Store::open_in_memory().await.unwrap();
+        let mut connection = store.connection.lock().await;
+        sqlx::query(
+            "INSERT INTO event_log (board, id, author, decoded_classification, bytes, verified_signer)
+             VALUES (?, ?, ?, 'known', x'8202f6', ?)",
+        )
+        .bind([31_u8; 32])
+        .bind([42_u8; 32])
+        .bind([53_u8; 32])
+        .bind([64_u8; 32])
+        .execute(&mut *connection)
+        .await
+        .unwrap();
+        let classification: String = sqlx::query_scalar("SELECT classification FROM event_log")
+            .fetch_one(&mut *connection)
+            .await
+            .unwrap();
+        assert_eq!(classification, "forged_author");
+    }
+
+    #[tokio::test]
     async fn latest_clock_uses_unsigned_wall_time_and_counter_per_board() {
         let store = Store::open_in_memory().await.unwrap();
         let board = BoardId::from_bytes([31; 32]);
@@ -200,7 +222,7 @@ mod tests {
             ),
         ] {
             sqlx::query(
-                "INSERT INTO event_log VALUES (?, ?, ?, NULL, 'unknown_version', x'8202f6')",
+                "INSERT INTO event_log (board, id, hlc, decoded_classification, bytes) VALUES (?, ?, ?, 'unknown_version', x'8202f6')",
             )
             .bind(BoardKey(board))
             .bind([id; 32])

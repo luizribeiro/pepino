@@ -92,7 +92,7 @@ impl Decoded {
         bytes: &[u8],
     ) -> Result<bool, StoreError> {
         let result = sqlx::query(
-            "INSERT INTO event_log (board, id, hlc, author, classification, bytes)
+            "INSERT INTO event_log (board, id, hlc, author, decoded_classification, bytes)
              VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (board, id) DO NOTHING",
         )
         .bind(BoardKey(board))
@@ -135,8 +135,8 @@ impl Decoded {
         board: BoardId,
     ) -> Result<(), StoreError> {
         sqlx::query(
-            "UPDATE event_log SET hlc = ?3, author = ?4, classification = ?5
-             WHERE board = ?1 AND id = ?2 AND (hlc, author, classification) IS NOT (?3, ?4, ?5)",
+            "UPDATE event_log SET hlc = ?3, author = ?4, decoded_classification = ?5
+             WHERE board = ?1 AND id = ?2 AND (hlc, author, decoded_classification) IS NOT (?3, ?4, ?5)",
         )
         .bind(BoardKey(board))
         .bind(self.id.as_bytes().as_slice())

@@ -189,7 +189,7 @@ async fn rebuild_redecodes_skips_and_retains_content_ids() {
 
     // Model an earlier decoder that stored this frame without recognizing the event.
     sqlx::query(
-        "UPDATE event_log SET classification = 'unknown_event', hlc = NULL, author = NULL
+        "UPDATE event_log SET decoded_classification = 'unknown_event', hlc = NULL, author = NULL
                  WHERE board = ?",
     )
     .bind(BoardKey(board))
@@ -241,7 +241,7 @@ async fn rebuild_failure_leaves_the_current_view_intact() {
     let before = store.tasks(board).await.unwrap();
     let history = store.events(board, task).await.unwrap();
     sqlx::query(
-        "INSERT INTO event_log (board, id, classification, bytes)
+        "INSERT INTO event_log (board, id, decoded_classification, bytes)
                  VALUES (?, ?, 'unknown_version', x'ff')",
     )
     .bind(BoardKey(board))
