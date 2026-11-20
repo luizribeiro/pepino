@@ -3388,6 +3388,7 @@ dependencies = [
  "p2panda-store",
  "pepino-core",
  "serde",
+ "serde_bytes",
  "sqlx",
  "tempfile",
  "thiserror 2.0.21",

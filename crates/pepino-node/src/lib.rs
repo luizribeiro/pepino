@@ -2,6 +2,8 @@
 mod ack;
 mod credentials;
 mod node;
+#[cfg(test)]
+mod receipt;
 mod settings;
 mod worker;
 
