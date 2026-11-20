@@ -1,7 +1,11 @@
 //! In-memory filtering and ordering for a board snapshot.
 
+mod error;
+mod eval;
 mod sort;
 
+pub use error::{QueryError, QueryErrorKind};
+pub use eval::{Context, PersonResolver, Query, ViewResolver};
 pub use sort::{Direction, Sort, SortKey};
 
 use pepino_core::filter::{Clause, Filter, Term};
