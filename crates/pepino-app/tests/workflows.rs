@@ -1523,3 +1523,24 @@ async fn task_validation_reports_the_offending_values() {
         assert!(error.to_string().contains(&format!("{value:?}")));
     }
 }
+
+#[tokio::test]
+async fn replacing_a_parent_reports_the_newly_excluded_edge() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let latch = add(&mut app, "Install a new latch").await;
+    let greenhouse = add(&mut app, "Renovate the greenhouse").await;
+    let door = add(&mut app, "Rebuild the door").await;
+    let link = |to: &str| json!({"op":"link","from":latch,"kind":"parent","to":to});
+
+    assert_eq!(write(&mut app, link(&greenhouse)).await.3.len(), 1);
+    let (changed, _, _, edges) = write(&mut app, link(&door)).await;
+    assert!(changed);
+    assert_eq!(edges.len(), 2);
+    assert_eq!(edges[0].to, door);
+    assert!(edges[0].effective);
+    assert_eq!(edges[1].to, greenhouse);
+    assert_eq!(edges[1].reason, Some(EdgeExclusionReason::SupersededParent));
+    assert_eq!(get(&mut app, &latch).await.parent, Some(door.clone()));
+    assert!(write(&mut app, link(&door)).await.3.is_empty());
+}
