@@ -1,7 +1,10 @@
+use crate::Date;
+use crate::state::storage;
+use crate::views::SavedViews;
 use crate::{AppError, FilterDiagnostic, FilterInput, MissingReference};
 use pepino_core::filter::Filter;
 use pepino_store::query::{QueryError, QueryErrorKind};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 type ViewFilters<'a> = BTreeMap<&'a str, (FilterInput, Filter)>;
 
@@ -68,4 +71,38 @@ fn query_error(
             hint: None,
         })),
     }
+}
+
+#[allow(dead_code)]
+fn needs_comments<'a>(filter: &'a Filter, views: &'a ViewFilters<'_>) -> bool {
+    let mut pending = vec![filter];
+    let mut seen = BTreeSet::new();
+    while let Some(filter) = pending.pop() {
+        for term in filter.terms() {
+            match &term.clause {
+                Clause::Text(_) => return true,
+                Clause::View(name) if seen.insert(name.as_str()) => {
+                    if let Some((_, nested)) = views.get(name.as_str()) {
+                        pending.push(nested);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+#[allow(dead_code)]
+fn parse_views(views: &SavedViews, today: Date) -> Result<ViewFilters<'_>, AppError> {
+    views
+        .iter()
+        .map(|(name, text)| {
+            let input = FilterInput::Text(text.into());
+            let parsed = input
+                .parse(today)
+                .map_err(|error| storage("decode saved filter", error, false))?;
+            Ok((name, (input, parsed)))
+        })
+        .collect()
 }
