@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 
+use pepino_store::query;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -28,6 +29,8 @@ impl SavedViews {
 }
 
 use crate::app::{invalid, worker};
+use crate::filter::ViewFilters;
+use crate::list::query_error;
 use crate::{App, AppError, Date, FilterInput, MissingReference, Response};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -76,6 +79,10 @@ impl App {
         self.reload_state().await?;
         let mut views = self.local.saved_views.clone();
         let replaced = views.insert(name.clone(), filter.clone());
+        let entry = FilterInput::Text(format!("@{name}"));
+        let parsed = ViewFilters::new(&views, today);
+        query::validate_views(&entry.parse(today)?, &|name: &str| parsed.resolve(name))
+            .map_err(|error| query_error(error, &entry, &parsed, &self.local.display_name))?;
         self.persist_views(views, guard).await?;
         Ok(Response::ViewSaved {
             view: SavedView { name, filter },

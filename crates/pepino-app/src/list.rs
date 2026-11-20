@@ -102,7 +102,7 @@ fn select_boards(boards: &[Board<'_>], terms: &[Term]) -> Result<Vec<BoardId>, A
     Ok(selected.into_iter().map(|board| board.id).collect())
 }
 
-fn query_error(
+pub(super) fn query_error(
     error: QueryError,
     source: &FilterInput,
     views: &ViewFilters<'_>,

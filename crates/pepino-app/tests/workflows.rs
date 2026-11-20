@@ -1019,22 +1019,16 @@ async fn listing_errors_report_source_positions_and_saved_view_chains() {
     let person_hint = format!("Known person is {}", app.local_state().display_name);
     list_golden(&mut app,json!(["is:open","  assignee:Ben Gardener"]),None,None,
         json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown person \"Ben Gardener\"","hint":person_hint,"term":"assignee:\"Ben Gardener\"","position":{"kind":"argument","index":1,"byte":2}}})).await;
-    for (name, filter) in [("first", "@missing"), ("last", "is:open @first")] {
-        handle(
-            &mut app,
-            json!({"op":"save_view","name":name,"filter":filter,"today":"2026-11-20"}),
-        )
-        .await
-        .unwrap();
-    }
+    replace_saved_views(
+        directory.path(),
+        json!({"first":"@missing","last":"is:open @first"}),
+    );
     list_golden(&mut app,json!("@first"),None,None,
         json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown saved view \"missing\"","hint":"Use list_views to see available saved views","term":"@missing","position":{"kind":"byte","byte":0},"view_chain":["first"]}})).await;
-    handle(
-        &mut app,
-        json!({"op":"save_view","name":"first","filter":"@last","today":"2026-11-20"}),
-    )
-    .await
-    .unwrap();
+    replace_saved_views(
+        directory.path(),
+        json!({"first":"@last","last":"is:open @first"}),
+    );
     list_golden(&mut app,json!("@first"),None,None,
         json!({"error":{"kind":"invalid_input","field":"filter","reason":"saved view cycle: first -> last -> first","term":"@first","position":{"kind":"byte","byte":8},"view_chain":["first","last","first"]}})).await;
 }
@@ -1174,11 +1168,10 @@ async fn an_edge_change_identifies_its_source_task() {
 async fn lists_only_parse_reachable_saved_filters() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = App::open(dir.path(), NOW).await.unwrap();
-    let path = dir.path().join("local.json");
-    let mut local: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    local["saved_views"] =
-        json!({"weekend":"tag:hardware","broken":"tags:hardware","nested":"@broken"});
-    std::fs::write(path, serde_json::to_vec(&local).unwrap()).unwrap();
+    replace_saved_views(
+        dir.path(),
+        json!({"weekend":"tag:hardware","broken":"tags:hardware","nested":"@broken"}),
+    );
     list_golden(
         &mut app,
         json!("@weekend"),
@@ -1188,4 +1181,28 @@ async fn lists_only_parse_reachable_saved_filters() {
     )
     .await;
     list_golden(&mut app, json!("@nested"), None, None, json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown filter key \"tags\"","term":"tags:hardware","position":{"kind":"byte","byte":0},"view_chain":["nested","broken"],"hint":"Use \"tag\""}})).await;
+}
+
+fn replace_saved_views(directory: &std::path::Path, views: Value) {
+    let path = directory.join("local.json");
+    let mut local: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    local["saved_views"] = views;
+    std::fs::write(path, serde_json::to_vec(&local).unwrap()).unwrap();
+}
+
+#[tokio::test]
+async fn saving_rejects_missing_and_cyclic_references_without_persisting() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::open(dir.path(), NOW).await.unwrap();
+    let save =
+        |name, filter| json!({"op":"save_view","name":name,"filter":filter,"today":"2026-11-20"});
+    handle(&mut app, save("first", "tag:hardware"))
+        .await
+        .unwrap();
+    handle(&mut app, save("last", "is:open @first"))
+        .await
+        .unwrap();
+    read_golden(&mut app, save("first", "@missing"), json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown saved view \"missing\"","term":"@missing","position":{"kind":"byte","byte":0},"view_chain":["first"],"hint":"Use list_views to see available saved views"}})).await;
+    read_golden(&mut app, save("first", "@last"), json!({"error":{"kind":"invalid_input","field":"filter","reason":"saved view cycle: first -> last -> first","term":"@first","position":{"kind":"byte","byte":8},"view_chain":["first","last","first"]}})).await;
+    read_golden(&mut app, json!({"op":"list_views"}), json!({"ok":{"kind":"views","views":[{"name":"first","filter":"tag:hardware"},{"name":"last","filter":"is:open @first"}]}})).await;
 }
