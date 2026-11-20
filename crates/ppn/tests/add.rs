@@ -376,6 +376,21 @@ fn add_reports_cyclic_dependencies_in_json() {
             .unwrap()
             .contains("would create a cycle")
     );
+
+    let output = sandbox
+        .command()
+        .args([
+            "add",
+            "Paint the frame",
+            "--blocks",
+            &start,
+            "--blocked-by",
+            &start[..8],
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(task_error(output, 1, "conflict")["field"], "blocked_by[0]");
 }
 
 #[test]

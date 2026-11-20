@@ -160,7 +160,7 @@ async fn creation_rejects_the_same_dependency_in_both_directions() {
     )
     .await
     .unwrap_err();
-    assert!(matches!(error, AppError::InvalidInput { field, .. } if field == "blocked_by[1]"));
+    assert!(matches!(error, AppError::Conflict { field, .. } if field == "blocked_by[1]"));
     assert_eq!(store.latest_hlc(board).await.unwrap(), before);
     assert_eq!(store.tasks(board).await.unwrap().len(), 2);
 }

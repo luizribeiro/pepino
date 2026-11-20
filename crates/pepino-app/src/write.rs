@@ -113,7 +113,6 @@ impl App {
                         "parent",
                     )?;
                 }
-                let mut outgoing = BTreeSet::new();
                 for (list, references, reverse) in
                     [("blocks", blocks, false), ("blocked_by", blocked_by, true)]
                 {
@@ -121,13 +120,7 @@ impl App {
                     for (index, reference) in references.into_iter().enumerate() {
                         let field = format!("{list}[{index}]");
                         let id = resolve(view, &field, &reference)?.id;
-                        if reverse && outgoing.contains(&id) {
-                            return Err(invalid(field, "task also appears in blocks"));
-                        }
                         ids.entry(id).or_insert(field);
-                    }
-                    if !reverse {
-                        outgoing.extend(ids.keys().copied());
                     }
                     for (target, field) in ids {
                         let (from, to) = if reverse {
