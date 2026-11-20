@@ -26,12 +26,15 @@ Foreground logs go to stderr. A daemon launched by the CLI redirects stderr to
 
 On Linux with an absolute `XDG_RUNTIME_DIR`, the CLI looks for a
 data-directory-specific socket under `$XDG_RUNTIME_DIR/pepino/`. Otherwise it
-uses `runtime/daemon.sock` inside the data directory. The default runtime
-directory has mode `0700` and the socket has mode `0600`.
+uses `runtime/daemon.sock` inside the data directory. The runtime
+directory must be owned by the user running Pepino and have mode `0700`.
+The socket has mode `0600` and trusts clients running as the same user.
+Control operations can change local board membership.
 
-Set `daemon.socket_path` to select an absolute path elsewhere. The parent
-directory must already exist. Use the same path and data-directory settings for
-the CLI and daemon.
+Set `daemon.socket_path` to select an absolute path elsewhere or to
+shorten a path that exceeds the platform limit. The parent directory
+must already exist and meet the same ownership and mode requirements.
+Use the same path and data directory settings for the CLI and daemon.
 
 A successful local write asks the daemon to scan for pending events. If the
 daemon is down, the CLI launches it and briefly retries the notification. The engine also scans
@@ -51,10 +54,10 @@ also works with automatic startup disabled.
 ## Sync and status
 
 `ppn sync --timeout 10s` asks the daemon to scan and waits until known work
-settles. The default wait is 30 seconds. It reports publications to the local
-node, ingested events, and connected peers. Publication and ingest counts
-cover the current sync-engine run. With no reachable devices, local publication
-can finish while events remain available in the node for future peers.
+settles. The default wait is 30 seconds and the maximum is five minutes.
+It reports publications to the local node, ingested events, and devices that
+completed a board sync during the current daemon run. Local publication can
+finish while events remain available in the node for future peers.
 
 `ppn status` includes peer IDs and per-board sync activity in JSON. The
 human output shows peer counts, events waiting to publish, timestamps, and
