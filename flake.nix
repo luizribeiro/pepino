@@ -3,6 +3,7 @@
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
     devenv.url = "github:cachix/devenv";
     flake-utils.url = "github:numtide/flake-utils";
+    crane.url = "github:ipetkov/crane";
   };
 
   nixConfig = {
@@ -10,7 +11,7 @@
     extra-substituters = "https://devenv.cachix.org";
   };
 
-  outputs = { self, nixpkgs, devenv, flake-utils, ... } @ inputs:
+  outputs = { self, nixpkgs, devenv, flake-utils, crane, ... } @ inputs:
     let
       inherit (nixpkgs) lib;
       systemModule = platform: import ./nix/system.nix { inherit self lib platform; };
@@ -32,8 +33,8 @@
             cargo = taskPkgs.rust-bin.stable.latest.default;
           };
 
-          packageArgs = {
-            pname = "ppn";
+          rust = import ./nix/rust.nix {
+            inherit crane pkgs;
             inherit (workspace) version;
             src = fileset.toSource {
               root = ./.;
@@ -43,31 +44,14 @@
                 ./crates
               ];
             };
-            cargoLock.lockFile = ./Cargo.lock;
-            buildInputs = [ pkgs.sqlite ];
-            nativeBuildInputs = [ pkgs.pkg-config ];
           };
-
-          mkCargoCheck = name: tool: command: pkgs.rustPlatform.buildRustPackage (packageArgs // {
-            pname = "ppn-${name}";
-            nativeBuildInputs = packageArgs.nativeBuildInputs ++ [ tool ];
-            buildPhase = ''
-              runHook preBuild
-              ${command}
-              runHook postBuild
-            '';
-            doCheck = false;
-            installPhase = ''touch "$out"'';
-          });
         in
         {
-          packages.default = pkgs.rustPlatform.buildRustPackage packageArgs;
+          packages.default = rust.package;
 
-          checks = {
+          checks = rust.checks // {
             default = self.packages.${system}.default;
             config = import ./nix/check.nix { inherit self pkgs; };
-            fmt = mkCargoCheck "fmt" pkgs.rustfmt "cargo fmt --check";
-            clippy = mkCargoCheck "clippy" pkgs.clippy "cargo clippy --locked --workspace --all-targets -- -D warnings";
           };
 
           devShells.default = devenv.lib.mkShell {
