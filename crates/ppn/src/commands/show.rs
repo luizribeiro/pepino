@@ -1,4 +1,4 @@
-use pepino_app::{ReadRequest, Request};
+use pepino_app::{EdgeEffect, EdgeKind, ReadRequest, Request, Response, TaskSummary};
 use ppn::app::AppClient;
 use ppn::error::CliError;
 use ppn::help_tree::example_help;
@@ -21,7 +21,10 @@ pub struct Args {
 pub fn run(context: &Context<'_>, Args { task, verbose }: Args) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
     let authors = client.author_labels(verbose);
-    let response = client.call(Request::Read(ReadRequest::GetTask { task }))?;
+    let mut response = client.call(Request::Read(ReadRequest::GetTask { task }))?;
+    if let Response::Task { task, edges, .. } = &mut response {
+        append_effective_edges(&task.summary, edges);
+    }
     CommandResult::app_document(context, response, move |response, settings| {
         let Task {
             task,
@@ -40,4 +43,35 @@ pub fn run(context: &Context<'_>, Args { task, verbose }: Args) -> Result<Comman
             &authors,
         ))
     })
+}
+
+fn append_effective_edges(task: &TaskSummary, edges: &mut Vec<EdgeEffect>) {
+    let id = &task.id;
+    let mut add = |kind, peer: &String, reverse| {
+        let (from, to) = if reverse || (kind == EdgeKind::Relates && peer < id) {
+            (peer, id)
+        } else {
+            (id, peer)
+        };
+        edges.push(EdgeEffect {
+            from: from.clone(),
+            kind,
+            to: to.clone(),
+            effective: true,
+            reason: None,
+        });
+    };
+    if let Some(parent) = &task.parent {
+        add(EdgeKind::Parent, parent, false);
+    }
+    for (kind, peers, reverse) in [
+        (EdgeKind::Parent, &task.children, true),
+        (EdgeKind::Blocks, &task.blocks, false),
+        (EdgeKind::Blocks, &task.blocked_by, true),
+        (EdgeKind::Relates, &task.relates, false),
+    ] {
+        for peer in peers {
+            add(kind, peer, reverse);
+        }
+    }
 }

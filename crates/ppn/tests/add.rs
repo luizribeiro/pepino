@@ -203,9 +203,14 @@ fn task_flags_round_trip_through_add_show_and_status() {
     let mut detail = as_json(&sandbox.run(&["show", id, "--json"]));
     let names = detail.as_object_mut().unwrap().remove("names").unwrap();
     assert_eq!(names, write["names"]);
+    let edges = detail.as_object_mut().unwrap().remove("edges").unwrap();
+    let edges = edges.as_array().unwrap();
+    let expected_edges = write["edges"].as_array().unwrap();
+    assert_eq!(edges.len(), expected_edges.len());
+    assert!(expected_edges.iter().all(|edge| edges.contains(edge)));
     assert_eq!(
         detail,
-        json!({"schema":1,"kind":"task","task":task,"edges":[],
+        json!({"schema":1,"kind":"task","task":task,
             "relation_titles":{parent:"Renovate the greenhouse", blocker:"Order stainless fittings",
                 downstream:"Test the new latch"},
             "assignee_names":{me:status["identity"]["display_name"]}

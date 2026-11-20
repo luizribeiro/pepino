@@ -16,7 +16,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "show" => (
             "task",
-            "task Task details including its ID and comments\nedges Excluded relationship edges\nrelation_titles Related task titles by ID\nassignee_names Assignee display names by ID\nnames Display names keyed by identity or device ID",
+            "task Task details including its ID and comments\nedges All incident relationships with their effective flags\nrelation_titles Related task titles by ID\nassignee_names Assignee display names by ID\nnames Display names keyed by identity or device ID",
         ),
         "tree" => (
             "tree",

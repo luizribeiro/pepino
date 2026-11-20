@@ -88,7 +88,13 @@ fn link_rejects_cycles_with_a_conflict() {
             .contains("would create a cycle")
     );
     let detail = as_json(&sandbox.run(&["show", &p.downstream, "--json"]));
-    assert_eq!(detail["edges"], serde_json::json!([]));
+    assert_eq!(
+        detail["edges"],
+        serde_json::json!([
+            {"effective":true,"from":p.downstream,"kind":"parent","to":p.parent},
+            {"effective":true,"from":p.blocker,"kind":"blocks","to":p.downstream}
+        ])
+    );
 }
 
 #[test]
@@ -140,4 +146,30 @@ fn reverse_relation_errors_identify_the_argument_as_typed() {
         let output = sandbox.command().args(args).arg("--json").output().unwrap();
         assert_eq!(task_error(output, 2, "invalid_input")["input"], "<TO>");
     }
+}
+
+#[test]
+fn show_json_includes_inbound_and_symmetric_effective_edges() {
+    let (sandbox, _) = task_sandbox();
+    let root = create_task(&sandbox, "Replace the greenhouse door", &[]);
+    let child = create_task(
+        &sandbox,
+        "Prepare the latch",
+        &["--parent", &root, "--blocks", &root],
+    );
+    sandbox.run(&["link", &root, "relates", &child]);
+    let detail = as_json(&sandbox.run(&["show", &root, "--json"]));
+    let edges = detail["edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 3);
+    for kind in ["parent", "blocks"] {
+        let edge = edges.iter().find(|edge| edge["kind"] == kind).unwrap();
+        assert_eq!(
+            (edge["from"].as_str(), edge["to"].as_str()),
+            (Some(child.as_str()), Some(root.as_str()))
+        );
+        assert_eq!(edge["effective"], true);
+    }
+    let edge = edges.iter().find(|edge| edge["kind"] == "relates").unwrap();
+    assert_eq!(edge["effective"], true);
+    assert!(!sandbox.run(&["show", &root]).contains("not effective:"));
 }

@@ -87,7 +87,7 @@ fn unlink_cleans_up_a_link_to_a_deleted_task() {
     assert!(human.contains("(deleted task)"));
     assert_eq!(
         as_json(&sandbox.run(&["show", &p.downstream, "--json"]))["edges"],
-        serde_json::json!([])
+        serde_json::json!([{"effective":true,"from":p.downstream,"kind":"parent","to":p.parent}])
     );
 }
 
