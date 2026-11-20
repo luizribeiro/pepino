@@ -1,3 +1,5 @@
+#[path = "network/crash.rs"]
+mod crash;
 #[path = "network/decode.rs"]
 mod decode;
 #[path = "network/lifecycle.rs"]
