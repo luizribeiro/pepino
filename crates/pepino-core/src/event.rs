@@ -114,6 +114,10 @@ impl Event {
         }
     }
 
+    /// Checks the event against the validity rules of its wire format.
+    ///
+    /// Validity rules are frozen per format version. Adding a built-in field
+    /// or tightening a validity rule requires a new format version.
     pub fn validate(&self) -> Result<(), InvalidEvent> {
         match self {
             Self::TaskCreated { title, fields } => {
