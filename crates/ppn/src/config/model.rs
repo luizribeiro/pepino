@@ -193,6 +193,7 @@ settings! {
         network: Network = scalar("PPN_NETWORK", "Non-empty network name.", "pepino".parse());
         relay_urls: Vec<RelayUrl> = list("PPN_RELAY_URLS", "Comma-separated HTTPS URLs.",
             DEFAULT_RELAY_URLS.iter().map(|url| url.parse()).collect());
+        port: Option<u16> = port("PPN_PORT", "UDP port from 1 to 65535.", Ok(None));
         mdns: bool = boolean("PPN_MDNS", "true, false, 1, or 0.", Ok(true));
         data_dir: AbsolutePath = path("PPN_DATA_DIR", "Absolute path, ~, or a path beginning with ~/.", dirs.data_dir());
         credentials_file: AbsolutePath = path("PPN_CREDENTIALS_FILE", "Absolute path, ~, or a path beginning with ~/.",

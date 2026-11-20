@@ -61,6 +61,10 @@ pub(crate) fn boolean(raw: &str) -> DeValue<'_> {
     }
 }
 
+pub(crate) fn port(raw: &str) -> DeValue<'_> {
+    DeValue::parse(raw).map_or_else(|_| scalar(raw), Spanned::into_inner)
+}
+
 pub(crate) fn list(raw: &str) -> DeValue<'_> {
     comma_list(raw, scalar)
 }
@@ -120,6 +124,7 @@ mod tests {
                     "https://use.release.example,, https://eu.release.example,",
                 ),
                 ("PPN_MDNS", "0"),
+                ("PPN_PORT", "44123"),
                 ("PPN_CREDENTIALS_FILE", "~/keys/device.cbor"),
                 ("PPN_TRUSTED_DEVICES", id),
                 ("PPN_BOOTSTRAP_NODES", &bootstrap),

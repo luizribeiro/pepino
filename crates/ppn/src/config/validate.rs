@@ -80,6 +80,20 @@ pub(crate) fn boolean(validator: &mut Validator<'_>, key: &str, input: &Input<'_
     )
 }
 
+pub(crate) fn port(
+    validator: &mut Validator<'_>,
+    key: &str,
+    input: &Input<'_>,
+) -> Option<Option<u16>> {
+    let port = input
+        .get_ref()
+        .as_integer()
+        .and_then(|value| u16::from_str_radix(value.as_str(), value.radix()).ok())
+        .filter(|port| *port != 0)
+        .ok_or(ValueError("expected an integer from 1 to 65535"));
+    validator.require(key, input, port).map(Some)
+}
+
 pub(crate) fn color(validator: &mut Validator<'_>, key: &str, input: &Input<'_>) -> Option<Color> {
     let color = text(input.get_ref()).and_then(|value| {
         Color::from_str(value, false).map_err(|_| ValueError("expected auto, always, or never"))
@@ -170,6 +184,15 @@ mod tests {
         let home = Path::new("/home/release");
         let dirs = PlatformDirs::new(Platform::Linux, home, None, None);
         validate_file(&home.join("config.toml"), text, &dirs)
+    }
+
+    #[test]
+    fn validates_the_optional_fixed_port() {
+        assert_eq!(validate("").unwrap().port.value, None);
+        assert_eq!(validate("port = 44123").unwrap().port.value, Some(44123));
+        for text in ["port = 0", "port = 65536", "port = '44123'"] {
+            assert!(validate(text).unwrap_err().to_string().contains("port:"));
+        }
     }
 
     #[test]
