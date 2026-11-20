@@ -20,6 +20,7 @@ pub struct BoardStatus {
     pub last_ingested: Option<EventId>,
     pub last_error: Option<String>,
     pub closed: bool,
+    pub(crate) scan_generation: Option<u64>,
 }
 
 impl Status {

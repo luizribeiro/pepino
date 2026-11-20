@@ -54,3 +54,29 @@ async fn publishes_existing_local_writes_in_store_order() {
     );
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn idle_wait_scans_writes_that_arrived_after_an_empty_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([46; 32]);
+    let device = DeviceId::from_bytes([47; 32]);
+    let mut app = directory::prepare(dir.path(), board, device).await;
+    let settings = crate::Settings {
+        poll_interval: Duration::from_secs(600),
+        ..Default::default()
+    };
+    let node = Arc::new(Stub::new(device));
+    let engine = SyncEngine::start(settings, node.clone(), dir.path())
+        .await
+        .unwrap();
+    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+    directory::write(
+        &mut app,
+        json!({"op":"add_task","title":"Repaint garden bench"}),
+    )
+    .await;
+    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+    assert_eq!(node.published().len(), 1);
+    assert!(engine.status().is_idle());
+    engine.shutdown().await.unwrap();
+}

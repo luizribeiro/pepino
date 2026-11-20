@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use futures_util::{Stream, StreamExt};
 use pepino_app::{App, OpenOptions};
-use pepino_core::DeviceId;
+use pepino_core::{BoardId, DeviceId};
 use pepino_node::Node;
 use tokio::{sync::watch, task::JoinSet};
 use tokio_stream::wrappers::WatchStream;
@@ -12,12 +12,14 @@ use crate::{Status, Transport, TransportBoard};
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub lock_timeout: Duration,
+    pub poll_interval: Duration,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             lock_timeout: OpenOptions::default().lock_timeout,
+            poll_interval: Duration::from_secs(2),
         }
     }
 }
@@ -30,6 +32,12 @@ pub enum Error {
     Node(#[from] pepino_node::Error),
     #[error(transparent)]
     Worker(#[from] tokio::task::JoinError),
+    #[error("outbox poll interval must be positive")]
+    PollInterval,
+    #[error("board {0} stopped syncing")]
+    BoardStopped(BoardId),
+    #[error("sync did not become idle before the deadline")]
+    Timeout,
     #[error("data directory belongs to device {local}, but the node is {node}")]
     DeviceMismatch { local: DeviceId, node: DeviceId },
 }
@@ -48,6 +56,9 @@ impl<T: Transport> SyncEngine<T> {
         node: Arc<T>,
         data_dir: impl AsRef<Path>,
     ) -> Result<Self, Error> {
+        if settings.poll_interval.is_zero() {
+            return Err(Error::PollInterval);
+        }
         let options = OpenOptions {
             lock_timeout: settings.lock_timeout,
             ..Default::default()
@@ -79,11 +90,12 @@ impl<T: Transport> SyncEngine<T> {
             let app = app.clone();
             let status = changes.clone();
             let nudged = nudged.clone();
+            let poll = settings.poll_interval;
             workers.spawn(async move {
                 let result = tokio::select! {
                     biased;
                     _ = stopping.changed() => Ok(()),
-                    _ = crate::outbox::run(&app, id, &board, &status, nudged) => Ok(()),
+                    _ = crate::outbox::run(&app, id, &board, &status, nudged, poll) => Ok(()),
                     result = crate::inbox::run(&app, id, stream, &status) => result,
                 };
                 status.send_modify(|status| {
@@ -113,14 +125,57 @@ impl<T: Transport> SyncEngine<T> {
 
     /// Request a scan after a local write commits.
     pub fn nudge(&self) {
-        self.nudges
-            .send_modify(|generation| *generation = generation.saturating_add(1));
+        self.request_scan();
+    }
+
+    fn request_scan(&self) -> u64 {
+        let mut requested = 0;
+        self.nudges.send_modify(|generation| {
+            *generation = generation.saturating_add(1);
+            requested = *generation;
+        });
+        requested
+    }
+
+    /// Scan for new writes and wait until all known deliveries are acknowledged.
+    pub async fn sync_once(&self) -> Result<(), Error> {
+        let generation = self.request_scan();
+        let mut updates = self.status.clone();
+        loop {
+            {
+                let status = updates.borrow_and_update();
+                if let Some((id, _)) = status.boards.iter().find(|(_, board)| board.closed) {
+                    return Err(Error::BoardStopped(*id));
+                }
+                if status
+                    .boards
+                    .values()
+                    .all(|board| board.scan_generation >= Some(generation))
+                    && status.idle_with(&self.node.status())
+                {
+                    return Ok(());
+                }
+            }
+            updates
+                .changed()
+                .await
+                .map_err(|_| pepino_node::Error::Closed)?;
+        }
+    }
+
+    /// Wait for local idle with a deadline. Peers can send more work later.
+    pub async fn wait_idle(&self, timeout: Duration) -> Result<(), Error> {
+        tokio::time::timeout(timeout, self.sync_once())
+            .await
+            .map_err(|_| Error::Timeout)?
     }
 
     pub fn status(&self) -> Status {
-        let mut status = self.status.borrow().clone();
-        status.node = self.node.status();
-        status
+        let status = self.status.borrow();
+        Status {
+            node: self.node.status(),
+            ..status.clone()
+        }
     }
 
     /// Emits the current snapshot followed by changes. Slow consumers may skip snapshots.

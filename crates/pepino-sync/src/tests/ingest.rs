@@ -67,6 +67,7 @@ async fn waits_for_the_local_lock_before_acknowledging() {
     let engine = SyncEngine::start(
         crate::Settings {
             lock_timeout: Duration::ZERO,
+            ..Default::default()
         },
         node.clone(),
         dir.path(),

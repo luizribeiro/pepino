@@ -14,10 +14,11 @@ pub(crate) async fn run(
     board: &impl TransportBoard,
     status: &watch::Sender<Status>,
     mut nudges: watch::Receiver<u64>,
+    poll_interval: Duration,
 ) {
     let mut retry = Retry::new();
     loop {
-        nudges.borrow_and_update();
+        let generation = *nudges.borrow_and_update();
         let page = match app
             .store()
             .outbox(id, app.local_state().device_id, PAGE)
@@ -37,13 +38,16 @@ pub(crate) async fn run(
         retry = Retry::new();
         status.send_if_modified(|state| {
             let board = state.boards.entry(id).or_default();
-            let changed = board.outbox_pending != Some(page.pending);
+            let latest = (page.pending == 0).then_some(generation);
+            let changed =
+                (board.outbox_pending, board.scan_generation) != (Some(page.pending), latest);
             board.outbox_pending = Some(page.pending);
+            board.scan_generation = latest;
             changed
         });
         if page.events.is_empty() {
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(2)) => {},
+                _ = tokio::time::sleep(poll_interval) => {},
                 result = nudges.changed() => if result.is_err() { return },
             }
         }
