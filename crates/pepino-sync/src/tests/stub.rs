@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use futures_util::stream;
+use futures_util::{StreamExt, stream};
 use pepino_core::{BoardId, DeviceId, EventId};
-use pepino_node::{Error, NodeEvents, NodeStatus};
+use pepino_node::{Error, NodeEvent, NodeEvents, NodeStatus};
 
 use crate::{Acknowledgement, DeliveryStream, Transport, TransportBoard};
 
@@ -72,7 +72,9 @@ impl Transport for Stub {
     }
 
     fn events(&self) -> NodeEvents {
-        Box::pin(stream::pending())
+        Box::pin(
+            stream::iter([Ok(NodeEvent::PeerSeen { peer: self.device })]).chain(stream::pending()),
+        )
     }
 
     fn status(&self) -> NodeStatus {

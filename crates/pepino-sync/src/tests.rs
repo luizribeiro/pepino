@@ -24,6 +24,19 @@ async fn opens_only_the_local_board_and_joins_shutdown() {
         [board]
     );
     assert!(node.status().boards.contains_key(&board));
+    use futures_util::StreamExt;
+    let mut changes = engine.status_changes().boxed();
+    let signal = async {
+        while let Some(status) = changes.next().await {
+            if status.last_node_event == Some(pepino_node::NodeEvent::PeerSeen { peer: device }) {
+                return;
+            }
+        }
+        panic!("node signal stream ended");
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), signal)
+        .await
+        .unwrap();
     engine.shutdown().await.unwrap();
     assert!(node.status().boards.is_empty());
 }

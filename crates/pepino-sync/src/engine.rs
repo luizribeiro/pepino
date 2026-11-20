@@ -1,9 +1,11 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
+use futures_util::{Stream, StreamExt};
 use pepino_app::{App, OpenOptions};
 use pepino_core::DeviceId;
 use pepino_node::Node;
 use tokio::{sync::watch, task::JoinSet};
+use tokio_stream::wrappers::WatchStream;
 
 use crate::{Status, Transport, TransportBoard};
 
@@ -77,6 +79,11 @@ impl<T: Transport> SyncEngine<T> {
             });
         }
         changes.send_modify(|status| status.node = node.status());
+        let observer = node.clone();
+        workers.spawn(async move {
+            observe_node(observer.as_ref(), changes, stopping).await;
+            Ok(())
+        });
         Ok(Self {
             node,
             status,
@@ -91,6 +98,11 @@ impl<T: Transport> SyncEngine<T> {
         status
     }
 
+    /// Emits the current snapshot followed by changes. Slow consumers may skip snapshots.
+    pub fn status_changes(&self) -> impl Stream<Item = Status> + use<T> {
+        WatchStream::new(self.status.clone())
+    }
+
     pub async fn shutdown(self) -> Result<(), Error> {
         let Self {
             stop, mut workers, ..
@@ -102,5 +114,30 @@ impl<T: Transport> SyncEngine<T> {
             result = result.and(outcome);
         }
         result
+    }
+}
+
+async fn observe_node<T: Transport>(
+    node: &T,
+    changes: watch::Sender<Status>,
+    mut stopping: watch::Receiver<()>,
+) {
+    let mut events = node.events();
+    loop {
+        tokio::select! {
+            biased;
+            _ = stopping.changed() => return,
+            event = events.next() => {
+                let Some(event) = event else { return };
+                let snapshot = node.status();
+                changes.send_modify(|status| {
+                    status.node = snapshot;
+                    match event {
+                        Ok(event) => status.last_node_event = Some(event),
+                        Err(error) => status.last_node_error = Some(error.to_string()),
+                    }
+                });
+            }
+        }
     }
 }
