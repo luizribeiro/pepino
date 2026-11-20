@@ -123,11 +123,11 @@ impl App {
         })
         .await??;
         store
-            .bind_local(local.board_id, local.identity_id, local.device_id)
+            .bind_local(local.board_id(), local.identity_id, local.device_id)
             .await
             .map_err(|error| store_error_at(&directory.join(DATABASE), error))?;
         let hlc = store
-            .latest_hlc(local.board_id)
+            .latest_hlc(local.board_id())
             .await
             .map_err(store_error)?
             .unwrap_or(Hlc {
@@ -241,7 +241,7 @@ impl App {
             }) => {
                 let title = if let Ok(id) = task.parse::<TaskId>() {
                     self.store
-                        .task_titles(self.local.board_id, &[id])
+                        .task_titles(self.local.board_id(), &[id])
                         .await
                         .ok()
                         .and_then(|mut titles| titles.remove(&id))

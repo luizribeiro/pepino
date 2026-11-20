@@ -48,6 +48,14 @@ pub struct LocalState {
 }
 
 impl LocalState {
+    pub fn board_id(&self) -> BoardId {
+        self.board_id
+    }
+
+    pub fn board_name(&self) -> &str {
+        &self.board_name
+    }
+
     pub(super) fn task_names<'a>(
         &self,
         tasks: impl IntoIterator<Item = &'a crate::TaskSummary>,
@@ -281,9 +289,9 @@ mod tests {
         let restored = LocalState::load(directory.path()).unwrap();
         assert_eq!(restored, state);
         assert_eq!(restored.device_id, device);
-        assert_eq!(restored.board_id, board);
+        assert_eq!(restored.board_id(), board);
         assert_eq!(restored.display_name, "Ada Gardener");
-        assert_eq!(restored.board_name, "Greenhouse");
+        assert_eq!(restored.board_name(), "Greenhouse");
         assert_eq!(restored.device_name, "garden tablet");
         #[cfg(unix)]
         {

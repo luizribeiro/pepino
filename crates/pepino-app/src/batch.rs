@@ -80,7 +80,7 @@ impl App {
     pub(super) async fn batch(&self, now: u64) -> Result<Batch, AppError> {
         let stored = self
             .store
-            .latest_hlc(self.local.board_id)
+            .latest_hlc(self.local.board_id())
             .await
             .map_err(store_error)?;
         let clock = self
@@ -119,7 +119,7 @@ impl App {
         let required: Vec<_> = batch.required.iter().map(|(edge, _)| *edge).collect();
         let outcomes = self
             .store
-            .append_batch_requiring_edges(self.local.board_id, &writes, &required)
+            .append_batch_requiring_edges(self.local.board_id(), &writes, &required)
             .await
             .map_err(|error| match error {
                 StoreError::IneffectiveEdge { from, to, reason } => {
@@ -163,7 +163,7 @@ impl App {
 
         let after = self
             .store
-            .board(self.local.board_id)
+            .board(self.local.board_id())
             .await
             .map_err(|error| committed_error(store_error(error)))?;
         let created = applied.iter().find_map(|event| event.created_task());
