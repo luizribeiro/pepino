@@ -17,6 +17,7 @@ pub(crate) async fn run<T: Transport>(
             let boards = boards.lock().await;
             (boards.poll, boards.nudged.clone())
         };
+        let mut poll = tokio::time::interval(poll);
         let mut published = None;
         loop {
             let generation = *nudges.borrow_and_update();
@@ -29,8 +30,9 @@ pub(crate) async fn run<T: Transport>(
                 );
             }
             drop(workers);
+            poll.reset();
             tokio::select! {
-                _ = tokio::time::sleep(poll) => (),
+                _ = poll.tick() => (),
                 result = nudges.changed() => if result.is_err() { return },
             }
         }
@@ -76,6 +78,12 @@ async fn reconcile<T: Transport>(
                 members.insert(board.id, ids);
             }
         }
+    }
+    if local.roster_ready() {
+        boards
+            .app
+            .record_device_observations(members.clone(), node_status.last_seen.clone())
+            .await?;
     }
     boards.changes.send_if_modified(|status| {
         let mut changed = status.members != members;

@@ -70,7 +70,10 @@ pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
                                 _ => "waiting_for_first_sync",
                             }
                         } else {
-                            match network.and_then(|network| network.board_members.get(&board.id)) {
+                            match network
+                                .and_then(|network| network.board_members.get(&board.id))
+                                .or_else(|| local.observed_members(board.id))
+                            {
                                 Some(members) if members.contains(&id) => "member",
                                 Some(_) => "pending",
                                 None => "unknown",
@@ -102,7 +105,9 @@ pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
                         (false, _, false) if local.added_device_here(id) => "added_not_seen",
                         (false, _, false) => "known_not_seen",
                     },
-                    last_seen: network.and_then(|network| network.last_seen.get(&label).copied()),
+                    last_seen: network
+                        .and_then(|network| network.last_seen.get(&label).copied())
+                        .or_else(|| local.observed_last_seen(id)),
                 }
             },
         )

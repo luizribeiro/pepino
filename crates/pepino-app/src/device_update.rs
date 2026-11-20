@@ -1,13 +1,46 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::SystemTime,
+};
 
 use pepino_core::{BoardId, DeviceId};
 
-#[cfg(test)]
 use crate::LocalState;
 
 use crate::{App, AppError, BoardJoinState};
 
+impl LocalState {
+    pub fn observed_members(&self, board: BoardId) -> Option<&BTreeSet<DeviceId>> {
+        self.catalog.observed_members.get(&board)
+    }
+
+    pub fn observed_last_seen(&self, device: DeviceId) -> Option<chrono::DateTime<chrono::Utc>> {
+        chrono::DateTime::from_timestamp_millis(*self.catalog.last_seen_ms.get(&device)?)
+    }
+}
+
 impl App {
+    pub async fn record_device_observations(
+        &self,
+        members: BTreeMap<BoardId, BTreeSet<DeviceId>>,
+        last_seen: BTreeMap<DeviceId, SystemTime>,
+    ) -> Result<(), AppError> {
+        if members.is_empty() && last_seen.is_empty() {
+            return Ok(());
+        }
+        self.update_local(move |local| {
+            local.catalog.observed_members.extend(members);
+            for (id, time) in last_seen {
+                let time = chrono::DateTime::<chrono::Utc>::from(time).timestamp_millis();
+                if local.knows_roster_device(id) {
+                    let saved = local.catalog.last_seen_ms.entry(id).or_insert(time);
+                    *saved = (*saved).max(time);
+                }
+            }
+        })
+        .await
+    }
+
     pub async fn remember_device(
         &self,
         id: DeviceId,
@@ -107,4 +140,25 @@ async fn stores_board_observations_only_for_known_devices() {
     let state = LocalState::load(dir.path()).unwrap();
     assert!(state.saw_device_on_board(tablet));
     assert!(!state.saw_device_on_board(stranger));
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn preserves_the_last_membership_observation_across_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
+    let board = app.local_state().catalog_board();
+    let peer = DeviceId::from_bytes([29; 32]);
+    app.remember_device(peer, "Ferrum".into(), None)
+        .await
+        .unwrap();
+    app.record_device_observations(
+        [(board, [peer].into())].into(),
+        [(peer, SystemTime::UNIX_EPOCH)].into(),
+    )
+    .await
+    .unwrap();
+    let state = LocalState::load(dir.path()).unwrap();
+    assert!(state.observed_members(board).unwrap().contains(&peer));
+    assert_eq!(state.observed_last_seen(peer).unwrap().timestamp(), 0);
 }
