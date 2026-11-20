@@ -13,6 +13,7 @@ mod receipt;
 mod settings;
 mod spool;
 mod status;
+mod status_state;
 mod worker;
 
 pub use ack::Ack;
@@ -23,6 +24,7 @@ pub use membership::{MemberInfo, Role};
 pub use node::Node;
 pub use settings::{BootstrapNode, MdnsMode, NodeSettings};
 pub use status::{NodeEvent, NodeEvents, SyncCounts};
+pub use status_state::{BoardStatus, NodeStatus};
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]

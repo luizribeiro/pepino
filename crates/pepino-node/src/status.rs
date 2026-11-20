@@ -8,7 +8,7 @@ use pepino_core::{BoardId, DeviceId};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::{Error, receipt::Payload};
+use crate::{Error, NodeStatus, receipt::Payload};
 
 pub type NodeEvents = BoxStream<'static, Result<NodeEvent, Error>>;
 
@@ -23,6 +23,36 @@ pub struct SyncCounts {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum NodeEvent {
+    Snapshot(NodeStatus),
+    PeerConnected {
+        peer: DeviceId,
+    },
+    PeerDisconnected {
+        peer: DeviceId,
+    },
+    BoardOpened {
+        board: BoardId,
+        replaying: bool,
+    },
+    BoardClosed {
+        board: BoardId,
+    },
+    ReplayStarted {
+        board: BoardId,
+        operations: u32,
+    },
+    ReplayEnded {
+        board: BoardId,
+        error: Option<String>,
+    },
+    CaughtUp {
+        board: BoardId,
+        peer: DeviceId,
+    },
+    PendingDeliveries {
+        board: BoardId,
+        count: usize,
+    },
     PeerSeen {
         peer: DeviceId,
     },
