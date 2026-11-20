@@ -292,6 +292,7 @@ fn add_diagnostics_report_invalid_values_and_hints() {
         "invalid_input",
     );
     assert_eq!(invalid["field"], "tags[0]");
+    assert_eq!(invalid["input"], "--tag");
     assert!(invalid["hint"].as_str().unwrap().contains("[a-z]"));
     assert!(
         invalid["message"]

@@ -45,11 +45,31 @@ pub fn run(context: &Context<'_>, input: Args) -> Result<CommandResult, CliError
         )
         .with_hint("Pass the description as text or use --from-file."));
     }
+    let json_input = from_json.is_some();
+    let scalar_inputs = [
+        ("status", args.fields.status.is_some()),
+        ("due", args.fields.due.is_some()),
+        ("priority", args.fields.priority.is_some()),
+        ("parent", args.relations.parent.is_some()),
+    ];
     let request = match from_json {
         Some(file) => crate::task_json::request(&file, context.time.today)?,
         None => new_task(read_task_text(title, None)?),
     };
     let request = args.apply_to_add(request, context.time.today)?;
-    let response = client.call(Request::Write(request))?;
+    let response = client.call(Request::Write(request)).map_err(|mut error| {
+        for (field, input) in [("tags", "--tag"), ("assignees", "--assign")] {
+            error = error.map_input(field, input);
+        }
+        if json_input {
+            error = error.map_input("title", "--from-json");
+            for (field, supplied_by_flag) in scalar_inputs {
+                if !supplied_by_flag {
+                    error = error.map_input(field, "--from-json");
+                }
+            }
+        }
+        error
+    })?;
     write_document(context, response, "Created")
 }
