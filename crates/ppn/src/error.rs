@@ -13,6 +13,7 @@ pub enum ErrorKind {
     Failure,
     Usage,
     NotFound,
+    NotInitialized,
     AmbiguousId,
     PermissionDenied,
     DaemonUnreachable,
@@ -33,6 +34,7 @@ impl ErrorKind {
             Self::Failure => "The command failed.",
             Self::Usage => "The arguments or options are invalid.",
             Self::NotFound => "The requested item could not be found.",
+            Self::NotInitialized => "Run ppn init to create the local identity, device, and board.",
             Self::AmbiguousId => "The identifier matches multiple items.",
             Self::PermissionDenied => "The operation is not permitted.",
             Self::DaemonUnreachable => "The daemon or network could not be reached.",
@@ -50,7 +52,8 @@ impl ErrorKind {
             | Self::ConfirmationRequired
             | Self::InvalidConfig
             | Self::Conflict
-            | Self::Busy => 1,
+            | Self::Busy
+            | Self::NotInitialized => 1,
             Self::Usage | Self::InvalidInput => 2,
             Self::NotFound => 3,
             Self::AmbiguousId => 4,
@@ -64,6 +67,7 @@ impl ErrorKind {
             Self::Failure => "failure",
             Self::Usage => "usage",
             Self::NotFound => "not_found",
+            Self::NotInitialized => "not_initialized",
             Self::AmbiguousId => "ambiguous_id",
             Self::PermissionDenied => "permission_denied",
             Self::DaemonUnreachable => "daemon_unreachable",
@@ -206,6 +210,7 @@ impl From<AppError> for CliError {
     fn from(error: AppError) -> Self {
         let kind = match error.kind() {
             AppErrorKind::NotFound => ErrorKind::NotFound,
+            AppErrorKind::NotInitialized => ErrorKind::NotInitialized,
             AppErrorKind::AmbiguousId => ErrorKind::AmbiguousId,
             AppErrorKind::InvalidInput => ErrorKind::InvalidInput,
             AppErrorKind::Conflict => ErrorKind::Conflict,
@@ -214,6 +219,10 @@ impl From<AppError> for CliError {
         };
         let mut diagnostic = Self::new(kind, error.to_string());
         match &error {
+            AppError::NotInitialized { directory } => {
+                diagnostic.message = format!("Data directory {directory} is not initialized.");
+                diagnostic.hint = Some("Run `ppn init`.".into());
+            }
             AppError::NotFound {
                 reference: pepino_app::MissingReference::Task(task),
                 ..
