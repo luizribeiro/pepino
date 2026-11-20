@@ -2,6 +2,7 @@
 
 mod error;
 mod eval;
+mod predicates;
 mod sort;
 
 pub use error::{QueryError, QueryErrorKind};

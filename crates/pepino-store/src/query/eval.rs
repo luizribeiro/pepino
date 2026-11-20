@@ -5,7 +5,10 @@ use pepino_core::{
 
 use crate::{BoardView, TaskRecord};
 
-use super::{QueryError, QueryErrorKind};
+use super::{
+    QueryError, QueryErrorKind,
+    predicates::{compare, utc_days},
+};
 
 /// Resolves decoded person text to candidate identities.
 pub type PersonResolver<'a> = dyn Fn(&str) -> Vec<IdentityId> + 'a;
@@ -86,6 +89,10 @@ fn prepare_clause<'a>(
             Box::new(move |task| values.iter().any(|tag| task.tags.contains(tag)))
         }
         Clause::Status(values) => Box::new(move |task| values.contains(&task.status)),
+        Clause::Priority(values) => Box::new(move |task| compare(task.priority, values)),
+        Clause::Due(values) => Box::new(move |task| compare(task.due, values)),
+        Clause::Created(values) => Box::new(move |task| utc_days(task.created, values)),
+        Clause::Updated(values) => Box::new(move |task| utc_days(task.updated, values)),
         _ => return Ok(None),
     };
     Ok(Some(predicate))
