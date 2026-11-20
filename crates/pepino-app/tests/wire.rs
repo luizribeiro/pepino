@@ -55,6 +55,7 @@ fn errors_and_write_responses_have_stable_tags() {
         json!({"kind":"ambiguous_id","field":"task","task":"97ad","count":2,"candidates":["97ada","97adb"]}),
         json!({"kind":"invalid_input","field":"tag","reason":"invalid tag"}),
         json!({"kind":"conflict","field":"task","task":"97ada"}),
+        json!({"kind":"not_found","field":"task","deleted_task":{"task":"97ad".repeat(16),"title":"Replace the greenhouse latch"}}),
         json!({"kind":"busy"}),
         json!({"kind":"storage","retryable":true,"reason":"database is busy"}),
         json!({"kind":"unsupported_version","requested":2,"supported":1}),

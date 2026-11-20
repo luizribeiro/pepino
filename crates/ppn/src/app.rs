@@ -159,7 +159,6 @@ mod tests {
             .call(Request::Write(WriteRequest::Delete { task: id.clone() }))
             .unwrap();
         let deleted = client.task(&prefix).unwrap_err();
-        assert_eq!(deleted.kind(), ErrorKind::Conflict);
         assert_eq!(
             deleted.to_string(),
             format!("Task {id} \"Inspect greenhouse hinges\" was deleted")

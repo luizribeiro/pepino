@@ -209,6 +209,17 @@ fn display_ids(text: &str, ids: &ShortIds<'_>) -> String {
 impl From<AppError> for CliError {
     fn from(error: AppError) -> Self {
         let kind = match error.kind() {
+            AppErrorKind::NotFound
+                if matches!(
+                    &error,
+                    AppError::NotFound {
+                        reference: pepino_app::MissingReference::DeletedTask { .. },
+                        ..
+                    }
+                ) =>
+            {
+                ErrorKind::Conflict
+            }
             AppErrorKind::NotFound => ErrorKind::NotFound,
             AppErrorKind::NotInitialized => ErrorKind::NotInitialized,
             AppErrorKind::AmbiguousId => ErrorKind::AmbiguousId,
@@ -230,14 +241,11 @@ impl From<AppError> for CliError {
                 diagnostic.message = format!("No task matches {task}");
                 diagnostic.hint = Some("Run `ppn ls` to list tasks.".into());
             }
-            AppError::NotFound { reference, .. } => {
-                diagnostic.message = format!("{reference} was not found");
+            AppError::NotFound {
+                reference: pepino_app::MissingReference::DeletedTask { task, title },
+                ..
             }
-            AppError::AmbiguousId { task, count, .. } => {
-                diagnostic.message = format!("Task reference {task} matches {count} tasks");
-                diagnostic.hint = Some("Use a longer task ID.".into());
-            }
-            AppError::Conflict {
+            | AppError::Conflict {
                 reference: pepino_app::ConflictReference::Task { task, title },
                 ..
             } => {
@@ -245,6 +253,13 @@ impl From<AppError> for CliError {
                     .as_ref()
                     .map_or_else(String::new, |title| format!(" {title:?}"));
                 diagnostic.message = format!("Task {task}{title} was deleted");
+            }
+            AppError::NotFound { reference, .. } => {
+                diagnostic.message = format!("{reference} was not found");
+            }
+            AppError::AmbiguousId { task, count, .. } => {
+                diagnostic.message = format!("Task reference {task} matches {count} tasks");
+                diagnostic.hint = Some("Use a longer task ID.".into());
             }
             AppError::Conflict {
                 reference: reference @ pepino_app::ConflictReference::View { .. },
@@ -271,6 +286,9 @@ impl From<AppError> for CliError {
         }
         if let Ok(Value::Object(mut details)) = serde_json::to_value(error) {
             details.remove("kind");
+            if let Some(Value::Object(task)) = details.remove("deleted_task") {
+                details.extend(task);
+            }
             if let Some(Value::String(hint)) = details.remove("hint") {
                 diagnostic.hint = Some(hint);
             }

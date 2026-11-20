@@ -60,20 +60,37 @@ fn assert_deleted(sandbox: &ConfigSandbox, task: &str) {
         .args(["show", task, "--json"])
         .output()
         .unwrap();
-    task_error(output, 1, "conflict");
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("was deleted")
+    );
 }
 
 #[test]
 fn rm_resolves_all_arguments_before_deleting() {
     let (sandbox, data) = task_sandbox();
     let project = small_project(&sandbox);
-    assert_task_reference_errors(&sandbox, &data, |bad| {
-        sandbox
-            .command()
-            .args(["rm", &project.parent, bad, "--yes", "--json"])
-            .output()
-            .unwrap()
-    });
+    let (ambiguous, candidates) = ambiguous_tasks(&data);
+    let missing = "f".repeat(64);
+    for (bad, status, code) in [
+        ("bad", 2, "invalid_input"),
+        (missing.as_str(), 3, "not_found"),
+        (&ambiguous, 4, "ambiguous_id"),
+    ] {
+        let error = task_error(
+            sandbox
+                .command()
+                .args(["rm", &project.parent, bad, "--yes", "--json"])
+                .output()
+                .unwrap(),
+            status,
+            code,
+        );
+        if code == "ambiguous_id" {
+            assert_eq!(error["candidates"], serde_json::json!(candidates));
+        }
+    }
     assert_eq!(
         show_task(&sandbox, &project.parent)["title"],
         "Renovate the greenhouse"

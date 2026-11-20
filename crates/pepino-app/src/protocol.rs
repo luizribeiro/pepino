@@ -345,7 +345,7 @@ impl AppErrorKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AppError {
-    #[error("{reference} at {field} was not found")]
+    #[error("{}", reference.message(field))]
     NotFound {
         field: String,
         #[serde(flatten)]
@@ -388,14 +388,34 @@ pub enum AppError {
 #[non_exhaustive]
 pub enum MissingReference {
     Task(String),
+    DeletedTask {
+        task: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+    },
     View(String),
     Board(String),
+}
+
+impl MissingReference {
+    fn message(&self, field: &str) -> String {
+        if matches!(self, Self::DeletedTask { .. }) {
+            format!("{self} at {field}")
+        } else {
+            format!("{self} at {field} was not found")
+        }
+    }
 }
 
 impl std::fmt::Display for MissingReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Task(task) => write!(f, "task {task}"),
+            Self::DeletedTask {
+                task,
+                title: Some(title),
+            } => write!(f, "task {task} {title:?} was deleted"),
+            Self::DeletedTask { task, title: None } => write!(f, "task {task} was deleted"),
             Self::View(view) => write!(f, "view {view}"),
             Self::Board(board) => write!(f, "board {board}"),
         }
