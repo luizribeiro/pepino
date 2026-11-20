@@ -26,7 +26,6 @@ use super::{
 };
 
 const STARTUP_LIMIT: Duration = Duration::from_secs(8);
-const STOP_LIMIT: Duration = Duration::from_secs(3);
 
 pub fn run(config: &Config, level: LogLevel) -> Result<(), CliError> {
     let runtime = Builder::new_current_thread()
@@ -109,6 +108,7 @@ async fn cycle(
         _ = interrupt.recv() => None,
         result = timeout(STARTUP_LIMIT, SyncEngine::start_with_node_settings(node.clone(), settings)) => Some(result),
     };
+    let mut engine_stop = Ok(());
     let outcome = match engine {
         Some(Ok(Ok(engine))) => {
             log(level, LogLevel::Info, "daemon ready");
@@ -118,19 +118,30 @@ async fn cycle(
                 result = server::serve(listener, &engine, started) => result.map_err(socket_error),
             };
             node.prepare_shutdown();
-            if !matches!(timeout(STOP_LIMIT, engine.shutdown()).await, Ok(Ok(()))) {
-                log(level, LogLevel::Warn, "sync engine stopped with an error");
-            }
+            engine_stop = match engine.shutdown().await {
+                Err(pepino_sync::Error::RestartRequired(_)) if matches!(end, Ok(End::Restart)) => {
+                    Ok(())
+                }
+                result => result.map_err(|error| shutdown_failure("the sync engine", error)),
+            };
             end
         }
         Some(_) => Err(failure("Could not start the sync engine.")),
         None => Ok(End::Stopped),
     };
-    let node = Arc::try_unwrap(node).map_err(|_| failure("Could not release the network node."))?;
-    match timeout(STOP_LIMIT, node.shutdown()).await {
-        Ok(Ok(())) => outcome,
-        _ => Err(failure("Could not stop the network node cleanly.")),
-    }
+    let node = Arc::try_unwrap(node)
+        .map_err(|_| shutdown_failure("the network node", "sync workers still hold it"))?;
+    node.shutdown()
+        .await
+        .map_err(|error| shutdown_failure("the network node", error))?;
+    engine_stop.and(outcome)
+}
+
+fn shutdown_failure(component: &str, error: impl std::fmt::Display) -> CliError {
+    CliError::new(
+        ErrorKind::Failure,
+        format!("Could not stop {component}. {error}"),
+    )
 }
 
 fn log(configured: LogLevel, level: LogLevel, message: &str) {
@@ -173,4 +184,18 @@ async fn an_uninitialized_daemon_creates_no_runtime_state() {
         ErrorKind::NotInitialized
     );
     assert!(!config.data_dir.value.as_path().exists());
+}
+
+#[cfg(test)]
+#[test]
+fn shutdown_diagnostic_names_the_failed_component_and_stage() {
+    let error = shutdown_failure(
+        "the network node",
+        pepino_node::Error::Worker("timed out closing board subscriptions".into()),
+    );
+    assert_eq!(error.kind(), ErrorKind::Failure);
+    assert_eq!(
+        error.to_string(),
+        "Could not stop the network node. node runtime: timed out closing board subscriptions"
+    );
 }
