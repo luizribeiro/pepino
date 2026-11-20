@@ -1,5 +1,7 @@
-use pepino_core::filter;
+use pepino_core::filter::{self, Filter};
 use serde::{Deserialize, Serialize};
+
+use crate::{AppError, Date};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -7,6 +9,34 @@ use serde::{Deserialize, Serialize};
 pub enum FilterInput {
     Text(String),
     Argv(Vec<String>),
+}
+
+#[allow(dead_code)]
+impl FilterInput {
+    pub(super) fn parse(&self, today: Date) -> Result<Filter, AppError> {
+        match self {
+            Self::Text(text) => filter::parse(text, today.into()),
+            Self::Argv(argv) => filter::parse_argv(argv, today.into()),
+        }
+        .map_err(|error| {
+            let message = error.kind.to_string();
+            let (reason, hint) = message
+                .rsplit_once(". ")
+                .map_or((message.as_str(), None), |(reason, hint)| {
+                    (reason, Some(hint.into()))
+                });
+            AppError::InvalidInput {
+                field: "filter".into(),
+                reason: reason.into(),
+                diagnostic: Some(Box::new(FilterDiagnostic {
+                    term: error.term,
+                    position: error.position.into(),
+                    view_chain: Vec::new(),
+                    hint,
+                })),
+            }
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

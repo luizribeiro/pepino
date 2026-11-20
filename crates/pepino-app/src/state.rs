@@ -7,6 +7,7 @@ use pepino_core::{BoardId, DeviceId, IdentityId};
 use serde::{Deserialize, Serialize};
 
 use crate::AppError;
+use crate::app::invalid;
 use crate::views::SavedViews;
 
 const VERSION: u32 = 2;
@@ -59,10 +60,10 @@ impl LocalState {
         let board_name = options.board_name.unwrap_or_else(|| "Personal".into());
         for (field, value) in [("display_name", &display_name), ("board_name", &board_name)] {
             if value.trim().is_empty() {
-                return Err(AppError::InvalidInput {
-                    field: field.into(),
-                    reason: "name must contain a non-whitespace character".into(),
-                });
+                return Err(invalid(
+                    field,
+                    "name must contain a non-whitespace character",
+                ));
             }
         }
         let device_name =

@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    Date, EdgeKind, EventRecord, FieldValue, Hlc, IdentityRecord, NamedRecord, Status, StatusCounts,
+    Date, EdgeKind, EventRecord, FieldValue, FilterDiagnostic, Hlc, IdentityRecord, NamedRecord,
+    Status, StatusCounts,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -244,7 +245,12 @@ pub enum AppError {
         candidates: Vec<String>,
     },
     #[error("invalid {field}: {reason}")]
-    InvalidInput { field: String, reason: String },
+    InvalidInput {
+        field: String,
+        reason: String,
+        #[serde(flatten)]
+        diagnostic: Option<Box<FilterDiagnostic>>,
+    },
     #[error("task {task} at {field} is deleted")]
     Conflict { field: String, task: String },
     #[error("another pepino process holds the data directory")]

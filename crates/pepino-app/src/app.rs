@@ -171,5 +171,6 @@ pub(super) fn invalid(field: impl Into<String>, reason: impl std::fmt::Display) 
     AppError::InvalidInput {
         field: field.into(),
         reason: reason.to_string(),
+        diagnostic: None,
     }
 }
