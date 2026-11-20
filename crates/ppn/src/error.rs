@@ -86,11 +86,16 @@ impl CliError {
     }
 
     pub fn usage(error: clap::Error) -> Self {
-        let message = error.to_string();
-        Self::new(
-            ErrorKind::Usage,
-            message.trim_end().trim_start_matches("error: "),
-        )
+        let rendered = error.to_string();
+        let (message, details) = rendered
+            .trim()
+            .split_once('\n')
+            .unwrap_or((rendered.trim(), ""));
+        let mut error = Self::new(ErrorKind::Usage, message.trim_start_matches("error: "));
+        if !details.trim().is_empty() {
+            error = error.with_hint(details.trim());
+        }
+        error
     }
 
     pub fn report(&self, json: bool, mut stderr: impl Write) -> ExitCode {

@@ -85,6 +85,8 @@ fn unknown_argument_is_a_usage_error() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.starts_with("error: unexpected argument '--unrecognized'"));
+    assert!(stderr.contains("\nhint: Usage: ppn"));
+    assert!(stderr.contains("try '--help'"));
     assert!(!stderr.contains('\x1b'));
 }
 
@@ -280,6 +282,20 @@ fn unknown_command_respects_json_even_when_clap_stops_before_the_flag() {
                 .contains("archvie")
         );
     }
+}
+
+#[test]
+fn usage_hints_keep_claps_command_suggestions() {
+    let output = ppn().args(["versionn", "--json"]).output().unwrap();
+    let diagnostic = assert_json_error(output, 2, "usage");
+    assert_eq!(
+        diagnostic["error"]["message"],
+        "unrecognized subcommand 'versionn'"
+    );
+    let hint = diagnostic["error"]["hint"].as_str().unwrap();
+    assert!(hint.contains("a similar subcommand exists: 'version'"));
+    assert!(hint.contains("Usage: ppn"));
+    assert!(hint.contains("try '--help'"));
 }
 
 #[test]
