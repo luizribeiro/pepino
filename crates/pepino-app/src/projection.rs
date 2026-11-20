@@ -7,6 +7,7 @@ use pepino_store::{
 use crate::app::{invalid, store_error};
 use crate::{
     App, AppError, CommentRecord, EdgeEffect, EdgeExclusionReason, MissingReference, TaskRecord,
+    TaskSummary,
 };
 
 pub(super) fn resolve<'a>(
@@ -54,6 +55,21 @@ pub(super) fn project(
     comments: &[StoredComment],
 ) -> Result<TaskRecord, AppError> {
     Ok(TaskRecord {
+        summary: project_summary(task)?,
+        comments: comments
+            .iter()
+            .map(|comment| CommentRecord {
+                id: comment.id.to_string(),
+                author: comment.author.to_string(),
+                hlc: comment.hlc.into(),
+                text: comment.text.clone(),
+            })
+            .collect(),
+    })
+}
+
+pub(super) fn project_summary(task: &StoredTask) -> Result<TaskSummary, AppError> {
+    Ok(TaskSummary {
         id: task.id.to_string(),
         title: task.title.clone(),
         description: task.description.clone(),
@@ -77,15 +93,7 @@ pub(super) fn project(
         relates: task.relates.iter().map(ToString::to_string).collect(),
         blocked: task.blocked,
         ready: task.ready,
-        comments: comments
-            .iter()
-            .map(|comment| CommentRecord {
-                id: comment.id.to_string(),
-                author: comment.author.to_string(),
-                hlc: comment.hlc.into(),
-                text: comment.text.clone(),
-            })
-            .collect(),
+        comment_count: task.comment_count,
     })
 }
 

@@ -200,6 +200,21 @@ pub enum EdgeExclusionReason {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TaskRecord {
+    #[serde(flatten)]
+    pub summary: TaskSummary,
+    pub comments: Vec<CommentRecord>,
+}
+
+impl std::ops::Deref for TaskRecord {
+    type Target = TaskSummary;
+
+    fn deref(&self) -> &Self::Target {
+        &self.summary
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TaskSummary {
     pub id: String,
     pub title: String,
     pub description: Option<String>,
@@ -219,7 +234,7 @@ pub struct TaskRecord {
     pub relates: BTreeSet<String>,
     pub blocked: bool,
     pub ready: bool,
-    pub comments: Vec<CommentRecord>,
+    pub comment_count: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

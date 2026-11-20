@@ -284,7 +284,7 @@ fn task_comments_and_edge_effects_have_stable_shapes() {
         "status":"doing", "due":"2026-12-01", "priority":2, "fields":{"estimate":{"type":"integer","value":3}},
         "tags":["greenhouse"], "assignees":["a6e1".repeat(16)], "created":created, "updated":updated,
         "author":author, "parent":peer, "children":[], "blocks":[], "blocked_by":[], "relates":[],
-        "blocked":false, "ready":true,
+        "blocked":false, "ready":true, "comment_count":1,
         "comments":[{"id":note,"author":author,"hlc":updated,"text":"The new latch arrived."}],
     });
     let task: TaskRecord = serde_json::from_value(record.clone()).unwrap();

@@ -219,7 +219,7 @@ async fn edit_fields_completes_work_and_clears_optional_values() {
     assert!(write(&mut app, clear.clone()).await.0);
     let task = get(&mut app, &id).await;
     assert_eq!(
-        (task.description, task.due, task.priority),
+        (task.description.as_deref(), task.due, task.priority),
         (None, None, None)
     );
     assert!(task.fields.is_empty());

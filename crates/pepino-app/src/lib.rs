@@ -31,7 +31,8 @@ pub use status::{IdentityRecord, NamedRecord, SkippedCounts, StatusCounts};
 
 pub use protocol::{
     AppError, AppErrorKind, CommentRecord, DependencyRecord, EdgeEffect, EdgeExclusionReason,
-    MissingReference, ReadRequest, Request, Response, TaskRecord, TreeNode, WriteRequest,
+    MissingReference, ReadRequest, Request, Response, TaskRecord, TaskSummary, TreeNode,
+    WriteRequest,
 };
 
 pub use values::{Date, EdgeKind, FieldValue, InvalidDate, Status};
