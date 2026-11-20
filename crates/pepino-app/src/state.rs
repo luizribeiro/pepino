@@ -53,6 +53,11 @@ pub struct LocalState {
     pub(super) boards: Vec<LocalBoard>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) current: Option<BoardId>,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::catalog::CatalogState::is_empty"
+    )]
+    pub(super) catalog: crate::catalog::CatalogState,
     pub(crate) saved_views: SavedViews,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) link: Option<Box<crate::device_grant::Link>>,
@@ -148,6 +153,7 @@ impl LocalState {
                 name: board_name,
             }],
             current: None,
+            catalog: Default::default(),
             other_devices: BTreeMap::new(),
             devices_seen_on_boards: BTreeSet::new(),
             devices_added_here: BTreeSet::new(),

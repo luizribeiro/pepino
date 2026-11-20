@@ -87,6 +87,7 @@ impl DeviceGrant {
             devices_added_here: BTreeSet::new(),
             boards,
             current: None,
+            catalog: Default::default(),
             saved_views: Default::default(),
             link: Some(Box::new(Link {
                 request,
@@ -103,6 +104,7 @@ impl LocalState {
         self.link
             .as_ref()
             .and_then(|link| link.progress.get(&id).copied())
+            .or_else(|| self.catalog.join(id))
             .unwrap_or(BoardJoinState::Joined)
     }
 

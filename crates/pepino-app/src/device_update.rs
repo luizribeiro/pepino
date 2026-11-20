@@ -51,6 +51,7 @@ impl App {
         progress: BTreeMap<BoardId, BoardJoinState>,
     ) -> Result<(), AppError> {
         self.update_devices(move |local| {
+            local.catalog.record_joins(&progress);
             if let Some(link) = &mut local.link {
                 for (id, state) in progress {
                     if let Some(previous) = link.progress.get_mut(&id) {
