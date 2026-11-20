@@ -386,6 +386,7 @@ fn every_command_result_is_a_versioned_object() {
         (&["help"][..], "commands"),
         (&["config", "show"][..], "values"),
         (&["config", "path"][..], "files"),
+        (&["config", "check"][..], "valid"),
         (&["version"][..], "version"),
         (&["debug", "confirm", "--yes"][..], "confirmed"),
         (&["debug", "input", "Release notes"][..], "text"),
@@ -757,4 +758,61 @@ fn config_path_checks_only_the_explicit_file() {
             .unwrap()
             .contains(sandbox.config.to_str().unwrap())
     );
+}
+
+#[test]
+fn config_check_validates_only_the_named_file_when_given() {
+    let sandbox = ConfigSandbox::new();
+    let file = sandbox.config.to_str().unwrap();
+    assert_eq!(
+        sandbox.run(&["config", "check"]),
+        format!("Valid  {file}\n")
+    );
+
+    let output = sandbox
+        .command()
+        .env("PPN_CONFIG", sandbox.home.path().join("missing.toml"))
+        .env("PPN_MDNS", "invalid")
+        .args(["config", "check", file, "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        as_json(&success(output)),
+        json!({
+            "schema": 1, "valid": true, "files": [{"path": file, "exists": true}],
+        })
+    );
+}
+
+#[test]
+fn config_check_reports_all_errors_with_locations() {
+    let sandbox = ConfigSandbox::new();
+    let invalid = sandbox.home.path().join("bad.toml");
+    let text = "netwrok = 'oops'\nrelay_urls = ['http://relay.example']\n[ui]\ncolor = 'rainbow'\n";
+    std::fs::write(&invalid, text).unwrap();
+    let file = invalid.to_str().unwrap();
+
+    let run = || {
+        let mut command = sandbox.command();
+        command.args(["config", "check", file]);
+        command
+    };
+    let human = run().output().unwrap();
+    assert_eq!(human.status.code(), Some(1));
+    assert!(human.stdout.is_empty());
+    let stderr = String::from_utf8(human.stderr).unwrap();
+
+    let json = assert_json_error(run().arg("--json").output().unwrap(), 1, "invalid_config");
+    let message = json["error"]["message"].as_str().unwrap();
+    for problem in [
+        "1:1: netwrok: unknown key; did you mean `network`?",
+        "2:15: relay_urls[0]: expected an HTTPS URL",
+        "4:9: ui.color: expected auto, always, or never",
+    ] {
+        let expected = format!("{file}:{problem}");
+        assert!(stderr.contains(&expected), "{stderr}");
+        assert!(message.contains(&expected), "{message}");
+    }
+    assert_eq!(message.lines().count(), 3);
+    assert_eq!(std::fs::read_to_string(invalid).unwrap(), text);
 }

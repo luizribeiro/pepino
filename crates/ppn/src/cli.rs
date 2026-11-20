@@ -112,15 +112,16 @@ fn dispatch(
         color: explicit_color.then_some(cli.globals.color),
     };
 
-    if let Some(Command::Config {
-        command: config_command::Command::Path,
-    }) = cli.command
-    {
-        return config_command::path(context, &config::select_files(&flags, &env, &dirs));
-    }
-
-    let loaded = config::load(&flags, &env, |path| fs::read_to_string(path), &dirs)?;
-    context.config = Some(loaded.config);
+    let files = match &cli.command {
+        Some(Command::Config {
+            command: config_command::Command::Path | config_command::Command::Check { .. },
+        }) => Vec::new(),
+        _ => {
+            let loaded = config::load(&flags, &env, |path| fs::read_to_string(path), &dirs)?;
+            context.config = Some(loaded.config);
+            loaded.files
+        }
+    };
     match cli.command {
         Some(Command::Version) => Ok(version::run(context)),
         Some(Command::Help { path }) => {
@@ -131,11 +132,18 @@ fn dispatch(
         }
         Some(Command::Config {
             command: config_command::Command::Show { key },
-        }) => config_command::show(context, key.as_deref(), loaded.files),
+        }) => config_command::show(context, key.as_deref(), files),
         Some(Command::Config {
             command: config_command::Command::Path,
+        }) => config_command::path(context, &config::select_files(&flags, &env, &dirs)),
+        Some(Command::Config {
+            command: config_command::Command::Check { file },
         }) => {
-            unreachable!("config path is dispatched before loading configuration")
+            let files = match file {
+                Some(file) => vec![config::ConfigFile::explicit(&file, &dirs)],
+                None => config::select_files(&flags, &env, &dirs),
+            };
+            config_command::check(context, &files, &dirs)
         }
         Some(Command::Debug { command }) => debug::run(context, command),
         None => Ok(help::run(context, Cli::command(), None)),

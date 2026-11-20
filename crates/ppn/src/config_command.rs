@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use clap::Subcommand;
-use ppn::config::{self, ConfigFile, FileStatus, nearest_key};
+use ppn::config::{self, ConfigFile, FileStatus, PlatformDirs, nearest_key};
 use ppn::error::{CliError, ErrorKind};
 use ppn::help_tree::example_help;
 use ppn::output::{CommandResult, Render};
@@ -20,6 +21,12 @@ pub enum Command {
     /// List configuration files and whether they exist.
     #[command(after_help = example_help(&["ppn config path --json"]))]
     Path,
+    /// Validate configuration files.
+    #[command(after_help = example_help(&["ppn config check", "ppn config check /etc/pepino/config.toml --json"]))]
+    Check {
+        /// Validate just this file. Omit it to check the selected configuration files.
+        file: Option<PathBuf>,
+    },
 }
 
 pub fn show(
@@ -114,5 +121,40 @@ impl Render for PathList {
 
     fn json_fields(self) -> Map<String, Value> {
         Map::from_iter([("files".into(), json!(self.0))])
+    }
+}
+
+pub fn check(
+    _context: &Context,
+    files: &[ConfigFile],
+    dirs: &PlatformDirs,
+) -> Result<CommandResult, CliError> {
+    config::check(files, |path| fs::read_to_string(path), dirs)
+        .map(|files| CommandResult::document(Check { files }))
+}
+
+struct Check {
+    files: Vec<FileStatus>,
+}
+
+impl Render for Check {
+    fn human(&self, _: &Terminal) -> String {
+        let mut output: String = self
+            .files
+            .iter()
+            .filter(|file| file.exists)
+            .map(|file| format!("Valid  {}\n", file.path.display()))
+            .collect();
+        if output.is_empty() {
+            output.push_str("No configuration files found.\n");
+        }
+        output
+    }
+
+    fn json_fields(self) -> Map<String, Value> {
+        Map::from_iter([
+            ("valid".into(), json!(true)),
+            ("files".into(), json!(self.files)),
+        ])
     }
 }
