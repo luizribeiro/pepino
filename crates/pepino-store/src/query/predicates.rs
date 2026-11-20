@@ -1,11 +1,13 @@
 use std::cmp::Ordering;
 
-use crate::TaskRecord;
-
+use icu_casemap::CaseMapper;
 use pepino_core::{
     Date, FieldValue, Hlc,
     filter::{Comparison, CustomValue, Operator, PresenceField, State},
 };
+
+use crate::{BoardView, TaskRecord};
+
 pub(super) fn is(task: &TaskRecord, state: State) -> bool {
     match state {
         State::Blocked => task.blocked,
@@ -66,4 +68,20 @@ fn test(order: Ordering, operator: Operator) -> bool {
         Operator::Gt => order.is_gt(),
         Operator::Ge => order.is_ge(),
     }
+}
+
+pub(super) fn fold(text: &str) -> String {
+    let mapper = CaseMapper::new();
+    text.chars().map(|ch| mapper.simple_fold(ch)).collect()
+}
+
+pub(super) fn text_matches(view: &BoardView, task: &TaskRecord, needle: &str) -> bool {
+    std::iter::once(task.title.as_str())
+        .chain(task.description.as_deref())
+        .chain(
+            view.comments(task.id)
+                .iter()
+                .map(|comment| comment.text.as_str()),
+        )
+        .any(|text| fold(text).contains(needle))
 }

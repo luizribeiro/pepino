@@ -113,3 +113,17 @@ fn custom_comparisons_respect_operand_type_and_lexical_case() {
     check("budget:>0", &[]);
     check("-estimate:>=0 has:estimate", &[1]);
 }
+
+#[test]
+fn free_text_searches_each_body_with_unicode_simple_case_folding() {
+    check(r#""NORTH FENCE""#, &[0]);
+    check("cèdre", &[0]);
+    check(r#""GALVANIZED BOLTS""#, &[0]);
+    check("οδυσσεύσ", &[12]);
+    check("STRAẞE", &[2, 7]);
+    check("STRASSE", &[]);
+    check("fence bolts", &[0]);
+    check("fence -bolts", &[]);
+    check(r#""fence use""#, &[]);
+    check("greenhouse", &[]);
+}

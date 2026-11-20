@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 ciborium = "0.2"
+icu_casemap = "2.4"
 pepino-core = { path = "../pepino-core" }
 sqlx = { version = "0.9", default-features = false, features = ["sqlite", "runtime-tokio", "migrate", "macros"] }
 thiserror = "2"

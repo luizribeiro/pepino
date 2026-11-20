@@ -7,7 +7,7 @@ use crate::{BoardView, PrefixResolution, TaskRecord};
 
 use super::{
     QueryError, QueryErrorKind,
-    predicates::{compare, custom, has, is, utc_days},
+    predicates::{compare, custom, fold, has, is, text_matches, utc_days},
 };
 
 /// Resolves decoded person text to candidate identities.
@@ -85,6 +85,10 @@ fn prepare_clause<'a>(
     context: &Context<'a>,
 ) -> Result<Option<Predicate<'a>>, QueryErrorKind> {
     let predicate: Predicate<'a> = match clause {
+        Clause::Text(text) => {
+            let needle = fold(text);
+            Box::new(move |task| text_matches(view, task, &needle))
+        }
         Clause::Is(values) => Box::new(move |task| values.iter().any(|value| is(task, *value))),
         Clause::Has(values) => Box::new(move |task| values.iter().any(|value| has(task, value))),
         Clause::Tag(values) => {
