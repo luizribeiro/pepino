@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use super::diagnostics::invalid_config;
-use super::path::{expand_home, serialize_path};
+use super::path::serialize_path;
 use super::{PlatformDirs, SYSTEM_CONFIG, Source, env_value};
 use crate::error::{CliError, ErrorKind};
 use crate::terminal::Color;
@@ -28,12 +28,19 @@ pub struct ConfigFile {
 }
 
 impl ConfigFile {
-    pub fn explicit(path: &Path, dirs: &PlatformDirs) -> Self {
-        let path = expand_home(path, dirs.home.as_path());
-        Self {
-            source: Source::ExplicitFile { path: path.clone() },
-            path,
-        }
+    pub fn explicit(path: &Path, dirs: &PlatformDirs) -> Result<Self, CliError> {
+        let expanded = dirs.expand_home(path).map_err(|error| {
+            CliError::new(
+                ErrorKind::InvalidConfig,
+                format!("{}: {error}", path.display()),
+            )
+        })?;
+        Ok(Self {
+            source: Source::ExplicitFile {
+                path: expanded.clone(),
+            },
+            path: expanded,
+        })
     }
 
     pub(crate) fn required(&self) -> bool {
@@ -86,11 +93,15 @@ pub fn select_files(
             .map(Path::new),
     };
     if let Some(path) = explicit {
-        return Ok(vec![ConfigFile::explicit(path, dirs)]);
+        return Ok(vec![ConfigFile::explicit(path, dirs)?]);
     }
 
     let system = PathBuf::from(SYSTEM_CONFIG);
-    let user = dirs.user_config.as_path().to_owned();
+    let user = dirs
+        .user_config()
+        .map_err(|error| CliError::new(ErrorKind::InvalidConfig, error.to_string()))?
+        .as_path()
+        .to_owned();
     Ok(vec![
         ConfigFile {
             source: Source::SystemFile {
@@ -125,12 +136,14 @@ mod tests {
 
     #[test]
     fn explicit_selection_replaces_both_default_paths() {
-        let dirs =
-            PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None).unwrap();
+        let dirs = PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None);
         let mut env = Env::new();
         let mut flags = Flags::default();
         let files = select_files(&flags, &env, &dirs).unwrap();
-        let statuses = paths(&files, |path| Ok(path == dirs.user_config.as_path())).unwrap();
+        let statuses = paths(&files, |path| {
+            Ok(path == dirs.user_config().unwrap().as_path())
+        })
+        .unwrap();
         assert_eq!(statuses.len(), 2);
         assert_eq!(
             statuses[0],
@@ -142,7 +155,7 @@ mod tests {
         assert_eq!(
             statuses[1],
             FileStatus {
-                path: dirs.user_config.as_path().into(),
+                path: dirs.user_config().unwrap().as_path().into(),
                 exists: true
             }
         );

@@ -944,3 +944,35 @@ fn config_show_names_non_utf8_environment_variables() {
         "{message}"
     );
 }
+
+#[test]
+fn explicit_config_check_accepts_an_unset_or_relative_home() {
+    let sandbox = ConfigSandbox::new();
+    let file = sandbox.home.path().join("sandbox.toml");
+    std::fs::write(&file, "network = 'release-team'").unwrap();
+    for home in [None, Some("relative")] {
+        let mut command = sandbox.command();
+        command
+            .env_remove("HOME")
+            .env_remove("XDG_CONFIG_HOME")
+            .env_remove("XDG_STATE_HOME");
+        if let Some(home) = home {
+            command.env("HOME", home);
+        }
+        for args in [&["version"][..], &["help"], &[]] {
+            let mut command = sandbox.command();
+            command.env_remove("HOME");
+            if let Some(home) = home {
+                command.env("HOME", home);
+            }
+            success(command.args(args).output().unwrap());
+        }
+        let output = command
+            .args(["config", "check"])
+            .arg(&file)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert_eq!(as_json(&success(output))["valid"], true);
+    }
+}

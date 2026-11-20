@@ -1,4 +1,4 @@
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::Path;
 use std::{env, fs, io, process::ExitCode};
 
@@ -60,10 +60,16 @@ enum Command {
 }
 
 pub fn run() -> ExitCode {
+    let env = env::vars_os().collect();
+    let platform = if cfg!(target_os = "macos") {
+        Platform::MacOs
+    } else {
+        Platform::Linux
+    };
     let inputs = ProcessInputs {
         args: env::args_os().collect(),
-        env: env::vars_os().collect(),
-        dirs: platform_dirs,
+        dirs: PlatformDirs::from_env(platform, &env, env::home_dir),
+        env,
         read: |path| fs::read_to_string(path),
         exists: Path::try_exists,
     };
@@ -74,7 +80,7 @@ pub fn run() -> ExitCode {
 struct ProcessInputs {
     args: Vec<OsString>,
     env: Env,
-    dirs: fn(&Env) -> Result<PlatformDirs, CliError>,
+    dirs: PlatformDirs,
     read: fn(&Path) -> io::Result<String>,
     exists: fn(&Path) -> io::Result<bool>,
 }
@@ -125,16 +131,15 @@ impl ProcessInputs {
         config: Option<std::path::PathBuf>,
         file: Option<&Path>,
     ) -> Result<Vec<config::ConfigFile>, CliError> {
-        let dirs = (self.dirs)(&self.env)?;
         match file {
-            Some(file) => Ok(vec![config::ConfigFile::explicit(file, &dirs)]),
+            Some(file) => Ok(vec![config::ConfigFile::explicit(file, &self.dirs)?]),
             None => config::select_files(
                 &Flags {
                     config,
                     color: None,
                 },
                 &self.env,
-                &dirs,
+                &self.dirs,
             ),
         }
     }
@@ -148,7 +153,7 @@ impl ProcessInputs {
             Terminal::detect(globals.color, &self.env),
             globals.yes,
             globals.timeout,
-            move || config::load(&flags, &self.env, self.read, &(self.dirs)(&self.env)?),
+            move || config::load(&flags, &self.env, self.read, &self.dirs),
         )
     }
 }
@@ -179,38 +184,11 @@ fn dispatch(
             command: config_command::Command::Check { file },
         }) => {
             let files = inputs.files(cli.globals.config, file.as_deref())?;
-            config_command::check(&files, &(inputs.dirs)(&inputs.env)?, inputs.read)
+            config_command::check(&files, &inputs.dirs, inputs.read)
         }
         Some(Command::Debug { command }) => debug::run(context, command),
         None => Ok(help::run(context, Cli::command(), None)),
     }
-}
-
-fn platform_dirs(env: &Env) -> Result<PlatformDirs, CliError> {
-    let lookup = |name| env.get(OsStr::new(name)).map(Path::new);
-    let fallback_home = env::home_dir();
-    let home = lookup("HOME")
-        .filter(|path| !path.as_os_str().is_empty())
-        .or(fallback_home.as_deref());
-    let invalid = |message: &str| {
-        CliError::new(
-            ppn::error::ErrorKind::InvalidConfig,
-            format!("HOME: {message}"),
-        )
-    };
-    let home = home.ok_or_else(|| invalid("could not determine the home directory"))?;
-    let platform = if cfg!(target_os = "macos") {
-        Platform::MacOs
-    } else {
-        Platform::Linux
-    };
-    PlatformDirs::new(
-        platform,
-        home,
-        lookup("XDG_CONFIG_HOME"),
-        lookup("XDG_STATE_HOME"),
-    )
-    .map_err(|error| invalid(&error.to_string()))
 }
 
 fn help_flag_target<'a>(
@@ -267,7 +245,9 @@ mod tests {
         ProcessInputs {
             args: args.iter().map(OsString::from).collect(),
             env: Env::new(),
-            dirs: |_| panic!("command requested platform directories"),
+            dirs: PlatformDirs::from_env(Platform::Linux, &Env::new(), || {
+                panic!("command requested HOME")
+            }),
             read: |_| panic!("command read a configuration file"),
             exists: |_| panic!("command probed for a configuration file"),
         }
@@ -288,9 +268,7 @@ mod tests {
         inputs.env = ["PPN_CONFIG", "PPN_MDNS", "PPN_NETWORK", "PPN_DATA_DIR"]
             .map(|name| (name.into(), "".into()))
             .into();
-        inputs.dirs = |_| {
-            Ok(PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None).unwrap())
-        };
+        inputs.dirs = PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None);
         inputs.read = |path| {
             assert!(!path.as_os_str().is_empty());
             Err(io::ErrorKind::NotFound.into())
@@ -304,6 +282,26 @@ mod tests {
                 .all(|value| value["source"] == "default")
         );
         assert!(execute(&inputs).0.is_ok());
+    }
+
+    #[test]
+    fn check_requires_home_only_to_expand_tilde() {
+        for home in [None, Some("relative")] {
+            let mut inputs = inputs(&["ppn", "config", "check", "/srv/release.toml"]);
+            let env = home
+                .map(|home| ("HOME".into(), home.into()))
+                .into_iter()
+                .collect();
+            inputs.dirs = PlatformDirs::from_env(Platform::Linux, &env, || None);
+            inputs.read = |path| {
+                assert_eq!(path, Path::new("/srv/release.toml"));
+                Ok("network = 'release-team'".into())
+            };
+            assert!(execute(&inputs).0.is_ok());
+            inputs.read = |_| Ok("data_dir = '~/pepino'".into());
+            let error = execute(&inputs).0.err().unwrap();
+            assert!(error.to_string().contains("data_dir: HOME:"), "{error}");
+        }
     }
 
     #[test]

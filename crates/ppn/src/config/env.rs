@@ -105,8 +105,7 @@ mod tests {
 
     #[test]
     fn reads_each_variable_and_resolves_precedence() {
-        let dirs =
-            PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None).unwrap();
+        let dirs = PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None);
         let id = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
         let bootstrap = format!(" , {id} = https://bootstrap.release.example , ");
         let env = Env::from(
@@ -127,7 +126,7 @@ mod tests {
             .map(|(name, value)| (name.into(), value.into())),
         );
         let read = |path: &Path| {
-            if path == dirs.user_config.as_path() {
+            if path == dirs.user_config().unwrap().as_path() {
                 Ok(format!(
                     "network = 'user-release'\ntrusted_devices = ['{id}']\n[ui]\ncolor = 'auto'"
                 ))
@@ -173,8 +172,7 @@ mod tests {
 
     #[test]
     fn names_each_invalid_environment_variable() {
-        let dirs =
-            PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None).unwrap();
+        let dirs = PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None);
         let env = Env::from([
             ("PPN_MDNS".into(), "sometimes".into()),
             (

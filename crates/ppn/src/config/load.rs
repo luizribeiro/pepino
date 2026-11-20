@@ -5,7 +5,6 @@ use super::diagnostics::invalid_config;
 use super::validate::Draft;
 use super::{
     Config, ConfigFile, Env, FileStatus, Flags, PlatformDirs, Setting, Source, select_files,
-    validate_file,
 };
 use crate::error::CliError;
 
@@ -55,7 +54,7 @@ pub fn check(
 ) -> Result<Vec<FileStatus>, CliError> {
     let mut problems = Vec::new();
     let statuses = visit_files(files, read, &mut problems, |file, text| {
-        validate_file(&file.path, text, dirs).map(|_| ())
+        Draft::new(dirs)?.apply_file(&file.path, text, &file.source)
     });
     invalid_config(problems)?;
     Ok(statuses)
@@ -94,7 +93,7 @@ mod tests {
     }
 
     fn dirs() -> PlatformDirs {
-        PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None).unwrap()
+        PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None)
     }
 
     #[test]
@@ -104,7 +103,7 @@ mod tests {
             if path == Path::new(SYSTEM_CONFIG) {
                 Ok("network = 'system-release'\nmdns = false\nrelay_urls = ['https://use.release.example', 'https://eu.release.example']".into())
             } else {
-                assert_eq!(path, dirs.user_config.as_path());
+                assert_eq!(path, dirs.user_config().unwrap().as_path());
                 Ok("network = 'user-release'\nrelay_urls = ['https://local.release.example']".into())
             }
         }, &dirs).unwrap();
@@ -113,7 +112,7 @@ mod tests {
         assert_eq!(values["network"]["source"], "user_file");
         assert_eq!(
             values["network"]["path"],
-            dirs.user_config.as_path().to_str().unwrap()
+            dirs.user_config().unwrap().as_path().to_str().unwrap()
         );
         assert_eq!(values["mdns"]["value"], false);
         assert_eq!(values["mdns"]["source"], "system_file");

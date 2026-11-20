@@ -132,7 +132,7 @@ impl Config<Option<AbsolutePath>> {
             ui,
         } = self;
         let data_dir = Setting {
-            value: data_dir.value.unwrap_or_else(|| dirs.data_dir.clone()),
+            value: data_dir.value.map_or_else(|| dirs.data_dir(), Ok)?,
             source: data_dir.source,
         };
         let credentials_file = Setting {
@@ -163,8 +163,7 @@ mod tests {
 
     #[test]
     fn defaults_cover_the_schema_with_default_sources() {
-        let dirs =
-            PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None).unwrap();
+        let dirs = PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None);
         let values = Config::defaults(&dirs).unwrap().values();
         assert_eq!(values.len(), 9);
         assert!(values.values().all(|value| value["source"] == "default"));

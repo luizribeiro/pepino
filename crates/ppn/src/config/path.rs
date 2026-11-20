@@ -9,7 +9,10 @@ pub struct AbsolutePath(PathBuf);
 
 impl AbsolutePath {
     pub fn expand(value: &Path, home: &Path) -> Result<Self, ValueError> {
-        let path = expand_home(value, home);
+        Self::new(expand_home(value, || Ok(home))?)
+    }
+
+    pub(crate) fn new(path: PathBuf) -> Result<Self, ValueError> {
         if !path.is_absolute() || path.as_os_str().as_encoded_bytes().contains(&0) {
             return Err(ValueError("expected an absolute path after expanding ~"));
         }
@@ -25,17 +28,19 @@ impl AbsolutePath {
     }
 }
 
-pub(crate) fn expand_home(value: &Path, home: &Path) -> PathBuf {
-    value.strip_prefix("~").map_or_else(
-        |_| value.to_owned(),
-        |rest| {
-            if rest.as_os_str().is_empty() {
-                home.to_owned()
-            } else {
-                home.join(rest)
-            }
-        },
-    )
+pub(crate) fn expand_home<'a>(
+    value: &Path,
+    home: impl FnOnce() -> Result<&'a Path, ValueError>,
+) -> Result<PathBuf, ValueError> {
+    let Ok(rest) = value.strip_prefix("~") else {
+        return Ok(value.to_owned());
+    };
+    let home = home()?;
+    Ok(if rest.as_os_str().is_empty() {
+        home.to_owned()
+    } else {
+        home.join(rest)
+    })
 }
 
 pub(crate) fn serialize_path<S: Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::Error> {

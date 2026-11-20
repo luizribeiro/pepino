@@ -146,7 +146,7 @@ impl<'a> Draft<'a> {
     fn configured_path(&self, input: &DeValue<'_>) -> Result<Option<AbsolutePath>, ValueError> {
         match text(input)? {
             "" => Ok(None),
-            value => AbsolutePath::expand(Path::new(value), self.dirs.home.as_path()).map(Some),
+            value => AbsolutePath::new(self.dirs.expand_home(Path::new(value))?).map(Some),
         }
     }
 }
@@ -203,7 +203,7 @@ mod tests {
 
     fn validate(text: &str) -> Result<Config, CliError> {
         let home = Path::new("/home/release");
-        let dirs = PlatformDirs::new(Platform::Linux, home, None, None).unwrap();
+        let dirs = PlatformDirs::new(Platform::Linux, home, None, None);
         validate_file(&home.join("config.toml"), text, &dirs)
     }
 
@@ -295,7 +295,7 @@ date_format = "%Q"
     #[test]
     fn derives_generated_credentials_after_merging_paths() {
         let home = Path::new("/home/release");
-        let dirs = PlatformDirs::new(Platform::Linux, home, None, None).unwrap();
+        let dirs = PlatformDirs::new(Platform::Linux, home, None, None);
         let mut draft = Draft::new(&dirs).unwrap();
         draft
             .apply_file(
