@@ -15,11 +15,11 @@ async fn opens_all_local_boards_and_joins_shutdown() {
     let dir = tempfile::tempdir().unwrap();
     let board = pepino_core::BoardId::from_bytes([16; 32]);
     let device = pepino_core::DeviceId::from_bytes([11; 32]);
-    directory::prepare(dir.path(), board, device).await;
+    let app = directory::prepare(dir.path(), board, device).await;
     let second = pepino_core::BoardId::from_bytes([17; 32]);
     let path = dir.path().join("local.json");
-    let mut local: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let mut local = serde_json::to_value(app.local_state()).unwrap();
+    drop(app);
     local["boards"]
         .as_array_mut()
         .unwrap()

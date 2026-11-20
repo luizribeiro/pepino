@@ -136,20 +136,21 @@ impl LocalState {
         Self::read(&directory.join(FILE_NAME))
     }
 
-    pub(super) fn load_migrating(directory: &Path) -> Result<Self, AppError> {
+    pub(super) fn load_for_open(directory: &Path, migrate: bool) -> Result<(Self, bool), AppError> {
         let path = directory.join(FILE_NAME);
-        let bytes =
-            fs::read(&path).map_err(|error| path_io_error(&path, "read local state", error))?;
-        let local = Self::decode(&bytes, &path)?;
-        if serde_json::from_slice::<serde_json::Value>(&bytes)
-            .is_ok_and(|value| value["version"] == 3)
-        {
+        let (local, version) = Self::read_version(&path)?;
+        let legacy = version == 3;
+        if legacy && migrate {
             local.write(&path)?;
         }
-        Ok(local)
+        Ok((local, legacy && !migrate))
     }
 
     pub(super) fn read(path: &Path) -> Result<Self, AppError> {
+        Self::read_version(path).map(|(local, _)| local)
+    }
+
+    fn read_version(path: &Path) -> Result<(Self, u64), AppError> {
         let bytes =
             fs::read(path).map_err(|error| path_io_error(path, "read local state", error))?;
         Self::decode(&bytes, path)
@@ -168,7 +169,7 @@ impl LocalState {
         write_json(path, self)
     }
 
-    fn decode(bytes: &[u8], path: &Path) -> Result<Self, AppError> {
+    fn decode(bytes: &[u8], path: &Path) -> Result<(Self, u64), AppError> {
         #[derive(Deserialize)]
         struct Version {
             version: u64,
@@ -199,7 +200,9 @@ impl LocalState {
             version if version == u64::from(VERSION) => (),
             version => return Err(storage("unsupported local state version", version, false)),
         }
-        serde_json::from_value(value).map_err(decode_error)
+        serde_json::from_value(value)
+            .map(|local| (local, version))
+            .map_err(decode_error)
     }
 }
 
@@ -399,13 +402,45 @@ mod tests {
             "display_name": "Ada",
             "saved_views": {"watering": "tag:watering"},
         });
-        let state =
-            LocalState::decode(fields.to_string().as_bytes(), Path::new(FILE_NAME)).unwrap();
+        let state = LocalState::decode(fields.to_string().as_bytes(), Path::new(FILE_NAME))
+            .unwrap()
+            .0;
         assert_eq!(state.board_name(), "Greenhouse");
         let saved = serde_json::to_value(state).unwrap();
         assert_eq!(saved["version"], 4);
         assert_eq!(saved["boards"][0]["id"], fields["board_id"]);
         assert_eq!(saved["saved_views"], fields["saved_views"]);
+    }
+
+    #[tokio::test]
+    async fn opening_and_reading_v3_leaves_the_file_untouched_until_a_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        let mut app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
+        let mut legacy = serde_json::to_value(app.local_state()).unwrap();
+        legacy["version"] = 3.into();
+        legacy["board_id"] = legacy["boards"][0]["id"].clone();
+        legacy["board_name"] = legacy["boards"][0]["name"].clone();
+        legacy.as_object_mut().unwrap().remove("boards");
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        app = crate::App::open(dir.path(), 0).await.unwrap();
+        app.handle(crate::Request::Read(crate::ReadRequest::Status), 0)
+            .await
+            .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        app.handle(
+            crate::Request::Write(crate::WriteRequest::SaveView {
+                name: "watering".into(),
+                filter: crate::FilterInput::Text("tag:watering".into()),
+            }),
+            0,
+        )
+        .await
+        .unwrap();
+        let migrated: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(migrated["version"], VERSION);
+        assert_eq!(migrated["boards"][0]["id"], legacy["board_id"]);
     }
 
     #[test]

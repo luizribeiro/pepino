@@ -30,6 +30,7 @@ pub struct App {
     pub(super) credentials_file: PathBuf,
     pub(super) lock_timeout: Duration,
     pub(super) clock: Clock,
+    migrate_on_write: bool,
 }
 
 impl App {
@@ -93,7 +94,7 @@ impl App {
         let state_dir = directory.clone();
         let existing = worker("open local state", move || {
             if exists(&state_dir.join(crate::state::FILE_NAME))? {
-                let local = LocalState::load_migrating(&state_dir)?;
+                let local = LocalState::load_for_open(&state_dir, initialize)?;
                 missing_pair(&state_dir, initialize)?;
                 Ok::<_, AppError>(Some(local))
             } else {
@@ -103,12 +104,13 @@ impl App {
         })
         .await??;
         let fresh = existing.is_none();
-        let local = match existing {
+        let (local, migrate_on_write) = match existing {
             Some(local) => local,
-            None => {
+            None => (
                 crate::initialize::prepare(directory.clone(), credentials_file.clone(), options)
-                    .await?
-            }
+                    .await?,
+                false,
+            ),
         };
         let database = directory.join(DATABASE);
         let store = open_store(database, fresh).await?;
@@ -133,6 +135,7 @@ impl App {
         }
         Ok(Self {
             clock: Clock::from_hlc(hlc),
+            migrate_on_write,
             store,
             local,
             directory,
@@ -200,6 +203,10 @@ impl App {
 
     pub async fn handle(&mut self, request: Request, now: u64) -> Result<Response, AppError> {
         let guard = lock(&self.directory, self.lock_timeout).await?;
+        if self.migrate_on_write && matches!(&request, Request::Write(_)) {
+            LocalState::load_for_open(&self.directory, true)?;
+            self.migrate_on_write = false;
+        }
         let deleted_conflicts = matches!(
             &request,
             Request::Write(WriteRequest::AddTask { .. } | WriteRequest::Link { .. })

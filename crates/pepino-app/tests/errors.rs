@@ -292,7 +292,11 @@ async fn opening_requires_both_local_files_and_a_matching_binding() {
     let original = std::fs::read(&local).unwrap();
     let mut state: Value = serde_json::from_slice(&original).unwrap();
     drop(app);
-    state["boards"][0]["id"] = json!("f1".repeat(32));
+    if state["version"] == 3 {
+        state["board_id"] = json!("f1".repeat(32));
+    } else {
+        state["boards"][0]["id"] = json!("f1".repeat(32));
+    }
     std::fs::write(&local, serde_json::to_vec(&state).unwrap()).unwrap();
     let error = App::open(&path, NOW).await.err().unwrap();
     assert!(error.to_string().contains("database does not match"));
