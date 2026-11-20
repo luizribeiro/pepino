@@ -25,9 +25,18 @@ impl Device {
     }
 
     pub(super) async fn start(&mut self) {
+        self.start_with(|_| ()).await;
+    }
+
+    pub(super) async fn start_with(&mut self, configure: impl FnOnce(&Stub)) {
         self.node = Arc::new(self.node.restarted());
+        configure(&self.node);
+        let settings = crate::Settings {
+            lock_timeout: Duration::ZERO,
+            poll_interval: Duration::from_secs(600),
+        };
         self.engine = Some(
-            SyncEngine::start(Default::default(), self.node.clone(), &self.path)
+            SyncEngine::start(settings, self.node.clone(), &self.path)
                 .await
                 .unwrap(),
         );

@@ -5,7 +5,7 @@ use pepino_core::{BoardId, DeviceId, EventId};
 use proptest::prelude::*;
 use serde_json::json;
 
-use super::{directory, simulation::Device, wire::Wire};
+use super::{directory, simulation::Device, stub::PublishFault, wire::Wire};
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(16))]
@@ -34,25 +34,19 @@ async fn scenario(actions: Vec<(u8, u8)>) -> Result<(), TestCaseError> {
         )
         .await,
     ];
-    for device in &mut devices {
-        device.start().await;
-    }
     let mut wire = Wire::new(board);
-    let mut written = BTreeSet::<EventId>::new();
+    let mut written = seed_publications(&mut devices, &wire, board).await?;
     for (step, (action, choice)) in actions.into_iter().enumerate() {
         let who = usize::from(choice % 2);
         collect(&mut wire, &devices);
-        match action % 7 {
+        match action % 10 {
             0 | 1 => {
-                let request =
-                    json!({"op":"add_task","title":format!("Inspect greenhouse pane {step}")});
-                let Response::Write {
-                    created: Some(id), ..
-                } = directory::write(&mut devices[who].app, request).await
-                else {
-                    panic!("expected a task creation");
-                };
-                prop_assert!(written.insert(id.parse().unwrap()));
+                let id = write_event(
+                    &mut devices[who],
+                    &format!("Inspect greenhouse pane {step}"),
+                )
+                .await;
+                prop_assert!(written.insert(id));
             }
             2 => {
                 if let Some(engine) = &devices[who].engine {
@@ -66,7 +60,7 @@ async fn scenario(actions: Vec<(u8, u8)>) -> Result<(), TestCaseError> {
                         who,
                         &devices[who].node,
                         author,
-                        usize::from(action % 7 == 4) + 1,
+                        usize::from(action % 10 == 4) + 1,
                         0,
                     );
                 }
@@ -77,6 +71,16 @@ async fn scenario(actions: Vec<(u8, u8)>) -> Result<(), TestCaseError> {
                 } else {
                     wire.restart(who);
                 }
+            }
+            6 if devices[who].engine.is_some() => {
+                devices[who]
+                    .node
+                    .fail_next_publish(PublishFault::NotSubmitted);
+            }
+            7 if devices[who].engine.is_some() => {
+                devices[who]
+                    .node
+                    .fail_next_publish(PublishFault::Unconfirmed);
             }
             _ => devices[who].drain().await,
         }
@@ -152,4 +156,62 @@ async fn stored(device: &Device, board: BoardId) -> BTreeSet<EventId> {
         .iter()
         .map(|item| item.decoded.id())
         .collect()
+}
+
+async fn write_event(device: &mut Device, title: &str) -> EventId {
+    let Response::Write {
+        created: Some(id), ..
+    } = directory::write(&mut device.app, json!({"op":"add_task","title":title})).await
+    else {
+        panic!("expected a task creation")
+    };
+    id.parse().unwrap()
+}
+
+async fn seed_publications(
+    devices: &mut [Device; 2],
+    wire: &Wire,
+    board: BoardId,
+) -> Result<BTreeSet<EventId>, TestCaseError> {
+    use pepino_core::Envelope;
+
+    let first = write_event(&mut devices[0], "Check the sash hinges").await;
+    let second = write_event(&mut devices[0], "Order a replacement latch").await;
+    devices[0].start_with(|node| node.reject(true)).await;
+    super::publish::until(devices[0].engine.as_ref().unwrap(), |status| {
+        status.boards[&board]
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("publish "))
+    })
+    .await;
+    assert_safe(wire, devices, board).await?;
+    drop(devices[0].engine.take());
+    devices[0]
+        .start_with(|node| node.fail_next_publish(PublishFault::NotSubmitted))
+        .await;
+    devices[0].drain().await;
+    let sent = devices[0]
+        .node
+        .published()
+        .iter()
+        .map(|bytes| Envelope::decode(bytes).unwrap().id())
+        .collect::<Vec<_>>();
+    prop_assert_eq!(
+        sent,
+        [first, second],
+        "rejected writes must survive a crash and retry in order"
+    );
+
+    let third = write_event(&mut devices[1], "Check the seed inventory").await;
+    devices[1]
+        .start_with(|node| node.fail_next_publish(PublishFault::Unconfirmed))
+        .await;
+    devices[1].drain().await;
+    prop_assert_eq!(
+        devices[1].node.published().len(),
+        2,
+        "an unconfirmed submission must be retried"
+    );
+    Ok(BTreeSet::from([first, second, third]))
 }
