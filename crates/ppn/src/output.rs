@@ -2,6 +2,7 @@ use std::io::{self, Write};
 use std::process::ExitCode;
 
 use pepino_app::Response;
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use crate::error::{CliError, ErrorKind};
@@ -16,7 +17,23 @@ pub trait Render {
 
 type WriteOutput = dyn FnOnce(bool, &Terminal, &mut dyn Write) -> Result<(), CliError>;
 
-pub struct CommandResult(Box<WriteOutput>, Vec<String>);
+pub struct CommandResult(Box<WriteOutput>, Vec<Warning>);
+
+#[derive(Serialize)]
+pub struct Warning {
+    pub message: String,
+    #[serde(flatten)]
+    pub details: Map<String, Value>,
+}
+
+impl From<String> for Warning {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            details: Map::new(),
+        }
+    }
+}
 
 impl CommandResult {
     pub fn document(value: impl Render + 'static) -> Self {
@@ -60,8 +77,8 @@ impl CommandResult {
             Vec::new(),
         ))
     }
-    pub fn with_warnings(mut self, warnings: impl IntoIterator<Item = String>) -> Self {
-        self.1.extend(warnings);
+    pub fn with_warnings(mut self, warnings: impl IntoIterator<Item = impl Into<Warning>>) -> Self {
+        self.1.extend(warnings.into_iter().map(Into::into));
         self
     }
 }
@@ -89,9 +106,12 @@ fn finish_to(
 ) -> ExitCode {
     let result = result.and_then(|CommandResult(write, warnings)| {
         write(json, terminal, stdout)?;
-        if !json {
-            for warning in warnings {
-                let _ = writeln!(stderr, "warning: {warning}");
+        for warning in warnings {
+            if json {
+                let _ = serde_json::to_writer(&mut *stderr, &json!({"warning": warning}));
+                let _ = writeln!(stderr);
+            } else {
+                let _ = writeln!(stderr, "warning: {}", warning.message);
             }
         }
         Ok(())
@@ -164,13 +184,13 @@ mod tests {
     }
 
     #[test]
-    fn emits_success_warnings_to_human_stderr() {
+    fn emits_success_warnings_to_stderr_in_both_formats() {
         let terminal = Terminal::fixed(None, false);
         for json in [false, true] {
             let result = CommandResult::document(Task {
                 title: "Order a replacement screw",
             })
-            .with_warnings(["The dependency would create a cycle.".into()]);
+            .with_warnings(["The dependency would create a cycle.".to_owned()]);
             let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
             assert_eq!(
                 finish_to(Ok(result), json, &terminal, &mut stdout, &mut stderr),
@@ -180,7 +200,8 @@ mod tests {
             assert_eq!(
                 stderr,
                 if json {
-                    b"".as_slice()
+                    b"{\"warning\":{\"message\":\"The dependency would create a cycle.\"}}\n"
+                        .as_slice()
                 } else {
                     b"warning: The dependency would create a cycle.\n"
                 }
