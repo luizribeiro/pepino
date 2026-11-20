@@ -1,4 +1,4 @@
-use std::fs::{self, File};
+use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -61,7 +61,7 @@ impl LocalState {
             board_id: BoardId::from_bytes(random_id()?),
             board_name,
         };
-        save(directory, &path, &state).map_err(|error| io_error("save local state", error))
+        save(directory, &path, state).map_err(|error| io_error("save local state", error))
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, AppError> {
@@ -78,7 +78,7 @@ impl LocalState {
     }
 }
 
-fn save(directory: &Path, path: &Path, state: &LocalState) -> io::Result<LocalState> {
+fn save(directory: &Path, path: &Path, state: LocalState) -> io::Result<LocalState> {
     fs::create_dir_all(directory)?;
     let mut file = tempfile::NamedTempFile::new_in(directory)?;
     #[cfg(unix)]
@@ -87,14 +87,14 @@ fn save(directory: &Path, path: &Path, state: &LocalState) -> io::Result<LocalSt
         file.as_file()
             .set_permissions(fs::Permissions::from_mode(0o600))?;
     }
-    serde_json::to_writer(file.as_file_mut(), state)?;
+    serde_json::to_writer(file.as_file_mut(), &state)?;
     file.write_all(b"\n")?;
     file.as_file().sync_all()?;
     match file.persist_noclobber(path) {
         Ok(_) => {
             #[cfg(unix)]
-            File::open(directory)?.sync_all()?;
-            Ok(state.clone())
+            fs::File::open(directory)?.sync_all()?;
+            Ok(state)
         }
         Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
             let bytes = fs::read(path)?;
@@ -136,7 +136,7 @@ mod tests {
             display_name: Some("Ada Gardener".into()),
             board_name: Some("Greenhouse".into()),
         };
-        let state = LocalState::load_or_create(directory.path(), options.clone()).unwrap();
+        let state = LocalState::load_or_create(directory.path(), options).unwrap();
         let path = directory.path().join(FILE_NAME);
         assert_eq!(state.display_name, "Ada Gardener");
         assert_eq!(state.board_name, "Greenhouse");
@@ -154,17 +154,46 @@ mod tests {
             );
         }
         let other = tempfile::tempdir().unwrap();
-        let other = LocalState::load_or_create(other.path(), options).unwrap();
+        let other = LocalState::load_or_create(other.path(), OpenOptions::default()).unwrap();
+        assert_eq!(other.display_name, whoami::username().unwrap());
+        assert_eq!(other.board_name, "Personal");
         assert_ne!(state.device_id, other.device_id);
         assert_ne!(state.identity_id, other.identity_id);
         assert_ne!(state.board_id, other.board_id);
-        fs::write(path, b"{\"version\":99}").unwrap();
+        let future = LocalState {
+            version: 99,
+            ..state
+        };
+        fs::write(path, serde_json::to_vec(&future).unwrap()).unwrap();
         assert!(matches!(
             LocalState::load_or_create(directory.path(), OpenOptions::default()),
             Err(AppError::Storage {
                 retryable: false,
-                ..
-            })
+                reason,
+            }) if reason.contains("unsupported local state version")
         ));
+    }
+
+    #[test]
+    fn racing_creators_use_the_same_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let start = std::sync::Barrier::new(2);
+        let create = |name: &str| {
+            start.wait();
+            LocalState::load_or_create(
+                directory.path(),
+                OpenOptions {
+                    display_name: Some(name.into()),
+                    board_name: None,
+                },
+            )
+            .unwrap()
+        };
+        let [left, right] = std::thread::scope(|scope| {
+            let left = scope.spawn(|| create("Ada Gardener"));
+            let right = scope.spawn(|| create("Ben Gardener"));
+            [left.join().unwrap(), right.join().unwrap()]
+        });
+        assert_eq!(left, right);
     }
 }
