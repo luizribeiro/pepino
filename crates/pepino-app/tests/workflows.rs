@@ -1,6 +1,6 @@
 use pepino_app::{
     App, AppError, EdgeEffect, EdgeExclusionReason, EdgeKind, FieldValue, ReadRequest, Request,
-    Response, TaskRecord,
+    Response, TaskRecord, TaskSummary,
 };
 use pepino_store::Store;
 use serde_json::{Value, json};
@@ -15,7 +15,7 @@ async fn handle(app: &mut App, request: Value) -> Result<Response, AppError> {
 async fn write(
     app: &mut App,
     request: Value,
-) -> (bool, Option<String>, Vec<TaskRecord>, Vec<EdgeEffect>) {
+) -> (bool, Option<String>, Vec<TaskSummary>, Vec<EdgeEffect>) {
     let Response::Write {
         changed,
         created,
@@ -86,7 +86,7 @@ async fn add_plans_a_project_and_returns_each_affected_record() {
             .iter()
             .all(|edge| edge.effective && edge.reason.is_none())
     );
-    assert_eq!(*child, get(&mut app, &id).await);
+    assert_eq!(*child, get(&mut app, &id).await.summary);
     assert_eq!(child.parent.as_deref(), Some(parent.as_str()));
     assert_eq!(child.assignees, [assignee].into());
     assert_eq!(child.due.unwrap().to_string(), "2026-12-01");
@@ -194,7 +194,7 @@ async fn edit_fields_completes_work_and_clears_optional_values() {
     assert!(get(&mut app, &child).await.ready);
     assert_eq!(
         write(&mut app, edit).await,
-        (false, None, vec![done.clone()], Vec::new())
+        (false, None, vec![done.summary.clone()], Vec::new())
     );
 
     let invalid = json!({
@@ -243,7 +243,7 @@ async fn tags_and_assignees_deduplicate_and_validate_entire_batches() {
         let (changed, created, new, _) = write(&mut app, request.clone()).await;
         assert!(changed);
         assert_eq!(created, None);
-        assert_eq!(new, [get(&mut app, &id).await]);
+        assert_eq!(new, [get(&mut app, &id).await.summary]);
         assert_eq!(
             write(&mut app, request).await,
             (false, None, new, Vec::new())
@@ -345,12 +345,22 @@ async fn comments_are_ordered_and_preserve_repeated_text() {
     let id = add(&mut app, "Install the latch").await;
     let author = app.local_state().device_id.to_string();
     let note = "The latch is in the tool cabinet.";
-    for text in [note, note, "The door now closes flush."] {
+    for (index, text) in [note, note, "The door now closes flush."]
+        .into_iter()
+        .enumerate()
+    {
         let (changed, _, tasks, _) =
             write(&mut app, json!({"op":"comment","task":&id,"text":text})).await;
         assert!(changed);
         let task = get(&mut app, &id).await;
-        assert_eq!(tasks, std::slice::from_ref(&task));
+        assert_eq!(tasks, std::slice::from_ref(&task.summary));
+        assert_eq!(tasks[0].comment_count, (index + 1) as u64);
+        assert!(
+            serde_json::to_value(&tasks[0])
+                .unwrap()
+                .get("comments")
+                .is_none()
+        );
         let comment = task.comments.last().unwrap();
         assert_eq!(
             (comment.author.as_str(), comment.text.as_str()),
@@ -409,7 +419,7 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
     assert!(changed);
     assert_eq!(created, None);
     let remaining = get(&mut app, &child).await;
-    assert_eq!(tasks, std::slice::from_ref(&remaining));
+    assert_eq!(tasks, std::slice::from_ref(&remaining.summary));
     assert!(remaining.blocked_by.is_empty() && remaining.ready);
     for (request, field) in [
         (json!({"op":"get_task","task":&blocker}), "task"),

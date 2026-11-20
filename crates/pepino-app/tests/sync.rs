@@ -1,4 +1,4 @@
-use pepino_app::{App, Response, TaskRecord};
+use pepino_app::{App, Response, TaskRecord, TaskSummary};
 use pepino_core::BoardId;
 use pepino_store::{EventRecord, IdSource, Store};
 use proptest::prelude::*;
@@ -12,7 +12,7 @@ async fn dispatch(app: &mut App, operation: Value) -> Response {
         .unwrap()
 }
 
-async fn create(app: &mut App, operation: Value, title: &str) -> TaskRecord {
+async fn create(app: &mut App, operation: Value, title: &str) -> TaskSummary {
     let Response::Write {
         changed: true,
         tasks,
@@ -70,7 +70,7 @@ async fn exchange(order: [u8; 8]) -> ([TaskRecord; 2], [TaskRecord; 2]) {
     let task = id.parse().unwrap();
     let first = left_store.events(left_board, task).await.unwrap();
     receive(&right_store, right_board, &first).await;
-    assert_eq!(get(&mut right, id).await, created);
+    assert_eq!(get(&mut right, id).await.summary, created);
 
     for (app, status, text) in [
         (&mut left, "doing", "The supplier has stainless latches."),

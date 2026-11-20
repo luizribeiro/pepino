@@ -121,7 +121,7 @@ pub enum Response {
         changed: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         created: Option<String>,
-        tasks: Vec<TaskRecord>,
+        tasks: Vec<TaskSummary>,
         edges: Vec<EdgeEffect>,
     },
     Task {

@@ -6,7 +6,7 @@ use pepino_core::{
 use pepino_store::{AppendOutcome, BoardView, IdSource};
 
 use crate::app::{invalid, store_error};
-use crate::projection::edge_effect as project_edge;
+use crate::projection::{edge_effect as project_edge, project_summary};
 use crate::state::storage;
 use crate::{App, AppError, EdgeEffect, Response};
 
@@ -90,9 +90,7 @@ impl App {
         mut batch: Batch,
     ) -> Result<Response, AppError> {
         if batch.events.is_empty() {
-            return self
-                .write_response(before, false, None, batch.affected, Vec::new())
-                .await;
+            return self.write_response(before, false, None, batch.affected, Vec::new());
         }
         let encoded = batch
             .events
@@ -123,9 +121,7 @@ impl App {
             })
             .collect();
         if applied.is_empty() {
-            return self
-                .write_response(before, false, None, batch.affected, Vec::new())
-                .await;
+            return self.write_response(before, false, None, batch.affected, Vec::new());
         }
 
         let after = self
@@ -146,11 +142,10 @@ impl App {
             .collect::<Result<Vec<_>, _>>()
             .map_err(committed_error)?;
         self.write_response(&after, true, created, batch.affected, edges)
-            .await
             .map_err(committed_error)
     }
 
-    async fn write_response(
+    fn write_response(
         &self,
         view: &BoardView,
         changed: bool,
@@ -161,7 +156,7 @@ impl App {
         let mut tasks = Vec::new();
         for id in &affected {
             if let Some(task) = view.task(*id) {
-                tasks.push(self.record(task).await?);
+                tasks.push(project_summary(task)?);
             }
         }
         Ok(Response::Write {
