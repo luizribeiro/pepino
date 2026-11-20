@@ -4,9 +4,17 @@ use super::keywords::{Builtin, State};
 pub use crate::Date;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Filter(pub(super) Vec<Term>);
+pub struct Filter(Vec<Term>);
 
 impl Filter {
+    /// Build a filter from syntax-valid terms in conjunction order.
+    ///
+    /// For canonical round trips, use nonempty alternatives and operands,
+    /// valid tag and view names, and field names accepted for custom clauses.
+    pub fn from_terms(terms: Vec<Term>) -> Self {
+        Self(terms)
+    }
+
     pub fn terms(&self) -> &[Term] {
         &self.0
     }

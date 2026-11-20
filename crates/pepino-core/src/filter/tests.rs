@@ -640,3 +640,20 @@ fn custom_operands_use_their_unquoted_form() {
         assert_eq!(parse(input).unwrap_err().kind, kind);
     }
 }
+
+#[test]
+fn filters_can_be_constructed_from_terms() {
+    let terms = vec![
+        Term {
+            negated: false,
+            clause: Clause::Status(vec![crate::Status::Todo]),
+        },
+        Term {
+            negated: true,
+            clause: Clause::Has(vec![PresenceField::Assignee]),
+        },
+    ];
+    let filter = Filter::from_terms(terms.clone());
+    assert_eq!(filter.terms(), terms);
+    assert_eq!(parse("status:todo -has:assignee"), Ok(filter));
+}

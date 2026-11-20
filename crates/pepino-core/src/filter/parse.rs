@@ -35,7 +35,7 @@ pub fn parse(input: &str, today: Date) -> Result<Filter, ParseError> {
         terms.push(parse_term(&rest[..end], position, today)?);
         rest = rest[end..].trim_start();
     }
-    Ok(Filter(terms))
+    Ok(Filter::from_terms(terms))
 }
 
 /// Parse arguments that the caller has already split into individual terms.
@@ -48,7 +48,7 @@ pub fn parse_argv<S: AsRef<str>>(argv: &[S], today: Date) -> Result<Filter, Pars
         .enumerate()
         .map(|(index, raw)| parse_argument(raw.as_ref(), index, today))
         .collect::<Result<Vec<_>, _>>()
-        .map(Filter)
+        .map(Filter::from_terms)
 }
 
 fn parse_argument(input: &str, index: usize, today: Date) -> Result<Term, ParseError> {

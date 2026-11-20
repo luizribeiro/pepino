@@ -135,7 +135,7 @@ proptest! {
     fn display_round_trips_the_ast(
         terms in vec((any::<bool>(), clause()).prop_map(|(negated, clause)| Term { negated, clause }), 0..9)
     ) {
-        let ast = Filter(terms);
+        let ast = Filter::from_terms(terms);
         let text = ast.to_string();
         prop_assert_eq!(parse(&text, Date::MIN), Ok(ast), "canonical filter {:?}", text);
     }
