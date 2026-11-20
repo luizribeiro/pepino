@@ -124,3 +124,26 @@ fn eventually<T>(mut poll: impl FnMut() -> Option<T>) -> T {
         thread::sleep(Duration::from_millis(25));
     }
 }
+
+impl Fixture {
+    pub fn signal(&self, signal: nix::sys::signal::Signal) {
+        let pid = i32::try_from(self.foreground.as_ref().unwrap().id()).unwrap();
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), signal).unwrap();
+    }
+
+    pub fn raw(&self, request: &Value) -> Value {
+        use std::{
+            io::{BufRead, BufReader, Write},
+            os::unix::net::UnixStream,
+        };
+
+        let mut stream = UnixStream::connect(&self.socket).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        writeln!(stream, "{request}").unwrap();
+        let mut reply = String::new();
+        BufReader::new(stream).read_line(&mut reply).unwrap();
+        as_json(&reply)
+    }
+}

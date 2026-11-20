@@ -26,8 +26,9 @@ mod support;
 mod network {
     use super::support::Fixture;
     use super::*;
+    use nix::sys::signal::Signal;
     use serde_json::json;
-    use std::os::unix::fs::PermissionsExt;
+    use std::{net::UdpSocket, os::unix::fs::PermissionsExt};
 
     #[test]
     fn serves_control_requests_refuses_a_second_instance_and_stops() {
@@ -60,10 +61,51 @@ mod network {
                 .unwrap()
                 .contains("already running")
         );
+        let reply = fixture.raw(&json!({"v":2,"request":{"op":"next_operation"}}));
+        assert_eq!(reply["result"]["code"], "unsupported_version");
         let stopped = as_json(&fixture.run(&["daemon", "stop", "--json"]));
         assert_eq!(stopped["running"], false);
         let exit = as_json(&success(fixture.wait_foreground()));
         assert_eq!(exit["action"], "stopped");
         fixture.assert_stopped();
+    }
+
+    #[test]
+    fn sigterm_releases_the_fixed_udp_port_and_removes_the_socket() {
+        let reserved = UdpSocket::bind("0.0.0.0:0").unwrap();
+        let port = reserved.local_addr().unwrap().port();
+        let mut fixture = Fixture::new(&format!("port = {port}\n"));
+        drop(reserved);
+        fixture.foreground();
+        assert!(UdpSocket::bind(("0.0.0.0", port)).is_err());
+        fixture.signal(Signal::SIGTERM);
+        success(fixture.wait_foreground());
+        fixture.assert_stopped();
+        UdpSocket::bind(("0.0.0.0", port)).unwrap();
+    }
+
+    #[test]
+    fn detached_start_recovers_the_socket_after_sigkill() {
+        let mut fixture = Fixture::new("");
+        let dead = fixture.foreground();
+        fixture.signal(Signal::SIGKILL);
+        assert!(!fixture.wait_foreground().status.success());
+        assert!(fixture.socket.exists());
+        let running = as_json(&fixture.run(&["daemon", "start", "--json"]));
+        let pid = running["pid"].as_u64().unwrap();
+        assert_ne!(pid, u64::from(dead));
+        assert!(
+            fixture
+                .run(&["daemon", "start"])
+                .contains(&format!("PID {pid}"))
+        );
+        assert_eq!(fixture.run(&["daemon", "stop"]).trim(), "Daemon stopped");
+        fixture.assert_stopped();
+        let output = fixture
+            .command()
+            .args(["daemon", "stop", "--json"])
+            .output()
+            .unwrap();
+        assert_json_error(output, 6, "daemon_unreachable");
     }
 }
