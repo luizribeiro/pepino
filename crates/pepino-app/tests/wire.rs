@@ -51,10 +51,10 @@ fn every_request_has_a_stable_operation_tag() {
 #[test]
 fn errors_and_write_responses_have_stable_tags() {
     for fixture in [
-        json!({"kind":"not_found","task":"97ad"}),
-        json!({"kind":"ambiguous_id","task":"97ad","count":2,"candidates":["97ada","97adb"]}),
+        json!({"kind":"not_found","field":"task","task":"97ad"}),
+        json!({"kind":"ambiguous_id","field":"task","task":"97ad","count":2,"candidates":["97ada","97adb"]}),
         json!({"kind":"invalid_input","field":"tag","reason":"invalid tag"}),
-        json!({"kind":"conflict","task":"97ada"}),
+        json!({"kind":"conflict","field":"task","task":"97ada"}),
         json!({"kind":"busy"}),
         json!({"kind":"storage","retryable":true,"reason":"database is busy"}),
         json!({"kind":"unsupported_version","requested":2,"supported":1}),
@@ -103,6 +103,7 @@ fn versioned_messages_have_a_shared_json_and_cbor_codec() {
         edges: Vec::new(),
     }));
     let error = WireResponse::new(Err(AppError::NotFound {
+        field: "task".into(),
         task: "97ad".into(),
     }));
 
@@ -132,7 +133,7 @@ fn versioned_messages_have_a_shared_json_and_cbor_codec() {
     );
     assert_eq!(
         serde_json::to_value(error).unwrap(),
-        json!({"v":1,"result":{"error":{"kind":"not_found","task":"97ad"}}})
+        json!({"v":1,"result":{"error":{"kind":"not_found","field":"task","task":"97ad"}}})
     );
 }
 

@@ -135,17 +135,19 @@ async fn lock(directory: &Path, timeout: Duration) -> Result<File, AppError> {
 }
 
 pub(super) fn store_error(error: StoreError) -> AppError {
-    let retryable = matches!(
-        error,
-        StoreError::Database {
-            kind: DatabaseErrorKind::Busy,
-            ..
-        } | StoreError::Migration {
-            kind: DatabaseErrorKind::Busy,
-            ..
-        }
-    );
-    storage("pepino store", error, retryable)
+    match error {
+        StoreError::Database { kind, source } => storage(
+            "database operation",
+            source,
+            kind == DatabaseErrorKind::Busy,
+        ),
+        StoreError::Migration { kind, source } => storage(
+            "database migration",
+            source,
+            kind == DatabaseErrorKind::Busy,
+        ),
+        error => storage("pepino store", error, false),
+    }
 }
 
 pub(super) fn invalid(field: impl Into<String>, reason: impl std::fmt::Display) -> AppError {

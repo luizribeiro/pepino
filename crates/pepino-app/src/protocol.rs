@@ -180,18 +180,19 @@ impl AppErrorKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AppError {
-    #[error("task {task:?} was not found")]
-    NotFound { task: String },
-    #[error("task reference {task:?} matches {count} tasks")]
+    #[error("task {task} at {field} was not found")]
+    NotFound { field: String, task: String },
+    #[error("task reference {task} at {field} matches {count} tasks")]
     AmbiguousId {
+        field: String,
         task: String,
         count: u64,
         candidates: Vec<String>,
     },
     #[error("invalid {field}: {reason}")]
     InvalidInput { field: String, reason: String },
-    #[error("task {task} is deleted")]
-    Conflict { task: String },
+    #[error("task {task} at {field} is deleted")]
+    Conflict { field: String, task: String },
     #[error("another pepino process holds the data directory")]
     Busy,
     #[error("storage error: {reason}")]

@@ -8,19 +8,50 @@ use serde_json::{Value, json};
 
 const NOW: u64 = 1_795_144_800_000;
 
-fn operations(reference: &str, peer: &str) -> [Value; 11] {
+fn operations(reference: &str, peer: &str) -> [(Value, &'static str); 12] {
     [
-        json!({"op":"add_task","title":"Install the replacement latch","parent":reference}),
-        json!({"op":"set_fields","task":reference,"changes":{"status":{"type":"status","value":"done"}}}),
-        json!({"op":"add_tags","task":reference,"tags":["greenhouse"]}),
-        json!({"op":"remove_tags","task":reference,"tags":["greenhouse"]}),
-        json!({"op":"assign","task":reference,"assignees":["me"]}),
-        json!({"op":"unassign","task":reference,"assignees":["me"]}),
-        json!({"op":"comment","task":reference,"text":"The latch arrived."}),
-        json!({"op":"link","from":reference,"kind":"blocks","to":peer}),
-        json!({"op":"unlink","from":peer,"kind":"blocks","to":reference}),
-        json!({"op":"delete","task":reference}),
-        json!({"op":"get_task","task":reference}),
+        (
+            json!({"op":"add_task","title":"Install the replacement latch","parent":reference}),
+            "parent",
+        ),
+        (
+            json!({"op":"add_task","title":"Install the replacement latch","blocks":[peer, reference]}),
+            "blocks[1]",
+        ),
+        (
+            json!({"op":"set_fields","task":reference,"changes":{"status":{"type":"status","value":"done"}}}),
+            "task",
+        ),
+        (
+            json!({"op":"add_tags","task":reference,"tags":["greenhouse"]}),
+            "task",
+        ),
+        (
+            json!({"op":"remove_tags","task":reference,"tags":["greenhouse"]}),
+            "task",
+        ),
+        (
+            json!({"op":"assign","task":reference,"assignees":["me"]}),
+            "task",
+        ),
+        (
+            json!({"op":"unassign","task":reference,"assignees":["me"]}),
+            "task",
+        ),
+        (
+            json!({"op":"comment","task":reference,"text":"The latch arrived."}),
+            "task",
+        ),
+        (
+            json!({"op":"link","from":reference,"kind":"blocks","to":peer}),
+            "from",
+        ),
+        (
+            json!({"op":"unlink","from":peer,"kind":"blocks","to":reference}),
+            "to",
+        ),
+        (json!({"op":"delete","task":reference}), "task"),
+        (json!({"op":"get_task","task":reference}), "task"),
     ]
 }
 
@@ -77,7 +108,7 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
         ("0000", AppErrorKind::NotFound),
         ("ABCd", AppErrorKind::AmbiguousId),
     ] {
-        for request in operations(reference, peer) {
+        for (request, field) in operations(reference, peer) {
             let error = app
                 .handle(serde_json::from_value(request).unwrap(), NOW)
                 .await
@@ -87,10 +118,23 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
                 assert_eq!(
                     error,
                     AppError::AmbiguousId {
+                        field: field.into(),
                         task: reference.into(),
                         count: 2,
                         candidates: vec![left.clone(), right.clone()],
                     }
+                );
+            } else if kind == AppErrorKind::NotFound {
+                assert_eq!(
+                    error,
+                    AppError::NotFound {
+                        field: field.into(),
+                        task: reference.into()
+                    }
+                );
+            } else {
+                assert!(
+                    matches!(error, AppError::InvalidInput { field: location, .. } if location == field)
                 );
             }
         }
@@ -100,7 +144,7 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
     let path = directory.path().join("local.json");
     let guard = File::options().read(true).write(true).open(path).unwrap();
     guard.try_lock().unwrap();
-    for request in operations(left, peer) {
+    for (request, _) in operations(left, peer) {
         let error = app
             .handle(serde_json::from_value(request).unwrap(), NOW)
             .await
@@ -118,12 +162,18 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
             .unwrap();
     }
     let before = store.latest_hlc(board).await.unwrap();
-    for request in operations("abcdf1", peer) {
+    for (request, field) in operations("abcdf1", peer) {
         let error = app
             .handle(serde_json::from_value(request).unwrap(), NOW)
             .await
             .unwrap_err();
-        assert_eq!(error, AppError::Conflict { task: left.clone() });
+        assert_eq!(
+            error,
+            AppError::Conflict {
+                field: field.into(),
+                task: left.clone()
+            }
+        );
     }
     let request = json!({"op":"get_task","task":"abcd"});
     assert_eq!(
@@ -131,6 +181,7 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
             .await
             .unwrap_err(),
         AppError::Conflict {
+            field: "task".into(),
             task: "abcd".into()
         },
     );

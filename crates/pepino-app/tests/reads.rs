@@ -15,7 +15,13 @@ async fn get_distinguishes_invalid_and_missing_references_on_a_new_board() {
             .await
             .unwrap_err();
         if task == "97ad" {
-            assert_eq!(error, AppError::NotFound { task: task.into() });
+            assert_eq!(
+                error,
+                AppError::NotFound {
+                    field: "task".into(),
+                    task: task.into()
+                }
+            );
         } else {
             assert!(matches!(error, AppError::InvalidInput { field, .. } if field == "task"));
         }

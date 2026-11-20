@@ -1,4 +1,3 @@
-use pepino_core::TaskId;
 use pepino_store::{BoardView, StoreError, TaskPrefixResolution, TaskRecord as StoredTask};
 
 use crate::app::{invalid, store_error};
@@ -11,13 +10,18 @@ pub(super) fn resolve<'a>(
 ) -> Result<&'a StoredTask, AppError> {
     match view.resolve_task_prefix(reference) {
         Ok(TaskPrefixResolution::Live(id)) => Ok(view.task(id).expect("ID resolved in this view")),
-        Ok(TaskPrefixResolution::Ambiguous { count, candidates }) => {
-            Err(ambiguous(reference, count, candidates))
-        }
+        Ok(TaskPrefixResolution::Ambiguous { count, candidates }) => Err(AppError::AmbiguousId {
+            field: field.into(),
+            task: reference.into(),
+            count,
+            candidates: candidates.iter().map(ToString::to_string).collect(),
+        }),
         Ok(TaskPrefixResolution::Unknown) => Err(AppError::NotFound {
+            field: field.into(),
             task: reference.into(),
         }),
         Ok(TaskPrefixResolution::Deleted { id }) => Err(AppError::Conflict {
+            field: field.into(),
             task: id.map_or_else(|| reference.into(), |id| id.to_string()),
         }),
         Err(StoreError::InvalidPrefix) => Err(invalid(
@@ -69,13 +73,5 @@ impl App {
                 })
                 .collect(),
         })
-    }
-}
-
-fn ambiguous(reference: &str, count: u64, ids: impl IntoIterator<Item = TaskId>) -> AppError {
-    AppError::AmbiguousId {
-        task: reference.into(),
-        count,
-        candidates: ids.into_iter().map(|id| id.to_string()).collect(),
     }
 }

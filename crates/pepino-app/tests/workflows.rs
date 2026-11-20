@@ -120,6 +120,7 @@ async fn a_missing_parent_leaves_the_event_log_unchanged() {
     assert_eq!(
         error,
         AppError::NotFound {
+            field: "parent".into(),
             task: "deadbeef".into()
         }
     );
@@ -399,14 +400,21 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
     let remaining = get(&mut app, &child).await;
     assert_eq!(tasks, std::slice::from_ref(&remaining));
     assert!(remaining.blocked_by.is_empty() && remaining.ready);
-    for request in [
-        json!({"op":"get_task","task":&blocker}),
-        json!({"op":"delete","task":blocker[..12].to_uppercase()}),
-        json!({"op":"unlink","from":&blocker[..12],"kind":"blocks","to":&child}),
+    for (request, field) in [
+        (json!({"op":"get_task","task":&blocker}), "task"),
+        (
+            json!({"op":"delete","task":blocker[..12].to_uppercase()}),
+            "task",
+        ),
+        (
+            json!({"op":"unlink","from":&blocker[..12],"kind":"blocks","to":&child}),
+            "from",
+        ),
     ] {
         assert_eq!(
             handle(&mut app, request).await.unwrap_err(),
             AppError::Conflict {
+                field: field.into(),
                 task: blocker.clone()
             }
         );
