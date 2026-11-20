@@ -1,7 +1,9 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
+use pepino_app::{AppError, AppErrorKind};
 use serde::Serialize;
+use serde_json::{Map, Value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 #[value(rename_all = "snake_case")]
@@ -14,6 +16,9 @@ pub enum ErrorKind {
     DaemonUnreachable,
     ConfirmationRequired,
     InvalidConfig,
+    InvalidInput,
+    Conflict,
+    Busy,
 }
 
 impl ErrorKind {
@@ -31,13 +36,20 @@ impl ErrorKind {
             Self::DaemonUnreachable => "The daemon or network could not be reached.",
             Self::ConfirmationRequired => "The operation needs explicit confirmation.",
             Self::InvalidConfig => "Configuration could not be read or is invalid.",
+            Self::InvalidInput => "The request input is invalid.",
+            Self::Conflict => "The request conflicts with existing data.",
+            Self::Busy => "The data directory is locked by another pepino process.",
         }
     }
 
     pub const fn status(self) -> u8 {
         match self {
-            Self::Failure | Self::ConfirmationRequired | Self::InvalidConfig => 1,
-            Self::Usage => 2,
+            Self::Failure
+            | Self::ConfirmationRequired
+            | Self::InvalidConfig
+            | Self::Conflict
+            | Self::Busy => 1,
+            Self::Usage | Self::InvalidInput => 2,
             Self::NotFound => 3,
             Self::AmbiguousId => 4,
             Self::PermissionDenied => 5,
@@ -55,6 +67,9 @@ impl ErrorKind {
             Self::DaemonUnreachable => "daemon_unreachable",
             Self::ConfirmationRequired => "confirmation_required",
             Self::InvalidConfig => "invalid_config",
+            Self::InvalidInput => "invalid_input",
+            Self::Conflict => "conflict",
+            Self::Busy => "busy",
         }
     }
 }
@@ -67,6 +82,8 @@ pub struct CliError {
     code: &'static str,
     message: String,
     hint: Option<String>,
+    #[serde(flatten)]
+    details: Map<String, Value>,
 }
 
 impl CliError {
@@ -80,6 +97,7 @@ impl CliError {
             code: kind.code(),
             message: message.into(),
             hint: None,
+            details: Map::new(),
         }
     }
 
@@ -113,6 +131,11 @@ impl CliError {
         }
 
         writeln!(stderr, "error: {}", self.message)?;
+        if let Some(candidates) = self.details.get("candidates").and_then(Value::as_array) {
+            for id in candidates.iter().filter_map(Value::as_str) {
+                writeln!(stderr, "  {id}")?;
+            }
+        }
         if let Some(hint) = &self.hint {
             writeln!(stderr, "hint: {hint}")?;
         }
@@ -120,9 +143,59 @@ impl CliError {
     }
 }
 
+impl From<AppError> for CliError {
+    fn from(error: AppError) -> Self {
+        let (kind, hint) = match error.kind() {
+            AppErrorKind::NotFound => (ErrorKind::NotFound, None),
+            AppErrorKind::AmbiguousId => (ErrorKind::AmbiguousId, Some("Use a longer task ID.")),
+            AppErrorKind::InvalidInput => (ErrorKind::InvalidInput, None),
+            AppErrorKind::Conflict => (ErrorKind::Conflict, None),
+            AppErrorKind::Busy => (ErrorKind::Busy, Some("Retry or increase --timeout.")),
+            AppErrorKind::Storage if error.retryable() => {
+                (ErrorKind::Failure, Some("Retry the request."))
+            }
+            AppErrorKind::WriteCommitted => (
+                ErrorKind::Failure,
+                Some("Read the current state before retrying."),
+            ),
+            _ => (ErrorKind::Failure, None),
+        };
+        let mut diagnostic = Self::new(kind, error.to_string());
+        diagnostic.hint = hint.map(str::to_owned);
+        if let Ok(Value::Object(mut details)) = serde_json::to_value(error) {
+            details.remove("kind");
+            if let Some(Value::String(hint)) = details.remove("hint") {
+                diagnostic.hint = Some(hint);
+            }
+            diagnostic.details = details;
+        }
+        diagnostic
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_diagnostics_keep_locations_and_hints() {
+        let error = serde_json::from_value::<AppError>(serde_json::json!({
+            "kind": "invalid_input", "field": "filter", "reason": "unknown filter key",
+            "term": "tags:hardware", "position": {"kind": "byte", "byte": 2},
+            "hint": "Use tag"
+        }))
+        .unwrap();
+        let mut buffer = Vec::new();
+        assert_eq!(
+            CliError::from(error).report(true, &mut buffer),
+            ExitCode::from(2)
+        );
+        let body: Value = serde_json::from_slice(&buffer).unwrap();
+        assert_eq!(body["error"]["code"], "invalid_input");
+        assert_eq!(body["error"]["field"], "filter");
+        assert_eq!(body["error"]["position"]["byte"], 2);
+        assert_eq!(body["error"]["hint"], "Use tag");
+    }
 
     #[test]
     fn renders_diagnostics_in_both_formats() {

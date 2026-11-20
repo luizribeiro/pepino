@@ -1033,6 +1033,7 @@ dependencies = [
  "hex",
  "humantime",
  "nix",
+ "pepino-app",
  "serde",
  "serde_json",
  "strsim",
