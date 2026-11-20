@@ -248,6 +248,8 @@ fn help_describes_the_cli_in_both_formats() {
     assert_eq!(commands[1]["name"], "help");
     assert_eq!(commands[2]["name"], "config");
     assert_eq!(commands[2]["commands"][0]["name"], "show");
+    assert_eq!(commands[2]["commands"][1]["name"], "path");
+    assert_eq!(commands[2]["commands"][2]["name"], "check");
 
     let flags = help["flags"].as_array().unwrap();
     let flag = |name: &str| flags.iter().find(|flag| flag["long"] == name).unwrap();
@@ -820,4 +822,37 @@ fn config_check_reports_all_errors_with_locations() {
     }
     assert_eq!(message.lines().count(), 3);
     assert_eq!(std::fs::read_to_string(invalid).unwrap(), text);
+}
+
+#[test]
+fn config_show_replaces_selected_files_with_the_flag_path() {
+    let sandbox = ConfigSandbox::new();
+    std::fs::write(
+        sandbox.home.path().join("alternate.toml"),
+        "network = 'alternate'\n",
+    )
+    .unwrap();
+    let run = |file| {
+        sandbox
+            .command()
+            .current_dir(sandbox.home.path())
+            .args(["config", "show", "--config", file, "--json"])
+            .output()
+            .unwrap()
+    };
+    let data = as_json(&success(run("alternate.toml")));
+    assert_eq!(
+        data["files"],
+        json!([{"path": "alternate.toml", "exists": true}])
+    );
+    assert_eq!(data["values"]["network"]["value"], "alternate");
+    assert_eq!(data["values"]["relay_urls"]["source"], "default");
+    assert_eq!(data["values"]["trusted_devices"]["value"], json!([]));
+    let diagnostic = assert_json_error(run("missing.toml"), 1, "invalid_config");
+    assert!(
+        diagnostic["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("missing.toml")
+    );
 }

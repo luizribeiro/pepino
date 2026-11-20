@@ -24,7 +24,7 @@ pub struct Globals {
     #[arg(long, global = true, value_name = "DURATION", value_parser = parse_timeout)]
     pub timeout: Option<Duration>,
 
-    /// Read only this configuration file. PPN_CONFIG also selects a file.
+    /// Use this file in place of the user and system files. PPN_CONFIG also selects a file.
     #[arg(long, global = true, value_name = "PATH")]
     pub config: Option<PathBuf>,
 
