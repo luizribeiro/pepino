@@ -10,13 +10,28 @@ impl Store {
         event: EventId,
         operation: EventId,
     ) -> Result<(), StoreError> {
+        self.mark_published_for(board, event, operation, None).await
+    }
+
+    /// Records a confirmed operation, replacing a receipt from another node database.
+    pub async fn mark_published_for(
+        &self,
+        board: BoardId,
+        event: EventId,
+        operation: EventId,
+        node_instance: Option<[u8; 16]>,
+    ) -> Result<(), StoreError> {
         sqlx::query(
-            "INSERT INTO publication (board, event, operation) VALUES (?, ?, ?)
-             ON CONFLICT (board, event) DO NOTHING",
+            "INSERT INTO publication (board, event, operation, node_instance) VALUES (?, ?, ?, ?)
+             ON CONFLICT (board, event) DO UPDATE SET
+                operation = excluded.operation, node_instance = excluded.node_instance
+             WHERE excluded.node_instance IS NOT NULL
+               AND publication.node_instance IS NOT excluded.node_instance",
         )
         .bind(BoardKey(board))
         .bind(event.as_bytes())
         .bind(operation.as_bytes())
+        .bind(node_instance)
         .execute(&mut *self.connection.lock().await)
         .await?;
         Ok(())
@@ -43,15 +58,28 @@ impl Store {
         author: DeviceId,
         limit: std::num::NonZeroU32,
     ) -> Result<Outbox, StoreError> {
+        self.outbox_for(board, author, limit, None).await
+    }
+
+    /// Reads an outbox scoped to the current node database, if supplied.
+    pub async fn outbox_for(
+        &self,
+        board: BoardId,
+        author: DeviceId,
+        limit: std::num::NonZeroU32,
+        node_instance: Option<[u8; 16]>,
+    ) -> Result<Outbox, StoreError> {
         let rows = self.read(async |connection| {
             sqlx::query_as::<_, ([u8; 32], Vec<u8>, i64)>(
                 "SELECT id, bytes, count(*) OVER () FROM event_log AS log
-                 WHERE board = ? AND author = ? AND classification != 'forged_author'
-                 AND NOT EXISTS (SELECT 1 FROM publication WHERE board = log.board AND event = log.id)
-                 ORDER BY hlc, id LIMIT ?",
+                 WHERE board = ?1 AND author = ?2 AND classification != 'forged_author'
+                 AND NOT EXISTS (SELECT 1 FROM publication WHERE board = log.board AND event = log.id
+                     AND (?3 IS NULL OR node_instance = ?3))
+                 ORDER BY hlc, id LIMIT ?4",
             )
             .bind(BoardKey(board))
             .bind(author.as_bytes())
+            .bind(node_instance)
             .bind(i64::from(limit.get()))
             .fetch_all(connection)
             .await
@@ -131,6 +159,38 @@ mod tests {
     use pepino_core::Envelope;
 
     use super::*;
+
+    #[tokio::test]
+    async fn only_receipts_for_the_current_node_exclude_local_events() {
+        let store = Store::open_in_memory().await.unwrap();
+        let board = BoardId::from_bytes([16; 32]);
+        let author = DeviceId::from_bytes([17; 32]);
+        let bytes = Envelope::new(
+            author,
+            pepino_core::Hlc {
+                wall_ms: 15,
+                counter: 0,
+            },
+            pepino_core::Event::TaskDeleted {
+                task: pepino_core::TaskId::from_bytes([18; 32]),
+            },
+        )
+        .unwrap()
+        .encode()
+        .unwrap();
+        let event = Envelope::decode(&bytes).unwrap().id();
+        store.append(board, &bytes, Some(author)).await.unwrap();
+        store.mark_published(board, event, event).await.unwrap();
+        for instance in [[1; 16], [2; 16]] {
+            let pending = || store.outbox_for(board, author, 1.try_into().unwrap(), Some(instance));
+            assert_eq!(pending().await.unwrap().events[0].id, event);
+            store
+                .mark_published_for(board, event, event, Some(instance))
+                .await
+                .unwrap();
+            assert_eq!(pending().await.unwrap().pending, 0);
+        }
+    }
 
     #[tokio::test]
     async fn records_only_existing_events_and_keeps_the_first_receipt() {
