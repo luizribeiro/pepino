@@ -38,6 +38,9 @@ pub(super) async fn operate(
         }
         Operation::AddMember { device, name } => match engine.add_member(device, name).await {
             Ok(()) => Outcome::MemberAdded,
+            Err(pepino_sync::Error::EnrollmentIncomplete { enrolled, failed }) => {
+                Outcome::MemberAddIncomplete { enrolled, failed }
+            }
             Err(pepino_sync::Error::EnrollmentAccess { board }) => {
                 Outcome::MemberAccessDenied { board }
             }

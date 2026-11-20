@@ -72,6 +72,10 @@ pub enum Outcome {
         network: Network,
     },
     MemberAdded,
+    MemberAddIncomplete {
+        enrolled: Vec<String>,
+        failed: Vec<String>,
+    },
     MemberAccessDenied {
         board: String,
     },

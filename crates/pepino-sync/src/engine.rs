@@ -50,6 +50,11 @@ pub enum Error {
     DeliveryStream(String),
     #[error("This device needs manage access to board {board:?} before adding a device.")]
     EnrollmentAccess { board: String },
+    #[error("Some boards could not enroll the device")]
+    EnrollmentIncomplete {
+        enrolled: Vec<String>,
+        failed: Vec<String>,
+    },
     #[error("sync did not become idle before the deadline")]
     Timeout,
     #[error("data directory belongs to device {local}, but the node is {node}")]
@@ -292,9 +297,13 @@ impl SyncEngine {
                 },
             ))
             .await?;
-        for (_, handle, role) in allowed {
-            handle.add_member(&member, role).await?;
-        }
+        let results =
+            futures_util::future::join_all(allowed.into_iter().map(|(name, handle, role)| {
+                let member = &member;
+                async move { (name, handle.add_member(member, role).await.is_ok()) }
+            }))
+            .await;
+        check_enrollment(results)?;
         self.app
             .remember_device(device.id, device.name, name)
             .await?;
@@ -332,4 +341,35 @@ async fn observe_node<T: Transport>(
             }
         }
     }
+}
+
+fn check_enrollment(results: Vec<(&str, bool)>) -> Result<(), Error> {
+    let (mut enrolled, mut failed) = (Vec::new(), Vec::new());
+    for (name, succeeded) in results {
+        if succeeded {
+            enrolled.push(name.to_owned());
+        } else {
+            failed.push(name.to_owned());
+        }
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::EnrollmentIncomplete { enrolled, failed })
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn reports_each_board_outcome_when_enrollment_partially_fails() {
+    let result = check_enrollment(vec![
+        ("Greenhouse", true),
+        ("Workshop", false),
+        ("Kitchen", true),
+    ]);
+    assert!(
+        matches!(result, Err(Error::EnrollmentIncomplete { enrolled, failed })
+        if enrolled == ["Greenhouse", "Kitchen"] && failed == ["Workshop"])
+    );
+    assert!(check_enrollment(vec![("Greenhouse", true), ("Workshop", true)]).is_ok());
 }

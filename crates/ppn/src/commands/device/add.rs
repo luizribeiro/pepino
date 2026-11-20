@@ -79,6 +79,27 @@ pub(super) fn run(
             Duration::from_secs(20),
         )
         .map_err(unreachable)?;
+    if let Outcome::MemberAddIncomplete { enrolled, failed } = &outcome {
+        let rows = |names: &[String]| {
+            names
+                .iter()
+                .map(|name| single_line(name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let message = format!(
+            "Could not enroll the device on {}. Enrollment succeeded on {}.",
+            rows(failed),
+            if enrolled.is_empty() {
+                "no boards".into()
+            } else {
+                rows(enrolled)
+            }
+        );
+        return Err(CliError::new(ErrorKind::Failure, message)
+            .with_detail("enrolled_boards", json!(enrolled))
+            .with_detail("failed_boards", json!(failed)));
+    }
     if let Outcome::MemberAccessDenied { board } = &outcome {
         return Err(CliError::new(
             ErrorKind::PermissionDenied,
