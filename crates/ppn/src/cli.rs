@@ -1,3 +1,4 @@
+use crate::commands;
 use crate::commands::config as config_command;
 use crate::commands::debug;
 use crate::commands::help;
@@ -45,6 +46,9 @@ enum Command {
     Status(status::Args),
     Add(add::Args),
     Show(show::Args),
+    Ls(commands::ls::Args),
+    Ready(commands::ready::Args),
+    Tree(commands::tree::Args),
     Debug(debug::Args),
 }
 
@@ -177,6 +181,9 @@ fn dispatch(
         Some(Command::Config(args)) => {
             config_command::run(context, inputs, cli.globals.config, args)
         }
+        Some(Command::Ls(args)) => commands::ls::run(context, args),
+        Some(Command::Ready(args)) => commands::ready::run(context, args),
+        Some(Command::Tree(args)) => commands::tree::run(context, args),
         Some(Command::Debug(args)) => debug::run(context, args),
         None => Ok(help::run(context, Cli::command(), None)),
     }
