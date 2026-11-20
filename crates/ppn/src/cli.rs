@@ -272,6 +272,32 @@ fn check_sandbox_paths(env: &Env, config: &config::Config) -> Result<(), CliErro
     Ok(())
 }
 
+fn writes_identity(command: &Command) -> bool {
+    match command {
+        Command::Init(_)
+        | Command::Add(_)
+        | Command::Edit(_)
+        | Command::Start(_)
+        | Command::Reopen(_)
+        | Command::Done(_)
+        | Command::Cancel(_)
+        | Command::Rm(_)
+        | Command::Tag(_)
+        | Command::Untag(_)
+        | Command::Assign(_)
+        | Command::Unassign(_)
+        | Command::Comment(_)
+        | Command::Link(_)
+        | Command::Unlink(_)
+        | Command::Sync(_) => true,
+        Command::Board(args) => args.writes(),
+        Command::Device(args) => args.writes(),
+        Command::Identity(args) => args.writes(),
+        Command::View(args) => args.writes(),
+        _ => false,
+    }
+}
+
 fn dispatch(
     cli: Cli,
     context: &Context<'_>,
@@ -290,6 +316,12 @@ fn dispatch(
         pepino_app::DeviceRequest::check_pending(
             context.config()?.config.data_dir.value.as_path(),
         )?;
+    }
+    if cli.command.as_ref().is_some_and(writes_identity) {
+        let data = context.config()?.config.data_dir.value.as_path();
+        if let Ok(local) = pepino_app::LocalState::load(data) {
+            local.check_device_write()?;
+        }
     }
     match cli.command {
         Some(Command::Show(args)) => show::run(context, args, cli.globals.verbose),
@@ -397,6 +429,30 @@ mod tests {
             ),
             read: |_| panic!("command read a configuration file"),
             exists: |_| panic!("command probed for a configuration file"),
+        }
+    }
+
+    #[test]
+    fn retires_writes_but_keeps_local_queries_available() {
+        for (args, writes) in [
+            (&["add", "Garden latch"][..], true),
+            (&["rm", "9874ab"], true),
+            (&["board", "new", "Orchard"], true),
+            (&["view", "save", "weekend", "tag:garden"], true),
+            (&["identity", "rename", "Ada Garden"], true),
+            (&["device", "request"], true),
+            (&["ls", "--all-boards"], false),
+            (&["device", "ls"], false),
+            (&["board", "show", "Orchard"], false),
+            (&["status"], false),
+        ] {
+            let parsed =
+                Cli::try_parse_from(std::iter::once("ppn").chain(args.iter().copied())).unwrap();
+            assert_eq!(
+                writes_identity(&parsed.command.unwrap()),
+                writes,
+                "{args:?}"
+            );
         }
     }
 

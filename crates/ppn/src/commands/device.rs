@@ -96,6 +96,19 @@ enum Action {
 }
 
 impl Args {
+    pub(crate) fn writes(&self) -> bool {
+        matches!(
+            self.action,
+            Action::Add { .. }
+                | Action::Rename { .. }
+                | Action::Revoke { .. }
+                | Action::Request { .. }
+                | Action::Join { .. }
+        )
+    }
+}
+
+impl Args {
     pub(crate) fn requires_identity(&self) -> bool {
         matches!(
             self.action,

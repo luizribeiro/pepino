@@ -50,6 +50,15 @@ enum Operation {
     },
 }
 
+impl Args {
+    pub(crate) fn writes(&self) -> bool {
+        matches!(
+            self.operation,
+            Operation::Use { .. } | Operation::New { .. } | Operation::Rename { .. }
+        )
+    }
+}
+
 pub fn run(
     context: &Context<'_>,
     args: Args,

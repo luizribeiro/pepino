@@ -62,6 +62,12 @@ enum Action {
     },
 }
 
+impl Args {
+    pub(crate) fn writes(&self) -> bool {
+        matches!(self.action, Action::Save { .. } | Action::Rm { .. })
+    }
+}
+
 pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
     let response = match args.action {

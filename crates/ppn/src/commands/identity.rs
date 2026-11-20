@@ -28,6 +28,12 @@ enum Operation {
     },
 }
 
+impl Args {
+    pub(crate) fn writes(&self) -> bool {
+        matches!(self.operation, Operation::Rename { .. })
+    }
+}
+
 pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError> {
     let request = match args.operation {
         Operation::Show => Request::Read(ReadRequest::IdentityShow),
