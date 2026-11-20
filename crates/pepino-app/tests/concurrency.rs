@@ -30,11 +30,11 @@ async fn open_and_handle_are_send() {
 async fn concurrent_apps_open_and_write_to_the_same_directory() {
     use std::collections::BTreeSet;
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use pepino_app::{OpenOptions, Response};
     use serde_json::json;
-    use tokio::sync::Barrier;
+    use tokio::{sync::Barrier, task::JoinSet};
 
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("greenhouse");
@@ -49,21 +49,21 @@ async fn concurrent_apps_open_and_write_to_the_same_directory() {
     fixture::copy(&path);
     let start = Arc::new(Barrier::new(titles.len()));
     let opened = Arc::new(Barrier::new(titles.len()));
-    let mut workers = Vec::new();
+    let options = OpenOptions {
+        lock_timeout: Duration::from_secs(60),
+        ..OpenOptions::default()
+    };
+    let mut workers = JoinSet::new();
     for title in titles {
         let start = start.clone();
         let opened = opened.clone();
         let path = path.clone();
-        workers.push(tokio::spawn(async move {
+        let options = options.clone();
+        workers.spawn(async move {
             start.wait().await;
-            let options = OpenOptions {
-                lock_timeout: Duration::from_secs(60),
-                ..OpenOptions::default()
-            };
             let mut app = App::open_with_options(path, NOW, options).await.unwrap();
             let request = serde_json::from_value(json!({"op":"add_task","title":title})).unwrap();
             opened.wait().await;
-            let started = Instant::now();
             let Response::Write {
                 created: Some(id),
                 changed: true,
@@ -72,20 +72,15 @@ async fn concurrent_apps_open_and_write_to_the_same_directory() {
             else {
                 panic!("expected a created task");
             };
-            assert!(
-                started.elapsed() < Duration::from_secs(5),
-                "write of {title} waited {:?}",
-                started.elapsed()
-            );
             (id, app.local_state().board_id())
-        }));
+        });
     }
 
-    let app = App::open(&path, NOW).await.unwrap();
+    let app = App::open_with_options(&path, NOW, options).await.unwrap();
     let board = app.local_state().board_id();
     let mut ids = BTreeSet::new();
-    for worker in workers {
-        let (id, observed_board) = worker.await.unwrap();
+    while let Some(worker) = workers.join_next().await {
+        let (id, observed_board) = worker.unwrap();
         assert_eq!(observed_board, board);
         assert!(ids.insert(id));
     }

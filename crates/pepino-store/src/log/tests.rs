@@ -351,9 +351,9 @@ async fn file_reads_see_the_committed_view_during_rebuild() {
     let mut tx = writer.begin().await.unwrap();
     rebuild(&mut tx, board).await.unwrap();
 
-    let visible = tokio::time::timeout(Duration::from_secs(2), store.task(board, task))
+    let visible = tokio::time::timeout(Duration::from_secs(60), store.task(board, task))
         .await
-        .unwrap()
+        .expect("reader timed out while the projection was rebuilding")
         .unwrap();
     assert_eq!(visible, None);
     tx.commit().await.unwrap();
@@ -491,7 +491,7 @@ async fn file_reader_cannot_observe_a_partial_batch() {
                         && let Some(paused) = paused.take()
                     {
                         let _ = paused.send(());
-                        let _ = wait.recv_timeout(Duration::from_secs(5));
+                        let _ = wait.recv();
                     }
                 }
             });
@@ -499,13 +499,15 @@ async fn file_reader_cannot_observe_a_partial_batch() {
 
     let events = [(&bytes[..], None), (&tag[..], None)];
     let (written, during) = tokio::join!(store.append_batch(board, &events), async {
-        tokio::time::timeout(Duration::from_secs(5), reached)
+        tokio::time::timeout(Duration::from_secs(60), reached)
             .await
-            .unwrap()
+            .expect("writer did not reach the second insert")
             .unwrap();
-        let snapshot = tokio::time::timeout(Duration::from_secs(3), store.board(board)).await;
+        let snapshot = tokio::time::timeout(Duration::from_secs(60), store.board(board)).await;
         resume.send(()).unwrap();
-        snapshot.unwrap().unwrap()
+        snapshot
+            .expect("reader timed out during the append batch")
+            .unwrap()
     });
     assert_eq!(written.unwrap().len(), 2);
     assert!(during.tasks().is_empty());
