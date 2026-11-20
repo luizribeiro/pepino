@@ -26,9 +26,16 @@ impl AbsolutePath {
 }
 
 pub(crate) fn expand_home(value: &Path, home: &Path) -> PathBuf {
-    value
-        .strip_prefix("~")
-        .map_or_else(|_| value.to_owned(), |rest| home.join(rest))
+    value.strip_prefix("~").map_or_else(
+        |_| value.to_owned(),
+        |rest| {
+            if rest.as_os_str().is_empty() {
+                home.to_owned()
+            } else {
+                home.join(rest)
+            }
+        },
+    )
 }
 
 pub(crate) fn serialize_path<S: Serializer>(path: &Path, serializer: S) -> Result<S::Ok, S::Error> {
@@ -57,6 +64,7 @@ mod tests {
             path("/srv/pepino").unwrap().as_path(),
             Path::new("/srv/pepino")
         );
+        assert_eq!(path("~").unwrap().as_path().as_os_str(), home.as_os_str());
         assert!(path("keys/device.cbor").is_err());
         assert!(path("~other/device.cbor").is_err());
     }
