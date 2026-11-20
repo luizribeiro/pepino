@@ -1,3 +1,7 @@
+use std::sync::Arc;
+
+use crate::SyncEngine;
+use futures_util::StreamExt;
 use std::{net::Ipv4Addr, path::Path, time::Duration};
 
 use pepino_app::App;
@@ -63,4 +67,75 @@ pub(super) async fn enroll(root: &Path, owner: &Device, name: &str) -> Device {
     )
     .await;
     Device { app, settings }
+}
+
+pub(super) struct Live {
+    pub(super) engine: SyncEngine,
+    node: Arc<Node>,
+}
+
+impl Device {
+    pub(super) async fn start(&self) -> Live {
+        let node = Arc::new(Node::spawn(self.settings.clone()).await.unwrap());
+        let engine = SyncEngine::start(
+            Default::default(),
+            node.clone(),
+            self.settings.database_path.parent().unwrap(),
+        )
+        .await
+        .unwrap();
+        Live { engine, node }
+    }
+
+    pub(super) async fn await_events(&self, live: &Live, count: i64) {
+        let mut changes = live.engine.status_changes().boxed();
+        tokio::time::timeout(WAIT, async {
+            while self
+                .app
+                .store()
+                .statistics(self.board())
+                .await
+                .unwrap()
+                .total
+                < count
+            {
+                changes.next().await.expect("engine status stream closed");
+            }
+        })
+        .await
+        .unwrap_or_else(|error| {
+            panic!(
+                "expected {count} events: {error}, {:?}",
+                live.engine.status()
+            )
+        });
+        live.engine.wait_idle(WAIT).await.unwrap();
+    }
+}
+
+impl Live {
+    pub(super) async fn stop(self) {
+        self.engine.shutdown().await.unwrap();
+        Arc::into_inner(self.node)
+            .unwrap()
+            .shutdown()
+            .await
+            .unwrap();
+    }
+}
+
+pub(super) async fn views_match(left: &Device, right: &Device) {
+    assert_eq!(
+        left.app
+            .store()
+            .board_with_comments(left.board())
+            .await
+            .unwrap(),
+        right
+            .app
+            .store()
+            .board_with_comments(right.board())
+            .await
+            .unwrap(),
+    );
 }
