@@ -44,6 +44,19 @@ impl SyncEngine {
             }
             .into());
         }
+        if handle
+            .members()
+            .await?
+            .iter()
+            .any(|(device, existing)| *device == request.device.id && *existing != role.into())
+        {
+            return Err(AppError::InvalidInput {
+                field: "role".into(),
+                reason: "Changing a person's board role is reserved for a later release.".into(),
+                diagnostic: None,
+            }
+            .into());
+        }
         let (owner, owner_device) = owner_card(&local, id)?;
         let admission = BoardAdmission {
             owner: owner.clone(),
