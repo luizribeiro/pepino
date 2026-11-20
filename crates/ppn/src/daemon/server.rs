@@ -19,6 +19,9 @@ use super::{
 
 const IO_LIMIT: Duration = Duration::from_secs(2);
 const CONNECTIONS: usize = 32;
+const WAITS: usize = 128;
+
+type Decoded = Result<Operation, Box<Outcome>>;
 
 pub enum End {
     Stopped,
@@ -33,7 +36,9 @@ pub async fn serve(
     let stop = Notify::new();
     let changes = engine.status_changes();
     tokio::pin!(changes);
+    let mut reads = FuturesUnordered::new();
     let mut requests = FuturesUnordered::new();
+    let mut waits = FuturesUnordered::new();
     loop {
         tokio::select! {
             biased;
@@ -44,19 +49,43 @@ pub async fn serve(
                 }
             }
             _ = requests.next(), if !requests.is_empty() => (),
-            accepted = listener.accept(), if requests.len() < CONNECTIONS => {
+            _ = waits.next(), if !waits.is_empty() => (),
+            read = reads.next(), if !reads.is_empty() => {
+                let read: Option<Option<(UnixStream, Decoded)>> = read;
+                if let Some(Some((stream, operation))) = read {
+                    if operation.as_ref().is_ok_and(|op| op.wait_ms().is_some()) {
+                        if waits.len() < WAITS {
+                            waits.push(respond(stream, operation, &stop, engine, started));
+                        } else {
+                            let busy = Outcome::error("busy", "Too many outstanding control waits.");
+                            requests.push(respond(stream, Err(Box::new(busy)), &stop, engine, started));
+                        }
+                    } else {
+                        requests.push(respond(stream, operation, &stop, engine, started));
+                    }
+                }
+            }
+            accepted = listener.accept(), if reads.len() + requests.len() < CONNECTIONS => {
                 let (stream, _) = accepted?;
-                requests.push(respond(stream, &stop, engine, started));
+                reads.push(read_request(stream));
             }
         }
     }
 }
 
-async fn respond(mut stream: UnixStream, stop: &Notify, engine: &SyncEngine, started: Instant) {
-    let Ok(frame) = timeout(IO_LIMIT, framing::read(&mut stream)).await else {
-        return;
-    };
-    let outcome = match decode(frame) {
+async fn read_request(mut stream: UnixStream) -> Option<(UnixStream, Decoded)> {
+    let frame = timeout(IO_LIMIT, framing::read(&mut stream)).await.ok()?;
+    Some((stream, decode(frame)))
+}
+
+async fn respond(
+    mut stream: UnixStream,
+    operation: Decoded,
+    stop: &Notify,
+    engine: &SyncEngine,
+    started: Instant,
+) {
+    let outcome = match operation {
         Ok(operation) => operate(engine, operation, started).await,
         Err(error) => *error,
     };

@@ -208,6 +208,21 @@ fn a_timed_out_join_completes_when_the_grantor_returns() {
             .contains("Board membership: waiting to be added")
     );
 
+    {
+        use std::{io::Write, os::unix::net::UnixStream};
+
+        let socket = ferrum.json(&["daemon", "status"])["socket_path"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let waits = (0..40).map(|_| {
+            let mut stream = UnixStream::connect(&socket).unwrap();
+            stream.write_all(b"{\"v\":1,\"request\":{\"op\":\"board_join_state\",\"timeout_ms\":5000}}\n").unwrap();
+            stream
+        }).collect::<Vec<_>>();
+        assert_eq!(ferrum.json(&["daemon", "status"])["running"], true);
+        drop(waits);
+    }
     titanium.start();
     // From here the daemon completes the join without another join command.
     until(|| ferrum.json(&["status"])["boards"][0]["membership"] == "joined");
