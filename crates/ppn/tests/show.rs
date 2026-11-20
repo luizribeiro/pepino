@@ -273,3 +273,61 @@ fn show_forces_color_on_a_pipe_when_requested_by_flag_or_config() {
         "task"
     );
 }
+
+#[test]
+fn human_diagnostics_use_cli_names_across_commands() {
+    let (sandbox, data) = task_sandbox();
+    let task = create_task(&sandbox, "Repair the greenhouse latch", &[]);
+    let (ambiguous, _) = common::ambiguous_tasks(&data);
+    let unusable = "1".repeat(64);
+    sandbox.run(&["view", "save", "weekend", "tag:hardware"]);
+    sandbox.run(&["view", "save", "maintenance", "@weekend"]);
+    let cyclic = format!("parent:{ambiguous}");
+    for (args, status) in [
+        (&["ls", "--sort", "missing"][..], 2),
+        (&["ls", "--filter", "due:<"], 2),
+        (&["ls", "@missing"], 2),
+        (&["ls", "assignee:unknown"], 2),
+        (&["ls", "board:missing"], 3),
+        (&["ls", &cyclic], 4),
+        (&["ls", "tag:hardware tag:outdoors"], 2),
+        (&["view", "save", "Weekend", "tag:hardware"], 2),
+        (&["view", "save", "weekend", "@maintenance"], 2),
+        (&["view", "rm", "weekend"], 1),
+        (&["view", "show", "absent"], 3),
+        (&["show", &unusable], 3),
+        (&["tree", &ambiguous], 4),
+        (&["deps", "task"], 2),
+        (&["log", &unusable], 3),
+        (&["add", "   "], 2),
+        (&["add", "Paint the frame", "--parent", &unusable], 3),
+        (&["add", "Paint the frame", "--set", "Invalid=4"], 2),
+        (&["edit", &task, "--title", "   "], 2),
+        (&["tag", &task, "Hardware"], 2),
+        (&["assign", &task, "Unknown Person"], 2),
+        (&["comment", &task, "   "], 2),
+        (&["link", &task, "blocks", &task], 1),
+        (&["unlink", &task, "blocks", &unusable], 3),
+        (&["rm", &task], 1),
+    ] {
+        let output = sandbox.command().args(args).output().unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(output.status.code(), Some(status), "{args:?}: {stderr}");
+        assert!(output.stdout.is_empty(), "{args:?}: {stderr}");
+        for identifier in [
+            "list_views",
+            "at name",
+            "at filter",
+            "changes.title",
+            "field:\"filter\"",
+        ] {
+            assert!(!stderr.contains(identifier), "{args:?}: {stderr}");
+        }
+        assert!(
+            !stderr
+                .split(|ch: char| !ch.is_ascii_hexdigit())
+                .any(|word| word.len() == 64),
+            "{args:?}: {stderr}"
+        );
+    }
+}
