@@ -11,6 +11,7 @@ mod batch;
 mod board;
 mod board_access;
 mod board_grant;
+mod board_install;
 mod board_request;
 mod board_requests;
 mod catalog;
