@@ -520,3 +520,24 @@ mod tests {
         assert!(matches!(response, Response::Task { .. }));
     }
 }
+
+pub fn normalize_name(input: &str) -> Result<String, crate::AppError> {
+    let title = normalize_title(input, "name")?;
+    pepino_core::Event::TaskCreated {
+        title: title.clone(),
+        fields: Default::default(),
+    }
+    .validate()
+    .map_err(|error| crate::batch::invalid_event("name", error))?;
+    Ok(title)
+}
+
+#[cfg(test)]
+#[test]
+fn identity_names_follow_title_rules() {
+    assert_eq!(normalize_name("  Ada Gardener  ").unwrap(), "Ada Gardener");
+    assert!(normalize_name("    ").is_err());
+    assert!(normalize_name("Ada\nGardener").is_err());
+    assert!(normalize_name(&"é".repeat(512)).is_ok());
+    assert!(normalize_name(&"é".repeat(513)).is_err());
+}

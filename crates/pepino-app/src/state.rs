@@ -282,8 +282,8 @@ impl TryFrom<OpenOptions> for InitialNames {
             }
         }
         Ok(Self {
-            display_name,
-            device_name,
+            display_name: crate::normalize_name(&display_name)?,
+            device_name: crate::normalize_name(&device_name)?,
             board_name,
         })
     }

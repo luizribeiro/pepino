@@ -227,12 +227,7 @@ impl App {
             Some(name) => name,
             None => whoami::hostname().map_err(|err| storage("get hostname", err, false))?,
         };
-        if name.trim().is_empty() {
-            return Err(invalid(
-                "name",
-                "name must contain a non-whitespace character",
-            ));
-        }
+        let name = crate::normalize_name(&name)?;
         let key_path = options
             .credentials_file
             .unwrap_or_else(|| directory.join("credentials.cbor"));

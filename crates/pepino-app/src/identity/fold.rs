@@ -57,7 +57,7 @@ pub(super) fn fold(entries: &BTreeMap<EventId, SignedEdit>, root: DeviceId) -> F
             .map(|id| entries[id].edit.generation + 1)
             .max()
             .unwrap_or(0);
-        if !authorized || edit.generation != generation {
+        if !authorized || edit.generation != generation || !valid_names(&edit.change) {
             view.rejected.insert(id);
             continue;
         }
@@ -73,6 +73,31 @@ pub(super) fn fold(entries: &BTreeMap<EventId, SignedEdit>, root: DeviceId) -> F
         accepted.insert(id, active);
     }
     view
+}
+
+fn valid_names(change: &Change) -> bool {
+    let valid = |name: &str| crate::normalize_name(name).is_ok_and(|value| value == name);
+    match change {
+        Change::Initialize {
+            display_name,
+            device_name,
+            added_ms,
+        } => {
+            if added_ms.is_some() {
+                valid(display_name) && valid(device_name)
+            } else {
+                !display_name.trim().is_empty() && !device_name.trim().is_empty()
+            }
+        }
+        Change::Add { name, added_ms, .. } => {
+            if added_ms.is_some() {
+                valid(name)
+            } else {
+                !name.trim().is_empty()
+            }
+        }
+        Change::RenameIdentity(name) | Change::RenameDevice(_, name) => valid(name),
+    }
 }
 
 #[cfg(test)]

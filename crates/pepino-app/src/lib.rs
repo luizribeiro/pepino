@@ -60,3 +60,5 @@ pub use wire::{PROTOCOL_VERSION, WireFormat, WireRequest, WireResponse, WireResu
 extern crate self as pepino_app;
 
 pub use device_grant_auth::SignedGrant;
+
+pub use write::normalize_name;
