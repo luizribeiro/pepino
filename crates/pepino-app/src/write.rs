@@ -91,9 +91,41 @@ impl App {
                 let current = self.resolve(view, "task", &task).await?;
                 set_assignees(batch, current, self.identities(assignees)?, false)?;
             }
+            Request::Link { from, kind, to } => {
+                self.set_edge(view, batch, &from, kind, &to, true).await?;
+            }
+            Request::Unlink { from, kind, to } => {
+                self.set_edge(view, batch, &from, kind, &to, false).await?;
+            }
             _ => return Err(invalid("op", "write operation is unavailable")),
         }
         Ok(())
+    }
+
+    async fn set_edge(
+        &self,
+        view: &BoardView,
+        batch: &mut Batch,
+        from: &str,
+        kind: EdgeKind,
+        to: &str,
+        present: bool,
+    ) -> Result<(), AppError> {
+        let mut from = self.resolve(view, "from", from).await?.id;
+        let mut to = self.resolve(view, "to", to).await?.id;
+        if kind == EdgeKind::Relates && from > to {
+            std::mem::swap(&mut from, &mut to);
+        }
+        let exists = view
+            .edges(from)
+            .iter()
+            .any(|edge| (edge.from, edge.kind, edge.to) == (from, kind, to));
+        let event = if present {
+            Event::EdgeAdded { from, kind, to }
+        } else {
+            Event::EdgeRemoved { from, kind, to }
+        };
+        batch.stage(event, "to", exists != present)
     }
 
     fn identities(&self, references: Vec<String>) -> Result<BTreeSet<IdentityId>, AppError> {

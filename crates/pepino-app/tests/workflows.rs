@@ -216,3 +216,41 @@ async fn tags_and_assignees_deduplicate_and_validate_entire_batches() {
         assert_eq!(get(&mut app, &id).await, before);
     }
 }
+
+#[tokio::test]
+async fn link_and_unlink_use_present_edges_including_excluded_ones() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let first = add(&mut app, "Order a replacement latch").await;
+    let second = add(&mut app, "Install the latch").await;
+    let link =
+        |from: &str, kind: &str, to: &str| json!({"op":"link","from":from,"kind":kind,"to":to});
+    let unlink =
+        |from: &str, kind: &str, to: &str| json!({"op":"unlink","from":from,"kind":kind,"to":to});
+
+    let related = write(&mut app, link(&first[..12], "relates", &second)).await;
+    assert!(related.0);
+    assert_eq!(related.1.len(), 2);
+    assert_eq!(get(&mut app, &second).await.relates, [first.clone()].into());
+    assert!(!write(&mut app, link(&second, "relates", &first)).await.0);
+    assert!(write(&mut app, unlink(&second, "relates", &first)).await.0);
+    assert!(get(&mut app, &first).await.relates.is_empty());
+    assert!(!write(&mut app, unlink(&first, "relates", &second)).await.0);
+
+    assert!(write(&mut app, link(&first, "blocks", &second)).await.0);
+    assert!(write(&mut app, link(&second, "blocks", &first)).await.0);
+    assert!(get(&mut app, &first).await.blocked_by.is_empty());
+    assert!(!write(&mut app, link(&second, "blocks", &first)).await.0);
+    assert!(write(&mut app, unlink(&second, "blocks", &first)).await.0);
+    assert!(!write(&mut app, unlink(&second, "blocks", &first)).await.0);
+    assert!(get(&mut app, &second).await.blocked);
+
+    for request in [
+        link(&first, "parent", &first),
+        unlink(&first, "parent", &first),
+    ] {
+        assert!(
+            matches!(handle(&mut app, request).await, Err(AppError::InvalidInput { field, .. }) if field == "to")
+        );
+    }
+}
