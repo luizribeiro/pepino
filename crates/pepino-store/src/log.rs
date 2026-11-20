@@ -8,6 +8,8 @@ use crate::{Store, StoreError, fold, history};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IdSource {
     Content,
+    /// Use only for an ID assigned by the transport or replayed from the store.
+    /// The ID is not checked against the envelope bytes.
     Trusted(EventId),
 }
 
