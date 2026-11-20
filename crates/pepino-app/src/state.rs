@@ -124,16 +124,25 @@ impl LocalState {
         &self,
         ids: impl IntoIterator<Item = &'a str>,
     ) -> std::collections::BTreeMap<String, String> {
-        let identity = self.identity_id.to_string();
-        ids.into_iter()
-            .filter(|id| {
-                *id == identity
-                    || id
-                        .parse::<DeviceId>()
-                        .is_ok_and(|device| self.knows_roster_device(device))
-            })
-            .map(|id| (id.to_owned(), self.display_name().to_owned()))
-            .collect()
+        let labels = self.person_labels();
+        let devices = self.author_devices();
+        let mut names = BTreeMap::new();
+        for reference in ids {
+            let person = reference
+                .parse::<DeviceId>()
+                .ok()
+                .and_then(|id| devices.get(&id).map(|(person, _)| *person))
+                .or_else(|| reference.parse().ok());
+            if let Some(id) = person
+                && let Some(name) = labels.get(&id)
+            {
+                names.insert(reference.into(), name.clone());
+                if labels.len() > 1 {
+                    names.insert(id.to_string(), name.clone());
+                }
+            }
+        }
+        names
     }
 
     pub(super) fn new(

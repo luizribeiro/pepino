@@ -29,6 +29,7 @@ mod identity;
 mod initialize;
 mod list;
 mod log;
+mod people_names;
 mod projection;
 mod protocol;
 mod read;

@@ -115,16 +115,11 @@ impl App {
                     .map(|(id, title)| (id.to_string(), title)),
             );
         }
+        let labels = self.local.person_labels();
         let assignee_names = task
             .assignees
-            .contains(&self.local.identity_id)
-            .then(|| {
-                (
-                    self.local.identity_id.to_string(),
-                    self.local.display_name().to_owned(),
-                )
-            })
-            .into_iter()
+            .iter()
+            .filter_map(|id| labels.get(id).map(|name| (id.to_string(), name.clone())))
             .collect();
         let edges = incident
             .into_iter()

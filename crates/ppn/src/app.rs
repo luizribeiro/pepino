@@ -81,9 +81,9 @@ impl AppClient {
 
     pub fn author_labels(&self, verbose: bool) -> impl Fn(Option<&str>) -> String + use<> {
         let local = self.app.local_state();
-        let devices = local.devices();
-        let local_person = crate::render::single_line(local.display_name());
-        move |id| author_label(id, &devices, &local_person, verbose)
+        let devices = local.author_devices();
+        let people = local.person_labels();
+        move |id| author_label(id, &devices, &people, verbose)
     }
 
     pub fn selected_board(&self) -> Result<(&pepino_app::LocalBoard, &'static str), CliError> {
@@ -254,8 +254,8 @@ mod tests {
 
 fn author_label(
     id: Option<&str>,
-    devices: &std::collections::BTreeMap<pepino_core::DeviceId, String>,
-    person: &str,
+    devices: &std::collections::BTreeMap<pepino_core::DeviceId, (pepino_core::IdentityId, String)>,
+    people: &std::collections::BTreeMap<pepino_core::IdentityId, String>,
     verbose: bool,
 ) -> String {
     use crate::render::{short_id, single_line};
@@ -263,13 +263,17 @@ fn author_label(
     let Some(id) = id else {
         return "unknown person".into();
     };
-    let Some(device) = id.parse().ok().and_then(|id| devices.get(&id)) else {
+    let Some((person, device)) = id.parse().ok().and_then(|id| devices.get(&id)) else {
         return format!("unknown device {}", short_id(id));
     };
+    let person = people
+        .get(person)
+        .map(|name| single_line(name))
+        .unwrap_or_else(|| "unknown person".into());
     if verbose {
         format!("{person} ({})", single_line(device))
     } else {
-        person.into()
+        person
     }
 }
 
@@ -277,19 +281,21 @@ fn author_label(
 #[test]
 fn labels_authors_as_the_identity_or_an_unknown_device() {
     let cobalt = pepino_core::DeviceId::from_bytes([19; 32]);
-    let devices = [(cobalt, "Garden tablet".into())].into();
+    let identity = pepino_core::IdentityId::from_bytes([20; 32]);
+    let devices = [(cobalt, (identity, "Garden tablet".into()))].into();
+    let people = [(identity, "Ada Gardener".into())].into();
     for (verbose, expected) in [
         (false, "Ada Gardener"),
         (true, "Ada Gardener (Garden tablet)"),
     ] {
         assert_eq!(
-            author_label(Some(&cobalt.to_string()), &devices, "Ada Gardener", verbose),
+            author_label(Some(&cobalt.to_string()), &devices, &people, verbose),
             expected
         );
     }
     let stranger = "9a".repeat(32);
     assert_eq!(
-        author_label(Some(&stranger), &devices, "Ada Gardener", false),
+        author_label(Some(&stranger), &devices, &people, false),
         "unknown device 9a9a9a"
     );
 }
