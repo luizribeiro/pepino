@@ -1,5 +1,6 @@
 mod directory;
 mod ingest;
+mod publish;
 mod stub;
 
 #[tokio::test]

@@ -38,6 +38,7 @@ pub struct SyncEngine<T: Transport = Node> {
     node: Arc<T>,
     status: watch::Receiver<Status>,
     stop: watch::Sender<()>,
+    nudges: watch::Sender<u64>,
     workers: JoinSet<Result<(), Error>>,
 }
 
@@ -61,6 +62,7 @@ impl<T: Transport> SyncEngine<T> {
         }
         let boards = [app.local_state().board_id];
         let (stop, stopping) = watch::channel(());
+        let (nudges, nudged) = watch::channel(0);
         let (changes, status) = watch::channel(Status {
             boards: boards
                 .into_iter()
@@ -76,10 +78,12 @@ impl<T: Transport> SyncEngine<T> {
             let mut stopping = stopping.clone();
             let app = app.clone();
             let status = changes.clone();
+            let nudged = nudged.clone();
             workers.spawn(async move {
                 let result = tokio::select! {
                     biased;
                     _ = stopping.changed() => Ok(()),
+                    _ = crate::outbox::run(&app, id, &board, &status, nudged) => Ok(()),
                     result = crate::inbox::run(&app, id, stream, &status) => result,
                 };
                 status.send_modify(|status| {
@@ -102,8 +106,15 @@ impl<T: Transport> SyncEngine<T> {
             node,
             status,
             stop,
+            nudges,
             workers,
         })
+    }
+
+    /// Request a scan after a local write commits.
+    pub fn nudge(&self) {
+        self.nudges
+            .send_modify(|generation| *generation = generation.saturating_add(1));
     }
 
     pub fn status(&self) -> Status {

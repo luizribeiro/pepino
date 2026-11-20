@@ -1,0 +1,56 @@
+use std::{sync::Arc, time::Duration};
+
+use futures_util::StreamExt;
+use pepino_core::{BoardId, DeviceId};
+use serde_json::json;
+
+use super::{directory, stub::Stub};
+use crate::{Status, SyncEngine};
+
+pub(super) async fn until(engine: &SyncEngine<Stub>, condition: impl Fn(&Status) -> bool) {
+    let mut updates = engine.status_changes().boxed();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(status) = updates.next().await {
+            if condition(&status) {
+                return;
+            }
+        }
+        panic!("engine stopped before publishing the expected status");
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn publishes_existing_local_writes_in_store_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([36; 32]);
+    let device = DeviceId::from_bytes([37; 32]);
+    let mut app = directory::prepare(dir.path(), board, device).await;
+    for title in ["Buy a sump pump", "Install the sump pump"] {
+        directory::write(&mut app, json!({"op":"add_task","title":title})).await;
+    }
+    let events = app
+        .store()
+        .outbox(board, device, 2.try_into().unwrap())
+        .await
+        .unwrap()
+        .events;
+    let node = Arc::new(Stub::new(device));
+    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    until(&engine, Status::is_idle).await;
+    assert_eq!(
+        engine.status().boards[&board].last_published,
+        Some(events[1].id)
+    );
+    assert_eq!(
+        node.published(),
+        events
+            .into_iter()
+            .map(|item| item.bytes)
+            .collect::<Vec<_>>()
+    );
+    engine.shutdown().await.unwrap();
+}

@@ -1,6 +1,6 @@
 mod engine;
 mod inbox;
-#[cfg(test)]
+mod outbox;
 mod publication;
 mod retry;
 mod status;
