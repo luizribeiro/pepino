@@ -317,3 +317,35 @@ fn edit_can_set_remove_and_leave_the_parent_unchanged() {
         .unwrap();
     task_error(conflicting, 2, "usage");
 }
+
+#[test]
+fn edit_can_add_and_remove_dependencies_in_either_direction() {
+    let (sandbox, _) = task_sandbox();
+    let start = create_task(&sandbox, "Measure the frame", &[]);
+    let task = create_task(&sandbox, "Cut the hinge mortises", &[]);
+    let end = create_task(&sandbox, "Hang the door", &[]);
+    let linked = as_json(&sandbox.run(&[
+        "edit",
+        &task,
+        "--blocked-by",
+        &start,
+        "--blocks",
+        &end,
+        "--json",
+    ]));
+    assert_write(&linked, true);
+    let detail = show_task(&sandbox, &task);
+    assert_eq!(detail["blocks"], serde_json::json!([end]));
+    assert_eq!(detail["blocked_by"], serde_json::json!([start]));
+    let message = sandbox.run(&["edit", &task, "--unblocked-by", &start, "--unblocks", &end]);
+    assert!(message.starts_with("Edited "));
+    let detail = show_task(&sandbox, &task);
+    assert_eq!(detail["blocks"], serde_json::json!([]));
+    assert_eq!(detail["blocked_by"], serde_json::json!([]));
+    let bad = sandbox
+        .command()
+        .args(["edit", &task, "--blocked-by", "hinge", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(task_error(bad, 2, "invalid_input")["input"], "--blocked-by");
+}
