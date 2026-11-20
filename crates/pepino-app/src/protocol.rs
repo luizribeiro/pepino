@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{Date, EdgeKind, FieldValue, Hlc, IdentityRecord, NamedRecord, Status, StatusCounts};
+use crate::{
+    Date, EdgeKind, EventRecord, FieldValue, Hlc, IdentityRecord, NamedRecord, Status, StatusCounts,
+};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -17,10 +19,20 @@ pub enum Request {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 #[non_exhaustive]
 pub enum ReadRequest {
-    GetTask { task: String },
-    Tree { task: Option<String> },
-    Deps { task: String },
+    GetTask {
+        task: String,
+    },
+    Tree {
+        task: Option<String>,
+    },
+    Deps {
+        task: String,
+    },
     Status,
+    Log {
+        task: Option<String>,
+        limit: Option<usize>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -116,6 +128,9 @@ pub enum Response {
         data_dir: String,
         counts: StatusCounts,
         protocol_version: u32,
+    },
+    Log {
+        events: Vec<EventRecord>,
     },
 }
 

@@ -721,3 +721,32 @@ async fn status_reports_local_context_and_counts_from_the_log() {
     expected["counts"] = json!({"open":1,"closed":1,"events":3,"skipped":{"unknown_version":1,"unknown_event":0,"unknown_value":0,"invalid":0}});
     read_golden(&mut app, json!({"op":"status"}), json!({"ok":expected})).await;
 }
+
+#[tokio::test]
+async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
+    use pepino_store::IdSource;
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let board = app.local_state().board_id;
+    let task = add(&mut app, "Replace the greenhouse latch").await;
+    write(
+        &mut app,
+        json!({"op":"comment","task":task,"text":"Bring stainless screws"}),
+    )
+    .await;
+    let store = Store::open(directory.path().join("pepino.sqlite"))
+        .await
+        .unwrap();
+    let future = store
+        .append(board, &[0x82, 2, 0xf6], IdSource::Content)
+        .await
+        .unwrap();
+    let pepino_store::AppendOutcome::Skipped { id: future_id, .. } = future else {
+        panic!("expected a skip")
+    };
+    let Response::Log { events } = handle(&mut app, json!({"op":"log"})).await.unwrap() else {
+        panic!("expected history");
+    };
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0].id, future_id.to_string());
+}

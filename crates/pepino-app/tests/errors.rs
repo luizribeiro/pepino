@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 const NOW: u64 = 1_795_144_800_000;
 
-fn operations(reference: &str, peer: &str) -> [(Value, &'static str); 14] {
+fn operations(reference: &str, peer: &str) -> [(Value, &'static str); 15] {
     [
         (
             json!({"op":"add_task","title":"Install the replacement latch","parent":reference}),
@@ -54,6 +54,7 @@ fn operations(reference: &str, peer: &str) -> [(Value, &'static str); 14] {
         (json!({"op":"get_task","task":reference}), "task"),
         (json!({"op":"tree","task":reference}), "task"),
         (json!({"op":"deps","task":reference}), "task"),
+        (json!({"op":"log","task":reference}), "task"),
     ]
 }
 

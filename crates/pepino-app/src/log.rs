@@ -4,7 +4,9 @@ use pepino_core::{DecodeOutcome, Event, InitialFields};
 use pepino_store::{EventClassification as StoredClassification, HistoryEvent};
 use serde::{Deserialize, Serialize};
 
-use crate::{AppError, Date, EdgeKind, FieldValue, Hlc, Status};
+use crate::app::store_error;
+use crate::projection::resolve;
+use crate::{App, AppError, Date, EdgeKind, FieldValue, Hlc, Response, Status};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EventRecord {
@@ -78,6 +80,29 @@ pub struct InitialTaskFields {
     pub tags: BTreeSet<String>,
     pub assignees: BTreeSet<String>,
     pub fields: BTreeMap<String, FieldValue>,
+}
+
+impl App {
+    pub(super) async fn log(
+        &self,
+        reference: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Response, AppError> {
+        let task = if let Some(reference) = reference {
+            Some(resolve(&self.board().await?, "task", reference)?.id)
+        } else {
+            None
+        };
+        let events = self
+            .store
+            .history(self.local.board_id, task, limit)
+            .await
+            .map_err(store_error)?
+            .into_iter()
+            .map(EventRecord::try_from)
+            .collect::<Result<_, _>>()?;
+        Ok(Response::Log { events })
+    }
 }
 
 impl From<StoredClassification> for EventClassification {
