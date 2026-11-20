@@ -3,10 +3,12 @@ use std::io::{self, BufRead, IsTerminal, Write};
 use std::time::Duration;
 
 use clap::ValueEnum;
+use serde::Serialize;
 
 use crate::error::{CliError, ErrorKind};
 
-#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
 pub enum Color {
     #[default]
     Auto,
