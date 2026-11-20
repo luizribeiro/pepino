@@ -13,6 +13,16 @@ use tokio::time::timeout;
 
 pub const WAIT: Duration = Duration::from_secs(8);
 
+pub fn fixture_dir() -> tempfile::TempDir {
+    #[cfg(target_os = "linux")]
+    if std::env::temp_dir() == Path::new("/tmp")
+        && let Ok(dir) = tempfile::tempdir_in("/dev/shm")
+    {
+        return dir;
+    }
+    tempfile::tempdir().unwrap()
+}
+
 pub fn network(dir: &Path) -> String {
     format!(
         "pepino-network-{}",
