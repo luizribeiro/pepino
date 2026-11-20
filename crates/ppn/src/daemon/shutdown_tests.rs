@@ -174,32 +174,103 @@ impl Pair {
             path: socket_path(&config(home, &self.network)),
         }
     }
+
+    fn joined(&self) {
+        use pepino_app::BoardJoinState;
+        let client = self.client(self.peer.path());
+        until(|| {
+            client.status().is_ok_and(|status| {
+                status.is_some_and(|status| {
+                    status.network.board_joins.get(&self.board) == Some(&BoardJoinState::Joined)
+                })
+            })
+        });
+    }
 }
 
-#[test]
-fn a_daemon_reopens_a_board_while_waiting_for_membership() {
+fn start_pair(rt: &tokio::runtime::Runtime) -> (Pair, Daemon, pepino_app::DeviceRequest) {
+    let (pair, device) = rt.block_on(Pair::enroll());
+    let daemon = Daemon::start(pair.owner.path(), &pair.network);
+    let client = pair.client(pair.owner.path());
+    until(|| client.status().is_ok_and(|status| status.is_some()));
+    (pair, daemon, device)
+}
+
+fn grant_membership(pair: &Pair, device: pepino_app::DeviceRequest) {
+    use super::protocol::{Operation, Outcome};
+
+    let client = pair.client(pair.owner.path());
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let reply = client.call_with(
+            Operation::AddMember {
+                device: device.clone(),
+                name: None,
+            },
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_secs(8)),
+        );
+        if matches!(reply, Ok(Outcome::MemberAdded)) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "could not enroll peer: {reply:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn random_delay(phase: u8) {
+    let seed = std::env::var("PEPINO_SHUTDOWN_TEST_SEED")
+        .ok()
+        .map(|seed| seed.parse().unwrap())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos()
+        });
+    let hash = blake3::hash(&[&seed.to_le_bytes()[..], &[phase]].concat());
+    std::thread::sleep(Duration::from_millis(u64::from(hash.as_bytes()[0]) % 40));
+}
+
+fn recover_join(signal: Signal) {
     use pepino_app::BoardJoinState;
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
-    let (pair, _) = rt.block_on(Pair::enroll());
-    let owner = Daemon::start(pair.owner.path(), &pair.network);
-    let client = pair.client(pair.owner.path());
-    until(|| client.status().is_ok_and(|status| status.is_some()));
+    let (pair, owner, device) = start_pair(&rt);
+    let peer = Daemon::start(pair.peer.path(), &pair.network);
     let client = pair.client(pair.peer.path());
-    for _ in 0..2 {
-        let peer = Daemon::start(pair.peer.path(), &pair.network);
-        until(|| {
-            client.status().is_ok_and(|status| {
-                status.is_some_and(|status| {
-                    status.network.board_joins.get(&pair.board)
-                        == Some(&BoardJoinState::WaitingToBeAdded)
-                })
+    until(|| {
+        client.status().is_ok_and(|status| {
+            status.is_some_and(|status| {
+                status.network.board_joins.get(&pair.board)
+                    == Some(&BoardJoinState::WaitingToBeAdded)
             })
-        });
-        peer.stop(Signal::SIGTERM);
-    }
+        })
+    });
+    std::thread::scope(|scope| {
+        scope.spawn(|| grant_membership(&pair, device));
+        random_delay(0);
+        peer.stop(signal);
+    });
+    let peer = Daemon::start(pair.peer.path(), &pair.network);
+    pair.joined();
+    peer.stop(Signal::SIGTERM);
     owner.stop(Signal::SIGTERM);
+}
+
+#[test]
+fn sigterm_during_join_recovers_membership() {
+    recover_join(Signal::SIGTERM);
+}
+
+#[test]
+fn sigkill_during_join_recovers_membership() {
+    recover_join(Signal::SIGKILL);
 }
