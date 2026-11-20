@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-tokio = { version = "1", features = ["rt"] }
+tokio = { version = "1", features = ["rt", "time"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 ciborium = "0.2"
 getrandom = "0.4"

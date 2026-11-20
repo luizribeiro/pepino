@@ -1,6 +1,7 @@
 use std::fs::File;
+use std::time::Duration;
 
-use pepino_app::{App, AppError, AppErrorKind};
+use pepino_app::{App, AppError, AppErrorKind, OpenOptions};
 use pepino_core::{DeviceId, Envelope, Event, EventId, Hlc, InitialFields};
 use pepino_store::{IdSource, Store};
 use serde_json::{Value, json};
@@ -26,7 +27,16 @@ fn operations(reference: &str, peer: &str) -> [Value; 11] {
 #[tokio::test]
 async fn every_operation_classifies_task_references_and_storage_contention() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let mut app = App::open_with_options(
+        directory.path(),
+        NOW,
+        OpenOptions {
+            lock_timeout: Duration::ZERO,
+            ..OpenOptions::default()
+        },
+    )
+    .await
+    .unwrap();
     let board = app.local_state().board_id;
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
@@ -95,13 +105,8 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
             .handle(serde_json::from_value(request).unwrap(), NOW)
             .await
             .unwrap_err();
-        assert!(matches!(
-            error,
-            AppError::Storage {
-                retryable: true,
-                ..
-            }
-        ));
+        assert_eq!(error, AppError::Busy);
+        assert!(error.retryable());
     }
     drop(guard);
     assert_eq!(store.latest_hlc(board).await.unwrap(), before);

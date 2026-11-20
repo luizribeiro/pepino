@@ -145,6 +145,7 @@ pub enum AppErrorKind {
     AmbiguousId,
     InvalidInput,
     Conflict,
+    Busy,
     Storage,
     UnsupportedVersion,
 }
@@ -156,6 +157,7 @@ impl AppErrorKind {
             Self::AmbiguousId => "ambiguous_id",
             Self::InvalidInput => "invalid_input",
             Self::Conflict => "conflict",
+            Self::Busy => "busy",
             Self::Storage => "storage",
             Self::UnsupportedVersion => "unsupported_version",
         }
@@ -178,6 +180,8 @@ pub enum AppError {
     InvalidInput { field: String, reason: String },
     #[error("task {task} is deleted")]
     Conflict { task: String },
+    #[error("another pepino process holds the data directory")]
+    Busy,
     #[error("storage error: {reason}")]
     Storage { retryable: bool, reason: String },
     #[error("protocol version {requested} is unsupported (supported version {supported})")]
@@ -185,12 +189,24 @@ pub enum AppError {
 }
 
 impl AppError {
+    pub const fn retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Busy
+                | Self::Storage {
+                    retryable: true,
+                    ..
+                }
+        )
+    }
+
     pub const fn kind(&self) -> AppErrorKind {
         match self {
             Self::NotFound { .. } => AppErrorKind::NotFound,
             Self::AmbiguousId { .. } => AppErrorKind::AmbiguousId,
             Self::InvalidInput { .. } => AppErrorKind::InvalidInput,
             Self::Conflict { .. } => AppErrorKind::Conflict,
+            Self::Busy => AppErrorKind::Busy,
             Self::Storage { .. } => AppErrorKind::Storage,
             Self::UnsupportedVersion { .. } => AppErrorKind::UnsupportedVersion,
         }

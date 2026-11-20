@@ -433,6 +433,7 @@ async fn reopening_preserves_local_state_tasks_and_clock_across_wall_regression(
         OpenOptions {
             display_name: Some("Ada Gardener".into()),
             board_name: Some("Greenhouse winter prep".into()),
+            ..OpenOptions::default()
         },
     )
     .await

@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+use std::time::Duration;
 
 use pepino_core::{BoardId, DeviceId, IdentityId};
 use serde::{Deserialize, Serialize};
@@ -10,10 +11,22 @@ use crate::AppError;
 const VERSION: u32 = 1;
 pub(crate) const FILE_NAME: &str = "local.json";
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenOptions {
     pub display_name: Option<String>,
     pub board_name: Option<String>,
+    /// Maximum wait for the data directory lock on each open or request.
+    pub lock_timeout: Duration,
+}
+
+impl Default for OpenOptions {
+    fn default() -> Self {
+        Self {
+            display_name: None,
+            board_name: None,
+            lock_timeout: Duration::from_secs(5),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -135,6 +148,7 @@ mod tests {
         let options = OpenOptions {
             display_name: Some("Ada Gardener".into()),
             board_name: Some("Greenhouse".into()),
+            ..OpenOptions::default()
         };
         let state = LocalState::load_or_create(directory.path(), options).unwrap();
         let path = directory.path().join(FILE_NAME);
@@ -184,7 +198,7 @@ mod tests {
                 directory.path(),
                 OpenOptions {
                     display_name: Some(name.into()),
-                    board_name: None,
+                    ..OpenOptions::default()
                 },
             )
             .unwrap()
