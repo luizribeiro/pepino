@@ -166,6 +166,27 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
     }
     let before = store.latest_hlc(board).await.unwrap();
     for (request, field) in operations("abcdf1", peer) {
+        if request["op"] == "log" {
+            let response = app
+                .handle(serde_json::from_value(request).unwrap(), NOW)
+                .await
+                .unwrap();
+            let pepino_app::Response::Log {
+                events, unordered, ..
+            } = response
+            else {
+                panic!("expected history for the deleted task");
+            };
+            assert_eq!(
+                events
+                    .iter()
+                    .map(|event| event.kind.as_str())
+                    .collect::<Vec<_>>(),
+                ["task_created", "task_deleted"]
+            );
+            assert!(unordered.is_empty());
+            continue;
+        }
         let error = app
             .handle(serde_json::from_value(request).unwrap(), NOW)
             .await

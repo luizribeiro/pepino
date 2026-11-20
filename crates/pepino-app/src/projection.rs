@@ -15,8 +15,26 @@ pub(super) fn resolve<'a>(
     field: &str,
     reference: &str,
 ) -> Result<&'a StoredTask, AppError> {
+    snapshot_task(view, resolve_id(view, field, reference, false)?)
+}
+
+pub(super) fn snapshot_task(view: &BoardView, id: TaskId) -> Result<&StoredTask, AppError> {
+    view.task(id).ok_or_else(|| {
+        store_error(StoreError::ViewValue(format!(
+            "missing task {id} in board snapshot"
+        )))
+    })
+}
+
+pub(super) fn resolve_id(
+    view: &BoardView,
+    field: &str,
+    reference: &str,
+    include_deleted: bool,
+) -> Result<TaskId, AppError> {
     match view.resolve_task_prefix(reference) {
-        Ok(TaskPrefixResolution::Live(id)) => Ok(view.task(id).expect("ID resolved in this view")),
+        Ok(TaskPrefixResolution::Live(id)) => Ok(id),
+        Ok(TaskPrefixResolution::Deleted { id: Some(id) }) if include_deleted => Ok(id),
         Ok(TaskPrefixResolution::Ambiguous { count, candidates }) => Err(AppError::AmbiguousId {
             field: field.into(),
             task: reference.into(),

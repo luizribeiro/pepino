@@ -1,7 +1,7 @@
 use pepino_store::{BoardView, Dependency};
 
 use crate::app::store_error;
-use crate::projection::{edge_effect, project, project_summary, resolve};
+use crate::projection::{edge_effect, project, project_summary, resolve, snapshot_task};
 use crate::{App, AppError, DependencyRecord, ReadRequest, Response, TreeNode};
 
 impl App {
@@ -65,9 +65,7 @@ impl App {
             .into_iter()
             .flat_map(|root| board.subtree(root))
             .map(|node| {
-                let task = board
-                    .task(node.task)
-                    .expect("subtree task belongs to the snapshot");
+                let task = snapshot_task(&board, node.task)?;
                 Ok(TreeNode {
                     depth: node.depth,
                     task: project_summary(task)?,
@@ -85,9 +83,7 @@ impl App {
             entries
                 .into_iter()
                 .map(|entry| {
-                    let task = board
-                        .task(entry.task)
-                        .expect("dependency belongs to the snapshot");
+                    let task = snapshot_task(&board, entry.task)?;
                     Ok(DependencyRecord {
                         distance: entry.distance,
                         task: project_summary(task)?,

@@ -5,7 +5,7 @@ use pepino_store::{EventClassification as StoredClassification, HistoryEvent};
 use serde::{Deserialize, Serialize};
 
 use crate::app::store_error;
-use crate::projection::resolve;
+use crate::projection::resolve_id;
 use crate::{App, AppError, Date, EdgeKind, FieldValue, Hlc, Response, Status};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -89,7 +89,7 @@ impl App {
         limit: Option<usize>,
     ) -> Result<Response, AppError> {
         let task = if let Some(reference) = reference {
-            Some(resolve(&self.board().await?, "task", reference)?.id)
+            Some(resolve_id(&self.board().await?, "task", reference, true)?)
         } else {
             None
         };
