@@ -47,7 +47,7 @@ let
 
   nullableList = value: if value == null then [ ] else value;
   uniqueIds = ids: lib.length ids == lib.length (lib.unique (map lib.toLower ids));
-
+  withoutNulls = lib.filterAttrs (_: value: value != null);
 in
 {
   options = { pkgs, ... }: {
@@ -105,4 +105,24 @@ in
       warnings = lib.optional (service.enable && nullableList service.trustedDevices == [ ])
         "services.pepino.enable is set with no trusted devices, so the node will accept boards from nobody.";
     };
+
+  render = pkgs: name: node:
+    let
+      ui = withoutNulls (lib.optionalAttrs (node ? ui) {
+        inherit (node.ui) color;
+        date_format = node.ui.dateFormat;
+      });
+    in
+    (pkgs.formats.toml { }).generate name (withoutNulls
+      {
+        inherit (node) network mdns;
+        relay_urls = node.relayUrls;
+        credentials_file = node.credentialsFile;
+        trusted_devices = node.trustedDevices;
+        bootstrap_nodes = if node.bootstrapNodes == null then null else
+        map
+          (node: { node_id = node.nodeId; relay_url = node.relayUrl; })
+          node.bootstrapNodes;
+        data_dir = node.dataDir;
+      } // lib.optionalAttrs (ui != { }) { inherit ui; });
 }
