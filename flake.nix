@@ -15,7 +15,7 @@
     let
       inherit (nixpkgs) lib;
       systemModule = platform: import ./nix/system.nix { inherit self lib platform; };
-      workspace = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package;
+      workspace = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace;
     in
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ]
       (system:
@@ -35,7 +35,10 @@
 
           rust = import ./nix/rust.nix {
             inherit crane pkgs;
-            inherit (workspace) version;
+            inherit (workspace.package) version;
+            members = map
+              (directory: (builtins.fromTOML (builtins.readFile (./. + "/${directory}/Cargo.toml"))).package.name)
+              workspace.members;
             src = fileset.toSource {
               root = ./.;
               fileset = fileset.unions [
