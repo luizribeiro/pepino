@@ -86,3 +86,28 @@ fn linked_devices_share_tasks_and_late_members_get_history() {
         assert_views(&titanium, &late, &[&project, &child, &inspection]);
     }
 }
+
+#[test]
+fn offline_conflicting_edits_converge_in_both_directions() {
+    let (_dir, network) = network();
+    let titanium = Host::owner(&network);
+    let ferrum = Host::new(&network);
+    let grant = titanium.add(&ferrum.request("Ferrum"), &[]);
+    join(&ferrum, &grant);
+    let task = task(&titanium, &["add", "Schedule the window repair"]);
+    titanium.run(&["sync"]);
+    wait_for_events(&ferrum, 1);
+
+    ferrum.stop();
+    ferrum.run(&["edit", &task, "--title", "Replace the window"]);
+    ferrum.run(&["comment", &task, "Measured the frame"]);
+    titanium.run(&["edit", &task, "--title", "Repair the window frame"]);
+    titanium.run(&["comment", &task, "Ordered glazing clips"]);
+    titanium.run(&["sync"]);
+
+    ferrum.start();
+    ferrum.run(&["sync"]);
+    wait_for_events(&ferrum, 5);
+    wait_for_events(&titanium, 5);
+    assert_views(&titanium, &ferrum, &[&task]);
+}
