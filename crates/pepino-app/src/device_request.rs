@@ -76,7 +76,7 @@ impl DeviceRequest {
         self.member_info()?.expires_at().map_err(request_info_error)
     }
 
-    fn reusable(&self, now: SystemTime) -> bool {
+    pub(crate) fn reusable(&self, now: SystemTime) -> bool {
         self.secret.is_some()
             && now.duration_since(UNIX_EPOCH).is_ok_and(|age| {
                 self.expires_at()

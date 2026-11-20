@@ -79,3 +79,76 @@ async fn the_fingerprint_covers_the_identity_and_device_request() {
     changed.device.secret = None;
     assert!(changed.secret().is_err());
 }
+
+impl crate::App {
+    pub async fn request_board(
+        &self,
+        info: &pepino_node::MemberInfo,
+        name: Option<&str>,
+    ) -> Result<BoardRequest, AppError> {
+        let info = info.clone();
+        let name = name.map(crate::normalize_name).transpose()?;
+        let local = self
+            .try_update_local_state(move |local| {
+                local.check_device_write()?;
+                if info
+                    .device_id()
+                    .map_err(crate::device_request::request_info_error)?
+                    != local.device_id
+                {
+                    return Err(invalid(
+                        "request",
+                        "the member bundle belongs to another device",
+                    ));
+                }
+                let identity = local.identity_card()?;
+                let name = name.as_deref().unwrap_or_else(|| local.device_name());
+                if local.catalog.board_request.as_ref().is_some_and(|saved| {
+                    saved.identity == identity
+                        && saved.device.id == local.device_id
+                        && saved.device.name == name
+                        && saved.device.reusable(std::time::SystemTime::now())
+                }) {
+                    return Ok(());
+                }
+                let mut secret = [0; 32];
+                getrandom::fill(&mut secret).map_err(|error| {
+                    crate::state::storage("generate board request secret", error, false)
+                })?;
+                let device =
+                    DeviceRequest::from_member_bytes(name.into(), info.as_bytes(), secret)?;
+                local.catalog.board_request = Some(BoardRequest { device, identity });
+                Ok(())
+            })
+            .await?;
+        local
+            .catalog
+            .board_request
+            .ok_or_else(|| invalid("request", "the board request could not be saved"))
+    }
+}
+
+#[cfg(test)]
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn board_requests_are_reused_without_replacing_the_existing_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = crate::write::fixture::open(directory.path(), 0)
+        .await
+        .unwrap();
+    let keys = app.identity_credentials().unwrap();
+    let node = pepino_node::Node::spawn(pepino_node::NodeSettings::offline(
+        keys,
+        directory.path().join("request-node.sqlite"),
+    ))
+    .await
+    .unwrap();
+    let info = node.member_info().await.unwrap();
+    let first = app.request_board(&info, Some("Workshop")).await.unwrap();
+    let second = app.request_board(&info, Some("Workshop")).await.unwrap();
+    let renamed = app.request_board(&info, Some("Tablet")).await.unwrap();
+    assert_eq!(first, second);
+    assert_ne!(first.binding().unwrap(), renamed.binding().unwrap());
+    assert_eq!(renamed.identity.id, app.local_state().identity_id);
+    node.shutdown().await.unwrap();
+}

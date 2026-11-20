@@ -15,6 +15,8 @@ pub(crate) struct CatalogState {
     revisions: BTreeMap<BoardId, Revision>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) shared: BTreeMap<BoardId, crate::SharedAccess>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) board_request: Option<crate::BoardRequest>,
     joins: BTreeMap<BoardId, BoardJoinState>,
     created_here: BTreeSet<BoardId>,
     bundles: BTreeMap<DeviceId, String>,
