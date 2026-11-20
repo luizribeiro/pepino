@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 
 use pepino_app::{
-    AppError, EdgeExclusionReason, PROTOCOL_VERSION, Request, Response, WireFormat, WireRequest,
-    WireResponse,
+    AppError, EdgeExclusionReason, PROTOCOL_VERSION, ReadRequest, Request, Response, WireFormat,
+    WireRequest, WireResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
@@ -36,6 +36,10 @@ fn every_request_has_a_stable_operation_tag() {
     ];
     for fixture in fixtures {
         let request = serde_json::from_value::<Request>(fixture.clone()).unwrap();
+        assert_eq!(
+            matches!(request, Request::Read(_)),
+            fixture["op"] == "get_task",
+        );
         let encoded = serde_json::to_value(&request).unwrap();
         for (key, expected) in fixture.as_object().unwrap() {
             assert_eq!(&encoded[key], expected, "{key}");
@@ -89,9 +93,9 @@ fn exclusion_reasons_have_stable_names() {
 
 #[test]
 fn versioned_messages_have_a_shared_json_and_cbor_codec() {
-    let request = WireRequest::new(Request::GetTask {
+    let request = WireRequest::new(Request::Read(ReadRequest::GetTask {
         task: "97ad".into(),
-    });
+    }));
     let ok = WireResponse::new(Ok(Response::Write {
         changed: false,
         created: None,
@@ -157,9 +161,9 @@ fn both_codecs_check_the_version_before_the_operation_and_reject_extra_fields() 
             ));
         }
         let mut trailing = format
-            .encode(&WireRequest::new(Request::GetTask {
+            .encode(&WireRequest::new(Request::Read(ReadRequest::GetTask {
                 task: "97ad".into(),
-            }))
+            })))
             .unwrap();
         trailing.push(0);
         assert!(matches!(

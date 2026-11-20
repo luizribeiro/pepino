@@ -1,6 +1,6 @@
 use pepino_app::{
-    App, AppError, EdgeEffect, EdgeExclusionReason, EdgeKind, FieldValue, Request, Response,
-    TaskRecord,
+    App, AppError, EdgeEffect, EdgeExclusionReason, EdgeKind, FieldValue, ReadRequest, Request,
+    Response, TaskRecord,
 };
 use pepino_store::Store;
 use serde_json::{Value, json};
@@ -38,7 +38,7 @@ async fn add(app: &mut App, title: &str) -> String {
 
 async fn get(app: &mut App, id: &str) -> TaskRecord {
     let Response::Task { task } = app
-        .handle(Request::GetTask { task: id.into() }, NOW)
+        .handle(Request::Read(ReadRequest::GetTask { task: id.into() }), NOW)
         .await
         .unwrap()
     else {

@@ -8,7 +8,7 @@ use tokio::time::{Instant, sleep};
 
 use crate::projection::resolve;
 use crate::state::{FILE_NAME, io_error, storage};
-use crate::{AppError, LocalState, OpenOptions, Request, Response};
+use crate::{AppError, LocalState, OpenOptions, ReadRequest, Request, Response};
 
 pub struct App {
     pub(super) store: Store,
@@ -75,14 +75,14 @@ impl App {
             .await
             .map_err(store_error)?;
         match request {
-            Request::GetTask { task } => {
+            Request::Read(ReadRequest::GetTask { task }) => {
                 let task = resolve(&board, "task", &task)?;
                 let task = self.record(task).await?;
                 Ok(Response::Task {
                     task: Box::new(task),
                 })
             }
-            request => {
+            Request::Write(request) => {
                 let mut batch = self.batch(now).await?;
                 self.plan_write(&board, &mut batch, request)?;
                 self.commit_batch(&board, batch).await

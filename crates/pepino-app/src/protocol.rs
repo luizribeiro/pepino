@@ -6,9 +6,24 @@ use thiserror::Error;
 use crate::{Date, EdgeKind, FieldValue, Hlc, Status};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(untagged)]
 #[non_exhaustive]
 pub enum Request {
+    Read(ReadRequest),
+    Write(WriteRequest),
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+#[non_exhaustive]
+pub enum ReadRequest {
+    GetTask { task: String },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+#[non_exhaustive]
+pub enum WriteRequest {
     AddTask {
         title: String,
         description: Option<String>,
@@ -63,9 +78,6 @@ pub enum Request {
         to: String,
     },
     Delete {
-        task: String,
-    },
-    GetTask {
         task: String,
     },
 }

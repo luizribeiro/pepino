@@ -6,17 +6,17 @@ use pepino_store::{BoardView, TaskRecord};
 use crate::app::invalid;
 use crate::batch::Batch;
 use crate::projection::resolve;
-use crate::{App, AppError, Request};
+use crate::{App, AppError, WriteRequest};
 
 impl App {
     pub(super) fn plan_write(
         &self,
         view: &BoardView,
         batch: &mut Batch,
-        request: Request,
+        request: WriteRequest,
     ) -> Result<(), AppError> {
         match request {
-            Request::AddTask {
+            WriteRequest::AddTask {
                 title,
                 description,
                 status,
@@ -83,41 +83,40 @@ impl App {
                     }
                 }
             }
-            Request::SetFields { task, changes } => {
+            WriteRequest::SetFields { task, changes } => {
                 let current = resolve(view, "task", &task)?;
                 set_fields(batch, current, changes)?;
             }
-            Request::AddTags { task, tags } => {
+            WriteRequest::AddTags { task, tags } => {
                 let current = resolve(view, "task", &task)?;
                 set_tags(batch, current, tags, true)?;
             }
-            Request::RemoveTags { task, tags } => {
+            WriteRequest::RemoveTags { task, tags } => {
                 let current = resolve(view, "task", &task)?;
                 set_tags(batch, current, tags, false)?;
             }
-            Request::Assign { task, assignees } => {
+            WriteRequest::Assign { task, assignees } => {
                 let current = resolve(view, "task", &task)?;
                 set_assignees(batch, current, self.identities(assignees)?, true)?;
             }
-            Request::Unassign { task, assignees } => {
+            WriteRequest::Unassign { task, assignees } => {
                 let current = resolve(view, "task", &task)?;
                 set_assignees(batch, current, self.identities(assignees)?, false)?;
             }
-            Request::Link { from, kind, to } => {
+            WriteRequest::Link { from, kind, to } => {
                 Self::set_edge(view, batch, &from, kind, &to, true)?;
             }
-            Request::Unlink { from, kind, to } => {
+            WriteRequest::Unlink { from, kind, to } => {
                 Self::set_edge(view, batch, &from, kind, &to, false)?;
             }
-            Request::Comment { task, text } => {
+            WriteRequest::Comment { task, text } => {
                 let task = resolve(view, "task", &task)?.id;
                 batch.push(Event::CommentAdded { task, text }, "text")?;
             }
-            Request::Delete { task } => {
+            WriteRequest::Delete { task } => {
                 let task = resolve(view, "task", &task)?.id;
                 batch.push(Event::TaskDeleted { task }, "task")?;
             }
-            Request::GetTask { .. } => return Err(invalid("op", "expected a write operation")),
         }
         Ok(())
     }

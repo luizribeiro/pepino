@@ -1,4 +1,4 @@
-use pepino_app::{App, AppError, Request};
+use pepino_app::{App, AppError, ReadRequest, Request};
 
 #[tokio::test]
 async fn get_distinguishes_invalid_and_missing_references_on_a_new_board() {
@@ -8,7 +8,10 @@ async fn get_distinguishes_invalid_and_missing_references_on_a_new_board() {
         .unwrap();
     for task in ["97ad", "non-hex"] {
         let error = app
-            .handle(Request::GetTask { task: task.into() }, 1_795_144_800_000)
+            .handle(
+                Request::Read(ReadRequest::GetTask { task: task.into() }),
+                1_795_144_800_000,
+            )
             .await
             .unwrap_err();
         if task == "97ad" {
