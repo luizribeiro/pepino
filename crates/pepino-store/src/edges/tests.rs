@@ -129,7 +129,7 @@ async fn setup() -> (Store, [TaskId; 4]) {
 }
 
 #[tokio::test]
-async fn newest_live_parent_wins_and_previous_parent_can_return() {
+async fn newest_parent_wins_even_when_its_target_is_deleted() {
     let (store, [greenhouse, door, _, frame]) = setup().await;
     add(&store, 12, 2, frame, EdgeKind::Parent, door).await;
     add(&store, 11, 2, frame, EdgeKind::Parent, greenhouse).await;
@@ -154,13 +154,52 @@ async fn newest_live_parent_wins_and_previous_parent_can_return() {
     assert_eq!(
         store.edges(BOARD, frame).await.unwrap(),
         [
-            older,
+            EdgeRecord {
+                exclusion: Some(EdgeExclusion::NewerParent),
+                ..older
+            },
             EdgeRecord {
                 exclusion: Some(EdgeExclusion::MissingEndpoint),
                 ..newer
             },
         ]
     );
+    assert_eq!(
+        store.task(BOARD, frame).await.unwrap().unwrap().parent,
+        None
+    );
+}
+
+#[tokio::test]
+async fn newest_parent_with_a_missing_target_revives_when_created() {
+    let (store, [greenhouse, _, _, frame]) = setup().await;
+    let shed = TaskId::from_bytes([5; 32]);
+    add(&store, 11, 1, frame, EdgeKind::Parent, greenhouse).await;
+    add(&store, 12, 2, frame, EdgeKind::Parent, shed).await;
+
+    assert_eq!(
+        store.task(BOARD, frame).await.unwrap().unwrap().parent,
+        None
+    );
+    let edges = store.edges(BOARD, frame).await.unwrap();
+    assert_eq!(edges[0].exclusion, Some(EdgeExclusion::NewerParent));
+    assert_eq!(edges[1].exclusion, Some(EdgeExclusion::MissingEndpoint));
+
+    append(
+        &store,
+        5,
+        3,
+        Event::TaskCreated {
+            title: "Weatherproof the garden shed".into(),
+            fields: InitialFields::default(),
+        },
+    )
+    .await;
+    assert_eq!(
+        store.task(BOARD, frame).await.unwrap().unwrap().parent,
+        Some(shed)
+    );
+    assert!(store.edges(BOARD, frame).await.unwrap()[1].is_effective());
 }
 
 #[tokio::test]

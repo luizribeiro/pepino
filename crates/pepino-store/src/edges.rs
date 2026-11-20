@@ -79,7 +79,7 @@ pub(crate) fn project(rows: &[EdgeRow]) -> Result<Vec<EdgeRecord>, StoreError> {
     for row in rows {
         let from = TaskId::from_bytes(row.task);
         let (kind, to) = edge_key::decode(row.member)?;
-        if row.live && kind == EdgeKind::Parent {
+        if kind == EdgeKind::Parent {
             newest_parent.insert(from, edges.len());
         }
         edges.push(EdgeRecord {

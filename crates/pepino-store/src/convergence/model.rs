@@ -68,9 +68,9 @@ fn reference(history: &History, board: BoardId) -> Vec<EdgeRecord> {
         edges[index].exclusion = if !live(edge.from) || !live(edge.to) {
             Some(EdgeExclusion::MissingEndpoint)
         } else if edge.kind == EdgeKind::Parent
-            && edges[index + 1..].iter().any(|next| {
-                next.kind == EdgeKind::Parent && next.from == edge.from && live(next.to)
-            })
+            && edges[index + 1..]
+                .iter()
+                .any(|next| next.kind == EdgeKind::Parent && next.from == edge.from)
         {
             Some(EdgeExclusion::NewerParent)
         } else if edge.kind != EdgeKind::Relates && reaches(&edges[..index], edge) {
