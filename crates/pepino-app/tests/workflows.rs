@@ -863,14 +863,13 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
     event.as_map_mut().unwrap()[0].0 = Cbor::from("reminder_added");
     bytes.clear();
     ciborium::into_writer(&frame, &mut bytes).unwrap();
-    let skip_id = pepino_core::EventId::from_bytes([255; 32]);
-    assert!(matches!(
-        store
-            .append(board, &bytes, IdSource::Trusted(skip_id))
-            .await
-            .unwrap(),
-        pepino_store::AppendOutcome::Skipped { .. }
-    ));
+    let pepino_store::AppendOutcome::Skipped { id: skip_id, .. } = store
+        .append(board, &bytes, IdSource::Content)
+        .await
+        .unwrap()
+    else {
+        panic!("expected a skip")
+    };
     let names = json!({app.local_state().device_id.to_string(): app.local_state().device_name});
     let unordered = json!([
         {"id":future_id.to_string(),"author":null,"hlc":null,"kind":"unknown","classification":"unknown_version","change":{"type":"skipped","summary":"Skipped event","version":2,"tasks":[]}},
@@ -880,6 +879,8 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
         {"id":comment.id,"author":author,"hlc":comment.hlc,"kind":"comment_added","classification":"applied","change":{"type":"comment","action":"commented","summary":"Replace the greenhouse latch: commented “Bring stainless screws”","task":task,"text":"Bring\n stainless screws"}},
         {"id":skip_id.to_string(),"author":author,"hlc":comment.hlc,"kind":"reminder_added","classification":"unknown_event","change":{"type":"skipped","summary":"Replace the greenhouse latch: skipped event","tasks":[task]}}
     ]);
+    let mut events = events.as_array().unwrap().clone();
+    events[1..].sort_by(|left, right| left["id"].as_str().cmp(&right["id"].as_str()));
     read_golden(
         &mut app,
         json!({"op":"log","task":null,"limit":null}),
@@ -895,7 +896,7 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
     read_golden(
         &mut app,
         json!({"op":"log","task":task,"limit":2}),
-        json!({"ok":{"kind":"log","names":names,"titles":{(task.as_str()):"Replace the greenhouse latch"},"unordered":[],"events":&events.as_array().unwrap()[1..]}}),
+        json!({"ok":{"kind":"log","names":names,"titles":{(task.as_str()):"Replace the greenhouse latch"},"unordered":[],"events":&events[1..]}}),
     )
     .await;
     read_golden(
@@ -1255,7 +1256,7 @@ async fn listing_errors_report_source_positions_and_saved_view_chains() {
 #[tokio::test]
 async fn history_describes_invalid_events_and_preserves_unknown_value_targets() {
     use ciborium::Value as Cbor;
-    use pepino_core::{DeviceId, Envelope, Event, EventId, FieldName, FieldValue, Hlc, Status};
+    use pepino_core::{DeviceId, Envelope, Event, FieldName, FieldValue, Hlc, Status};
     use pepino_store::IdSource;
 
     let directory = tempfile::tempdir().unwrap();
@@ -1290,9 +1291,12 @@ async fn history_describes_invalid_events_and_preserves_unknown_value_targets() 
             Cbor::Map(vec![(Cbor::from("status"), Cbor::from("waiting"))]),
         ),
     ];
-    let [invalid, unknown] = [EventId::from_bytes([28; 32]), EventId::from_bytes([29; 32])];
-    for ((event, member, value), id) in envelopes.into_iter().zip([invalid, unknown]) {
-        let encoded = Envelope::new(peer, hlc, event).unwrap().encode().unwrap();
+    let mut ids = Vec::new();
+    for (counter, (event, member, value)) in (hlc.counter..).zip(envelopes) {
+        let encoded = Envelope::new(peer, Hlc { counter, ..hlc }, event)
+            .unwrap()
+            .encode()
+            .unwrap();
         let mut frame: Cbor = ciborium::from_reader(encoded.as_slice()).unwrap();
         let content = frame.as_array_mut().unwrap()[1].as_map_mut().unwrap();
         let (_, event) = content
@@ -1307,18 +1311,22 @@ async fn history_describes_invalid_events_and_preserves_unknown_value_targets() 
         *field = value;
         let mut raw = Vec::new();
         ciborium::into_writer(&frame, &mut raw).unwrap();
-        assert!(matches!(
-            store
-                .append(board, &raw, IdSource::Trusted(id))
-                .await
-                .unwrap(),
-            pepino_store::AppendOutcome::Skipped { .. }
-        ));
+        let pepino_store::AppendOutcome::Skipped { id, .. } =
+            store.append(board, &raw, IdSource::Content).await.unwrap()
+        else {
+            panic!("expected a skip")
+        };
+        ids.push(id);
     }
+    let [invalid, unknown]: [_; 2] = ids.try_into().unwrap();
+    let unknown_clock = pepino_app::Hlc::from(Hlc {
+        counter: hlc.counter + 1,
+        ..hlc
+    });
     let wire_clock = pepino_app::Hlc::from(hlc);
     read_golden(&mut app, json!({"op":"log","task":app_task,"limit":2}), json!({"ok":{"kind":"log","titles":{(app_task.as_str()):"Refit the greenhouse door"},"unordered":[],"events":[
         {"id":invalid.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"invalid","kind":"tag_added","reason":"invalid tag \"Hardware\"","change":{"type":"tag","action":"added","summary":"Refit the greenhouse door: tag #Hardware added","task":app_task,"tag":"Hardware"}},
-        {"id":unknown.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"unknown_value","kind":"task_field_set","change":{"type":"skipped","summary":"Refit the greenhouse door: skipped event","tasks":[app_task]}}
+        {"id":unknown.to_string(),"author":peer.to_string(),"hlc":unknown_clock,"classification":"unknown_value","kind":"task_field_set","change":{"type":"skipped","summary":"Refit the greenhouse door: skipped event","tasks":[app_task]}}
     ]}})).await;
 }
 
