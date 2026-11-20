@@ -262,3 +262,18 @@ fn ls_warns_on_unknown_custom_fields_without_failing() {
         ])
     );
 }
+
+#[test]
+fn ls_applies_status_terms_in_nested_saved_views() {
+    let (sandbox, _) = task_sandbox();
+    small_project(&sandbox);
+    let closed = create_task(&sandbox, "Paint the shed", &["--status", "done"]);
+    sandbox.run(&["view", "save", "finished", "is:closed"]);
+    sandbox.run(&["view", "save", "shed", "@finished"]);
+    assert!(sandbox.run(&["ls", "@shed"]).contains("Paint the shed"));
+    let result = listing(&sandbox, &["@shed"]);
+    assert_eq!(result["tasks"][0]["id"], closed);
+    assert_eq!(result["total"], 1);
+    assert_eq!(result["constrains_status"], true);
+    assert_eq!(listing(&sandbox, &["-is:blocked"])["total"], 2);
+}

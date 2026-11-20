@@ -29,7 +29,7 @@ pub struct Args {
     #[arg(long, value_name = "N")]
     limit: Option<usize>,
 
-    /// Include closed tasks. By default only open tasks are listed unless a status: or is: term is supplied.
+    /// Include closed tasks. By default only open tasks are listed unless the filter or a saved view selects a status.
     #[arg(long)]
     all: bool,
 
@@ -39,19 +39,28 @@ pub struct Args {
 }
 
 pub fn run(context: &Context<'_>, mut args: Args) -> Result<CommandResult, CliError> {
-    if !args.all && !FilterInput::Argv(args.filter.clone()).has_status_term()? {
-        args.filter.push("is:open".into());
-    }
     if let Some(board) = args.board {
         let board = board.replace('\\', "\\\\").replace('"', "\\\"");
         args.filter.push(format!("board:\"{board}\""));
     }
-    let response = AppClient::open(context)?.call(Request::Read(ReadRequest::ListTasks {
-        filter: FilterInput::Argv(args.filter),
-        sort: args.sort,
-        limit: args.limit,
-        today: context.time.today,
-    }))?;
+    let filter = FilterInput::Argv(args.filter);
+    let (sort, limit, today) = (args.sort, args.limit, context.time.today);
+    let request = if args.all {
+        ReadRequest::ListTasks {
+            filter,
+            sort,
+            limit,
+            today,
+        }
+    } else {
+        ReadRequest::ListOpenTasks {
+            filter,
+            sort,
+            limit,
+            today,
+        }
+    };
+    let response = AppClient::open(context)?.call(Request::Read(request))?;
 
     let result = response.tasks()?;
     let warnings: Vec<_> = result
