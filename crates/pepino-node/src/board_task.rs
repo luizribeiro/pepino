@@ -68,6 +68,7 @@ impl BoardTask {
                         let state = Arc::new(state);
                         self.ready.send_replace(JoinState::Joined(Arc::downgrade(&state)));
                         space = Some(state);
+                        self.status.send(NodeEvent::BoardJoined { board: self.lease.id });
                     }
                     Err(error) => {
                         let details = error.to_string();

@@ -7,12 +7,15 @@ use crate::SyncCounts;
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeStatus {
     pub peers_seen: BTreeSet<DeviceId>,
+    pub last_seen: BTreeMap<DeviceId, std::time::SystemTime>,
     pub connected_peers: BTreeSet<DeviceId>,
     pub boards: BTreeMap<BoardId, BoardStatus>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BoardStatus {
+    pub joined: bool,
+    pub synced_with_peer: bool,
     pub replaying: bool,
     pub pending_deliveries: usize,
     pub caught_up: BTreeSet<DeviceId>,
@@ -80,6 +83,7 @@ mod tracking {
                 }
                 NodeEvent::PeerSeen { peer } => {
                     state.peers_seen.insert(*peer);
+                    state.last_seen.insert(*peer, std::time::SystemTime::now());
                 }
                 NodeEvent::PeerDisconnected { peer } => {
                     state.connected_peers.remove(peer);
@@ -95,6 +99,11 @@ mod tracking {
                             ..Default::default()
                         },
                     );
+                }
+                NodeEvent::BoardJoined { board } => {
+                    if let Some(item) = state.boards.get_mut(board) {
+                        item.joined = true;
+                    }
                 }
                 NodeEvent::BoardClosed { board } => {
                     state.boards.remove(board);
@@ -134,6 +143,7 @@ mod tracking {
                 NodeEvent::CaughtUp { board, peer } => {
                     if let Some(item) = state.boards.get_mut(board) {
                         item.caught_up.insert(*peer);
+                        item.synced_with_peer = true;
                     }
                 }
                 _ => (),
@@ -207,10 +217,16 @@ fn reconnect_requires_a_fresh_catch_up() {
         board,
         replaying: false,
     });
+    assert!(!status.snapshot().boards[&board].joined);
+    status.send(NodeEvent::BoardJoined { board });
     status.send(NodeEvent::PeerConnected { peer });
+    status.send(NodeEvent::PeerSeen { peer });
     status.send(NodeEvent::CaughtUp { board, peer });
     assert!(status.snapshot().boards[&board].caught_up.contains(&peer));
     status.send(NodeEvent::PeerDisconnected { peer });
     status.send(NodeEvent::PeerConnected { peer });
-    assert!(!status.snapshot().boards[&board].caught_up.contains(&peer));
+    let snapshot = status.snapshot();
+    assert!(!snapshot.boards[&board].caught_up.contains(&peer));
+    assert!(snapshot.boards[&board].joined && snapshot.boards[&board].synced_with_peer);
+    assert!(snapshot.last_seen.contains_key(&peer));
 }

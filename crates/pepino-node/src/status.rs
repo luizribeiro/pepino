@@ -36,6 +36,9 @@ pub enum NodeEvent {
         board: BoardId,
         replaying: bool,
     },
+    BoardJoined {
+        board: BoardId,
+    },
     BoardClosed {
         board: BoardId,
     },
