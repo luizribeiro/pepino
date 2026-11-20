@@ -128,6 +128,32 @@ async fn a_missing_parent_leaves_the_event_log_unchanged() {
 }
 
 #[tokio::test]
+async fn creation_rejects_the_same_dependency_in_both_directions() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let first = add(&mut app, "Order a replacement latch").await;
+    let second = add(&mut app, "Check the door seal").await;
+    let store = Store::open(directory.path().join("pepino.sqlite"))
+        .await
+        .unwrap();
+    let board = app.local_state().board_id;
+    let before = store.latest_hlc(board).await.unwrap();
+
+    let error = handle(
+        &mut app,
+        json!({
+            "op":"add_task", "title":"Install the latch",
+            "blocks":[&first], "blocked_by":[&second,first[..12].to_uppercase()]
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, AppError::InvalidInput { field, .. } if field == "blocked_by[1]"));
+    assert_eq!(store.latest_hlc(board).await.unwrap(), before);
+    assert_eq!(store.tasks(board).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn edit_fields_completes_work_and_clears_optional_values() {
     let directory = tempfile::tempdir().unwrap();
     let mut app = App::open(directory.path(), NOW).await.unwrap();

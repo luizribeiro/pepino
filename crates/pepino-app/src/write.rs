@@ -50,16 +50,27 @@ impl App {
                         "parent",
                     )?;
                 }
-                for (field, references) in [("blocks", blocks), ("blocked_by", blocked_by)] {
-                    let mut ids = BTreeSet::new();
-                    for reference in references {
-                        ids.insert(resolve(view, field, &reference)?.id);
+                let mut outgoing = BTreeSet::new();
+                for (list, references, reverse) in
+                    [("blocks", blocks, false), ("blocked_by", blocked_by, true)]
+                {
+                    let mut ids = BTreeMap::new();
+                    for (index, reference) in references.into_iter().enumerate() {
+                        let field = format!("{list}[{index}]");
+                        let id = resolve(view, &field, &reference)?.id;
+                        if reverse && outgoing.contains(&id) {
+                            return Err(invalid(field, "task also appears in blocks"));
+                        }
+                        ids.entry(id).or_insert(field);
                     }
-                    for target in ids {
-                        let (from, to) = if field == "blocks" {
-                            (created, target)
-                        } else {
+                    if !reverse {
+                        outgoing.extend(ids.keys().copied());
+                    }
+                    for (target, field) in ids {
+                        let (from, to) = if reverse {
                             (target, created)
+                        } else {
+                            (created, target)
                         };
                         batch.push(
                             Event::EdgeAdded {
@@ -67,7 +78,7 @@ impl App {
                                 kind: EdgeKind::Blocks,
                                 to,
                             },
-                            field,
+                            &field,
                         )?;
                     }
                 }
