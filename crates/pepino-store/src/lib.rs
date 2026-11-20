@@ -1,5 +1,6 @@
 mod fold;
 mod log;
+mod task;
 
 use std::path::Path;
 
@@ -13,6 +14,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 pub use log::{AppendOutcome, IdSource, SkipReason};
+pub use task::TaskRecord;
 
 static MIGRATOR: Migrator = sqlx::migrate!();
 
