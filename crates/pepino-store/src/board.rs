@@ -85,7 +85,7 @@ impl Store {
                 let mut tx = connection.begin().await?;
                 let tasks = task::task_rows(&mut tx, board).await?;
                 let deleted = sqlx::query_scalar::<_, [u8; 32]>(
-                    "SELECT task FROM task_state WHERE board = ? AND deleted = 1 AND created IS NOT NULL",
+                    "SELECT task FROM task_state WHERE board = ? AND deleted = 1",
                 )
                 .bind(BoardKey(board))
                 .fetch_all(&mut *tx)

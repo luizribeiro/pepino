@@ -153,3 +153,37 @@ async fn ambiguous_prefix_returns_only_the_first_ten_of_all_matches() {
         }
     );
 }
+
+#[tokio::test]
+async fn a_delete_that_arrives_before_creation_resolves_as_deleted() {
+    let store = Store::open_in_memory().await.unwrap();
+    let board = BoardId::from_bytes([19; 32]);
+    let task = task_id(3);
+    let delete = Envelope::new(
+        DeviceId::from_bytes([33; 32]),
+        Hlc {
+            wall_ms: 1_795_144_800_000,
+            counter: 0,
+        },
+        Event::TaskDeleted { task },
+    )
+    .unwrap();
+    store
+        .append(board, &delete.encode().unwrap(), IdSource::Content)
+        .await
+        .unwrap();
+
+    let view = store.board(board).await.unwrap();
+    assert_eq!(
+        view.resolve_prefix("a1a103").unwrap(),
+        PrefixResolution::None
+    );
+    assert_eq!(
+        view.resolve_task_prefix("a1a103").unwrap(),
+        TaskPrefixResolution::Deleted { id: Some(task) }
+    );
+    assert_eq!(
+        view.resolve_task_prefix("a1a104").unwrap(),
+        TaskPrefixResolution::Unknown
+    );
+}
