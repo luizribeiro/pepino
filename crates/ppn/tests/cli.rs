@@ -73,8 +73,9 @@ fn other_stdout_write_failures_are_reported() {
 }
 
 #[test]
-fn no_subcommand_is_a_no_op() {
-    assert!(run_ppn(&[]).is_empty());
+fn no_subcommand_displays_root_help() {
+    assert_eq!(run_ppn(&[]), run_ppn(&["help"]));
+    assert_eq!(run_ppn(&["--json"]), run_ppn(&["help", "--json"]));
 }
 
 #[test]

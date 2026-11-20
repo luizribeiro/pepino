@@ -72,7 +72,7 @@ pub fn run() -> ExitCode {
                         .map(|command| help::run(&context, command.clone(), None))
                 }
                 Some(Command::Debug { command }) => debug::run(&context, command),
-                None => return ExitCode::SUCCESS,
+                None => Ok(help::run(&context, Cli::command(), None)),
             };
             finish(result, cli.globals.json, &context.terminal)
         }
