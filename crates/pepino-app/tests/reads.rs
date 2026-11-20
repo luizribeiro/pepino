@@ -1,9 +1,12 @@
-use pepino_app::{App, AppError, ReadRequest, Request};
+#[path = "support/template.rs"]
+mod fixture;
+
+use pepino_app::{AppError, ReadRequest, Request};
 
 #[tokio::test]
 async fn get_distinguishes_invalid_and_missing_references_on_a_new_board() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), 1_795_144_800_000)
+    let mut app = fixture::open(directory.path(), 1_795_144_800_000)
         .await
         .unwrap();
     for task in ["97ad", "non-hex"] {
@@ -31,13 +34,16 @@ async fn get_distinguishes_invalid_and_missing_references_on_a_new_board() {
 
 #[cfg(unix)]
 #[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn creates_private_data_directory_and_database_files() {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("greenhouse");
-    let _app = App::init(&path, 1_795_144_800_000).await.unwrap();
+    let _app = pepino_app::App::init(&path, 1_795_144_800_000)
+        .await
+        .unwrap();
     let mode = |file: &std::path::Path| fs::metadata(file).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode(&path), 0o700);
     for file in [
