@@ -85,6 +85,12 @@ pub struct HistoryEvent {
     pub tasks: Vec<TaskId>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct History {
+    pub events: Vec<HistoryEvent>,
+    pub unordered: Vec<HistoryEvent>,
+}
+
 #[derive(FromRow)]
 struct StoredEvent {
     id: [u8; 32],
@@ -218,5 +224,39 @@ impl Store {
                 Ok((row, event))
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn ordered_history_uses_the_board_clock_and_id_index() {
+        let store = Store::open_in_memory().await.unwrap();
+        let board = BoardId::from_bytes([19; 32]);
+        let plan = store
+            .read(async |connection| {
+                sqlx::query_as::<_, (i64, i64, i64, String)>(
+                    "EXPLAIN QUERY PLAN SELECT id, classification, bytes FROM event_log
+                 WHERE board = ? AND hlc IS NOT NULL ORDER BY hlc DESC, id DESC LIMIT ?",
+                )
+                .bind(BoardKey(board))
+                .bind(3_i64)
+                .fetch_all(connection)
+                .await
+            })
+            .await
+            .unwrap();
+        assert!(
+            plan.iter()
+                .any(|(_, _, _, detail)| detail.contains("event_log_history")),
+            "{plan:?}"
+        );
+        assert!(
+            plan.iter()
+                .all(|(_, _, _, detail)| !detail.contains("TEMP B-TREE")),
+            "{plan:?}"
+        );
     }
 }

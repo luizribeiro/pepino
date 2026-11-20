@@ -30,7 +30,7 @@ pub use board::BoardView;
 pub use comment::CommentRecord;
 pub use edges::{EdgeExclusion, EdgeRecord};
 pub use error::{DatabaseErrorKind, StoreError};
-pub use history::{EventClassification, EventRecord, HistoryEvent};
+pub use history::{EventClassification, EventRecord, History, HistoryEvent};
 pub use log::{AppendOutcome, IdSource, RebuildReport, SkipReason};
 pub use prefix::{PrefixResolution, TaskPrefixResolution};
 pub use statistics::BoardStatistics;
