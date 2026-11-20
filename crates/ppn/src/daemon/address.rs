@@ -23,6 +23,15 @@ fn resolve(config: &Config, runtime: Option<&Path>, linux: bool) -> PathBuf {
     data.join("runtime").join("daemon.sock")
 }
 
+pub(super) fn validate_path(path: &Path) -> io::Result<()> {
+    std::os::unix::net::SocketAddr::from_pathname(path)
+        .map(|_| ())
+        .map_err(|error| io::Error::new(
+            error.kind(),
+            format!("Invalid control socket path {} ({error}). Set daemon.socket_path to a shorter absolute path.", path.display()),
+        ))
+}
+
 pub fn prepare_parent(config: &Config, path: &Path) -> io::Result<()> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 
@@ -52,6 +61,17 @@ pub fn prepare_parent(config: &Config, path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::config::{Platform, PlatformDirs, validate_file};
+
+    #[test]
+    fn reports_an_overlong_socket_path_and_config_key() {
+        let path = PathBuf::from(format!(
+            "/var/run/pepino/{}/control.sock",
+            "greenhouse".repeat(16)
+        ));
+        let error = validate_path(&path).unwrap_err().to_string();
+        assert!(error.contains(&path.display().to_string()));
+        assert!(error.contains("daemon.socket_path"));
+    }
 
     #[test]
     fn resolves_distinct_runtime_paths_per_data_directory() {

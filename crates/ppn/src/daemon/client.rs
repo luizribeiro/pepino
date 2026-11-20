@@ -23,6 +23,7 @@ impl Client {
     }
 
     pub fn call_with(&self, operation: Operation, limit: Duration) -> io::Result<Outcome> {
+        super::address::validate_path(&self.path)?;
         Builder::new_current_thread()
             .enable_all()
             .build()?

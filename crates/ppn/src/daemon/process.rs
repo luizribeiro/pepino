@@ -23,6 +23,7 @@ const DETACH: &str = "PPN_INTERNAL_DETACH";
 pub fn spawn(config: &Config, selection: Option<&Path>, level: LogLevel) -> io::Result<Child> {
     use clap::ValueEnum;
 
+    super::address::validate_path(&super::address::socket_path(config))?;
     if let Some(path) = &config.daemon.socket_path.value {
         fs::metadata(path.as_path().parent().ok_or(io::ErrorKind::InvalidInput)?)?;
     }

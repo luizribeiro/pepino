@@ -58,6 +58,8 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         None => lease(&lock).map_err(socket_error)?,
     };
     let path = socket_path(config);
+    super::address::validate_path(&path)
+        .map_err(|error| CliError::new(ErrorKind::Failure, error.to_string()))?;
     prepare_parent(config, &path).map_err(socket_error)?;
     let socket = Socket::bind(path).await.map_err(socket_error)?;
     loop {
