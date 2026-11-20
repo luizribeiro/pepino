@@ -48,19 +48,107 @@ mod tracking {
             let changes = status::subscribe(&self.changes);
             stream::iter([Ok(initial)]).chain(changes).boxed()
         }
+        pub(crate) fn send(&self, event: NodeEvent) {
+            let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            match &event {
+                NodeEvent::PeerConnected { peer } => {
+                    state.connected_peers.insert(*peer);
+                }
+                NodeEvent::PeerDisconnected { peer } => {
+                    state.connected_peers.remove(peer);
+                }
+                NodeEvent::BoardOpened { board, replaying } => {
+                    state.boards.insert(
+                        *board,
+                        BoardStatus {
+                            replaying: *replaying,
+                            ..Default::default()
+                        },
+                    );
+                }
+                NodeEvent::BoardClosed { board } => {
+                    state.boards.remove(board);
+                }
+                NodeEvent::ReplayStarted { board, .. } => {
+                    if let Some(item) = state.boards.get_mut(board) {
+                        item.replaying = true;
+                    }
+                }
+                NodeEvent::ReplayEnded { board, .. } => {
+                    if let Some(item) = state.boards.get_mut(board) {
+                        item.replaying = false;
+                    }
+                }
+                NodeEvent::SyncStarted {
+                    board,
+                    peer,
+                    session_id,
+                    estimated,
+                    ..
+                } => {
+                    if let Some(item) = state.boards.get_mut(board) {
+                        item.active_syncs.insert((*peer, *session_id), *estimated);
+                        item.caught_up.remove(peer);
+                    }
+                }
+                NodeEvent::SyncEnded {
+                    board,
+                    peer,
+                    session_id,
+                    ..
+                } => {
+                    if let Some(item) = state.boards.get_mut(board) {
+                        item.active_syncs.remove(&(*peer, *session_id));
+                    }
+                }
+                NodeEvent::CaughtUp { board, peer } => {
+                    if let Some(item) = state.boards.get_mut(board) {
+                        item.caught_up.insert(*peer);
+                    }
+                }
+                _ => (),
+            }
+            let _ = self.changes.send(event);
+        }
+
+        pub(crate) fn pending(&self, board: BoardId, increase: bool) {
+            let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(item) = state.boards.get_mut(&board) {
+                if increase {
+                    item.pending_deliveries += 1;
+                } else {
+                    item.pending_deliveries = item.pending_deliveries.saturating_sub(1);
+                }
+                let _ = self.changes.send(NodeEvent::PendingDeliveries {
+                    board,
+                    count: item.pending_deliveries,
+                });
+            }
+        }
     }
 
     #[tokio::test]
-    async fn initial_state_precedes_live_changes() {
+    async fn late_subscriber_gets_current_state_then_changes() {
         let status = Status::default();
-        let board = BoardId::from_bytes([27; 32]);
-        let change = NodeEvent::BoardClosed { board };
+        let board = BoardId::from_bytes([32; 32]);
+        let peer = DeviceId::from_bytes([45; 32]);
+        status.send(NodeEvent::BoardOpened {
+            board,
+            replaying: true,
+        });
+        status.send(NodeEvent::PeerConnected { peer });
+        status.pending(board, true);
         let mut events = status.subscribe();
-        status.changes.send(change.clone()).unwrap();
+        status.send(NodeEvent::ReplayEnded { board, error: None });
+        let NodeEvent::Snapshot(snapshot) = events.next().await.unwrap().unwrap() else {
+            panic!("first event must be the snapshot");
+        };
+        assert!(snapshot.connected_peers.contains(&peer));
+        assert!(snapshot.boards[&board].replaying);
+        assert_eq!(snapshot.boards[&board].pending_deliveries, 1);
         assert_eq!(
             events.next().await.unwrap().unwrap(),
-            NodeEvent::Snapshot(NodeStatus::default())
+            NodeEvent::ReplayEnded { board, error: None }
         );
-        assert_eq!(events.next().await.unwrap().unwrap(), change);
     }
 }
