@@ -1,15 +1,32 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use pepino_core::{BoardId, DecodeOutcome, EdgeKind, Envelope, Event, TaskId};
+use pepino_core::{BoardId, DecodeOutcome, EdgeKind, Envelope, Event, FieldValue, Status, TaskId};
 use proptest::prelude::*;
 
 use super::{BOARD, History, OTHER, histories, on_board, runtime};
 use crate::{EdgeExclusion, EdgeRecord};
 
-fn reference(history: &History, board: BoardId) -> Vec<EdgeRecord> {
+struct Reference {
+    edges: Vec<EdgeRecord>,
+    tasks: BTreeMap<TaskId, Relations>,
+}
+
+#[derive(Debug, Default, Eq, PartialEq)]
+struct Relations {
+    parent: Option<TaskId>,
+    children: BTreeSet<TaskId>,
+    blocks: BTreeSet<TaskId>,
+    blocked_by: BTreeSet<TaskId>,
+    relates: BTreeSet<TaskId>,
+    blocked: bool,
+    ready: bool,
+}
+
+fn reference(history: &History, board: BoardId) -> Reference {
     let mut created = BTreeSet::new();
     let mut deleted = BTreeSet::new();
     let mut writes = Vec::new();
+    let mut status_registers = BTreeMap::new();
     for (index, entry) in history.events.iter().enumerate() {
         if !on_board(board, index) {
             continue;
@@ -17,10 +34,27 @@ fn reference(history: &History, board: BoardId) -> Vec<EdgeRecord> {
         let DecodeOutcome::Known(event) = Envelope::decode(&entry.bytes).unwrap() else {
             continue;
         };
-        match *event.event() {
-            Event::TaskCreated { .. } => {
-                created.insert(event.created_task().unwrap());
+        let status_write = match event.event() {
+            Event::TaskCreated { fields, .. } => {
+                let task = event.created_task().unwrap();
+                created.insert(task);
+                Some((task, fields.status))
             }
+            Event::TaskFieldSet {
+                task,
+                field,
+                value: FieldValue::Status(status),
+            } if field.as_str() == "status" => Some((*task, *status)),
+            _ => None,
+        };
+        if let Some((task, status)) = status_write {
+            let order = event.order_key();
+            let entry = status_registers.entry(task).or_insert((order, status));
+            if order > entry.0 {
+                *entry = (order, status);
+            }
+        }
+        match *event.event() {
             Event::TaskDeleted { task } => {
                 deleted.insert(task);
             }
@@ -79,7 +113,47 @@ fn reference(history: &History, board: BoardId) -> Vec<EdgeRecord> {
             None
         };
     }
-    edges
+    let is_open = |task| {
+        status_registers
+            .get(&task)
+            .is_some_and(|(_, status)| matches!(status, Status::Todo | Status::Doing))
+    };
+    let tasks = created
+        .difference(&deleted)
+        .map(|&task| {
+            let mut relations = relations(task, &edges);
+            relations.blocked = is_open(task) && relations.blocked_by.iter().copied().any(is_open);
+            relations.ready = is_open(task) && !relations.blocked;
+            (task, relations)
+        })
+        .collect();
+    Reference { edges, tasks }
+}
+
+fn relations(task: TaskId, edges: &[EdgeRecord]) -> Relations {
+    let mut result = Relations::default();
+    for edge in edges.iter().filter(|edge| edge.exclusion.is_none()) {
+        match (edge.kind, edge.from == task, edge.to == task) {
+            (EdgeKind::Parent, true, _) => result.parent = Some(edge.to),
+            (EdgeKind::Parent, _, true) => {
+                result.children.insert(edge.from);
+            }
+            (EdgeKind::Blocks, true, _) => {
+                result.blocks.insert(edge.to);
+            }
+            (EdgeKind::Blocks, _, true) => {
+                result.blocked_by.insert(edge.from);
+            }
+            (EdgeKind::Relates, true, _) => {
+                result.relates.insert(edge.to);
+            }
+            (EdgeKind::Relates, _, true) => {
+                result.relates.insert(edge.from);
+            }
+            _ => {}
+        }
+    }
+    result
 }
 
 fn reaches(accepted: &[EdgeRecord], candidate: EdgeRecord) -> bool {
@@ -124,11 +198,24 @@ proptest! {
             for board in [BOARD, OTHER] {
                 let view = store.board(board).await.unwrap();
                 let expected = reference(&history, board);
+                prop_assert_eq!(view.tasks().len(), expected.tasks.len());
+                for record in view.iter() {
+                    let actual = Relations {
+                        parent: record.parent,
+                        children: record.children.clone(),
+                        blocks: record.blocks.clone(),
+                        blocked_by: record.blocked_by.clone(),
+                        relates: record.relates.clone(),
+                        blocked: record.blocked,
+                        ready: record.ready,
+                    };
+                    prop_assert_eq!(Some(&actual), expected.tasks.get(&record.id), "task {}", record.id);
+                }
                 let mut parents = Vec::new();
                 let mut blocks = Vec::new();
                 for &task in &history.tasks {
                     let actual = view.edges(task);
-                    let incident: Vec<_> = expected.iter().copied()
+                    let incident: Vec<_> = expected.edges.iter().copied()
                         .filter(|edge| edge.from == task || edge.to == task)
                         .collect();
                     prop_assert_eq!(&actual, &incident);
