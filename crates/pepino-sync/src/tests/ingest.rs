@@ -347,3 +347,31 @@ async fn shutdown_commits_and_acknowledges_the_delivery_it_already_took() {
         1
     );
 }
+
+#[tokio::test]
+async fn a_pending_leave_pauses_incoming_task_updates() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = pepino_app::App::init(dir.path(), directory::NOW)
+        .await
+        .unwrap();
+    let local = app.local_state().device_id;
+    let board = app.local_state().catalog_board();
+    let peer = DeviceId::from_bytes([51; 32]);
+    app.remember_device(peer, "Ferrum".into(), None)
+        .await
+        .unwrap();
+    app.record_leave_request(std::time::SystemTime::now().into())
+        .await
+        .unwrap();
+    let node = Arc::new(Stub::new(local));
+    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    let mut receipt = node.deliver(board, peer, vec![0x82, 2, 0xf6]);
+    tokio::time::timeout(WAIT, receipt.wait_for(|done| *done))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(app.store().statistics(board).await.unwrap().total, 0);
+    engine.shutdown().await.unwrap();
+}

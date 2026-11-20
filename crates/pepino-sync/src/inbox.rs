@@ -76,6 +76,7 @@ pub(crate) async fn run<A: Acknowledgement>(
                     state.boards.entry(id).or_default().ingest_pending = false
                 });
             }
+            Err(pepino_node::Error::Removed) => return Ok(()),
             Err(error) => {
                 let cause = error.to_string();
                 record_error(status, id, cause.clone());
@@ -100,6 +101,15 @@ async fn ingest<A>(
     }
     let mut retry = Retry::new();
     loop {
+        match app.fresh_local_state().await {
+            Ok(local) if local.device_leave_requested_at().is_some() => return,
+            Ok(_) => (),
+            Err(error) => {
+                record_error(status, board, format!("read local roster: {error}"));
+                retry.wait().await;
+                continue;
+            }
+        }
         match app
             .append_received(board, &delivery.bytes, delivery.signer)
             .await

@@ -20,6 +20,16 @@ pub(crate) async fn run(
     let mut retry = Retry::new();
     loop {
         let generation = *nudges.borrow_and_update();
+        if !app
+            .fresh_local_state()
+            .await
+            .is_ok_and(|local| local.check_device_write().is_ok())
+        {
+            if !wait(&mut nudges, poll_interval).await {
+                return;
+            }
+            continue;
+        }
         let page = match app
             .store()
             .outbox_for(id, app.local_state().device_id, PAGE, Some(node_instance))
@@ -46,14 +56,18 @@ pub(crate) async fn run(
             board.scan_generation = latest;
             changed
         });
-        if page.events.is_empty() {
-            tokio::select! {
-                _ = tokio::time::sleep(poll_interval) => {},
-                result = nudges.changed() => if result.is_err() { return },
-            }
+        if page.events.is_empty() && !wait(&mut nudges, poll_interval).await {
+            return;
         }
         for event in page.events {
             publish(app, id, board, node_instance, status, event).await;
         }
     }
+}
+
+async fn wait(nudges: &mut watch::Receiver<u64>, poll: Duration) -> bool {
+    !matches!(
+        tokio::time::timeout(poll, nudges.changed()).await,
+        Ok(Err(_))
+    )
 }

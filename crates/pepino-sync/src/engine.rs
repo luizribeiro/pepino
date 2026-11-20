@@ -320,6 +320,7 @@ impl SyncEngine {
         let mut boards = self.boards.lock().await;
         let local =
             crate::discover::reconcile_roster(&boards, self.app.fresh_local_state().await?).await?;
+        local.check_device_write()?;
         boards.open_missing(&local).await?;
         let owner = self.node.device_id();
         let allowed = futures_util::future::try_join_all(local.boards().iter().map(|board| {
@@ -379,6 +380,7 @@ impl SyncEngine {
     pub async fn create_board(&self, name: &str) -> Result<BoardId, Error> {
         App::validate_board_name(name)?;
         let mut boards = self.boards.lock().await;
+        self.app.fresh_local_state().await?.check_device_write()?;
         let handle = self.node.create_board().await?;
         let id = handle.id();
         let local = match self.app.register_created_board(id, name).await {
