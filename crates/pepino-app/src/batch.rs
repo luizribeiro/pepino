@@ -116,15 +116,7 @@ impl App {
             .iter()
             .map(|bytes| (bytes.as_slice(), IdSource::Content))
             .collect();
-        let required = if batch
-            .events
-            .iter()
-            .any(|event| event.created_task().is_some())
-        {
-            batch.required.iter().map(|(edge, _)| *edge).collect()
-        } else {
-            Vec::new()
-        };
+        let required: Vec<_> = batch.required.iter().map(|(edge, _)| *edge).collect();
         let outcomes = self
             .store
             .append_batch_requiring_edges(self.local.board_id, &writes, &required)

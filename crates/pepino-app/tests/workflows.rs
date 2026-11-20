@@ -300,7 +300,7 @@ async fn tags_and_assignees_deduplicate_and_validate_entire_batches() {
 }
 
 #[tokio::test]
-async fn link_and_unlink_use_present_edges_including_excluded_ones() {
+async fn link_and_unlink_reject_cycles_without_recording_them() {
     let directory = tempfile::tempdir().unwrap();
     let mut app = App::open(directory.path(), NOW).await.unwrap();
     let first = add(&mut app, "Order a replacement latch").await;
@@ -320,11 +320,11 @@ async fn link_and_unlink_use_present_edges_including_excluded_ones() {
     assert!(!write(&mut app, unlink(&first, "relates", &second)).await.0);
 
     assert!(write(&mut app, link(&first, "blocks", &second)).await.0);
-    let (changed, _, _, edges) = write(&mut app, link(&second, "blocks", &first)).await;
-    assert!(changed);
-    assert_eq!(edges[0].reason, Some(EdgeExclusionReason::Cycle));
-    assert!(!write(&mut app, link(&second, "blocks", &first)).await.0);
-    assert!(write(&mut app, unlink(&second, "blocks", &first)).await.0);
+    let error = handle(&mut app, link(&second, "blocks", &first))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind().code(), "conflict");
+    assert!(error.to_string().contains("would create a cycle"));
     assert!(!write(&mut app, unlink(&second, "blocks", &first)).await.0);
     assert!(get(&mut app, &second).await.blocked);
 

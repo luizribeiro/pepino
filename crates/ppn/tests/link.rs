@@ -72,30 +72,38 @@ fn link_reports_errors_in_either_endpoint() {
 }
 
 #[test]
-fn link_warns_when_folding_excludes_a_recorded_link() {
+fn link_rejects_cycles_with_a_conflict() {
     let (sandbox, _) = task_sandbox();
     let p = small_project(&sandbox);
-    for (from, kind, to, reason) in [
-        (&p.downstream, "blocks", &p.blocker, "cycle"),
-        (&p.downstream, "parent", &p.blocker, "superseded_parent"),
-        (&p.parent, "parent", &p.blocker, "cycle"),
-    ] {
-        let output = sandbox
-            .command()
-            .args(["link", from, kind, to, "--json"])
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{output:?}");
-        let warning = as_json(std::str::from_utf8(&output.stderr).unwrap());
-        let write = as_json(std::str::from_utf8(&output.stdout).unwrap());
-        let edge = &warning["warning"]["edge"];
-        assert_eq!(edge["reason"], reason);
-        assert!(write["edges"].as_array().unwrap().contains(edge));
-        assert!(
-            as_json(&sandbox.run(&["show", from, "--json"]))["edges"]
-                .as_array()
-                .unwrap()
-                .contains(edge)
-        );
-    }
+    let output = sandbox
+        .command()
+        .args(["link", &p.downstream, "blocks", &p.blocker, "--json"])
+        .output()
+        .unwrap();
+    let error = task_error(output, 1, "conflict");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("would create a cycle")
+    );
+    let detail = as_json(&sandbox.run(&["show", &p.downstream, "--json"]));
+    assert_eq!(detail["edges"], serde_json::json!([]));
+}
+
+#[test]
+fn link_reports_parent_cycles_with_two_short_ids() {
+    let (sandbox, _) = task_sandbox();
+    let p = small_project(&sandbox);
+    let output = sandbox
+        .command()
+        .args(["link", &p.parent, "parent", &p.blocker])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let error = String::from_utf8(output.stderr).unwrap();
+    assert!(error.contains("would create a cycle"));
+    assert!(error.contains(&p.parent[..6]));
+    assert!(error.contains(&p.blocker[..6]));
 }
