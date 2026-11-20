@@ -312,3 +312,26 @@ fn ls_aligns_status_title_and_metadata_on_a_terminal() {
     );
     assert_eq!(rows[0].find("due:"), rows[1].find("p4"));
 }
+
+#[test]
+fn numeric_filter_reports_text_values_in_stdout_and_stderr_json() {
+    let (sandbox, _) = task_sandbox();
+    for (title, value) in [("Order hinges", "cost=12.50"), ("Order screws", "cost=14")] {
+        create_task(&sandbox, title, &["--set", value]);
+    }
+    let output = sandbox
+        .command()
+        .args(["ls", "cost:>10", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let listing = as_json(&String::from_utf8(output.stdout).unwrap());
+    assert_eq!(listing["total"], 1);
+    assert_eq!(listing["warnings"][0]["text_tasks"], 1);
+    let warning = as_json(&String::from_utf8(output.stderr).unwrap());
+    assert_eq!(warning["warning"]["code"], "numeric_filter_on_text");
+    assert_eq!(
+        warning["warning"]["message"],
+        listing["warnings"][0]["message"]
+    );
+}

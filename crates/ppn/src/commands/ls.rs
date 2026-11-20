@@ -80,16 +80,28 @@ pub(super) fn list(
     let warnings: Vec<_> = result
         .warnings
         .iter()
-        .map(|warning| Warning {
-            message: format!(
-                "Unknown filter field {:?}. Did you mean {:?}?",
-                warning.field, warning.suggestion
-            ),
-            details: Map::from_iter([
-                ("code".into(), json!("unknown_filter_field")),
-                ("field".into(), json!(warning.field)),
-                ("suggestion".into(), json!(warning.suggestion)),
-            ]),
+        .map(|warning| {
+            if let (Some(count), Some(message)) = (warning.text_tasks, &warning.message) {
+                return Warning {
+                    message: message.clone(),
+                    details: Map::from_iter([
+                        ("code".into(), json!("numeric_filter_on_text")),
+                        ("field".into(), json!(warning.field)),
+                        ("text_tasks".into(), json!(count)),
+                    ]),
+                };
+            }
+            Warning {
+                message: format!(
+                    "Unknown filter field {:?}. Did you mean {:?}?",
+                    warning.field, warning.suggestion
+                ),
+                details: Map::from_iter([
+                    ("code".into(), json!("unknown_filter_field")),
+                    ("field".into(), json!(warning.field)),
+                    ("suggestion".into(), json!(warning.suggestion)),
+                ]),
+            }
         })
         .collect();
     let count = result.tasks.len();
