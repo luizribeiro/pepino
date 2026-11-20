@@ -2,6 +2,8 @@
 mod errors;
 #[path = "query/fixture.rs"]
 mod fixture;
+#[path = "query/properties.rs"]
+mod properties;
 #[path = "query/semantics.rs"]
 mod semantics;
 #[path = "query/sort.rs"]
