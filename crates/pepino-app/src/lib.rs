@@ -25,7 +25,9 @@ mod write;
 pub use app::App;
 pub use filter::{FilterDiagnostic, FilterInput, FilterPosition};
 pub use hlc::Hlc;
-pub use log::{EventChange, EventClassification, EventRecord, InitialTaskFields};
+pub use log::{
+    EventAction, EventChange, EventClassification, EventDetail, EventRecord, InitialTaskFields,
+};
 pub use state::{LocalState, OpenOptions};
 pub use status::{IdentityRecord, NamedRecord, SkippedCounts, StatusCounts};
 

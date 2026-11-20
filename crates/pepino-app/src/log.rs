@@ -32,9 +32,51 @@ pub enum EventClassification {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EventChange {
+    #[serde(flatten)]
+    pub detail: EventDetail,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<EventAction>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum EventAction {
+    Added,
+    Removed,
+    Set,
+    Unset,
+    Created,
+    Deleted,
+    Commented,
+}
+
+impl From<&Event> for EventAction {
+    fn from(event: &Event) -> Self {
+        match event {
+            Event::TaskCreated { .. } => Self::Created,
+            Event::TaskDeleted { .. } => Self::Deleted,
+            Event::TaskFieldSet {
+                value: pepino_core::FieldValue::Unset,
+                ..
+            } => Self::Unset,
+            Event::TaskFieldSet { .. } => Self::Set,
+            Event::TagAdded { .. } | Event::AssigneeAdded { .. } | Event::EdgeAdded { .. } => {
+                Self::Added
+            }
+            Event::TagRemoved { .. }
+            | Event::AssigneeRemoved { .. }
+            | Event::EdgeRemoved { .. } => Self::Removed,
+            Event::CommentAdded { .. } => Self::Commented,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
-pub enum EventChange {
+pub enum EventDetail {
     Creation {
         title: String,
         fields: InitialTaskFields,
@@ -138,11 +180,12 @@ impl TryFrom<HistoryEvent> for EventRecord {
             }
             DecodeOutcome::Known(_) => ("unknown", None, None),
         };
-        let (kind, change) = match record.event {
-            Some(event) => (event.kind(), EventChange::try_from(event)?),
+        let action = record.event.as_ref().map(EventAction::from);
+        let (kind, detail) = match record.event {
+            Some(event) => (event.kind(), EventDetail::try_from(event)?),
             None => (
                 kind,
-                EventChange::Skipped {
+                EventDetail::Skipped {
                     tasks: record.tasks.into_iter().map(|id| id.to_string()).collect(),
                     version,
                 },
@@ -154,13 +197,13 @@ impl TryFrom<HistoryEvent> for EventRecord {
             hlc: decoded.hlc().map(Into::into),
             classification: record.classification.into(),
             kind: kind.into(),
-            change,
+            change: EventChange { detail, action },
             reason,
         })
     }
 }
 
-impl TryFrom<Event> for EventChange {
+impl TryFrom<Event> for EventDetail {
     type Error = AppError;
 
     fn try_from(value: Event) -> Result<Self, Self::Error> {

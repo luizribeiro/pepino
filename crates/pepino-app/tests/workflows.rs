@@ -789,8 +789,8 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
         {"id":future_id.to_string(),"author":null,"hlc":null,"kind":"unknown","classification":"unknown_version","change":{"type":"skipped","version":2,"tasks":[]}},
     ]);
     let events = json!([
-        {"id":task,"author":author,"hlc":task_record.created,"kind":"task_created","classification":"applied","change":{"type":"creation","title":"Replace the greenhouse latch","fields":{"description":null,"status":"todo","due":null,"priority":null,"tags":[],"assignees":[],"fields":{}}}},
-        {"id":comment.id,"author":author,"hlc":comment.hlc,"kind":"comment_added","classification":"applied","change":{"type":"comment","task":task,"text":"Bring stainless screws"}},
+        {"id":task,"author":author,"hlc":task_record.created,"kind":"task_created","classification":"applied","change":{"type":"creation","action":"created","title":"Replace the greenhouse latch","fields":{"description":null,"status":"todo","due":null,"priority":null,"tags":[],"assignees":[],"fields":{}}}},
+        {"id":comment.id,"author":author,"hlc":comment.hlc,"kind":"comment_added","classification":"applied","change":{"type":"comment","action":"commented","task":task,"text":"Bring stainless screws"}},
         {"id":skip_id.to_string(),"author":author,"hlc":comment.hlc,"kind":"reminder_added","classification":"unknown_event","change":{"type":"skipped","tasks":[task]}}
     ]);
     read_golden(
@@ -1103,7 +1103,37 @@ async fn history_describes_invalid_events_and_preserves_unknown_value_targets() 
     }
     let wire_clock = pepino_app::Hlc::from(hlc);
     read_golden(&mut app, json!({"op":"log","task":app_task,"limit":2}), json!({"ok":{"kind":"log","unordered":[],"events":[
-        {"id":invalid.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"invalid","kind":"tag_added","reason":"invalid tag \"Hardware\"","change":{"type":"tag","task":app_task,"tag":"Hardware"}},
+        {"id":invalid.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"invalid","kind":"tag_added","reason":"invalid tag \"Hardware\"","change":{"type":"tag","action":"added","task":app_task,"tag":"Hardware"}},
         {"id":unknown.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"unknown_value","kind":"task_field_set","change":{"type":"skipped","tasks":[app_task]}}
     ]}})).await;
+}
+
+#[tokio::test]
+async fn log_actions_distinguish_sets_unsets_and_presence_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::open(dir.path(), NOW).await.unwrap();
+    let task = add(&mut app, "Replace the greenhouse latch").await;
+    for request in [
+        json!({"op":"set_fields","task":task,"changes":{"priority":{"type":"integer","value":3}}}),
+        json!({"op":"set_fields","task":task,"changes":{"priority":{"type":"unset"}}}),
+        json!({"op":"add_tags","task":task,"tags":["hardware"]}),
+        json!({"op":"remove_tags","task":task,"tags":["hardware"]}),
+        json!({"op":"delete","task":task}),
+    ] {
+        handle(&mut app, request).await.unwrap();
+    }
+    let Response::Log { events, .. } = handle(&mut app, json!({"op":"log","task":task}))
+        .await
+        .unwrap()
+    else {
+        panic!("expected log");
+    };
+    use pepino_app::EventAction::*;
+    assert_eq!(
+        events
+            .iter()
+            .filter_map(|event| event.change.action)
+            .collect::<Vec<_>>(),
+        [Created, Set, Unset, Added, Removed, Deleted]
+    );
 }
