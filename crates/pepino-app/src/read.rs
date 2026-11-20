@@ -119,8 +119,9 @@ impl App {
                     task: project_at(&board, node.task)?,
                 })
             })
-            .collect::<Result<_, AppError>>()?;
-        Ok(Response::Tree { nodes })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        let names = self.local.task_names(nodes.iter().map(|node| &node.task));
+        Ok(Response::Tree { nodes, names })
     }
 
     async fn deps(&self, reference: &str) -> Result<Response, AppError> {
@@ -136,12 +137,20 @@ impl App {
                         task: project_at(&board, entry.task)?,
                     })
                 })
-                .collect::<Result<_, AppError>>()
+                .collect::<Result<Vec<_>, AppError>>()
         };
+        let task = Box::new(project_summary(task)?);
+        let blockers = project_deps(deps.blocked_by)?;
+        let dependents = project_deps(deps.blocks)?;
+        let names = self.local.task_names(
+            std::iter::once(task.as_ref())
+                .chain(blockers.iter().chain(&dependents).map(|entry| &entry.task)),
+        );
         Ok(Response::Deps {
-            task: Box::new(project_summary(task)?),
-            blockers: project_deps(deps.blocked_by)?,
-            dependents: project_deps(deps.blocks)?,
+            task,
+            blockers,
+            dependents,
+            names,
         })
     }
 }

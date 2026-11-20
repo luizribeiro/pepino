@@ -138,11 +138,15 @@ pub enum Response {
     },
     Tree {
         nodes: Vec<TreeNode>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        names: BTreeMap<String, String>,
     },
     Deps {
         task: Box<TaskSummary>,
         blockers: Vec<DependencyRecord>,
         dependents: Vec<DependencyRecord>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        names: BTreeMap<String, String>,
     },
     Status {
         identity: IdentityRecord,

@@ -676,6 +676,7 @@ async fn graph_reads_render_the_project_forest_and_transitive_dependencies() {
         get(&mut app, &test).await.summary,
     ];
     assert_eq!(test_record.comment_count, 1);
+    let names = json!({app.local_state().device_id.to_string(): app.local_state().device_name});
     let branch = json!([
         {"depth":0,"task":root_record},
         {"depth":1,"task":install_record},
@@ -684,7 +685,7 @@ async fn graph_reads_render_the_project_forest_and_transitive_dependencies() {
     read_golden(
         &mut app,
         json!({"op":"tree","task":root}),
-        json!({"ok":{"kind":"tree","nodes":branch}}),
+        json!({"ok":{"kind":"tree","names":names,"nodes":branch}}),
     )
     .await;
     let mut nodes = branch.as_array().unwrap().clone();
@@ -692,13 +693,13 @@ async fn graph_reads_render_the_project_forest_and_transitive_dependencies() {
     read_golden(
         &mut app,
         json!({"op":"tree","task":null}),
-        json!({"ok":{"kind":"tree","nodes":nodes}}),
+        json!({"ok":{"kind":"tree","names":names,"nodes":nodes}}),
     )
     .await;
     read_golden(
         &mut app,
         json!({"op":"deps","task":test}),
-        json!({"ok":{"kind":"deps","task":test_record,"blockers":[
+        json!({"ok":{"kind":"deps","names":names,"task":test_record,"blockers":[
         {"distance":1,"task":install_record},{"distance":2,"task":order_record}
     ],"dependents":[]}}),
     )
@@ -706,7 +707,7 @@ async fn graph_reads_render_the_project_forest_and_transitive_dependencies() {
     read_golden(
         &mut app,
         json!({"op":"deps","task":order}),
-        json!({"ok":{"kind":"deps","task":order_record,"blockers":[],"dependents":[
+        json!({"ok":{"kind":"deps","names":names,"task":order_record,"blockers":[],"dependents":[
             {"distance":1,"task":install_record},{"distance":2,"task":test_record}
         ]}}),
     )
