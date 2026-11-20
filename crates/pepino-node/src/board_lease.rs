@@ -12,6 +12,8 @@ use tokio::sync::{Notify, watch};
 
 use crate::Error;
 
+pub(crate) const BOARD_SHUTDOWN_LIMIT: Duration = Duration::from_secs(3);
+
 #[derive(Clone, Default)]
 pub(crate) struct OpenBoards(Arc<Registry>);
 
@@ -88,7 +90,7 @@ impl OpenBoards {
     pub(crate) async fn stop(&self) -> Result<(), Error> {
         self.prepare_shutdown();
         self.0.stopping.send_replace(true);
-        tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::time::timeout(BOARD_SHUTDOWN_LIMIT, async {
             loop {
                 if self.drained() {
                     return;

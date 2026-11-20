@@ -14,20 +14,31 @@ use tokio::{
     sync::oneshot,
 };
 
-use crate::Error;
+use crate::{
+    Error,
+    board_lease::{BOARD_SHUTDOWN_LIMIT, OpenBoards},
+};
 
 const WRITER_LIMIT: Duration = Duration::from_secs(2);
-const SHUTDOWN_LIMIT: Duration = Duration::from_secs(6);
+const SHUTDOWN_LIMIT: Duration = BOARD_SHUTDOWN_LIMIT.saturating_add(Duration::from_secs(6));
+
+pub(crate) struct Transport {
+    pub(crate) inner: Arc<p2panda::Node>,
+    pub(crate) boards: OpenBoards,
+}
 
 pub(crate) struct Worker {
     pub(crate) handle: Handle,
     pub(crate) pool: Arc<OnceLock<SqlitePool>>,
-    stop: oneshot::Sender<Box<dyn FnOnce() + Send>>,
+    stop: oneshot::Sender<()>,
     done: oneshot::Receiver<Result<(), Error>>,
 }
 
 impl Worker {
-    pub(crate) async fn start(database: &Path) -> Result<Self, Error> {
+    pub(crate) async fn start(
+        database: &Path,
+        mut transport: oneshot::Receiver<Transport>,
+    ) -> Result<Self, Error> {
         let path = database.with_file_name("node.lock");
         let lock = File::options()
             .write(true)
@@ -40,10 +51,6 @@ impl Worker {
             Err(std::fs::TryLockError::WouldBlock) => return Err(Error::DirectoryInUse(path)),
             Err(error) => return Err(Error::storage(error)),
         }
-        Self::start_locked(lock).await
-    }
-
-    async fn start_locked(lock: File) -> Result<Self, Error> {
         let (ready_tx, ready) = oneshot::channel();
         let (stop, stop_rx) = oneshot::channel();
         let (done_tx, done) = oneshot::channel();
@@ -67,8 +74,13 @@ impl Worker {
                 let result = if ready_tx.send(handle).is_ok()
                     && let Ok((runtime, cleanup)) = runtimes
                 {
-                    let release = runtime.block_on(stop_rx).ok();
-                    stop_runtime(runtime, cleanup, worker_pool.get(), release)
+                    let _ = runtime.block_on(stop_rx);
+                    let transport = transport.try_recv().ok();
+                    let drained = match &transport {
+                        Some(transport) => runtime.block_on(transport.boards.stop()),
+                        None => Ok(()),
+                    };
+                    stop_runtime(runtime, cleanup, worker_pool.get(), transport).and(drained)
                 } else {
                     Ok(())
                 };
@@ -99,14 +111,7 @@ impl Worker {
     }
 
     pub(crate) async fn shutdown(self) -> Result<(), Error> {
-        self.shutdown_with(|| {}).await
-    }
-
-    pub(crate) async fn shutdown_with(
-        self,
-        release: impl FnOnce() + Send + 'static,
-    ) -> Result<(), Error> {
-        let _ = self.stop.send(Box::new(release));
+        drop(self.stop);
         tokio::time::timeout(SHUTDOWN_LIMIT, self.done)
             .await
             .map_err(|_| {
@@ -120,7 +125,7 @@ fn stop_runtime(
     runtime: tokio::runtime::Runtime,
     cleanup: tokio::runtime::Runtime,
     pool: Option<&SqlitePool>,
-    release: Option<Box<dyn FnOnce() + Send>>,
+    transport: Option<Transport>,
 ) -> Result<(), Error> {
     // p2panda 0.8.1 rolls back cancelled transactions in a spawned task.
     // Hold SQLite's writer lock while cancelling runtime tasks so none can orphan a writer.
@@ -134,9 +139,10 @@ fn stop_runtime(
                 .map_err(Error::storage)
         })
     });
-    if let Some(release) = release {
+    if let Some(Transport { inner, boards }) = transport {
         let _entered = runtime.enter();
-        release();
+        boards.release_upstream();
+        drop(inner);
     }
     drop(runtime);
     let Some((pool, writer)) = pool.zip(writer) else {
@@ -157,11 +163,15 @@ fn stop_runtime(
 mod tests {
     use super::*;
 
+    async fn start(database: &Path) -> Result<Worker, Error> {
+        Worker::start(database, oneshot::channel().1).await
+    }
+
     #[tokio::test]
     async fn runs_and_joins_a_separate_runtime() {
         let dir = tempfile::tempdir().unwrap();
         let database = dir.path().join("node.sqlite");
-        let worker = Worker::start(&database).await.unwrap();
+        let worker = start(&database).await.unwrap();
         let caller = thread::current().id();
         assert_ne!(
             worker
@@ -170,20 +180,14 @@ mod tests {
                 .unwrap(),
             caller
         );
-        let handle = worker.handle.id();
-        worker
-            .shutdown_with(move || assert_eq!(Handle::current().id(), handle))
-            .await
-            .unwrap();
-        drop(Worker::start(&database).await.unwrap());
+        worker.shutdown().await.unwrap();
+        drop(start(&database).await.unwrap());
     }
 
     #[tokio::test]
     async fn shutdown_releases_connections_held_by_worker_tasks() {
         let dir = tempfile::tempdir().unwrap();
-        let worker = Worker::start(&dir.path().join("node.sqlite"))
-            .await
-            .unwrap();
+        let worker = start(&dir.path().join("node.sqlite")).await.unwrap();
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         worker.pool.set(pool.clone()).unwrap();
         let checked_out = pool.clone();
@@ -209,7 +213,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("node.sqlite");
-        let worker = Worker::start(&path).await.unwrap();
+        let worker = start(&path).await.unwrap();
         let pool = crate::node::open_database(&path).await.unwrap();
         worker.pool.set(pool.clone()).unwrap();
         let store = SqliteStore::from_pool(pool.clone());
@@ -250,7 +254,7 @@ mod tests {
     async fn holds_directory_lock_during_background_shutdown() {
         let dir = tempfile::tempdir().unwrap();
         let database = dir.path().join("node.sqlite");
-        let worker = Worker::start(&database).await.unwrap();
+        let worker = start(&database).await.unwrap();
         let (started, ready) = oneshot::channel();
         let (release, wait) = std::sync::mpsc::channel();
         worker.handle.spawn_blocking(move || {
@@ -261,16 +265,11 @@ mod tests {
         let Worker { stop, done, .. } = worker;
         drop(stop);
         assert!(matches!(
-            Worker::start(&database).await,
+            start(&database).await,
             Err(Error::DirectoryInUse(_))
         ));
         release.send(()).unwrap();
         done.await.unwrap().unwrap();
-        Worker::start(&database)
-            .await
-            .unwrap()
-            .shutdown()
-            .await
-            .unwrap();
+        start(&database).await.unwrap().shutdown().await.unwrap();
     }
 }

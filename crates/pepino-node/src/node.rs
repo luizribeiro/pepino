@@ -5,8 +5,12 @@ use pepino_core::DeviceId;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 
 use crate::{
-    Error, NodeEvents, NodeSettings, ack::AckStore, board_lease::OpenBoards, status::peer_session,
-    status_state::Status, worker::Worker,
+    Error, NodeEvents, NodeSettings,
+    ack::AckStore,
+    board_lease::OpenBoards,
+    status::peer_session,
+    status_state::Status,
+    worker::{Transport, Worker},
 };
 
 /// A running transport node. Await [`Node::shutdown`] before opening its data directory again.
@@ -14,9 +18,9 @@ use crate::{
 pub struct Node {
     instance_id: [u8; 16],
     pub(crate) inner: Arc<p2panda::Node>,
+    pub(crate) boards: OpenBoards,
     pub(crate) worker: Worker,
     pub(crate) acks: AckStore,
-    pub(crate) boards: OpenBoards,
     pub(crate) status: Status,
     pub(crate) publish_confirmation_timeout: Duration,
 }
@@ -25,7 +29,10 @@ impl Node {
     pub async fn spawn(settings: NodeSettings) -> Result<Self, Error> {
         let builder = settings.builder()?;
         let publish_confirmation_timeout = settings.publish_confirmation_timeout;
-        let worker = Worker::start(&settings.database_path).await?;
+        let boards = OpenBoards::default();
+        let worker_boards = boards.clone();
+        let (transport, transport_rx) = tokio::sync::oneshot::channel();
+        let worker = Worker::start(&settings.database_path, transport_rx).await?;
         let worker_pool = worker.pool.clone();
         let started = worker
             .run(async move {
@@ -40,7 +47,14 @@ impl Node {
                     .database_pool(pool.clone())
                     .spawn()
                     .await
+                    .map(Arc::new)
                     .map_err(Error::node)?;
+                transport
+                    .send(Transport {
+                        inner: inner.clone(),
+                        boards: worker_boards,
+                    })
+                    .map_err(|_| Error::Closed)?;
                 let mut system = inner.event_stream().await.map_err(Error::node)?;
                 let status = Status::default();
                 let broadcaster = status.clone();
@@ -50,7 +64,7 @@ impl Node {
                         peer_session(&broadcaster, &mut peers, event);
                     }
                 });
-                Ok((Arc::new(inner), acks, status, instance_id))
+                Ok((inner, acks, status, instance_id))
             })
             .await;
         let (inner, acks, status, instance_id) = match started {
@@ -65,7 +79,7 @@ impl Node {
             inner,
             worker,
             acks,
-            boards: OpenBoards::default(),
+            boards,
             status,
             publish_confirmation_timeout,
         })
@@ -116,18 +130,12 @@ impl Node {
     pub async fn shutdown(self) -> Result<(), Error> {
         let Self {
             inner,
-            worker,
             boards,
+            worker,
             ..
         } = self;
-        let closed = boards.stop().await;
-        worker
-            .shutdown_with(move || {
-                boards.release_upstream();
-                drop(inner);
-            })
-            .await
-            .and(closed)
+        drop((inner, boards));
+        worker.shutdown().await
     }
 }
 

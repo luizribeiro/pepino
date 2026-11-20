@@ -4,7 +4,7 @@ use std::{
 };
 
 use futures_util::future::try_join_all;
-use pepino_node::{BoardHandle, Node, Role};
+use pepino_node::{BoardHandle, Error, Node, Role};
 use tempfile::TempDir;
 use tokio::time::timeout;
 
@@ -58,17 +58,62 @@ async fn close_enrolled_board(names: &[&str]) -> (TempDir, Vec<Node>) {
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn shutdown_releases_the_udp_port_with_a_board_still_open() {
     let (_dir, node, address) = node_with_udp_port().await;
-    let _board = node.create_board().await.unwrap();
+    let board = node.create_board().await.unwrap();
+    node.shutdown().await.unwrap();
+    assert!(matches!(
+        board.wait_until_joined(WAIT).await,
+        Err(Error::Closed)
+    ));
+    wait_for_udp_port(address).await;
+}
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn shutdown_immediately_after_spawn_releases_the_udp_port() {
+    let (_dir, node, address) = node_with_udp_port().await;
     node.shutdown().await.unwrap();
     wait_for_udp_port(address).await;
 }
 
 #[tokio::test]
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
-async fn dropping_without_shutdown_releases_the_udp_port() {
-    let (_dir, node, address) = node_with_udp_port().await;
+async fn dropping_without_shutdown_closes_an_open_board() {
+    let (dir, node, address) = node_with_udp_port().await;
+    let board = node.create_board().await.unwrap();
+    board
+        .publish(b"Verify the rollback plan".to_vec())
+        .await
+        .unwrap();
     drop(node);
+    let lock = std::fs::File::options()
+        .write(true)
+        .open(dir.path().join("alice/node.lock"))
+        .unwrap();
+    until(async || lock.try_lock(), Result::is_ok, WAIT)
+        .await
+        .unwrap();
+    assert!(matches!(
+        board.wait_until_joined(WAIT).await,
+        Err(Error::Closed)
+    ));
     wait_for_udp_port(address).await;
+}
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn shutdown_closes_a_board_waiting_for_membership() {
+    let dir = super::support::fixture_dir();
+    let network = network(dir.path());
+    let owner = start(&settings(&network, dir.path().join("alice"))).await;
+    let board = owner.create_board().await.unwrap();
+    let peer = start(&settings(&network, dir.path().join("ben"))).await;
+    let joining = peer.open_board(board.id()).await.unwrap();
+    let joined = joining.wait_until_joined(WAIT);
+    tokio::pin!(joined);
+    assert!(futures_util::poll!(&mut joined).is_pending());
+    peer.shutdown().await.unwrap();
+    assert!(matches!(joined.await, Err(Error::Closed)));
+    owner.shutdown().await.unwrap();
 }
 
 async fn node_with_udp_port() -> (TempDir, Node, SocketAddr) {
