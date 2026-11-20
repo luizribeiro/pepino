@@ -21,21 +21,35 @@ pub fn lease(path: &Path) -> io::Result<File> {
         }
         std::fs::TryLockError::Error(error) => error,
     })?;
+    if !same_file(path, &file)? {
+        return Err(io::ErrorKind::AddrInUse.into());
+    }
     Ok(file)
+}
+
+fn same_file(path: &Path, file: &File) -> io::Result<bool> {
+    let held = file.metadata()?;
+    match fs::symlink_metadata(path) {
+        Ok(current) => Ok((held.dev(), held.ino()) == (current.dev(), current.ino())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 pub struct Socket {
     pub listener: UnixListener,
     path: PathBuf,
     identity: (u64, u64),
-    _lease: File,
+    lock: PathBuf,
+    lease: File,
 }
 
 impl Socket {
     pub async fn bind(path: PathBuf) -> io::Result<Self> {
         let mut lock = path.as_os_str().to_owned();
         lock.push(".lock");
-        let lease = lease(Path::new(&lock))?;
+        let lock = PathBuf::from(lock);
+        let lease = lease(&lock)?;
         if let Some((device, inode)) = identity(&path)? {
             match tokio::time::timeout(
                 std::time::Duration::from_millis(100),
@@ -62,7 +76,8 @@ impl Socket {
             listener,
             path,
             identity,
-            _lease: lease,
+            lock,
+            lease,
         };
         fs::set_permissions(&socket.path, fs::Permissions::from_mode(0o600))?;
         Ok(socket)
@@ -88,6 +103,9 @@ impl Drop for Socket {
         if identity(&self.path).ok().flatten() == Some(self.identity) {
             let _ = fs::remove_file(&self.path);
         }
+        if same_file(&self.lock, &self.lease).unwrap_or(false) {
+            let _ = fs::remove_file(&self.lock);
+        }
     }
 }
 
@@ -99,16 +117,24 @@ mod tests {
     async fn recovers_an_abandoned_socket_and_preserves_an_existing_listener() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("release.sock");
+        let lock = dir.path().join("release.sock.lock");
         let listener = UnixListener::bind(&path).unwrap();
         assert_eq!(
             Socket::bind(path.clone()).await.err().unwrap().kind(),
             io::ErrorKind::AddrInUse
         );
         drop(listener);
+        let abandoned = File::open(&lock).unwrap();
         let socket = Socket::bind(path.clone()).await.unwrap();
+        assert!(same_file(&lock, &abandoned).unwrap());
+        assert!(lease(&lock).is_err());
         assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o600);
         drop(socket);
         assert!(!path.exists());
+        assert!(!lock.exists());
+        let replacement = Socket::bind(path.clone()).await.unwrap();
+        assert!(!same_file(&lock, &abandoned).unwrap());
+        drop(replacement);
         fs::write(&path, "release notes").unwrap();
         assert!(Socket::bind(path.clone()).await.is_err());
         assert_eq!(fs::read_to_string(path).unwrap(), "release notes");
