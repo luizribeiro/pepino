@@ -278,6 +278,15 @@ pub fn ambiguous_tasks(data: &std::path::Path) -> (String, [String; 2]) {
 pub fn assert_task_reference_errors(
     sandbox: &ConfigSandbox,
     data: &std::path::Path,
+    invoke: impl FnMut(&str) -> Output,
+) {
+    assert_reference_errors_with_deleted(sandbox, data, (3, "not_found"), invoke);
+}
+
+pub fn assert_reference_errors_with_deleted(
+    sandbox: &ConfigSandbox,
+    data: &std::path::Path,
+    (deleted_status, deleted_code): (i32, &str),
     mut invoke: impl FnMut(&str) -> Output,
 ) {
     use pepino_app::{Request, WriteRequest};
@@ -297,7 +306,7 @@ pub fn assert_task_reference_errors(
     for (reference, status, code) in [
         ("latch", 2, "invalid_input"),
         ("ffffffffffffffff", 3, "not_found"),
-        (&deleted[..8], 1, "conflict"),
+        (&deleted[..8], deleted_status, deleted_code),
         (&ambiguous, 4, "ambiguous_id"),
     ] {
         let error = task_error(invoke(reference), status, code);

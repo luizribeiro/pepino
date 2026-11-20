@@ -209,17 +209,6 @@ fn display_ids(text: &str, ids: &ShortIds<'_>) -> String {
 impl From<AppError> for CliError {
     fn from(error: AppError) -> Self {
         let kind = match error.kind() {
-            AppErrorKind::NotFound
-                if matches!(
-                    &error,
-                    AppError::NotFound {
-                        reference: pepino_app::MissingReference::DeletedTask { .. },
-                        ..
-                    }
-                ) =>
-            {
-                ErrorKind::Conflict
-            }
             AppErrorKind::NotFound => ErrorKind::NotFound,
             AppErrorKind::NotInitialized => ErrorKind::NotInitialized,
             AppErrorKind::AmbiguousId => ErrorKind::AmbiguousId,

@@ -130,7 +130,7 @@ fn task_reads_keep_reference_statuses_across_graphs_and_history() {
             .args([command, &deleted, "--json"])
             .output()
             .unwrap();
-        assert_eq!(task_error(output, 1, "conflict")["task"], deleted);
+        assert_eq!(task_error(output, 3, "not_found")["task"], deleted);
     }
     let log = as_json(&sandbox.run(&["log", &deleted, "--json"]));
     let events = log["events"].as_array().unwrap();

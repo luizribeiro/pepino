@@ -52,7 +52,7 @@ fn link_reports_errors_in_either_endpoint() {
     for bad_first in [true, false] {
         let (sandbox, data) = task_sandbox();
         let p = small_project(&sandbox);
-        assert_task_reference_errors(&sandbox, &data, |bad| {
+        assert_reference_errors_with_deleted(&sandbox, &data, (1, "conflict"), |bad| {
             let (from, to) = if bad_first {
                 (bad, p.parent.as_str())
             } else {

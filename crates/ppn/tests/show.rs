@@ -61,7 +61,7 @@ fn show_diagnostics_distinguish_malformed_and_missing_references() {
 }
 
 #[test]
-fn show_reports_deleted_tasks_as_conflicts() {
+fn show_reports_deleted_tasks_as_not_found() {
     use pepino_app::{Request, WriteRequest};
     let (sandbox, data) = task_sandbox();
     let id = create_task(&sandbox, "Order the new mounting plate", &[]);
@@ -78,11 +78,11 @@ fn show_reports_deleted_tasks_as_conflicts() {
         .args(["show", &id[..6], "--json"])
         .output()
         .unwrap();
-    let error = task_error(output, 1, "conflict");
+    let error = task_error(output, 3, "not_found");
     assert_eq!(error["field"], "task");
     assert_eq!(error["task"], id);
     let output = sandbox.command().args(["show", &id[..6]]).output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(3));
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
         format!(
