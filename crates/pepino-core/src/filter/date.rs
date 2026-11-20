@@ -64,15 +64,6 @@ impl fmt::Display for DateOperand {
     }
 }
 
-pub(super) fn resolve(value: &str, today: Date) -> Result<Date, ErrorKind> {
-    value
-        .parse::<DateOperand>()?
-        .resolve(today)
-        .map_err(|_| ErrorKind::DateOutOfRange {
-            value: value.into(),
-        })
-}
-
 fn relative(value: &str) -> Option<String> {
     match value {
         "today" | "tomorrow" | "yesterday" => Some(value.into()),

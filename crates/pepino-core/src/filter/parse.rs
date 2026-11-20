@@ -4,8 +4,8 @@ use super::ast::ME;
 use super::keywords::{self, Builtin};
 
 use super::{
-    Assignee, Clause, Comparison, CustomValue, Date, DateOperand, ErrorKind, Filter, Operator,
-    ParseError, Position, PresenceField, State, Term, date, lex,
+    Assignee, Clause, Comparison, CustomValue, Date, ErrorKind, Filter, Operator, ParseError,
+    Position, PresenceField, State, Term, lex,
 };
 
 /// Parse whitespace-separated terms using the supplied calendar date.
@@ -80,9 +80,9 @@ fn parse_argument(input: &str, index: usize, today: Date) -> Result<Term, ParseE
     parse_term(raw, position, today)
 }
 
-fn parse_term(raw: &str, position: Position, today: Date) -> Result<Term, ParseError> {
+fn parse_term(raw: &str, position: Position, _today: Date) -> Result<Term, ParseError> {
     let body = raw.strip_prefix('-');
-    let clause = parse_clause(body.unwrap_or(raw), today)
+    let clause = parse_clause(body.unwrap_or(raw))
         .map_err(|failure| error(raw, position, shifted(failure, usize::from(body.is_some()))))?;
     Ok(Term {
         negated: body.is_some(),
@@ -90,13 +90,13 @@ fn parse_term(raw: &str, position: Position, today: Date) -> Result<Term, ParseE
     })
 }
 
-fn parse_clause(body: &str, today: Date) -> Located<Clause> {
+fn parse_clause(body: &str) -> Located<Clause> {
     if let Some(name) = body.strip_prefix('@') {
         return parse_view(name).map_err(|failure| shifted(failure, 1));
     }
     if let Some((key, values)) = key_parts(body) {
         let key = key.map_err(|kind| (0, kind))?;
-        return parse_keyed(key, values, today)
+        return parse_keyed(key, values)
             .map_err(|failure| shifted(failure, body.len() - values.len()));
     }
     decode_required(body, ErrorKind::EmptyTerm).map(Clause::Text)
@@ -135,7 +135,7 @@ fn parse_view(raw: &str) -> Located<Clause> {
     }
 }
 
-fn parse_keyed(field: FieldName, raw: &str, today: Date) -> Located<Clause> {
+fn parse_keyed(field: FieldName, raw: &str) -> Located<Clause> {
     use Builtin::*;
     let key = field.as_str();
     let equal_text = || alternatives(raw, key, false, |operand| Ok(operand.value));
@@ -185,8 +185,7 @@ fn parse_keyed(field: FieldName, raw: &str, today: Date) -> Located<Clause> {
         Some(Created) => dates().map(Clause::Created),
         Some(Updated) => dates().map(Clause::Updated),
         None => {
-            let alternatives =
-                alternatives(raw, key, true, |operand| parse_custom(operand, today))?;
+            let alternatives = alternatives(raw, key, true, parse_custom)?;
             Ok(Clause::Custom {
                 field,
                 alternatives,
@@ -195,7 +194,7 @@ fn parse_keyed(field: FieldName, raw: &str, today: Date) -> Located<Clause> {
     }
 }
 
-fn parse_custom(operand: Operand, today: Date) -> Result<Comparison<CustomValue>, ErrorKind> {
+fn parse_custom(operand: Operand) -> Result<Comparison<CustomValue>, ErrorKind> {
     let Operand {
         operator,
         value,
@@ -207,8 +206,8 @@ fn parse_custom(operand: Operand, today: Date) -> Result<Comparison<CustomValue>
     } else if lex::ascii_digits(digits) {
         CustomValue::Integer(parse_integer(value)?)
     } else {
-        match date::resolve(&value, today) {
-            Ok(date) => CustomValue::Date(DateOperand::Absolute(date)),
+        match value.parse() {
+            Ok(date) => CustomValue::Date(date),
             Err(error @ ErrorKind::DateOutOfRange { .. }) => return Err(error),
             Err(_) => CustomValue::Text(value),
         }

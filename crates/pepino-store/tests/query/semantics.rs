@@ -114,6 +114,8 @@ fn custom_comparisons_respect_operand_type_and_lexical_case() {
     check(r#"estimate:12,"12""#, &[0, 1]);
     check("inspection:>=2026-11-21", &[0]);
     check("inspection:>2026-11-21", &[]);
+    check("inspection:+2d", &[0]);
+    check(r#"inspection:"+2d""#, &[]);
     check(r#"inspection:>=999,"later",2026-11-21"#, &[0]);
     check(r#"supplier:<"Beta""#, &[0]);
     check("supplier:acme", &[]);

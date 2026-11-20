@@ -29,11 +29,11 @@ const ALTERNATIVES: &[(&str, &[&str])] = &[
         ],
     ),
     ("priority", &["<0", "5", ">10"]),
-    ("due", &["<2026-11-20", "2026-11-20", ">2026-11-20"]),
-    ("created", &["<2026-11-19", "2026-11-19", ">=2026-11-20"]),
-    ("updated", &["<2026-11-20", "2026-11-20", ">2026-11-20"]),
+    ("due", &["<fri", "2026-11-20", ">tomorrow"]),
+    ("created", &["<today", "2026-11-19", ">=tomorrow"]),
+    ("updated", &["<2026-11-20", "tomorrow", ">+1w"]),
     ("estimate", &["<10", "12", r#""12""#, "2026-11-20"]),
-    ("inspection", &["<2026-11-21", "2026-11-21", ">2026-11-21"]),
+    ("inspection", &["<2026-11-21", "+2d", ">=-1w"]),
     ("supplier", &[r#"<"Beta""#, r#""Acme""#, "12"]),
 ];
 
@@ -116,6 +116,8 @@ proptest! {
 fn error_term() -> impl Strategy<Value = &'static str> {
     sample::select(vec![
         "assignee:missing",
+        "updated:+9223372036854775807w",
+        "inspection:-99999999999999999999999d",
         "assignee:Alex",
         "parent:xy",
         "blocks:0f0f",

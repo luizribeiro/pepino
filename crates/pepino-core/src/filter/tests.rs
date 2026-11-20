@@ -623,20 +623,14 @@ fn custom_operands_use_their_unquoted_form() {
             clause: Clause::Custom {
                 field: FieldName::new("reminder").unwrap(),
                 alternatives: vec![
-                    comparison(Eq, CustomValue::Date(DateOperand::Absolute(today()))),
-                    comparison(
-                        Ge,
-                        CustomValue::Date(DateOperand::Absolute("2026-11-22".parse().unwrap()))
-                    ),
+                    comparison(Eq, CustomValue::Date("today".parse().unwrap())),
+                    comparison(Ge, CustomValue::Date("+3d".parse().unwrap())),
                     comparison(Eq, CustomValue::Text("today".into())),
                     comparison(Eq, CustomValue::Text("fri".into())),
                     comparison(Eq, CustomValue::Text("+3d".into())),
                     comparison(Eq, CustomValue::Text("-8".into())),
                     comparison(Eq, CustomValue::Text("later".into())),
-                    comparison(
-                        Le,
-                        CustomValue::Date(DateOperand::Absolute("2028-02-29".parse().unwrap()))
-                    ),
+                    comparison(Le, CustomValue::Date("2028-02-29".parse().unwrap())),
                 ],
             },
         }]
@@ -650,9 +644,9 @@ fn custom_operands_use_their_unquoted_form() {
             },
         ),
         (
-            "reminder:+9223372036854775808w",
+            "reminder:+999999999-01-01",
             ErrorKind::DateOutOfRange {
-                value: "+9223372036854775808w".into(),
+                value: "+999999999-01-01".into(),
             },
         ),
     ] {
