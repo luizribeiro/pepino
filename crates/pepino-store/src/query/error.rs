@@ -2,10 +2,20 @@ use pepino_core::{IdentityId, TaskId};
 use thiserror::Error;
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
-#[error("{term}: {kind}")]
+#[error("{}{term}: {kind}", view_location(.view_chain))]
 pub struct QueryError {
     pub term: String,
     pub kind: QueryErrorKind,
+    /// Saved views entered before reaching the offending term, outermost first.
+    pub view_chain: Vec<String>,
+}
+
+fn view_location(chain: &[String]) -> String {
+    if chain.is_empty() {
+        String::new()
+    } else {
+        format!("in @{}: ", chain.join(" -> @"))
+    }
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]

@@ -120,6 +120,7 @@ fn prepare<'a>(
         let at_term = |kind| QueryError {
             term: term.to_string(),
             kind,
+            view_chain: chain.clone(),
         };
         let predicate = match &term.clause {
             Clause::Board(_) => continue,

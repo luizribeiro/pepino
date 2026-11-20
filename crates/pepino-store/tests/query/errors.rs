@@ -11,16 +11,27 @@ use super::{
 };
 
 fn check(query: &Query<'_>, term: &str, kind: QueryErrorKind) {
+    check_chain(query, term, kind, &[]);
+}
+
+fn check_chain(query: &Query<'_>, term: &str, kind: QueryErrorKind, chain: &[&str]) {
     let expected = QueryError {
         term: term.into(),
         kind,
+        view_chain: chain.iter().map(|name| (*name).to_owned()).collect(),
     };
     assert_eq!(query.prepare(board()).unwrap_err(), expected);
     assert_eq!(select(board(), query).unwrap_err(), expected);
     let task = board().task(id(0)).unwrap();
     let error = matches(board(), task, query).unwrap_err();
     assert_eq!(error, expected);
-    assert!(error.to_string().starts_with(term));
+    if !chain.is_empty() {
+        assert!(
+            error
+                .to_string()
+                .starts_with(&format!("in @{}: {term}", chain.join(" -> @")))
+        );
+    }
 }
 
 #[test]
@@ -54,7 +65,8 @@ fn unresolved_person_reports_decoded_text_and_canonical_term() {
         select(&empty, &query(&filter)),
         Err(QueryError {
             term: term.into(),
-            kind
+            kind,
+            view_chain: vec![],
         })
     );
 }
@@ -108,12 +120,13 @@ fn ambiguous_task_prefix_lists_candidates_and_total() {
 
 #[test]
 fn unknown_saved_view_names_the_failing_reference() {
-    check(
+    check_chain(
         &query(&filter("@unknown")),
         "@missing",
         QueryErrorKind::UnknownView {
             name: "missing".into(),
         },
+        &["unknown"],
     );
 }
 
@@ -128,9 +141,14 @@ fn direct_and_indirect_view_cycles_report_the_chain_and_closing_term() {
         ),
     ] {
         let kind = QueryErrorKind::ViewCycle {
-            chain: chain.into_iter().map(str::to_owned).collect(),
+            chain: chain.iter().map(|name| (*name).to_owned()).collect(),
         };
-        check(&query(&filter(input)), term, kind);
+        check_chain(
+            &query(&filter(input)),
+            term,
+            kind,
+            &chain[..chain.len() - 1],
+        );
     }
 }
 
@@ -149,4 +167,23 @@ fn preparation_errors_are_independent_of_term_order() {
             },
         );
     }
+}
+
+#[test]
+fn nested_clause_errors_report_the_views_that_led_there() {
+    let root = filter("@weekend");
+    let views = std::collections::BTreeMap::from([
+        ("weekend", filter("@garden")),
+        ("garden", filter("assignee:missing")),
+    ]);
+    let mut query = query(&root);
+    query.context.views = &views;
+    check_chain(
+        &query,
+        "assignee:missing",
+        QueryErrorKind::UnknownPerson {
+            text: "missing".into(),
+        },
+        &["weekend", "garden"],
+    );
 }
