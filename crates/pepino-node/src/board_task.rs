@@ -122,7 +122,6 @@ impl BoardTask {
             }
             None => Ok(()),
         };
-        // The upstream pipeline can cancel a writer when its last stream handle is dropped.
         self.lease.retain_upstream((joined, subscription));
         let delivered = if requested {
             self.events.stop().await

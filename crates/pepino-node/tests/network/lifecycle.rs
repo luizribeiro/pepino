@@ -3,11 +3,56 @@ use std::{
     time::Duration,
 };
 
-use pepino_node::Node;
+use futures_util::future::try_join_all;
+use pepino_node::{BoardHandle, Node, Role};
 use tempfile::TempDir;
 use tokio::time::timeout;
 
-use super::support::{WAIT, network, settings, start, until};
+use super::support::{WAIT, enroll, network, settings, start, until};
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn two_and_three_nodes_shut_down_concurrently_after_board_close() {
+    for names in [&["alice", "ben"][..], &["alice", "ben", "chloe"][..]] {
+        let (_dir, nodes) = close_enrolled_board(names).await;
+        try_join_all(nodes.into_iter().map(Node::shutdown))
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn two_and_three_nodes_shut_down_sequentially_after_board_close() {
+    for names in [&["alice", "ben"][..], &["alice", "ben", "chloe"][..]] {
+        let (_dir, nodes) = close_enrolled_board(names).await;
+        for node in nodes {
+            node.shutdown().await.unwrap();
+        }
+    }
+}
+
+async fn close_enrolled_board(names: &[&str]) -> (TempDir, Vec<Node>) {
+    let dir = super::support::fixture_dir();
+    let network = network(dir.path());
+    let mut nodes = Vec::new();
+    for name in names {
+        nodes.push(start(&settings(&network, dir.path().join(name))).await);
+    }
+    let board = nodes[0].create_board().await.unwrap();
+    board
+        .publish(b"Review the release checklist".to_vec())
+        .await
+        .unwrap();
+    let mut boards = vec![board];
+    for node in &nodes[1..] {
+        boards.push(enroll(&boards[0], node, Role::Write).await);
+    }
+    try_join_all(boards.into_iter().map(BoardHandle::close))
+        .await
+        .unwrap();
+    (dir, nodes)
+}
 
 #[tokio::test]
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]

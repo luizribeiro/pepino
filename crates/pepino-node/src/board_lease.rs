@@ -105,13 +105,12 @@ impl OpenBoards {
     }
 
     fn retain_upstream(&self, handles: impl Send + 'static) {
-        if self.0.preparing.load(Ordering::Acquire) {
-            self.0
-                .retained
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(Box::new(handles));
-        }
+        // Dropping the final stream guard can cancel a writer on p2panda's pipeline runtime.
+        self.0
+            .retained
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(Box::new(handles));
     }
 }
 
@@ -235,11 +234,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn upstream_handles_outlive_the_board_lease_during_node_shutdown() {
+    async fn upstream_handles_outlive_a_board_closed_before_shutdown() {
         let open = OpenBoards::default();
         let lease = open.reserve(BoardId::from_bytes([34; 32])).unwrap();
         let marker = Arc::new("greenhouse subscription");
-        open.prepare_shutdown();
         lease.retain_upstream(marker.clone());
         drop(lease);
         open.stop().await.unwrap();
