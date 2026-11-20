@@ -1,4 +1,8 @@
-use std::{net::Ipv4Addr, path::PathBuf, time::Duration};
+use std::{
+    net::{Ipv4Addr, Ipv6Addr},
+    path::PathBuf,
+    time::Duration,
+};
 
 use p2panda::{
     Hash, NodeBuilder, RelayUrl, VerifyingKey, network::MdnsDiscoveryMode, node::AckPolicy,
@@ -29,6 +33,7 @@ pub struct NodeSettings {
     pub mdns: MdnsMode,
     pub bind_ip_v4: Option<Ipv4Addr>,
     pub bind_port: Option<u16>,
+    pub bind_ip_v6: Option<Ipv6Addr>,
     pub credentials: DeviceCredentials,
     pub database_path: PathBuf,
     pub publish_confirmation_timeout: Duration,
@@ -43,9 +48,20 @@ impl NodeSettings {
             mdns: MdnsMode::Active,
             bind_ip_v4: None,
             bind_port: None,
+            bind_ip_v6: None,
             credentials,
             database_path: database_path.into(),
             publish_confirmation_timeout: Duration::from_secs(30),
+        }
+    }
+
+    pub fn offline(credentials: DeviceCredentials, database_path: impl Into<PathBuf>) -> Self {
+        Self {
+            mdns: MdnsMode::Disabled,
+            bind_ip_v4: Some(Ipv4Addr::LOCALHOST),
+            bind_ip_v6: Some(Ipv6Addr::LOCALHOST),
+            bind_port: Some(0),
+            ..Self::new(credentials, database_path)
         }
     }
 
@@ -80,6 +96,9 @@ impl NodeSettings {
         if let Some(ip) = self.bind_ip_v4 {
             builder = builder.bind_ip_v4(ip);
         }
+        if let Some(ip) = self.bind_ip_v6 {
+            builder = builder.bind_ip_v6(ip);
+        }
         if let Some(port) = self.bind_port {
             builder = builder.bind_port_v4(port);
         }
@@ -102,6 +121,20 @@ fn relay_url(text: &str) -> Result<RelayUrl, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn offline_settings_bind_ephemeral_loopback_without_discovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let keys = DeviceCredentials::load_or_create(dir.path().join("device.cbor")).unwrap();
+        let settings = NodeSettings::offline(keys, dir.path().join("node.sqlite"));
+        assert_eq!(settings.bind_ip_v4, Some(Ipv4Addr::LOCALHOST));
+        assert_eq!(settings.bind_ip_v6, Some(Ipv6Addr::LOCALHOST));
+        assert_eq!(settings.bind_port, Some(0));
+        assert_eq!(settings.mdns, MdnsMode::Disabled);
+        assert!(settings.relay_urls.is_empty());
+        assert!(settings.bootstrap_nodes.is_empty());
+        settings.validate().unwrap();
+    }
 
     #[test]
     fn validates_network_and_bootstrap_settings_without_starting_a_node() {
