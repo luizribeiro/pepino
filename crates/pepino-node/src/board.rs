@@ -114,6 +114,7 @@ impl Node {
                     acks.reset(id).await?;
                     StreamFrom::Start
                 } else {
+                    acks.upgrade_legacy(id).await?;
                     StreamFrom::Frontier
                 };
                 let replaying = cursor::needs_replay(&acks.pool, id, node.id()).await?;

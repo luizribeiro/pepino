@@ -73,6 +73,22 @@ impl Position {
             .log_height(&self.author, &self.log)
             .is_some_and(|seq| *seq >= self.seq)
     }
+    pub(crate) async fn record(
+        self,
+        db: &mut SqliteConnection,
+        board: BoardId,
+    ) -> Result<(), Error> {
+        sqlx::query("INSERT OR IGNORE INTO pepino_ack_position VALUES (?, ?, ?, ?)")
+            .bind(board.as_bytes().as_slice())
+            .bind(self.author.as_bytes().as_slice())
+            .bind(self.log.as_bytes().as_slice())
+            .bind(self.seq)
+            .execute(db)
+            .await
+            .map_err(Error::storage)?;
+        Ok(())
+    }
+
     pub(crate) async fn compact(
         self,
         db: &mut SqliteConnection,

@@ -1,6 +1,8 @@
 use pepino_core::{BoardId, EventId};
 use sqlx::SqlitePool;
 
+mod legacy;
+
 use crate::{
     Error,
     cursor::{self, Position},
@@ -84,14 +86,7 @@ impl Ack {
         let mut cursor = cursor::load(&mut tx, self.board).await?;
         let pos = self.position;
         if !pos.covered(&cursor) {
-            sqlx::query("INSERT OR IGNORE INTO pepino_ack_position VALUES (?, ?, ?, ?)")
-                .bind(self.board.as_bytes().as_slice())
-                .bind(pos.author.as_bytes().as_slice())
-                .bind(pos.log.as_bytes().as_slice())
-                .bind(pos.seq)
-                .execute(&mut *tx)
-                .await
-                .map_err(Error::storage)?;
+            pos.record(&mut tx, self.board).await?;
             pos.compact(&mut tx, self.board, &mut cursor).await?;
         }
         sqlx::query("DELETE FROM pepino_board_ack WHERE board = ? AND event = ?")
