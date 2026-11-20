@@ -948,6 +948,7 @@ dependencies = [
  "getrandom",
  "pepino-core",
  "pepino-store",
+ "proptest",
  "serde",
  "serde_json",
  "sqlx",

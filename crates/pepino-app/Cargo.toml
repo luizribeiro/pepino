@@ -18,6 +18,7 @@ whoami = "2"
 
 [dev-dependencies]
 ciborium = "0.2"
+proptest = { version = "1", default-features = false, features = ["std"] }
 tokio = { version = "1", features = ["macros", "rt"] }
 
 [lints]
