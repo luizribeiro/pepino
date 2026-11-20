@@ -1,4 +1,5 @@
 pub mod add;
+pub mod cancel;
 pub mod config;
 pub mod debug;
 pub mod deps;
@@ -8,9 +9,11 @@ pub mod help;
 pub mod log;
 pub mod ls;
 pub mod ready;
+pub mod rm;
 pub mod show;
 pub mod start;
 pub mod status;
+pub mod tag;
 pub mod tree;
 pub mod version;
 pub mod view;

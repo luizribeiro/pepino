@@ -56,6 +56,9 @@ enum Command {
     Edit(commands::edit::Args),
     Start(commands::start::Args),
     Done(commands::done::Args),
+    Cancel(commands::cancel::Args),
+    Rm(commands::rm::Args),
+    Tag(commands::tag::Args),
     Debug(debug::Args),
 }
 
@@ -197,6 +200,9 @@ fn dispatch(
         Some(Command::Edit(args)) => commands::edit::run(context, args),
         Some(Command::Start(args)) => commands::start::run(context, args),
         Some(Command::Done(args)) => commands::done::run(context, args),
+        Some(Command::Cancel(args)) => commands::cancel::run(context, args),
+        Some(Command::Rm(args)) => commands::rm::run(context, args),
+        Some(Command::Tag(args)) => commands::tag::run(context, args),
         Some(Command::Debug(args)) => debug::run(context, args),
         None => Ok(help::run(context, Cli::command(), None)),
     }
