@@ -3,7 +3,7 @@ use pepino_core::{
 };
 use sqlx::{Connection, SqliteConnection};
 
-use crate::{Store, StoreError, fold::fold};
+use crate::{Store, StoreError, fold::fold, history};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IdSource {
@@ -104,6 +104,27 @@ impl Decoded {
         .map_err(StoreError::database)?;
         Ok(result.rows_affected() == 1)
     }
+
+    async fn project(
+        self,
+        connection: &mut SqliteConnection,
+        board: BoardId,
+    ) -> Result<AppendOutcome, StoreError> {
+        let id = self.id;
+        Ok(match self.event {
+            Ok(envelope) => {
+                history::index(connection, board, &envelope).await?;
+                match fold(connection, board, &envelope).await? {
+                    Some(task) => AppendOutcome::Applied { id, task },
+                    None => AppendOutcome::Skipped {
+                        id,
+                        reason: SkipReason::EdgeViewPending,
+                    },
+                }
+            }
+            Err(reason) => AppendOutcome::Skipped { id, reason },
+        })
+    }
 }
 
 impl Store {
@@ -118,16 +139,7 @@ impl Store {
         let mut tx = connection.begin().await.map_err(StoreError::database)?;
         let id = decoded.id;
         let outcome = if decoded.insert(&mut tx, board, bytes).await? {
-            match decoded.event {
-                Ok(envelope) => match fold(&mut tx, board, &envelope).await? {
-                    Some(task) => AppendOutcome::Applied { id, task },
-                    None => AppendOutcome::Skipped {
-                        id,
-                        reason: SkipReason::EdgeViewPending,
-                    },
-                },
-                Err(reason) => AppendOutcome::Skipped { id, reason },
-            }
+            decoded.project(&mut tx, board).await?
         } else {
             AppendOutcome::Duplicate { id }
         };

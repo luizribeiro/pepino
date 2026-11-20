@@ -1,5 +1,6 @@
 mod comment;
 mod fold;
+mod history;
 mod log;
 mod prefix;
 mod task;
@@ -16,6 +17,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 pub use comment::CommentRecord;
+pub use history::EventRecord;
 pub use log::{AppendOutcome, IdSource, SkipReason};
 pub use prefix::PrefixResolution;
 pub use task::TaskRecord;
