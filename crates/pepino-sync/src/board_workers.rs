@@ -176,7 +176,7 @@ async fn receive<B: TransportBoard>(
     use futures_util::StreamExt;
     use pepino_node::{Error as NodeError, MemberState};
     let mut membership = board.membership_events();
-    match crate::inbox::run(app, id, stream, status, stopping.clone()).await {
+    match crate::inbox::run(app, id, board, stream, status, stopping.clone()).await {
         Err(Error::Node(NodeError::Removed)) => (),
         result => return result,
     }

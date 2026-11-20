@@ -230,6 +230,9 @@ async fn stream_errors_back_off_and_keep_the_board_non_idle_until_repoll() {
     let dir = tempfile::tempdir().unwrap();
     let board = BoardId::from_bytes([65; 32]);
     let app = directory::prepare(dir.path(), board, DeviceId::from_bytes([66; 32])).await;
+    use crate::Transport;
+    let node = Stub::new(DeviceId::from_bytes([66; 32]));
+    let handle = node.open_board(board).await.unwrap();
     tokio::time::pause();
     let mut idle = crate::Status::default();
     idle.boards.entry(board).or_default().outbox_pending = Some(0);
@@ -273,7 +276,7 @@ async fn stream_errors_back_off_and_keep_the_board_non_idle_until_repoll() {
     };
     let (_stop, stopping) = watch::channel(());
     tokio::select! {
-        result = crate::inbox::run(&app, board, stream, &status, stopping) => panic!("{result:?}"),
+        result = crate::inbox::run(&app, board, &handle, stream, &status, stopping) => panic!("{result:?}"),
         _ = async { tokio::join!(observe, seq); } => (),
     }
 }

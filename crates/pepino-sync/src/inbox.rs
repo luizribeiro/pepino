@@ -1,18 +1,20 @@
 use std::{future::poll_fn, task::Poll, time::Duration};
 
-use pepino_app::{App, SyncStoreError};
+use pepino_app::{App, BoardCards, SyncStoreError};
 use pepino_core::BoardId;
 use pepino_store::{AppendOutcome, StoreError};
 use tokio::sync::watch;
 
 use crate::{
-    Acknowledgement, Delivery, DeliveryStream, Error, Status, retry::Retry, status::record_error,
+    Acknowledgement, Delivery, DeliveryStream, Error, Status, TransportBoard, retry::Retry,
+    status::record_error,
 };
 
-pub(crate) async fn run<A: Acknowledgement>(
+pub(crate) async fn run<B: TransportBoard>(
     app: &App,
     id: BoardId,
-    mut deliveries: DeliveryStream<A>,
+    handle: &B,
+    mut deliveries: DeliveryStream<B::Ack>,
     status: &watch::Sender<Status>,
     mut stopping: watch::Receiver<()>,
 ) -> Result<(), Error> {
@@ -52,7 +54,9 @@ pub(crate) async fn run<A: Acknowledgement>(
                 stream_retry = Retry::new();
                 last_stream_error = None;
                 let finish = async {
-                    ingest(app, id, &delivery, status).await;
+                    if !ingest_cards(app, id, handle, &delivery, status).await {
+                        ingest(app, id, &delivery, status).await;
+                    }
                     let mut retry = Retry::new();
                     while let Err(error) = delivery.ack.ack().await {
                         record_error(
@@ -199,4 +203,32 @@ async fn ingest_catalog<A>(
         }
         retry.wait().await;
     }
+}
+
+async fn ingest_cards<B: TransportBoard>(
+    app: &App,
+    board: BoardId,
+    handle: &B,
+    delivery: &Delivery<B::Ack>,
+    status: &watch::Sender<Status>,
+) -> bool {
+    if !BoardCards::is_board_card(&delivery.bytes) {
+        return false;
+    }
+    let mut retry = Retry::new();
+    while let Some(cards) = BoardCards::decode(&delivery.bytes) {
+        let manager =
+            matches!(cards, BoardCards::Introduce(_)) && handle.manages(delivery.signer).await;
+        match app
+            .receive_board_cards(board, delivery.signer, manager, cards)
+            .await
+        {
+            Ok(()) | Err(pepino_app::AppError::InvalidInput { .. }) => break,
+            Err(error) => {
+                record_error(status, board, format!("save board identity cards: {error}"));
+                retry.wait().await;
+            }
+        }
+    }
+    true
 }
