@@ -49,9 +49,17 @@ and their sources.
 This example uses sops-nix with a file encrypted in SOPS binary format.
 Replace the example node ID with the ID of a device allowed to request board
 relaying. The module provisions the service account, group and state directory
-and installs `/etc/pepino/node.toml`. The read-only `services.pepino.configFile`
-option exposes the generated path for the future daemon's `--config` flag.
-Service units are a later addition.
+and installs `/etc/pepino/node.toml`. The node file always includes `data_dir`,
+which defaults to `/var/lib/pepino`.
+
+`ppn` skips the node file by default. Pass `--config /etc/pepino/node.toml` to
+read it explicitly.
+`PPN_CONFIG` is the equivalent environment variable. A service-only module
+configuration leaves `/etc/pepino/config.toml` absent and `ppn` off the system
+`PATH`. Enable `programs.pepino.enable` to add both.
+
+The read-only `services.pepino.configFile` option exposes the generated path
+for the future daemon's `--config` flag. Service units are a later addition.
 
 On nix-darwin, set `users.users.pepino.uid` and `users.groups.pepino.gid` to unused
 IDs on your host. Use the configured account and group names if you override the
@@ -74,7 +82,8 @@ NixOS firewall rule. The node does not bind that port.
 | Both: `network` | String | Unset | Network name. |
 | Both: `relayUrls` | List of HTTPS URLs | Unset | Relay servers to use. |
 | Both: `mdns` | Boolean | Unset | Discover peers through multicast DNS. |
-| Both: `credentialsFile` | Absolute path string | Unset | Runtime path of the node's credentials. |
+| `programs.pepino.credentialsFile` | Absolute path string | Unset | Runtime path to client credentials. When unset, `ppn` uses `credentials.cbor` in the effective client state directory. |
+| `services.pepino.credentialsFile` | Absolute path string | Unset | Runtime path to the always-on node's credentials. When unset, `ppn` uses `credentials.cbor` in the service state directory. |
 | Both: `trustedDevices` | List of 64-digit hex node IDs | Unset | Devices allowed to request board relaying. |
 | Both: `bootstrapNodes` | List of `{ nodeId, relayUrl }` | Unset | Bootstrap peer IDs and HTTPS relay URLs. |
 | Both: `dataDir` | Absolute path string | Client unset, service `/var/lib/pepino` | State directory. |
@@ -93,7 +102,8 @@ warning.
 ## Credentials
 
 Use a runtime path from sops-nix (`config.sops.secrets.<name>.path`) or agenix
-(`config.age.secrets.<name>.path`). Give the account running the node ownership and
-mode `0600`. Keep plaintext CBOR credentials outside the Nix store and out of Nix
-expressions. The generated TOML contains the path string. By default, each client
-can keep its own credentials in its own state directory.
+(`config.age.secrets.<name>.path`) for provisioned credentials. For the always-on
+node, give the service account ownership of the file and set mode `0600`. Keep
+plaintext CBOR credentials outside the Nix store and out of Nix expressions.
+The generated TOML contains the path string. Leave the system-wide client setting
+unset for separate per-user credentials.
