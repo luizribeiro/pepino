@@ -1,10 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use pepino_core::{EdgeKind, Event, FieldName, FieldValue, IdentityId, InitialFields, TaskId};
+use pepino_core::{
+    EdgeKind, Event, FieldName, FieldValue, IdentityId, InitialFields, InvalidEvent, TaskId,
+};
 use pepino_store::{BoardView, TaskRecord};
 
 use crate::app::invalid;
-use crate::batch::Batch;
+use crate::batch::{Batch, invalid_event};
 use crate::projection::resolve;
 use crate::{App, AppError, WriteRequest};
 
@@ -34,11 +36,15 @@ impl App {
                     status: status.into(),
                     due: due.map(Into::into),
                     priority,
-                    tags: tags.into_iter().collect(),
+                    tags: tags.iter().cloned().collect(),
                     assignees: self.identities(assignees)?,
                     custom: custom_fields(fields)?,
                 };
-                let created = TaskId(batch.push(Event::TaskCreated { title, fields }, "fields")?);
+                let creation = Event::TaskCreated { title, fields };
+                creation.validate().map_err(|error| {
+                    invalid_event(&creation_path(&creation, &tags, &error), error)
+                })?;
+                let created = TaskId(batch.push(creation, "title")?);
                 if let Some(parent) = parent {
                     let to = resolve(view, "parent", &parent)?.id;
                     batch.push(
@@ -150,16 +156,15 @@ impl App {
     fn identities(&self, references: Vec<String>) -> Result<BTreeSet<IdentityId>, AppError> {
         references
             .into_iter()
-            .map(|reference| {
+            .enumerate()
+            .map(|(index, reference)| {
                 if reference == "me" {
                     Ok(self.local.identity_id)
                 } else {
                     reference.parse().map_err(|_| {
                         invalid(
-                            "assignees",
-                            format_args!(
-                                "{reference:?} must be a full hexadecimal identity ID or me"
-                            ),
+                            format!("assignees[{index}]"),
+                            "expected a full hexadecimal identity ID or me",
                         )
                     })
                 }
@@ -176,7 +181,8 @@ fn set_fields(
     batch.affected.insert(current.id);
     for (name, value) in changes {
         let value = value.into();
-        let field = FieldName::new(&name).map_err(|error| invalid(&name, error))?;
+        let path = field_path("changes", &name);
+        let field = FieldName::new(&name).map_err(|error| invalid(&path, error))?;
         let changed = current_value(current, &field) != value;
         batch.stage(
             Event::TaskFieldSet {
@@ -184,7 +190,7 @@ fn set_fields(
                 field,
                 value,
             },
-            &name,
+            &path,
             changed,
         )?;
     }
@@ -211,14 +217,18 @@ fn set_tags(
 ) -> Result<(), AppError> {
     let task = current.id;
     batch.affected.insert(task);
-    for tag in tags.into_iter().collect::<BTreeSet<_>>() {
+    let mut indexed = BTreeMap::new();
+    for (index, tag) in tags.into_iter().enumerate() {
+        indexed.entry(tag).or_insert(index);
+    }
+    for (tag, index) in indexed {
         let changed = current.tags.contains(&tag) != present;
         let event = if present {
             Event::TagAdded { task, tag }
         } else {
             Event::TagRemoved { task, tag }
         };
-        batch.stage(event, "tags", changed)?;
+        batch.stage(event, &format!("tags[{index}]"), changed)?;
     }
     Ok(())
 }
@@ -252,15 +262,57 @@ fn custom_fields(
     fields
         .into_iter()
         .map(|(name, value)| {
-            let field =
-                FieldName::new(&name).map_err(|error| invalid(format!("fields.{name}"), error))?;
+            let path = field_path("fields", &name);
+            let field = FieldName::new(&name).map_err(|error| invalid(&path, error))?;
             if !field.is_custom() {
-                return Err(invalid(
-                    format!("fields.{name}"),
-                    "expected a custom field name",
-                ));
+                return Err(invalid(path, "expected a custom field name"));
             }
             Ok((field, value.into()))
         })
         .collect()
+}
+
+fn creation_path(creation: &Event, tags: &[String], error: &InvalidEvent) -> String {
+    let Event::TaskCreated { fields, .. } = creation else {
+        return "title".into();
+    };
+    match error {
+        InvalidEvent::EmptyTitle | InvalidEvent::TextTooLong { kind: "title", .. } => {
+            "title".into()
+        }
+        InvalidEvent::TextTooLong {
+            kind: "description",
+            ..
+        } => "description".into(),
+        InvalidEvent::Tag(tag) => tags
+            .iter()
+            .position(|value| value == tag)
+            .map_or_else(|| "tags".into(), |index| format!("tags[{index}]")),
+        InvalidEvent::TextTooLong {
+            kind: "field text",
+            max_bytes,
+        } => fields
+            .custom
+            .iter()
+            .find_map(|(name, value)| match value {
+                FieldValue::Text(text) if text.len() > *max_bytes => {
+                    Some(field_path("fields", name.as_str()))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| "fields".into()),
+        _ => "fields".into(),
+    }
+}
+
+fn field_path(object: &str, field: &str) -> String {
+    if !field.is_empty()
+        && field
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        format!("{object}.{field}")
+    } else {
+        format!("{object}[{}]", serde_json::Value::String(field.into()))
+    }
 }

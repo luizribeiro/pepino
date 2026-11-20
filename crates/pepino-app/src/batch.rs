@@ -52,18 +52,14 @@ impl Batch {
     }
 }
 
-fn invalid_event(field: &str, error: InvalidEvent) -> AppError {
-    let input = match &error {
-        InvalidEvent::EmptyTitle => "title",
-        InvalidEvent::TextTooLong { kind: "title", .. } => "title",
-        InvalidEvent::TextTooLong {
-            kind: "description",
-            ..
-        } => "description",
-        InvalidEvent::Tag(_) if field == "fields" => "tags",
-        _ => field,
-    };
-    invalid(input, error)
+pub(super) fn invalid_event(field: &str, error: InvalidEvent) -> AppError {
+    match error {
+        InvalidEvent::FieldName { reason, .. } => invalid(field, reason),
+        InvalidEvent::FieldType(_) => invalid(field, "incorrect value type for built-in field"),
+        InvalidEvent::BuiltInCustomField(_) => invalid(field, "expected a custom field name"),
+        InvalidEvent::Tag(_) => invalid(field, "invalid tag name"),
+        error => invalid(field, error),
+    }
 }
 
 impl App {

@@ -196,15 +196,19 @@ async fn creation_rejects_invalid_events_without_writing_history() {
         (json!({"title":""}), "title"),
         (json!({"title":"x".repeat(1025)}), "title"),
         (json!({"description":"x".repeat(65_537)}), "description"),
-        (json!({"tags":["bad TAG"]}), "tags"),
-        (json!({"assignees":["Ada"]}), "assignees"),
+        (json!({"tags":["greenhouse", "bad TAG"]}), "tags[1]"),
+        (json!({"assignees":["me", "Ada"]}), "assignees[1]"),
         (
             json!({"fields":{"status":{"type":"status","value":"done"}}}),
             "fields.status",
         ),
         (
             json!({"fields":{"malformed/name":{"type":"integer","value":3}}}),
-            "fields.malformed/name",
+            r#"fields["malformed/name"]"#,
+        ),
+        (
+            json!({"fields":{"estimate":{"type":"text","value":"x".repeat(65_537)}}}),
+            "fields.estimate",
         ),
     ] {
         let mut request = json!({"op":"add_task","title":"Install the replacement latch"});

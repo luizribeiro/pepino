@@ -202,9 +202,15 @@ async fn edit_fields_completes_work_and_clears_optional_values() {
         "changes":{"description":{"type":"unset"},"title":{"type":"integer","value":3}}
     });
     assert!(
-        matches!(handle(&mut app, invalid).await, Err(AppError::InvalidInput { field, .. }) if field == "title")
+        matches!(handle(&mut app, invalid).await, Err(AppError::InvalidInput { field, .. }) if field == "changes.title")
     );
     assert_eq!(get(&mut app, &id).await, done);
+    let invalid = json!({"op":"set_fields","task":&id,"changes":{"priority":{"type":"text","value":"urgent"}}});
+    let error = handle(&mut app, invalid).await.unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "invalid changes.priority: incorrect value type for built-in field"
+    );
 
     let clear = json!({
         "op":"set_fields", "task":&id,
@@ -250,19 +256,19 @@ async fn tags_and_assignees_deduplicate_and_validate_entire_batches() {
     for (request, expected) in [
         (
             json!({"op":"add_tags","task":&id,"tags":["garden", "z INVALID"]}),
-            "tags",
+            "tags[1]",
         ),
         (
             json!({"op":"remove_tags","task":&id,"tags":["maintenance", "z INVALID"]}),
-            "tags",
+            "tags[1]",
         ),
         (
             json!({"op":"assign","task":&id,"assignees":["me","Ada"]}),
-            "assignees",
+            "assignees[1]",
         ),
         (
             json!({"op":"unassign","task":&id,"assignees":["me","Ada"]}),
-            "assignees",
+            "assignees[1]",
         ),
     ] {
         assert!(
