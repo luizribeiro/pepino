@@ -10,3 +10,9 @@ license = "MIT"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+print_stdout = "deny"
+print_stderr = "deny"
+exit = "deny"
+dbg_macro = "deny"
