@@ -221,7 +221,10 @@ async fn app_writes_continue_while_publish_is_waiting_on_the_transport() {
         json!({"op":"add_task","title":"Replace the shed roof"}),
     )
     .await;
-    engine.shutdown().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), engine.shutdown())
+        .await
+        .expect("shutdown must cancel the blocked publish")
+        .unwrap();
     assert_eq!(
         cli.store()
             .outbox(board, local, 1.try_into().unwrap())
