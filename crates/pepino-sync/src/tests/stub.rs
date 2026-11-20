@@ -67,6 +67,10 @@ pub(super) struct Receipt {
 }
 
 impl Stub {
+    pub(super) fn stop_deliveries(&self) {
+        self.queue.lock().unwrap().take();
+    }
+
     pub(super) fn connect(&self, peer: DeviceId) {
         self.status.lock().unwrap().connected_peers.insert(peer);
         let _ = self.signals.send(NodeEvent::PeerConnected { peer });
@@ -313,4 +317,37 @@ fn restarting_preserves_the_replication_instance() {
     let original = Stub::new(device);
     assert_eq!(original.instance_id(), original.restarted().instance_id());
     assert_ne!(original.instance_id(), Stub::new(device).instance_id());
+}
+
+#[tokio::test]
+async fn a_closed_delivery_stream_signals_that_the_daemon_must_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([78; 32]);
+    let device = DeviceId::from_bytes([79; 32]);
+    super::directory::prepare(dir.path(), board, device).await;
+    let node = Arc::new(Stub::new(device));
+    let engine = crate::SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    let changes = engine.status_changes().boxed();
+    node.stop_deliveries();
+    let failure = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        changes
+            .filter_map(|status| async move { status.restart_required })
+            .boxed()
+            .next()
+            .await
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(failure.board, board);
+    assert!(failure.cause.contains("stream closed"));
+    assert_eq!(engine.status().restart_required, Some(failure.clone()));
+    assert!(
+        matches!(engine.sync_once().await, Err(crate::Error::RestartRequired(error)) if error == failure)
+    );
+    assert!(
+        matches!(engine.shutdown().await, Err(crate::Error::RestartRequired(error)) if error == failure)
+    );
 }

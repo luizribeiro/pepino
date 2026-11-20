@@ -9,6 +9,16 @@ pub struct Status {
     pub node: NodeStatus,
     pub last_node_event: Option<NodeEvent>,
     pub last_node_error: Option<String>,
+    /// A terminal worker failure. The daemon must shut down the engine and node,
+    /// then start both again.
+    pub restart_required: Option<BoardFailure>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("board {board} stopped syncing: {cause}. Restart the engine and node")]
+pub struct BoardFailure {
+    pub board: BoardId,
+    pub cause: String,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -32,18 +42,19 @@ impl Status {
     }
 
     pub(crate) fn idle_with(&self, node: &NodeStatus) -> bool {
-        self.boards.iter().all(|(id, board)| {
-            !board.closed
-                && board.outbox_pending == Some(0)
-                && !board.ingest_pending
-                && !board.stream_retrying
-                && node.boards.get(id).is_some_and(|signals| {
-                    !signals.replaying
-                        && signals.active_syncs.is_empty()
-                        && signals.pending_deliveries == 0
-                        && node.connected_peers.is_subset(&signals.caught_up)
-                })
-        })
+        self.restart_required.is_none()
+            && self.boards.iter().all(|(id, board)| {
+                !board.closed
+                    && board.outbox_pending == Some(0)
+                    && !board.ingest_pending
+                    && !board.stream_retrying
+                    && node.boards.get(id).is_some_and(|signals| {
+                        !signals.replaying
+                            && signals.active_syncs.is_empty()
+                            && signals.pending_deliveries == 0
+                            && node.connected_peers.is_subset(&signals.caught_up)
+                    })
+            })
     }
 }
 

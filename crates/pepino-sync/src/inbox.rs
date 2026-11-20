@@ -16,6 +16,7 @@ pub(crate) async fn run<A: Acknowledgement>(
     status: &watch::Sender<Status>,
 ) -> Result<(), Error> {
     let mut stream_retry = Retry::new();
+    let mut last_stream_error = None;
     loop {
         // A concurrent idle check must see the node queue or the item now owned by us.
         let item = poll_fn(|cx| {
@@ -33,11 +34,18 @@ pub(crate) async fn run<A: Acknowledgement>(
             item
         })
         .await
-        .ok_or(pepino_node::Error::Closed)?;
+        .ok_or_else(|| {
+            Error::DeliveryStream(
+                last_stream_error
+                    .clone()
+                    .unwrap_or_else(|| "stream closed".into()),
+            )
+        })?;
 
         match item {
             Ok(delivery) => {
                 stream_retry = Retry::new();
+                last_stream_error = None;
                 ingest(app, id, &delivery, status).await;
                 let mut retry = Retry::new();
                 while let Err(error) = delivery.ack.ack().await {
@@ -53,7 +61,9 @@ pub(crate) async fn run<A: Acknowledgement>(
                 });
             }
             Err(error) => {
-                record_error(status, id, error.to_string());
+                let cause = error.to_string();
+                record_error(status, id, cause.clone());
+                last_stream_error = Some(cause);
                 stream_retry.wait().await;
             }
         }

@@ -2,12 +2,12 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use futures_util::{Stream, StreamExt};
 use pepino_app::{App, OpenOptions};
-use pepino_core::{BoardId, DeviceId};
+use pepino_core::DeviceId;
 use pepino_node::Node;
 use tokio::{sync::watch, task::JoinSet};
 use tokio_stream::wrappers::WatchStream;
 
-use crate::{Status, Transport, TransportBoard};
+use crate::{BoardFailure, Status, Transport, TransportBoard};
 
 #[derive(Clone, Debug)]
 pub struct Settings {
@@ -36,14 +36,19 @@ pub enum Error {
     Worker(#[from] tokio::task::JoinError),
     #[error("outbox poll interval must be positive")]
     PollInterval,
-    #[error("board {0} stopped syncing")]
-    BoardStopped(BoardId),
+    #[error(transparent)]
+    RestartRequired(#[from] BoardFailure),
+    #[error("delivery stream ended: {0}")]
+    DeliveryStream(String),
     #[error("sync did not become idle before the deadline")]
     Timeout,
     #[error("data directory belongs to device {local}, but the node is {node}")]
     DeviceMismatch { local: DeviceId, node: DeviceId },
 }
 
+/// Watch [`Status::restart_required`] through [`Self::status_changes`] to supervise
+/// the engine. On failure, the daemon must shut down both the engine and the
+/// node, then start both again.
 pub struct SyncEngine<T: Transport = Node> {
     node: Arc<T>,
     status: watch::Receiver<Status>,
@@ -99,17 +104,19 @@ impl<T: Transport> SyncEngine<T> {
                 let result = tokio::select! {
                     biased;
                     _ = stopping.changed() => Ok(()),
-                    _ = crate::outbox::run(&app, id, &board, node_instance, &status, nudged, poll) => Ok(()),
-                    result = crate::inbox::run(&app, id, stream, &status) => result,
+                    _ = crate::outbox::run(&app, id, &board, node_instance, &status, nudged, poll) => Err("outbox worker ended".into()),
+                    result = crate::inbox::run(&app, id, stream, &status) => result.map_err(|error| error.to_string()),
                 };
+                let result = result.map_err(|cause| BoardFailure { board: id, cause });
                 status.send_modify(|status| {
                     let board = status.boards.entry(id).or_default();
                     board.closed = true;
-                    if let Err(error) = &result {
-                        board.last_error = Some(error.to_string());
+                    if let Err(failure) = &result {
+                        board.last_error = Some(failure.cause.clone());
+                        status.restart_required.get_or_insert_with(|| failure.clone());
                     }
                 });
-                result.and(board.close().await.map_err(Error::from))
+                result.map_err(Error::from).and(board.close().await.map_err(Error::from))
             });
         }
         changes.send_modify(|status| status.node = node.status());
@@ -148,8 +155,8 @@ impl<T: Transport> SyncEngine<T> {
         loop {
             {
                 let status = updates.borrow_and_update();
-                if let Some((id, _)) = status.boards.iter().find(|(_, board)| board.closed) {
-                    return Err(Error::BoardStopped(*id));
+                if let Some(failure) = &status.restart_required {
+                    return Err(failure.clone().into());
                 }
                 if status
                     .boards
