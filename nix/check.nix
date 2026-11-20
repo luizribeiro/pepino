@@ -31,24 +31,28 @@ let
     ];
   }).config;
 
-  passes = config:
-    lib.all (entry: entry.assertion) config.assertions
-    && builtins.deepSeq (removeAttrs config.programs.pepino [ "package" ])
+  failedAssertions = config: map (entry: entry.message) (lib.filter (entry: !entry.assertion) config.assertions);
+  forceOptions = config:
+    builtins.deepSeq (removeAttrs config.programs.pepino [ "package" ])
       (builtins.deepSeq (removeAttrs config.services.pepino [ "package" "configFile" ])
         (builtins.seq config.services.pepino.configFile true));
-  rejects = evaluate: settings:
-    let result = builtins.tryEval (passes (evaluate settings));
-    in !result.success || !result.value;
+  accepts = config: warnings:
+    failedAssertions config == [ ] && forceOptions config && config.warnings == warnings;
+  rejects = config: expected:
+    let messages = failedAssertions config;
+    in if builtins.length messages == 1 && lib.hasInfix expected (builtins.head messages)
+    then true
+    else throw "Expected Pepino assertion containing '${expected}', got ${builtins.toJSON messages}";
 
-  verify = evaluate: full:
-    lib.all (settings: let config = evaluate settings; in passes config && config.warnings == [ ])
+  verify = evaluate:
+    lib.all (settings: accepts (evaluate settings) [ ])
       [ fixtures.empty fixtures.outsideStore fixtures.cleared fixtures.typical ]
-    && passes (evaluate full)
-    && (evaluate full).warnings == [
-      "services.pepino.port only drives the NixOS firewall rule. The node does not bind this port."
-    ]
-    && (evaluate fixtures.untrusted).warnings != [ ]
-    && lib.all (rejects evaluate) fixtures.invalid;
+    && accepts (evaluate fixtures.untrusted) [ untrustedWarning ]
+    && lib.all ({ settings, message }: rejects (evaluate settings) message) fixtures.invalidAssertions
+    && lib.all (settings: !(builtins.tryEval (forceOptions (evaluate settings))).success) fixtures.invalidTypes;
+
+  portWarning = "services.pepino.port only drives the NixOS firewall rule. The node does not bind this port.";
+  untrustedWarning = "services.pepino.enable is set with no trusted devices, so the node will accept boards from nobody.";
 
   linux = evaluate self.nixosModules.default;
   darwin = evaluate self.darwinModules.default;
@@ -62,27 +66,30 @@ let
   fullDarwinSettings = lib.recursiveUpdate fixtures.full { services.pepino.openFirewall = false; };
   fullDarwin = darwinWithAccount fullDarwinSettings;
 in
-assert verify linux fixtures.full && verify darwinWithAccount fullDarwinSettings;
+assert verify linux && verify darwinWithAccount;
 assert lib.all
   (evaluate:
   let config = evaluate fixtures.disabled;
   in config.assertions == [ ] && config.warnings == [ ]
     && config.environment.etc == { } && config.environment.systemPackages == [ ])
   [ linux darwin ];
-assert rejects linux fixtures.invalidLinux;
-assert rejects darwinWithAccount fixtures.invalidDarwinFirewall;
-assert rejects darwin fixtures.missingDarwinUid;
-assert rejects darwin fixtures.missingDarwinGid;
+assert rejects (linux fixtures.invalidLinux) "services.pepino.openFirewall requires services.pepino.port.";
+assert rejects (darwinWithAccount fixtures.invalidDarwinFirewall)
+  "services.pepino.openFirewall is not supported on nix-darwin. Configure the firewall manually.";
+assert rejects (darwin fixtures.missingDarwinUid) "services.pepino requires users.users.pepino-relay.uid to be set";
+assert rejects (darwin fixtures.missingDarwinGid) "services.pepino requires users.groups.pepino-relay.gid to be set";
 assert (linux fixtures.empty).environment.systemPackages == [ package ];
 assert (linux fixtures.typical).services.pepino.package == package;
 assert (linux fixtures.empty).services.pepino.configFile == null;
 assert !((linux fixtures.empty).environment.etc ? "pepino/node.toml");
 assert !((linux fixtures.untrusted).environment.etc ? "pepino/config.toml");
+assert accepts fullLinux [ portWarning ];
 assert fullLinux.environment.etc."pepino/node.toml".source == fullLinux.services.pepino.configFile;
 assert fullDarwin.environment.etc."pepino/node.toml".source == fullDarwin.services.pepino.configFile;
 assert fullLinux.networking.firewall.allowedUDPPorts == [ 44123 ];
 assert fullLinux.users.users.pepino-relay.isSystemUser;
 assert fullLinux.systemd.tmpfiles.settings.pepino."/srv/pepino".d.mode == "0700";
+assert accepts fullDarwin [ portWarning ];
 assert fullDarwin.users.knownUsers == [ "pepino-relay" ];
 assert fullDarwin.users.knownGroups == [ "pepino-relay" ];
 assert fullDarwin.users.users.pepino-relay.uid == 451;

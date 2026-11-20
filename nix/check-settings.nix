@@ -12,12 +12,25 @@ let
     bootstrapNodes = [ (node host) ];
   };
 
-  invalidNode = {
-    storeCredentials.credentialsFile = "${builtins.storeDir}/pepino-credentials";
-    storeRoot.credentialsFile = builtins.storeDir;
-    normalizedStoreCredentials.credentialsFile = "/../${lib.removePrefix "/" builtins.storeDir}//./pepino-credentials";
-    trustedDuplicates.trustedDevices = [ laptop (lib.toUpper laptop) ];
-    bootstrapDuplicates.bootstrapNodes = [ (node host) (node (lib.toUpper host)) ];
+  credentialsInStore = path: {
+    settings.credentialsFile = path;
+    message = "credentialsFile must be outside the Nix store.";
+  };
+  invalidValues = {
+    storeCredentials = credentialsInStore "${builtins.storeDir}/pepino-credentials";
+    storeRoot = credentialsInStore builtins.storeDir;
+    normalizedStoreCredentials = credentialsInStore "/../${lib.removePrefix "/" builtins.storeDir}//./pepino-credentials";
+    trustedDuplicates = {
+      settings.trustedDevices = [ laptop (lib.toUpper laptop) ];
+      message = "trustedDevices contains duplicate node IDs.";
+    };
+    bootstrapDuplicates = {
+      settings.bootstrapNodes = [ (node host) (node (lib.toUpper host)) ];
+      message = "bootstrapNodes contains duplicate node IDs.";
+    };
+  };
+
+  invalidTypes = {
     nodeId.trustedDevices = [ "invalid" ];
     bootstrapId.bootstrapNodes = [ (node "invalid") ];
     insecureRelay.relayUrls = [ "http://relay.example.com" ];
@@ -27,6 +40,8 @@ let
     relativeState.dataDir = "state/pepino";
     blankNetwork.network = "  ";
   };
+  forBoth = makeCase: cases:
+    lib.concatMap (prefix: lib.mapAttrsToList (makeCase prefix) cases) [ "programs" "services" ];
 in
 {
   empty.programs.pepino.enable = true;
@@ -39,8 +54,8 @@ in
     };
   };
   disabled = {
-    programs.pepino = invalidNode.storeCredentials // invalidNode.trustedDuplicates;
-    services.pepino = invalidNode.storeCredentials // invalidNode.bootstrapDuplicates // {
+    programs.pepino = invalidValues.storeCredentials.settings // invalidValues.trustedDuplicates.settings;
+    services.pepino = invalidValues.storeCredentials.settings // invalidValues.bootstrapDuplicates.settings // {
       openFirewall = true;
       port = 44123;
     };
@@ -87,14 +102,18 @@ in
     services.pepino = { enable = true; group = "pepino-relay"; };
     users.users.pepino.uid = 451;
   };
-  invalid =
-    map (node: { programs.pepino = node // { enable = true; }; }) (lib.attrValues invalidNode)
-    ++ map (node: { services.pepino = node // { enable = true; }; }) (lib.attrValues invalidNode)
+  invalidAssertions = forBoth
+    (prefix: _: { settings, message }: {
+      settings.${prefix}.pepino = settings // { enable = true; };
+      message = "${prefix}.pepino.${message}";
+    })
+    invalidValues;
+  invalidTypes = forBoth (prefix: _: settings: { ${prefix}.pepino = settings; }) invalidTypes
     ++ [
-      { programs.pepino.ui.color = "sometimes"; }
-      { services.pepino.port = 0; }
-      { services.pepino.port = 65536; }
-      { services.pepino.port = "44123"; }
-      { services.pepino.configFile = "/tmp/pepino.toml"; }
-    ];
+    { programs.pepino.ui.color = "sometimes"; }
+    { services.pepino.port = 0; }
+    { services.pepino.port = 65536; }
+    { services.pepino.port = "44123"; }
+    { services.pepino.configFile = "/tmp/pepino.toml"; }
+  ];
 }
