@@ -49,7 +49,6 @@ pub enum DecodeError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum DecodeOutcome {
     Known(Envelope),
     UnknownVersion {

@@ -95,7 +95,7 @@ impl StoredEvent {
             DecodeOutcome::UnknownEvent { .. }
             | DecodeOutcome::UnknownValue { .. }
             | DecodeOutcome::InvalidEvent { .. } => metadata::skipped(&self.bytes),
-            _ => (None, Vec::new()),
+            DecodeOutcome::UnknownVersion { .. } => (None, Vec::new()),
         };
         Ok(HistoryEvent {
             classification: self.classification,

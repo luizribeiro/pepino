@@ -129,7 +129,7 @@ impl TryFrom<HistoryEvent> for EventRecord {
             DecodeOutcome::InvalidEvent { reason, .. } => {
                 ("unknown", None, Some(reason.to_string()))
             }
-            _ => ("unknown", None, None),
+            DecodeOutcome::Known(_) => ("unknown", None, None),
         };
         let (kind, change) = match record.event {
             Some(event) => (event.kind(), EventChange::try_from(event)?),

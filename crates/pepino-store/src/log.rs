@@ -22,14 +22,13 @@ pub enum SkipReason {
         values: Vec<UnknownValue>,
     },
     Invalid(InvalidEvent),
-    UnknownOutcome,
 }
 
 impl SkipReason {
     fn classification(&self) -> &'static str {
         match self {
             Self::UnknownVersion(_) => "unknown_version",
-            Self::UnknownEvent(_) | Self::UnknownOutcome => "unknown_event",
+            Self::UnknownEvent(_) => "unknown_event",
             Self::UnknownValue { .. } => "unknown_value",
             Self::Invalid(_) => "invalid",
         }
@@ -75,7 +74,6 @@ impl Decoded {
                 variant, values, ..
             } => Err(SkipReason::UnknownValue { variant, values }),
             DecodeOutcome::InvalidEvent { reason, .. } => Err(SkipReason::Invalid(reason)),
-            _ => Err(SkipReason::UnknownOutcome),
         };
         Ok(Self {
             id,
