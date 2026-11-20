@@ -5,10 +5,10 @@ use std::{
     process::Command,
 };
 
-use pepino_core::BoardId;
-use pepino_node::Role;
+use pepino_core::{BoardId, EventId};
+use pepino_node::{BoardHandle, Role};
 
-use super::support::{WAIT, enroll, network, next, settings, start};
+use super::support::{WAIT, fixture_dir, network, next, settings, start};
 
 const EVENTS: usize = 24;
 
@@ -19,36 +19,38 @@ fn acknowledged(index: usize, mask: u32) -> bool {
 #[tokio::test]
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn abort_recovers_exactly_the_random_unacknowledged_subset() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = fixture_dir();
     let network = network(dir.path());
     let owner_dir = dir.path().join("alice");
     let config = settings(&network, owner_dir.clone());
-    let a = start(&config).await;
-    let b = start(&settings(&network, dir.path().join("ben"))).await;
-    let c = start(&settings(&network, dir.path().join("chloe"))).await;
+    let ben = settings(&network, dir.path().join("ben"));
+    let chloe = settings(&network, dir.path().join("chloe"));
+    let (a, b, c) = tokio::join!(start(&config), start(&ben), start(&chloe));
     let mut owner = a.create_board().await.unwrap();
-    let other = enroll(&owner, &b, Role::Write).await;
-    let third = enroll(&owner, &c, Role::Write).await;
     let board_id = owner.id();
-    let mut events = owner.events().unwrap();
-    let mut sent = HashMap::new();
-    for index in 0..EVENTS {
-        let writer = [&owner, &other, &third][index % 3];
-        let id = writer
-            .publish(index.to_string().into_bytes())
+    let (other, third) = tokio::try_join!(b.open_board(board_id), c.open_board(board_id)).unwrap();
+    for member in [&b, &c] {
+        owner
+            .add_member(&member.member_info().await.unwrap(), Role::Write)
             .await
             .unwrap();
-        sent.insert(id, index);
     }
+    tokio::try_join!(other.wait_until_joined(WAIT), third.wait_until_joined(WAIT)).unwrap();
+
+    let mut events = owner.events().unwrap();
+    let (first, second, third) = tokio::join!(
+        publish_history(&owner, 0),
+        publish_history(&other, 1),
+        publish_history(&third, 2),
+    );
+    let sent: HashMap<_, _> = first.into_iter().chain(second).chain(third).collect();
     let mut delivered = HashSet::new();
     while delivered.len() < EVENTS {
         let event = next(&mut events).await;
         assert!(sent.contains_key(&event.id));
         delivered.insert(event.id);
     }
-    c.shutdown().await.unwrap();
-    b.shutdown().await.unwrap();
-    a.shutdown().await.unwrap();
+    tokio::try_join!(a.shutdown(), b.shutdown(), c.shutdown()).unwrap();
 
     let random = p2panda::Topic::random();
     let mask = u32::from_le_bytes(random.as_bytes()[..4].try_into().unwrap());
@@ -89,6 +91,15 @@ async fn abort_recovers_exactly_the_random_unacknowledged_subset() {
         .unwrap();
     assert_eq!(next(&mut events).await.id, sentinel);
     a.shutdown().await.unwrap();
+}
+
+async fn publish_history(board: &BoardHandle, author: usize) -> Vec<(EventId, usize)> {
+    let mut sent = Vec::new();
+    for index in (author..EVENTS).step_by(3) {
+        let id = board.publish(index.to_string().into_bytes()).await.unwrap();
+        sent.push((id, index));
+    }
+    sent
 }
 
 #[tokio::test]
