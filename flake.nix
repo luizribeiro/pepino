@@ -52,6 +52,8 @@
           checks = rust.checks // {
             default = self.packages.${system}.default;
             config = import ./nix/check.nix { inherit self pkgs; };
+          } // lib.optionalAttrs (system == "x86_64-linux") {
+            vm = import ./nix/vm.nix { inherit self pkgs; };
           };
 
           devShells.default = devenv.lib.mkShell {
