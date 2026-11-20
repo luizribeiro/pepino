@@ -53,6 +53,20 @@ pub struct SavedView {
     pub filter: String,
 }
 
+impl SavedView {
+    /// Selects a definition from a list-views response using the saved-view name rules.
+    pub fn find_by_name<'a>(views: &'a [Self], name: &str) -> Result<&'a Self, AppError> {
+        validate_name(name)?;
+        views
+            .iter()
+            .find(|view| view.name == name)
+            .ok_or_else(|| AppError::NotFound {
+                field: "name".into(),
+                reference: MissingReference::View(name.into()),
+            })
+    }
+}
+
 impl App {
     pub(super) async fn reload_state(&mut self) -> Result<(), AppError> {
         let directory = self.directory.clone();
@@ -168,5 +182,41 @@ fn validate_name(name: &str) -> Result<(), AppError> {
         Ok(())
     } else {
         Err(invalid("name", "expected [a-z][a-z0-9_-]* within 64 bytes"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::AppErrorKind;
+
+    #[test]
+    fn finds_a_saved_definition_or_reports_a_name_error() {
+        let views = [
+            SavedView {
+                name: "repairs".into(),
+                filter: "tag:hardware".into(),
+            },
+            SavedView {
+                name: "weekend".into(),
+                filter: "due:<fri".into(),
+            },
+        ];
+        assert_eq!(
+            SavedView::find_by_name(&views, "weekend").unwrap(),
+            &views[1]
+        );
+        assert_eq!(
+            SavedView::find_by_name(&views, "wednesday")
+                .unwrap_err()
+                .kind(),
+            AppErrorKind::NotFound
+        );
+        assert_eq!(
+            SavedView::find_by_name(&views, "Weekend Plan")
+                .unwrap_err()
+                .kind(),
+            AppErrorKind::InvalidInput
+        );
     }
 }
