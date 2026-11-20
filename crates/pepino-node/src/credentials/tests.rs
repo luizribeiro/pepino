@@ -63,3 +63,19 @@ fn removes_interrupted_creation_after_install_or_before_retry() {
     assert!(!stale.exists());
     assert!(other.exists());
 }
+
+#[test]
+fn loading_credentials_requires_an_existing_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("release.cbor");
+    assert!(matches!(
+        DeviceCredentials::load(&path),
+        Err(Error::CredentialIo(_))
+    ));
+    assert!(!path.exists());
+    let created = DeviceCredentials::load_or_create(&path).unwrap();
+    assert_eq!(
+        DeviceCredentials::load(&path).unwrap().device_id(),
+        created.device_id()
+    );
+}

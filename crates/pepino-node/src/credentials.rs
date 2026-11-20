@@ -24,6 +24,10 @@ struct CredentialFile {
 }
 
 impl DeviceCredentials {
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, Error> {
+        decode(&fs::read(path).map_err(Error::CredentialIo)?)
+    }
+
     pub fn load_or_create(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
         let parent = path
