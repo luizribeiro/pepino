@@ -42,6 +42,21 @@ impl Status {
     }
 }
 
+pub(crate) fn record_error(
+    status: &tokio::sync::watch::Sender<Status>,
+    board: BoardId,
+    error: String,
+) {
+    status.send_if_modified(|state| {
+        let board = state.boards.entry(board).or_default();
+        if board.last_error.as_ref() == Some(&error) {
+            return false;
+        }
+        board.last_error = Some(error);
+        true
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,4 +86,20 @@ mod tests {
         status.boards.get_mut(&board).unwrap().ingest_pending = true;
         assert!(!status.is_idle());
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_repeated_error_preserves_the_snapshot_without_waking_observers() {
+    let board = BoardId::from_bytes([12; 32]);
+    let (status, mut updates) = tokio::sync::watch::channel(Status::default());
+    let message = String::from("the data directory is locked");
+    record_error(&status, board, message.clone());
+    assert!(updates.has_changed().unwrap());
+    assert_eq!(
+        updates.borrow_and_update().boards[&board].last_error,
+        Some(message.clone())
+    );
+    record_error(&status, board, message);
+    assert!(!updates.has_changed().unwrap());
 }

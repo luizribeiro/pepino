@@ -5,7 +5,9 @@ use pepino_core::BoardId;
 use pepino_store::{AppendOutcome, StoreError};
 use tokio::sync::watch;
 
-use crate::{Acknowledgement, Delivery, DeliveryStream, Error, Status, retry::Retry};
+use crate::{
+    Acknowledgement, Delivery, DeliveryStream, Error, Status, retry::Retry, status::record_error,
+};
 
 pub(crate) async fn run<A: Acknowledgement>(
     app: &App,
@@ -35,7 +37,7 @@ pub(crate) async fn run<A: Acknowledgement>(
                 ingest(app, id, &delivery, status).await;
                 let mut retry = Retry::new();
                 while let Err(error) = delivery.ack.ack().await {
-                    report(
+                    record_error(
                         status,
                         id,
                         format!("ack operation {}: {error}", delivery.operation),
@@ -44,7 +46,7 @@ pub(crate) async fn run<A: Acknowledgement>(
                 }
             }
             Err(error) => {
-                report(status, id, error.to_string());
+                record_error(status, id, error.to_string());
             }
         }
         status.send_modify(|state| state.boards.entry(id).or_default().ingest_pending = false);
@@ -71,7 +73,7 @@ async fn ingest<A>(
             }
             Ok(AppendOutcome::Duplicate { .. }) => return,
             Err(SyncStoreError::Store(StoreError::Decode(error))) => {
-                report(
+                record_error(
                     status,
                     board,
                     format!("decode operation {}: {error}", delivery.operation),
@@ -79,7 +81,7 @@ async fn ingest<A>(
                 return;
             }
             Err(error) => {
-                report(
+                record_error(
                     status,
                     board,
                     format!("store operation {}: {error}", delivery.operation),
@@ -88,15 +90,4 @@ async fn ingest<A>(
             }
         }
     }
-}
-
-fn report(status: &watch::Sender<Status>, board: BoardId, error: String) {
-    status.send_if_modified(|state| {
-        let board = state.boards.entry(board).or_default();
-        if board.last_error.as_ref() == Some(&error) {
-            return false;
-        }
-        board.last_error = Some(error);
-        true
-    });
 }
