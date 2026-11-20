@@ -32,7 +32,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "init" | "status" => (
             "status",
-            "identity Local person\ndevice Local device\nboard Current board\ndata_dir Local data directory\ncounts Task and event counts\nnetwork Daemon network snapshot or offline\nprotocol_version Application protocol version",
+            "identity Local person\ndevice Local device\nboard Current board\nboards Configured boards and their membership states\ndata_dir Local data directory\ncounts Task and event counts\nnetwork Daemon network snapshot or offline\nprotocol_version Application protocol version",
         ),
         "daemon run" | "daemon start" | "daemon stop" | "daemon status" => (
             "daemon",

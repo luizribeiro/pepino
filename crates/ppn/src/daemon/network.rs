@@ -41,6 +41,15 @@ pub fn snapshot(status: pepino_sync::Status) -> Network {
     }
 }
 
+pub fn membership(state: pepino_app::BoardJoinState) -> &'static str {
+    use pepino_app::BoardJoinState::*;
+    match state {
+        Joined => "joined",
+        WaitingToBeAdded => "waiting to be added",
+        WaitingForFirstSync => "waiting for first sync",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
