@@ -249,6 +249,10 @@ impl App {
         let creating = matches!(&request, Request::Write(WriteRequest::AddTask { .. }));
         let result = match request {
             Request::Read(request) => self.read(request).await,
+            Request::Write(WriteRequest::BoardRename { board, name }) => {
+                self.board_rename(&board, &name, guard).await
+            }
+            Request::Write(WriteRequest::BoardUse { board }) => self.board_use(&board, guard).await,
             Request::Write(WriteRequest::SaveView { name, filter }) => {
                 self.save_view(name, &filter, guard).await
             }

@@ -120,6 +120,13 @@ pub enum WriteRequest {
     Delete {
         task: String,
     },
+    BoardUse {
+        board: String,
+    },
+    BoardRename {
+        board: String,
+        name: String,
+    },
     SaveView {
         name: String,
         filter: FilterInput,
@@ -296,7 +303,6 @@ impl std::ops::Deref for TaskRecord {
 pub struct TaskSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board: Option<crate::LocalBoard>,
-
     pub id: String,
     pub title: String,
     pub description: Option<String>,

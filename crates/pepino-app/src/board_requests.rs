@@ -1,6 +1,8 @@
+use std::fs::File;
+
 use serde::{Deserialize, Serialize};
 
-use crate::app::store_error;
+use crate::app::{invalid, store_error, worker};
 use crate::{App, AppError, BoardJoinState, LocalBoard, Response};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -42,8 +44,48 @@ impl App {
             board: self.board_info(board).await?,
         })
     }
-}
 
+    pub(super) async fn board_use(
+        &mut self,
+        reference: &str,
+        guard: File,
+    ) -> Result<Response, AppError> {
+        let board = self.local.resolve_board(reference, "board")?.clone();
+        let mut info = self.board_info(&board).await?;
+        if !info.current {
+            let mut local = self.local.clone();
+            local.current = Some(board.id);
+            self.persist_boards(local, guard).await?;
+            info.current = true;
+        }
+        Ok(Response::Board { board: info })
+    }
+
+    pub fn validate_board_name(name: &str) -> Result<(), AppError> {
+        if name.trim().is_empty() {
+            return Err(invalid(
+                "name",
+                "board name must contain a non-whitespace character",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) async fn persist_boards(
+        &mut self,
+        local: crate::LocalState,
+        guard: File,
+    ) -> Result<(), AppError> {
+        let directory = self.directory.clone();
+        self.local = worker("persist boards", move || {
+            let _guard = guard;
+            local.replace(&directory)?;
+            Ok::<_, AppError>(local)
+        })
+        .await??;
+        Ok(())
+    }
+}
 #[cfg(test)]
 #[tokio::test]
 async fn reports_the_current_and_empty_named_board() {
@@ -70,4 +112,33 @@ async fn reports_the_current_and_empty_named_board() {
     assert!(
         matches!(board, Response::Board { board } if board.board.id == id && board.total == 0 && !board.current)
     );
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn changes_only_the_host_selection_and_the_named_label() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = crate::write::fixture::open(directory.path(), 0)
+        .await
+        .unwrap();
+    let anchor = app.local_state().catalog_board();
+    let id = pepino_core::BoardId::from_bytes([81; 32]);
+    app.register_created_board(id, "Workshop").await.unwrap();
+    for request in [
+        crate::WriteRequest::BoardUse {
+            board: "Workshop".into(),
+        },
+        crate::WriteRequest::BoardRename {
+            board: "5151".into(),
+            name: "Tool Shed".into(),
+        },
+    ] {
+        assert!(
+            matches!(app.handle(crate::Request::Write(request), 0).await.unwrap(),
+            Response::Board { board } if board.current && board.board.id == id)
+        );
+    }
+    let local = app.fresh_local_state().await.unwrap();
+    assert_eq!(local.catalog_board(), anchor);
+    assert_eq!(local.board_name(), "Tool Shed");
 }

@@ -90,7 +90,9 @@ impl App {
         request: WriteRequest,
     ) -> Result<(), AppError> {
         match request {
-            WriteRequest::SaveView { .. }
+            WriteRequest::BoardUse { .. }
+            | WriteRequest::BoardRename { .. }
+            | WriteRequest::SaveView { .. }
             | WriteRequest::DeleteView { .. }
             | WriteRequest::ApplyToTasks { .. } => {
                 return Err(invalid("request", "expected a single task write"));

@@ -5,7 +5,7 @@ use pepino_node::MemberInfo;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{lock, worker};
-use crate::{App, AppError, BoardJoinState, LocalBoard, LocalState, WireFormat};
+use crate::{App, AppError, BoardJoinState, LocalBoard, LocalState, Response, WireFormat};
 
 const PREFIX: &[u8] = b"pepino-board-catalog\0";
 
@@ -147,16 +147,6 @@ impl LocalState {
 }
 
 impl App {
-    pub fn validate_board_name(name: &str) -> Result<(), AppError> {
-        if name.trim().is_empty() {
-            return Err(crate::app::invalid(
-                "name",
-                "board name must contain a non-whitespace character",
-            ));
-        }
-        Ok(())
-    }
-
     pub async fn fresh_local_state(&self) -> Result<LocalState, AppError> {
         let directory = self.directory.clone();
         worker("reload local state", move || LocalState::load(&directory)).await?
@@ -205,6 +195,24 @@ impl App {
                 .await?;
         }
         Ok(true)
+    }
+
+    pub(super) async fn board_rename(
+        &mut self,
+        reference: &str,
+        name: &str,
+        guard: std::fs::File,
+    ) -> Result<Response, AppError> {
+        Self::validate_board_name(name)?;
+        let board = self.local.resolve_board(reference, "board")?;
+        let mut info = self.board_info(board).await?;
+        if board.name != name {
+            let mut local = self.local.clone();
+            local.name_board(board.id, name);
+            self.persist_boards(local, guard).await?;
+            info.board.name = name.into();
+        }
+        Ok(Response::Board { board: info })
     }
 
     pub(super) async fn update_local(
