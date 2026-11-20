@@ -40,8 +40,8 @@ receives its role on each board. If some boards fail, Pepino reports the
 outcomes and you can retry with the same request.
 
 The grant contains the granting device's signature, a MAC tied to the
-request secret, the identity and device roster, board IDs and names, and
-the granting device's connection hint. Back on the new host, read the
+request secret, the identity ID and display name, the two devices' names,
+board IDs and names, and the granting device's connection hint. Back on the new host, read the
 grant from stdin or a file. With terminal input, `ppn device join` prompts
 for the code without echoing it.
 
@@ -51,7 +51,8 @@ ppn device join --from-file grant.txt
 ```
 
 Join verifies the code against the saved request and shows the signing
-device. Keep that device's daemon running and reachable, either on the
+device. The grant bootstraps the join. The first board carries the
+authoritative identity record, which the daemon syncs during the join. Keep that device's daemon running and reachable, either on the
 same LAN with mDNS or through a common relay. Both hosts need the same
 network name.
 
@@ -73,12 +74,38 @@ request fingerprint and device ID.
 Run `ppn status` on the new host to see whether each board is joined,
 waiting to be added, or waiting for its first sync. Run `ppn sync` to
 check progress and `ppn ls` to see the replicated tasks. `ppn device ls`
-shows devices known to this host, identifies the current device, and
-includes observation times when the daemon has seen a device. The
-current device shows pending until its board membership and first sync
-complete. Remote devices are marked as added and awaiting their first
-observation, or seen on the board. Each host has its own roster until
-identity records can sync.
+shows the shared roster alongside what this host observes. The roster
+includes each device's name, who added it, when it was added, and whether
+it is active or revoked. The observations show board membership, the most
+recent sighting, and which row describes this host. A late join can still
+be pending on some boards.
+
+In `ppn device ls --json`, compare `roster` across hosts. The `devices`
+array includes this host's observations, with `member_of`, `total_boards`,
+`boards`, and `last_seen`. `state` describes the local observation and
+`roster_state` describes the shared record. The creator and entries from
+an older roster can have unknown add metadata. `ppn status` reports when
+the cached roster may be stale and counts rejected roster edits.
+
+## Manage identity and device names
+
+```sh
+ppn identity show
+ppn identity rename 'Ada Gardener'
+ppn device rename 'Garden laptop'
+ppn device rename ferrum 'Greenhouse tablet'
+```
+
+A device reference accepts a name, full device ID, or a unique ID prefix
+of four or more hexadecimal digits. Use a full ID if multiple devices
+have the same name. New names must contain one line of text and have at
+most 1,024 UTF-8 bytes after trimming surrounding whitespace. Renames
+are saved locally and propagate through the first board when daemons sync.
+Known devices' past work displays the current identity name.
+
+On upgrade, each device publishes the additions it recorded on that host
+once its own admission is in the synced roster. The originating device
+creates the initial record. Older additions keep an unknown add time.
 
 The manual flow covers adding a device to one existing identity.
 Removing or revoking devices, one-code linking, merging a host that

@@ -44,3 +44,43 @@ Daemon status includes observed device membership by board in `board_members` an
 per-board activity in `boards`. The CLI adds `selected_board` to `board ls`,
 `board show`, and `status`, with `id`, `name`, and `source` (`--board`,
 `PPN_BOARD`, or `current`).
+
+## Identity roster
+
+These application requests use the same v1 envelope.
+
+```json
+{"v":1,"request":{"op":"identity_show"}}
+{"v":1,"request":{"op":"identity_rename","name":"Ada Gardener"}}
+{"v":1,"request":{"op":"device_rename","name":"Garden laptop"}}
+{"v":1,"request":{"op":"device_rename","device":"ferrum","name":"Greenhouse tablet"}}
+```
+
+Show and identity rename return kind `identity` with an `identity` object.
+Status carries the same object. It contains the full `id`, `display_name`,
+`roster`, `cache_stale`, and `rejected_roster_entries`. Device rename
+returns kind `roster_device` with a `device` object. A roster entry carries
+the full `id`, `name`, `added_by` (full ID or null), `added_at` (v1 clock
+object or null), and `state` (`active` or `revoked`). The roster is
+ordered by full device ID. An omitted or null `device` selects this host.
+Unmatched references yield `not_found`. Ambiguous references supply
+the full candidate IDs and use the CLI's `ambiguous_id` code.
+
+Identity and device names use task title whitespace and byte-length rules.
+A known roster device's author label uses the identity display name. The
+`names` map of task and event results uses full keys for known authors and
+assignees and carries the identity display name as the value.
+
+Catalog announcements use the existing `pepino-board-catalog\0` prefix on
+the first board. The optional CBOR `roster` field contains individually
+signed edits. The legacy `devices` field carries no roster authority.
+Each edit has a writer, parent edit IDs, generation, and one change.
+Changes initialize the record, add a device, rename the identity, or
+rename a device. The edit ID is the BLAKE3 derive-key digest of the CBOR
+tuple `(catalog board ID, identity ID, edit)`, with context
+`Pepino identity catalog edit v1`. The writer signs that digest with its
+device key. Initial edits require the board creator and have generation
+zero. Other edits require an active writer in their accepted parents'
+causal past. The fold holds edits with missing parents and rejects
+invalid signatures, causal links, or writers. It resolves accepted
+edits in ascending `(generation, edit ID)` order.
