@@ -59,3 +59,27 @@ fn rm_resolves_all_arguments_before_deleting() {
         "Renovate the greenhouse"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn rm_lists_titles_and_accepts_yes_and_no_on_a_terminal() {
+    let (sandbox, _) = task_sandbox();
+    let project = small_project(&sandbox);
+    for (answer, expected) in [(b"n\n", "Deletion cancelled."), (b"y\n", "Deleted ")] {
+        let mut command = sandbox.command();
+        command.args(["rm", &project.parent, &project.blocker]);
+        let output = task_terminal(command, Some(answer));
+        assert!(output.status.success(), "{output:?}");
+        let prompt = String::from_utf8(output.stderr).unwrap();
+        assert!(prompt.contains("Renovate the greenhouse"));
+        assert!(prompt.contains("Order stainless fittings"));
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.starts_with(expected));
+        if answer == b"n\n" {
+            assert_eq!(show_task(&sandbox, &project.parent)["id"], project.parent);
+            assert_eq!(show_task(&sandbox, &project.blocker)["id"], project.blocker);
+        }
+    }
+    assert_deleted(&sandbox, &project.parent);
+    assert_deleted(&sandbox, &project.blocker);
+}
