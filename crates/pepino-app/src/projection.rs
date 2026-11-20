@@ -85,6 +85,7 @@ pub(super) fn project_at(view: &BoardView, id: TaskId) -> Result<TaskSummary, Ap
 
 pub(super) fn project_summary(task: &StoredTask) -> Result<TaskSummary, AppError> {
     Ok(TaskSummary {
+        board: None,
         id: task.id.to_string(),
         title: task.title.clone(),
         description: task.description.clone(),

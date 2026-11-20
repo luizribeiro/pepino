@@ -284,6 +284,9 @@ impl std::ops::Deref for TaskRecord {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TaskSummary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board: Option<crate::LocalBoard>,
+
     pub id: String,
     pub title: String,
     pub description: Option<String>,

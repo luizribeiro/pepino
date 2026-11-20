@@ -28,7 +28,6 @@ impl App {
             .unwrap_or("default")
             .parse()
             .map_err(|error| invalid("sort", error))?;
-        self.reload_state().await?;
         let views = ViewFilters::new(&self.local.saved_views);
         let saved = |name: &str| views.resolve(name);
         let people = |name: &str| self.local.person_candidates(None, name);
@@ -56,40 +55,68 @@ impl App {
             supplied
         };
         let boards = self.list_boards_for_filter(&terms)?;
-        let (tasks, total, resolved_dates, warnings) =
-            if let Some(board) = boards.first().map(|board| board.id) {
-                let view = if views.needs_comments(&filter) {
-                    self.store.board_with_comments(board).await
-                } else {
-                    self.store.board(board).await
-                }
-                .map_err(store_error)?;
-                let people = |name: &str| self.local.person_candidates(Some(&view), name);
-                let prepared = (Query {
-                    filter: &filter,
-                    context: Context {
-                        people: &people,
-                        ..context()
-                    },
-                })
-                .prepare(&view)
-                .map_err(diagnostic)?;
-                let mut matching = prepared.select();
-                let total = matching.len();
-                sort.sort(&mut matching);
-                let tasks = matching
-                    .into_iter()
-                    .take(limit.unwrap_or(total))
-                    .map(project_summary)
-                    .collect::<Result<Vec<_>, _>>()?;
-                let resolved_dates = prepared
+        let include_board = self.all_boards || boards.len() > 1;
+        let mut snapshots = Vec::new();
+        for board in boards {
+            let view = if views.needs_comments(&filter) {
+                self.store.board_with_comments(board.id).await
+            } else {
+                self.store.board(board.id).await
+            }
+            .map_err(store_error)?;
+            snapshots.push((board, view));
+        }
+        let people = |name: &str| {
+            snapshots
+                .iter()
+                .flat_map(|(_, view)| self.local.person_candidates(Some(view), name))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        };
+        let mut matching = Vec::new();
+        let mut resolved_dates = BTreeMap::new();
+        for (board, view) in &snapshots {
+            let prepared = (Query {
+                filter: &filter,
+                context: Context {
+                    people: &people,
+                    ..context()
+                },
+            })
+            .prepare(view)
+            .map_err(diagnostic)?;
+            matching.extend(prepared.select().into_iter().map(|task| (*board, task)));
+            resolved_dates.extend(
+                prepared
                     .resolved_dates()
                     .iter()
-                    .map(|(expression, date)| (expression.clone(), (*date).into()))
-                    .collect();
-                let warnings = views.field_warnings(
-                    &filter,
-                    view.iter().flat_map(|task| {
+                    .map(|(expr, date)| (expr.clone(), (*date).into())),
+            );
+        }
+        let total = matching.len();
+        matching.sort_unstable_by(|(left_board, left), (right_board, right)| {
+            sort.compare(left, right)
+                .then_with(|| left_board.id.cmp(&right_board.id))
+        });
+        let tasks = matching
+            .into_iter()
+            .take(limit.unwrap_or(total))
+            .map(|(board, task)| {
+                let mut task = project_summary(task)?;
+                task.board = include_board.then(|| board.clone());
+                Ok(task)
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        let warnings = if snapshots.is_empty() {
+            Vec::new()
+        } else {
+            views.field_warnings(
+                &filter,
+                snapshots
+                    .iter()
+                    .flat_map(|(_, view)| view.iter())
+                    .flat_map(|task| {
                         task.custom.iter().map(|(key, value)| {
                             (
                                 key.as_str(),
@@ -97,11 +124,8 @@ impl App {
                             )
                         })
                     }),
-                );
-                (tasks, total, resolved_dates, warnings)
-            } else {
-                (Vec::new(), 0, BTreeMap::new(), Vec::new())
-            };
+            )
+        };
         let names = self.local.task_names(&tasks);
         Ok(Response::Tasks {
             names,
@@ -145,7 +169,7 @@ impl LocalState {
 
 impl App {
     fn list_boards_for_filter(&self, terms: &[Term]) -> Result<Vec<&crate::LocalBoard>, AppError> {
-        let mut selected = if !terms.is_empty() && self.selected.is_none() {
+        let mut selected = if self.all_boards || (!terms.is_empty() && self.selected.is_none()) {
             self.local.boards().iter().collect()
         } else {
             vec![self.selected_board()]
@@ -249,7 +273,6 @@ fn candidate_hint(candidates: &[impl ToString]) -> String {
         .collect::<Vec<_>>();
     format!("Choose from {}", names.join(", "))
 }
-
 #[cfg(test)]
 #[tokio::test]
 async fn routes_a_filter_to_a_board_prefix() {

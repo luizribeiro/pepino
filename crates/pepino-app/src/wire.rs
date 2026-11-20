@@ -11,6 +11,10 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub struct WireRequest {
     pub v: u32,
     pub request: Request,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all_boards: bool,
 }
 
 impl WireRequest {
@@ -18,7 +22,17 @@ impl WireRequest {
         Self {
             v: PROTOCOL_VERSION,
             request,
+            board: None,
+            all_boards: false,
         }
+    }
+
+    pub async fn handle(self, app: &mut crate::App, now: u64) -> WireResponse {
+        let board = self.board.as_deref().map(|board| (board, "board"));
+        WireResponse::new(
+            app.handle_on(self.request, now, board, self.all_boards)
+                .await,
+        )
     }
 }
 
@@ -99,4 +113,21 @@ impl WireFormat {
             }
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn routing_is_optional_in_both_wire_formats() {
+    let routed =
+        serde_json::json!({"v":1,"board":"Workshop","all_boards":true,"request":{"op":"status"}});
+    for format in [WireFormat::Json, WireFormat::Cbor] {
+        let request: WireRequest = format.decode(&format.encode(&routed).unwrap()).unwrap();
+        assert_eq!(request.board.as_deref(), Some("Workshop"));
+        assert!(request.all_boards);
+    }
+    let request: WireRequest = WireFormat::Json
+        .decode(br#"{"v":1,"request":{"op":"status"}}"#)
+        .unwrap();
+    assert!(request.board.is_none());
+    assert!(!request.all_boards);
 }

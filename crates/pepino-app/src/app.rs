@@ -32,6 +32,7 @@ pub struct App {
     pub(super) clock: Clock,
     migrate_on_write: bool,
     pub(super) selected: Option<BoardId>,
+    pub(super) all_boards: bool,
 }
 
 impl App {
@@ -138,6 +139,7 @@ impl App {
             clock: Clock::from_hlc(hlc),
             migrate_on_write,
             selected: None,
+            all_boards: false,
             store,
             local,
             directory,
@@ -210,7 +212,7 @@ impl App {
     }
 
     pub async fn handle(&mut self, request: Request, now: u64) -> Result<Response, AppError> {
-        self.handle_on(request, now, None).await
+        self.handle_on(request, now, None, false).await
     }
 
     pub async fn handle_on(
@@ -218,6 +220,7 @@ impl App {
         request: Request,
         now: u64,
         board: Option<(&str, &str)>,
+        all_boards: bool,
     ) -> Result<Response, AppError> {
         let guard = lock(&self.directory, self.lock_timeout).await?;
         self.reload_state().await?;
@@ -228,6 +231,7 @@ impl App {
                     .map(|board| board.id)
             })
             .transpose()?;
+        self.all_boards = all_boards;
         if self.migrate_on_write && matches!(&request, Request::Write(_)) {
             LocalState::load_for_open(&self.directory, true)?;
             self.migrate_on_write = false;
@@ -454,7 +458,6 @@ pub(super) fn invalid(field: impl Into<String>, reason: impl std::fmt::Display) 
         diagnostic: None,
     }
 }
-
 #[cfg(test)]
 #[tokio::test]
 async fn scopes_a_read_to_another_board_for_one_request() {
@@ -471,7 +474,7 @@ async fn scopes_a_read_to_another_board_for_one_request() {
     local.replace(directory.path()).unwrap();
     let status = Request::Read(crate::ReadRequest::Status);
     let result = app
-        .handle_on(status.clone(), 0, Some(("5151", "--board")))
+        .handle_on(status.clone(), 0, Some(("5151", "--board")), false)
         .await
         .unwrap();
     assert!(matches!(result, Response::Status { board, .. } if board.id == id.to_string()));
