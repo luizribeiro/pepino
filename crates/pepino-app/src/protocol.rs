@@ -400,6 +400,13 @@ pub enum AppError {
         board: String,
         candidates: Vec<crate::LocalBoard>,
     },
+    #[error("ambiguous person {reference:?}")]
+    AmbiguousPerson {
+        reference: String,
+        field: String,
+        candidates: Vec<String>,
+        identity_ids: Vec<String>,
+    },
     #[error("device reference {reference:?} matches several devices")]
     AmbiguousDevice {
         reference: String,
@@ -558,6 +565,7 @@ impl AppError {
             }
             Self::AmbiguousId { .. }
             | Self::AmbiguousBoard { .. }
+            | Self::AmbiguousPerson { .. }
             | Self::AmbiguousDevice { .. } => AppErrorKind::AmbiguousId,
             Self::InvalidInput { .. } => AppErrorKind::InvalidInput,
             Self::Conflict { .. } => AppErrorKind::Conflict,

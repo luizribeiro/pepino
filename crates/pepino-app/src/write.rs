@@ -289,7 +289,12 @@ impl App {
                     &people,
                     &assignee,
                 )
-                .map_err(|error| invalid(format!("assignees[{index}]"), error))
+                .map_err(|error| {
+                    let field = format!("assignees[{index}]");
+                    self.local
+                        .ambiguous_person(&error, field.clone())
+                        .unwrap_or_else(|| invalid(field, error))
+                })
             })
             .collect()
     }

@@ -365,6 +365,13 @@ impl From<AppError> for CliError {
             AppError::NotFound { reference, .. } => {
                 diagnostic.message = format!("{reference} was not found");
             }
+            AppError::AmbiguousPerson { candidates, .. } => {
+                let candidates = candidates
+                    .iter()
+                    .map(|name| crate::render::single_line(name))
+                    .collect::<Vec<_>>();
+                diagnostic.hint = Some(format!("Choose one of {}.", candidates.join(", ")));
+            }
             AppError::AmbiguousDevice { candidates, .. } => {
                 let ids = candidates
                     .iter()

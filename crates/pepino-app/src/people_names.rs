@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use pepino_core::{DeviceId, IdentityId};
 use pepino_store::query::fold_text;
 
-use crate::LocalState;
+use crate::{AppError, LocalState};
+use pepino_store::query::QueryErrorKind;
 
 impl LocalState {
     pub fn person_names(&self) -> BTreeMap<IdentityId, String> {
@@ -20,6 +21,31 @@ impl LocalState {
 
     pub fn person_labels(&self) -> BTreeMap<IdentityId, String> {
         disambiguate(self.person_names())
+    }
+
+    pub(super) fn ambiguous_person(
+        &self,
+        error: &QueryErrorKind,
+        field: String,
+    ) -> Option<AppError> {
+        let QueryErrorKind::AmbiguousPerson { text, candidates } = error else {
+            return None;
+        };
+        let labels = self.person_labels();
+        if candidates.iter().all(|id| labels.contains_key(id))
+            && self
+                .person_names()
+                .values()
+                .any(|name| fold_text(name) == fold_text(text))
+        {
+            return Some(AppError::AmbiguousPerson {
+                reference: text.clone(),
+                field,
+                candidates: candidates.iter().map(|id| labels[id].clone()).collect(),
+                identity_ids: candidates.iter().map(ToString::to_string).collect(),
+            });
+        }
+        None
     }
 
     pub fn author_devices(&self) -> BTreeMap<DeviceId, (IdentityId, String)> {

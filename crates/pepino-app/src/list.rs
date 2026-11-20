@@ -37,7 +37,7 @@ impl App {
             people: &people,
             views: &saved,
         };
-        let diagnostic = |error| query_error(error, source, &views, self.local.display_name());
+        let diagnostic = |error| query_error(error, source, &views, &self.local);
         let terms = (Query {
             filter: &supplied,
             context: context(),
@@ -149,18 +149,34 @@ impl LocalState {
         if let Ok(id) = name.parse() {
             return vec![id];
         }
-        let named = (fold_text(name) == fold_text(self.display_name())).then_some(self.identity_id);
-        if name.len() < 4 || !name.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return named.into_iter().collect();
+        let (base, suffix) = name
+            .rsplit_once('#')
+            .filter(|(_, suffix)| {
+                suffix.len() >= 4 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+            .map_or((name, None), |(base, suffix)| {
+                (base, Some(suffix.to_ascii_lowercase()))
+            });
+        let base = fold_text(base);
+        let known = self.person_names();
+        let named = known.iter().filter_map(|(&id, label)| {
+            (fold_text(label) == base
+                && suffix
+                    .as_ref()
+                    .is_none_or(|suffix| id.to_string().starts_with(suffix)))
+            .then_some(id)
+        });
+        if suffix.is_some() || name.len() < 4 || !name.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return named.collect();
         }
         let prefix = name.to_ascii_lowercase();
         named
-            .into_iter()
             .chain(
-                view.into_iter()
-                    .flat_map(BoardView::assignee_ids)
+                known
+                    .keys()
                     .copied()
-                    .chain([self.identity_id])
+                    .chain(view.into_iter().flat_map(BoardView::assignee_ids).copied())
                     .filter(|id| id.to_string().starts_with(&prefix)),
             )
             .collect()
@@ -204,8 +220,12 @@ pub(super) fn query_error(
     error: QueryError,
     source: &FilterInput,
     views: &ViewFilters<'_>,
-    known_person: &str,
+    local: &LocalState,
 ) -> AppError {
+    if let Some(ambiguous) = local.ambiguous_person(&error.kind, "filter".into()) {
+        return ambiguous;
+    }
+    let known_person = local.display_name();
     let parsed = views.parsed();
     if let QueryErrorKind::UnknownView { name } = &error.kind
         && let Some((_, Err(error_from_view))) = parsed.get(name)
