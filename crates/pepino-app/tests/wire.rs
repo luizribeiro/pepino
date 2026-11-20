@@ -1,6 +1,9 @@
 use std::fmt::Debug;
 
-use pepino_app::{AppError, EdgeExclusionReason, Request, Response};
+use pepino_app::{
+    AppError, EdgeExclusionReason, PROTOCOL_VERSION, Request, Response, WireFormat, WireRequest,
+    WireResponse,
+};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
 
@@ -49,6 +52,7 @@ fn errors_and_write_responses_have_stable_tags() {
         json!({"kind":"invalid_input","field":"tag","reason":"invalid tag"}),
         json!({"kind":"conflict","task":"97ada"}),
         json!({"kind":"storage","retryable":true,"reason":"database is busy"}),
+        json!({"kind":"unsupported_version","requested":2,"supported":1}),
     ] {
         let error = serde_json::from_value::<AppError>(fixture.clone()).unwrap();
         assert_eq!(serde_json::to_value(error.kind()).unwrap(), fixture["kind"]);
@@ -79,5 +83,87 @@ fn exclusion_reasons_have_stable_names() {
     ] {
         assert_eq!(serde_json::to_value(reason).unwrap(), expected);
         round_trip(&reason);
+    }
+}
+
+#[test]
+fn versioned_messages_have_a_shared_json_and_cbor_codec() {
+    let request = WireRequest::new(Request::GetTask {
+        task: "97ad".into(),
+    });
+    let ok = WireResponse::new(Ok(Response::Write {
+        changed: false,
+        created: None,
+        tasks: Vec::new(),
+        edges: Vec::new(),
+    }));
+    let error = WireResponse::new(Err(AppError::NotFound {
+        task: "97ad".into(),
+    }));
+
+    for format in [WireFormat::Json, WireFormat::Cbor] {
+        assert_eq!(
+            format
+                .decode::<WireRequest>(&format.encode(&request).unwrap())
+                .unwrap(),
+            request
+        );
+        for response in [&ok, &error] {
+            assert_eq!(
+                &format
+                    .decode::<WireResponse>(&format.encode(response).unwrap())
+                    .unwrap(),
+                response
+            );
+        }
+    }
+    assert_eq!(
+        serde_json::to_value(request).unwrap(),
+        json!({"v":1,"request":{"op":"get_task","task":"97ad"}})
+    );
+    assert_eq!(
+        serde_json::to_value(ok).unwrap(),
+        json!({"v":1,"result":{"ok":{"kind":"write","changed":false,"tasks":[],"edges":[]}}})
+    );
+    assert_eq!(
+        serde_json::to_value(error).unwrap(),
+        json!({"v":1,"result":{"error":{"kind":"not_found","task":"97ad"}}})
+    );
+}
+
+#[test]
+fn both_codecs_check_the_version_before_the_operation_and_reject_extra_fields() {
+    for format in [WireFormat::Json, WireFormat::Cbor] {
+        let future = format
+            .encode(&json!({"v":PROTOCOL_VERSION+1,"request":{"op":"reorder_board"}}))
+            .unwrap();
+        assert_eq!(
+            format.decode::<WireRequest>(&future),
+            Err(AppError::UnsupportedVersion {
+                requested: PROTOCOL_VERSION + 1,
+                supported: PROTOCOL_VERSION,
+            })
+        );
+        for invalid in [
+            json!({"v":1,"request":{"op":"add_task","title":"Replace the latch","tag":["greenhouse"]}}),
+            json!({"v":1,"request":{"op":"get_task","task":"97ad","tags":[]} }),
+            json!({"v":1,"request":{"op":"get_task","task":"97ad"},"extra":true}),
+        ] {
+            let bytes = format.encode(&invalid).unwrap();
+            assert!(matches!(
+                format.decode::<WireRequest>(&bytes),
+                Err(AppError::InvalidInput { .. })
+            ));
+        }
+        let mut trailing = format
+            .encode(&WireRequest::new(Request::GetTask {
+                task: "97ad".into(),
+            }))
+            .unwrap();
+        trailing.push(0);
+        assert!(matches!(
+            format.decode::<WireRequest>(&trailing),
+            Err(AppError::InvalidInput { .. })
+        ));
     }
 }

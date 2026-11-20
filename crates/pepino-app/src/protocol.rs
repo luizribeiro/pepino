@@ -6,7 +6,7 @@ use thiserror::Error;
 pub use pepino_core::{Date, EdgeKind, FieldValue, Hlc, Status};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 #[non_exhaustive]
 pub enum Request {
     AddTask {
@@ -146,6 +146,7 @@ pub enum AppErrorKind {
     InvalidInput,
     Conflict,
     Storage,
+    UnsupportedVersion,
 }
 
 impl AppErrorKind {
@@ -156,6 +157,7 @@ impl AppErrorKind {
             Self::InvalidInput => "invalid_input",
             Self::Conflict => "conflict",
             Self::Storage => "storage",
+            Self::UnsupportedVersion => "unsupported_version",
         }
     }
 }
@@ -178,6 +180,8 @@ pub enum AppError {
     Conflict { task: String },
     #[error("storage error: {reason}")]
     Storage { retryable: bool, reason: String },
+    #[error("protocol version {requested} is unsupported (supported version {supported})")]
+    UnsupportedVersion { requested: u32, supported: u32 },
 }
 
 impl AppError {
@@ -188,6 +192,7 @@ impl AppError {
             Self::InvalidInput { .. } => AppErrorKind::InvalidInput,
             Self::Conflict { .. } => AppErrorKind::Conflict,
             Self::Storage { .. } => AppErrorKind::Storage,
+            Self::UnsupportedVersion { .. } => AppErrorKind::UnsupportedVersion,
         }
     }
 }
