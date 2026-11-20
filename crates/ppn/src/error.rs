@@ -160,31 +160,37 @@ impl CliError {
 
 impl From<AppError> for CliError {
     fn from(error: AppError) -> Self {
-        let (kind, hint) = match error.kind() {
-            AppErrorKind::NotFound => (ErrorKind::NotFound, None),
-            AppErrorKind::AmbiguousId => (ErrorKind::AmbiguousId, Some("Use a longer task ID.")),
-            AppErrorKind::InvalidInput => (
-                ErrorKind::InvalidInput,
-                Some("Check the value at the reported field."),
-            ),
-            AppErrorKind::Conflict => (ErrorKind::Conflict, None),
-            AppErrorKind::Busy => (ErrorKind::Busy, Some("Retry or increase --timeout.")),
-            AppErrorKind::Storage => (
-                ErrorKind::Failure,
-                error.retryable().then_some("Retry the request."),
-            ),
-            AppErrorKind::UnsupportedVersion => (
-                ErrorKind::Failure,
-                Some("Use a ppn version that supports the app protocol."),
-            ),
-            AppErrorKind::WriteCommitted => (
-                ErrorKind::Failure,
-                Some("Read the current state before retrying."),
-            ),
-            _ => (ErrorKind::Failure, None),
+        let kind = match error.kind() {
+            AppErrorKind::NotFound => ErrorKind::NotFound,
+            AppErrorKind::AmbiguousId => ErrorKind::AmbiguousId,
+            AppErrorKind::InvalidInput => ErrorKind::InvalidInput,
+            AppErrorKind::Conflict => ErrorKind::Conflict,
+            AppErrorKind::Busy => ErrorKind::Busy,
+            _ => ErrorKind::Failure,
         };
         let mut diagnostic = Self::new(kind, error.to_string());
-        diagnostic.hint = hint.map(str::to_owned);
+        match &error {
+            AppError::NotFound {
+                reference: pepino_app::MissingReference::Task(task),
+                ..
+            } => {
+                diagnostic.message = format!("No task matches {task}");
+                diagnostic.hint = Some("Run `ppn ls` to list tasks.".into());
+            }
+            AppError::AmbiguousId { .. } => {
+                diagnostic.hint = Some("Use a longer task ID.".into());
+            }
+            AppError::InvalidInput { field, reason, .. } => {
+                if reason.starts_with("invalid task reference ")
+                    || reason.starts_with("invalid tag ")
+                    || reason.starts_with("invalid assignee ")
+                {
+                    diagnostic.message = reason.clone();
+                }
+                diagnostic.hint = input_hint(field, reason).map(str::to_owned);
+            }
+            _ => {}
+        }
         if let Ok(Value::Object(mut details)) = serde_json::to_value(error) {
             details.remove("kind");
             if let Some(Value::String(hint)) = details.remove("hint") {
@@ -193,6 +199,18 @@ impl From<AppError> for CliError {
             diagnostic.details = details;
         }
         diagnostic
+    }
+}
+
+fn input_hint(field: &str, reason: &str) -> Option<&'static str> {
+    if field.starts_with("tags[") {
+        Some("Use a tag matching [a-z][a-z0-9_./-]* with at most 64 bytes.")
+    } else if field.starts_with("assignees[") {
+        Some("Use `me` or a full identity ID.")
+    } else if reason.starts_with("invalid task reference ") {
+        Some("Use an id shown by `ppn ls`, at least 4 hex digits.")
+    } else {
+        None
     }
 }
 
@@ -226,39 +244,18 @@ mod tests {
     }
 
     #[test]
-    fn transport_errors_keep_retry_guidance() {
-        for (error, hint) in [
-            (
-                AppError::Storage {
-                    retryable: false,
-                    reason: "bad schema".into(),
-                },
-                None,
-            ),
-            (
-                AppError::Storage {
-                    retryable: true,
-                    reason: "database busy".into(),
-                },
-                Some("Retry the request."),
-            ),
-            (
-                AppError::UnsupportedVersion {
-                    requested: 2,
-                    supported: 1,
-                },
-                Some("Use a ppn version that supports the app protocol."),
-            ),
-            (
-                AppError::WriteCommitted {
-                    reason: "projection failed".into(),
-                },
-                Some("Read the current state before retrying."),
-            ),
+    fn generic_application_errors_have_no_hint() {
+        for error in [
+            AppError::Storage {
+                retryable: true,
+                reason: "database busy".into(),
+            },
+            AppError::Busy,
+            AppError::WriteCommitted {
+                reason: "projection failed".into(),
+            },
         ] {
-            let error = CliError::from(error);
-            assert_eq!(error.kind(), ErrorKind::Failure);
-            assert_eq!(error.hint.as_deref(), hint);
+            assert!(CliError::from(error).hint.is_none());
         }
     }
 

@@ -1388,13 +1388,24 @@ fn task_diagnostics_include_request_locations_and_validation_hints() {
     let missing = error(&["show", "deadbeef"], 3, "not_found");
     assert_eq!(missing["field"], "task");
     assert_eq!(missing["task"], "deadbeef");
+    assert_eq!(missing["message"], "No task matches deadbeef");
+    assert!(missing["hint"].as_str().unwrap().contains("ppn ls"));
+    let malformed = error(&["show", "latch"], 2, "invalid_input");
+    assert!(malformed["message"].as_str().unwrap().contains("\"latch\""));
+    assert!(malformed["hint"].as_str().unwrap().contains("4 hex digits"));
     let invalid = error(
         &["add", "Repair the latch", "-t", "bad tag"],
         2,
         "invalid_input",
     );
     assert_eq!(invalid["field"], "tags[0]");
-    assert!(invalid["hint"].as_str().unwrap().contains("field"));
+    assert!(invalid["hint"].as_str().unwrap().contains("[a-z]"));
+    assert!(
+        invalid["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("invalid tag \"bad tag\":")
+    );
     let due = error(
         &["add", "Repair the latch", "--due", "Friday"],
         2,
@@ -1496,7 +1507,7 @@ fn status_honors_zero_timeout_on_the_data_directory_lock() {
         .output()
         .unwrap();
     let error = task_error(output, 1, "busy");
-    assert!(error["hint"].as_str().unwrap().contains("--timeout"));
+    assert!(error["hint"].is_null());
     lock.unlock().unwrap();
     assert_eq!(
         as_json(&sandbox.run(&["status", "--json"]))["kind"],
