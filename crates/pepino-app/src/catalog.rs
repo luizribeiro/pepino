@@ -5,6 +5,7 @@ use pepino_node::MemberInfo;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{lock, worker};
+use crate::identity::SignedEdit;
 use crate::{App, AppError, BoardJoinState, LocalBoard, LocalState, Response, WireFormat};
 
 const PREFIX: &[u8] = b"pepino-board-catalog\0";
@@ -50,7 +51,10 @@ struct Announcement {
     v: u32,
     identity: IdentityId,
     revisions: BTreeMap<BoardId, Revision>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     devices: BTreeMap<DeviceId, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    roster: Vec<SignedEdit>,
     member: String,
 }
 
@@ -71,7 +75,8 @@ impl LocalState {
             v: crate::PROTOCOL_VERSION,
             identity: self.identity_id,
             revisions: self.catalog.revisions.clone(),
-            devices: self.devices(),
+            devices: BTreeMap::new(),
+            roster: self.catalog.identity.edits().cloned().collect(),
             member: member.to_hex(),
         };
         let mut bytes = PREFIX.to_vec();
@@ -120,17 +125,25 @@ impl LocalState {
         self.catalog.revisions.insert(id, revision);
     }
 
-    fn merge_catalog(&mut self, board: BoardId, signer: DeviceId, announcement: Announcement) {
+    fn merge_catalog(
+        &mut self,
+        board: BoardId,
+        signer: DeviceId,
+        announcement: Announcement,
+    ) -> Result<(), AppError> {
         if board != self.catalog_board()
             || self.identity_id != announcement.identity
-            || !self.other_devices.contains_key(&signer)
+            || announcement.v != crate::PROTOCOL_VERSION
         {
-            return;
+            return Ok(());
         }
-        for (id, name) in announcement.devices {
-            if id != self.device_id && !name.trim().is_empty() {
-                self.other_devices.entry(id).or_insert(name);
-            }
+        self.catalog
+            .identity
+            .merge(board, self.identity_id, announcement.roster)?;
+        let bootstrap_sender =
+            self.roster_root().is_none() && self.other_devices.contains_key(&signer);
+        if !self.active_roster_device(signer) && !bootstrap_sender {
+            return Ok(());
         }
         if let Ok(info) = MemberInfo::from_hex(&announcement.member)
             && info.device_id().is_ok_and(|device| device == signer)
@@ -145,6 +158,7 @@ impl LocalState {
         for (id, revision) in announcement.revisions {
             self.merge_board(id, revision);
         }
+        Ok(())
     }
 }
 
@@ -160,7 +174,7 @@ impl App {
             .map_err(|error| crate::app::invalid("device", error))?;
         let bytes = member.to_hex();
         self.update_local(move |local| {
-            if local.other_devices.contains_key(&id) {
+            if local.active_roster_device(id) {
                 local.catalog.bundles.insert(id, bytes);
             }
         })
@@ -193,8 +207,10 @@ impl App {
             return Ok(false);
         };
         if let Ok(announcement) = WireFormat::Cbor.decode(bytes) {
-            self.update_local(move |local| local.merge_catalog(board, signer, announcement))
-                .await?;
+            self.try_update_local_state(move |local| {
+                local.merge_catalog(board, signer, announcement)
+            })
+            .await?;
         }
         Ok(true)
     }
@@ -286,4 +302,31 @@ fn concurrent_creations_and_renames_join_independent_revisions() {
         prop_assert_eq!(local.boards()[2].name.as_str(), "Seed House");
         prop_assert_eq!(local.board_join_state(greenhouse), BoardJoinState::WaitingToBeAdded);
     });
+}
+
+#[cfg(test)]
+#[test]
+fn ignores_legacy_device_claims_even_from_a_bootstrap_sender() {
+    let board = BoardId::from_bytes([52; 32]);
+    let own = DeviceId::from_bytes([53; 32]);
+    let peer = DeviceId::from_bytes([54; 32]);
+    let stranger = DeviceId::from_bytes([55; 32]);
+    let mut local = LocalState::new(
+        crate::OpenOptions::default().try_into().unwrap(),
+        own,
+        board,
+    )
+    .unwrap();
+    local.other_devices.insert(peer, "Ferrum".into());
+    let announcement = Announcement {
+        v: crate::PROTOCOL_VERSION,
+        identity: local.identity_id,
+        revisions: BTreeMap::new(),
+        devices: [(stranger, "Cobalt".into())].into(),
+        roster: Vec::new(),
+        member: String::new(),
+    };
+    local.merge_catalog(board, peer, announcement).unwrap();
+    assert_eq!(local.devices()[&peer], "Ferrum");
+    assert!(!local.devices().contains_key(&stranger));
 }

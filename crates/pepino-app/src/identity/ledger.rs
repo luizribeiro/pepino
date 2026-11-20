@@ -24,11 +24,15 @@ pub(crate) struct IdentityCatalog {
 }
 
 impl IdentityCatalog {
+    pub(crate) fn edits(&self) -> impl Iterator<Item = &SignedEdit> {
+        self.edits.values()
+    }
+
     pub(super) fn rejected_count(&self) -> usize {
         self.invalid.len() + self.rejected.len()
     }
 
-    pub(super) fn merge(
+    pub(crate) fn merge(
         &mut self,
         board: BoardId,
         identity: IdentityId,
