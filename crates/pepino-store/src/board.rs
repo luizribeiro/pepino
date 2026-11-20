@@ -5,17 +5,18 @@ use pepino_core::{BoardId, TaskId};
 use sqlx::Connection;
 
 use crate::{
-    Dependencies, EdgeRecord, PrefixResolution, Store, StoreError, SubtreeEntry, TaskRecord, edges,
-    task,
+    CommentRecord, Dependencies, EdgeRecord, PrefixResolution, Store, StoreError, SubtreeEntry,
+    TaskRecord, comment, edges, task,
 };
 
-/// An owned snapshot of a board's live tasks and present edges.
+/// An owned snapshot of a board's live tasks, their comments, and present edges.
 #[derive(Debug, Eq, PartialEq)]
 pub struct BoardView {
     tasks: Vec<TaskRecord>,
     by_id: BTreeMap<TaskId, usize>,
     edges: Vec<EdgeRecord>,
     incident: HashMap<TaskId, Vec<usize>>,
+    comments: HashMap<TaskId, Vec<CommentRecord>>,
 }
 
 impl BoardView {
@@ -30,6 +31,11 @@ impl BoardView {
 
     pub fn iter(&self) -> slice::Iter<'_, TaskRecord> {
         self.tasks.iter()
+    }
+
+    /// Lists comments on a live task in ascending `(hlc, id)` order.
+    pub fn comments(&self, task: TaskId) -> &[CommentRecord] {
+        self.comments.get(&task).map_or(&[], Vec::as_slice)
     }
 
     pub(crate) fn ids_in_range(&self, first: TaskId, last: TaskId) -> impl Iterator<Item = TaskId> {
@@ -49,15 +55,16 @@ impl BoardView {
 }
 
 impl Store {
-    /// Loads the board's task and edge registers from a single SQLite read snapshot.
+    /// Loads the board's tasks, edges, and comments from a single SQLite read snapshot.
     pub async fn board(&self, board: BoardId) -> Result<BoardView, StoreError> {
-        let (task_rows, edge_rows) = self
+        let (task_rows, edge_rows, comment_records) = self
             .read(async |connection| {
                 let mut tx = connection.begin().await?;
                 let tasks = task::task_rows(&mut tx, board).await?;
                 let edges = edges::edge_rows(&mut tx, board).await?;
+                let comments = comment::records(&mut tx, board, None).await?;
                 tx.commit().await?;
-                Ok((tasks, edges))
+                Ok((tasks, edges, comments))
             })
             .await?;
         let projected = edges::project(&edge_rows)?;
@@ -74,11 +81,16 @@ impl Store {
             incident.entry(edge.from).or_default().push(index);
             incident.entry(edge.to).or_default().push(index);
         }
+        let mut comments = HashMap::<_, Vec<_>>::new();
+        for (task, comment) in comment_records {
+            comments.entry(task).or_default().push(comment);
+        }
         Ok(BoardView {
             tasks,
             by_id,
             edges,
             incident,
+            comments,
         })
     }
 
