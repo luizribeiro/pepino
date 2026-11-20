@@ -10,6 +10,7 @@ mod app;
 mod batch;
 mod filter;
 mod hlc;
+mod list;
 mod log;
 mod projection;
 mod protocol;

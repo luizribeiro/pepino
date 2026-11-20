@@ -288,6 +288,7 @@ pub enum AppError {
 pub enum MissingReference {
     Task(String),
     View(String),
+    Board(String),
 }
 
 impl std::fmt::Display for MissingReference {
@@ -295,6 +296,7 @@ impl std::fmt::Display for MissingReference {
         match self {
             Self::Task(task) => write!(f, "task {task}"),
             Self::View(view) => write!(f, "view {view}"),
+            Self::Board(board) => write!(f, "board {board}"),
         }
     }
 }
