@@ -64,7 +64,7 @@ struct Show {
 
 impl Render for Show {
     fn human(&self, _: &Terminal) -> String {
-        let mut rows = vec![("KEY", "VALUE".into(), "SOURCE".into())];
+        let mut rows = vec![("KEY", "SOURCE".into(), "VALUE".into())];
         rows.extend(self.values.iter().map(|(&key, entry)| {
             let value = display_value(&entry["value"]);
             let source = display_value(&entry["source"]);
@@ -72,17 +72,17 @@ impl Render for Show {
                 Some(path) => format!("{source} ({})", display_value(path)),
                 None => source,
             };
-            (key, value, source)
+            (key, source, value)
         }));
         let key_width = rows.iter().map(|row| row.0.len()).max().unwrap_or(0);
-        let value_width = rows
+        let source_width = rows
             .iter()
             .map(|row| row.1.chars().count())
             .max()
             .unwrap_or(0);
         rows.into_iter()
-            .map(|(key, value, source)| {
-                format!("{key:<key_width$}  {value:<value_width$}  {source}\n")
+            .map(|(key, source, value)| {
+                format!("{key:<key_width$}  {source:<source_width$}  {value}\n")
             })
             .collect()
     }

@@ -616,6 +616,11 @@ fn config_show_reports_effective_values_and_sources() {
     assert!(human.contains("https://east.release.example"));
     assert!(human.contains("explicit_file"));
     assert!(human.contains("ui.date_format"));
+    assert!(
+        human
+            .lines()
+            .any(|line| line.starts_with("network") && line.ends_with("release-team"))
+    );
     assert_eq!(human.lines().count(), 10);
 
     let data = as_json(&sandbox.run(&["config", "show", "--json"]));
