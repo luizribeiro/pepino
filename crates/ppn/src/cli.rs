@@ -1,5 +1,6 @@
 use crate::commands::config as config_command;
 use crate::commands::debug;
+use crate::commands::version;
 use std::ffi::OsString;
 use std::path::Path;
 use std::{env, fs, io, process::ExitCode};
@@ -19,7 +20,7 @@ use ppn::terminal::{Context, Terminal};
 use crate::commands::add;
 use crate::commands::show;
 use crate::commands::status;
-use crate::{help, version};
+use crate::help;
 
 #[derive(Parser)]
 #[command(
@@ -38,9 +39,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Print the installed ppn version.
-    #[command(after_help = example_help(&["ppn version --json"]))]
-    Version,
+    Version(version::Args),
     /// Show help for ppn.
     #[command(after_help = example_help(&["ppn help --json"]))]
     Help {
@@ -126,7 +125,7 @@ fn execute(inputs: &ProcessInputs) -> (Result<CommandResult, CliError>, bool, Te
                     help_flag_target(&definition, args, json)
                         .map(|command| help::run(&context, command.clone(), Some(error.render())))
                 }
-                ErrorKind::DisplayVersion => Ok(version::run(&context)),
+                ErrorKind::DisplayVersion => Ok(version::run(&context, version::Args {})),
                 _ => Err(CliError::usage(error)),
             };
             (result, json, context.terminal)
@@ -178,7 +177,7 @@ fn dispatch(
         Some(Command::Show(args)) => show::run(context, args),
         Some(Command::Add(args)) => add::run(context, args, json),
         Some(Command::Status(args)) => status::run(context, args),
-        Some(Command::Version) => Ok(version::run(context)),
+        Some(Command::Version(args)) => Ok(version::run(context, args)),
         Some(Command::Help { path }) => {
             let mut definition = Cli::command();
             definition.build();

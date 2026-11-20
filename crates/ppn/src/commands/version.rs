@@ -16,8 +16,13 @@ impl Render for Version {
     }
 }
 
-pub fn run(_: &Context) -> CommandResult {
+pub fn run(_: &Context, _: Args) -> CommandResult {
     CommandResult::document(Version {
         version: env!("CARGO_PKG_VERSION"),
     })
 }
+
+#[derive(clap::Args)]
+#[command(about = "Print the installed ppn version.",
+    after_help = ppn::help_tree::example_help(&["ppn version --json"]))]
+pub struct Args {}
