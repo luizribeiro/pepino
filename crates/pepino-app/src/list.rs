@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use pepino_core::{
-    BoardId, IdentityId,
+    IdentityId,
     filter::{Clause, Filter, State, Term},
 };
 use pepino_store::BoardView;
@@ -55,56 +55,53 @@ impl App {
         } else {
             supplied
         };
-        let local_board = Board {
-            id: self.local.board_id(),
-            name: self.local.board_name(),
-        };
-        let boards = select_boards(&[local_board], &terms)?;
-        let (tasks, total, resolved_dates, warnings) = if let Some(&board) = boards.first() {
-            let view = if views.needs_comments(&filter) {
-                self.store.board_with_comments(board).await
+        let boards = self.list_boards_for_filter(&terms)?;
+        let (tasks, total, resolved_dates, warnings) =
+            if let Some(board) = boards.first().map(|board| board.id) {
+                let view = if views.needs_comments(&filter) {
+                    self.store.board_with_comments(board).await
+                } else {
+                    self.store.board(board).await
+                }
+                .map_err(store_error)?;
+                let people = |name: &str| self.local.person_candidates(Some(&view), name);
+                let prepared = (Query {
+                    filter: &filter,
+                    context: Context {
+                        people: &people,
+                        ..context()
+                    },
+                })
+                .prepare(&view)
+                .map_err(diagnostic)?;
+                let mut matching = prepared.select();
+                let total = matching.len();
+                sort.sort(&mut matching);
+                let tasks = matching
+                    .into_iter()
+                    .take(limit.unwrap_or(total))
+                    .map(project_summary)
+                    .collect::<Result<Vec<_>, _>>()?;
+                let resolved_dates = prepared
+                    .resolved_dates()
+                    .iter()
+                    .map(|(expression, date)| (expression.clone(), (*date).into()))
+                    .collect();
+                let warnings = views.field_warnings(
+                    &filter,
+                    view.iter().flat_map(|task| {
+                        task.custom.iter().map(|(key, value)| {
+                            (
+                                key.as_str(),
+                                matches!(value, pepino_core::FieldValue::Text(_)),
+                            )
+                        })
+                    }),
+                );
+                (tasks, total, resolved_dates, warnings)
             } else {
-                self.store.board(board).await
-            }
-            .map_err(store_error)?;
-            let people = |name: &str| self.local.person_candidates(Some(&view), name);
-            let prepared = (Query {
-                filter: &filter,
-                context: Context {
-                    people: &people,
-                    ..context()
-                },
-            })
-            .prepare(&view)
-            .map_err(diagnostic)?;
-            let mut matching = prepared.select();
-            let total = matching.len();
-            sort.sort(&mut matching);
-            let tasks = matching
-                .into_iter()
-                .take(limit.unwrap_or(total))
-                .map(project_summary)
-                .collect::<Result<Vec<_>, _>>()?;
-            let resolved_dates = prepared
-                .resolved_dates()
-                .iter()
-                .map(|(expression, date)| (expression.clone(), (*date).into()))
-                .collect();
-            let warnings = views.field_warnings(
-                &filter,
-                view.iter().flat_map(|task| {
-                    task.custom.iter().map(|(key, value)| {
-                        (
-                            key.as_str(),
-                            matches!(value, pepino_core::FieldValue::Text(_)),
-                        )
-                    })
-                }),
-            );
-            (tasks, total, resolved_dates, warnings)
-        } else {
-            (Vec::new(), 0, BTreeMap::new(), Vec::new())
-        };
+                (Vec::new(), 0, BTreeMap::new(), Vec::new())
+            };
         let names = self.local.task_names(&tasks);
         Ok(Response::Tasks {
             names,
@@ -146,32 +143,37 @@ impl LocalState {
     }
 }
 
-#[derive(Clone, Copy)]
-struct Board<'a> {
-    id: BoardId,
-    name: &'a str,
-}
-
-fn select_boards(boards: &[Board<'_>], terms: &[Term]) -> Result<Vec<BoardId>, AppError> {
-    let mut selected = boards.to_vec();
-    for term in terms {
-        let Clause::Board(names) = &term.clause else {
-            continue;
+impl App {
+    fn list_boards_for_filter(&self, terms: &[Term]) -> Result<Vec<&crate::LocalBoard>, AppError> {
+        let mut selected = if !terms.is_empty() && self.selected.is_none() {
+            self.local.boards().iter().collect()
+        } else {
+            vec![self.selected_board()]
         };
-        let matches = |board: &Board<'_>| {
-            names.iter().any(|name| {
-                name == board.name || name.parse::<BoardId>().is_ok_and(|id| id == board.id)
-            })
-        };
-        if !boards.iter().any(matches) {
-            return Err(AppError::NotFound {
-                field: "filter".into(),
-                reference: MissingReference::Board(names.join(",")),
-            });
+        for term in terms {
+            let Clause::Board(names) = &term.clause else {
+                continue;
+            };
+            let mut matches = BTreeSet::new();
+            for name in names {
+                match self.local.resolve_board(name, "filter") {
+                    Ok(board) => {
+                        matches.insert(board.id);
+                    }
+                    Err(AppError::NotFound { .. }) => (),
+                    Err(error) => return Err(error),
+                }
+            }
+            if matches.is_empty() {
+                return Err(AppError::NotFound {
+                    field: "filter".into(),
+                    reference: MissingReference::Board(names.join(",")),
+                });
+            }
+            selected.retain(|board| matches.contains(&board.id) != term.negated);
         }
-        selected.retain(|board| matches(board) != term.negated);
+        Ok(selected)
     }
-    Ok(selected.into_iter().map(|board| board.id).collect())
 }
 
 pub(super) fn query_error(
@@ -246,4 +248,21 @@ fn candidate_hint(candidates: &[impl ToString]) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>();
     format!("Choose from {}", names.join(", "))
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn routes_a_filter_to_a_board_prefix() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = crate::write::fixture::open(directory.path(), 0)
+        .await
+        .unwrap();
+    let id = pepino_core::BoardId::from_bytes([81; 32]);
+    app.local.boards.push(crate::LocalBoard {
+        id,
+        name: "Workshop".into(),
+    });
+    let filter = FilterInput::Text("board:5151".into()).parse().unwrap();
+    let boards = app.list_boards_for_filter(filter.terms()).unwrap();
+    assert_eq!(boards[0].id, id);
 }
