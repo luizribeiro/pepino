@@ -45,7 +45,10 @@ fn noninteractive_confirmation_requires_yes() {
     assert_eq!(run_ppn(&["debug", "confirm", "--yes"]), "Confirmed\n");
     let json: serde_json::Value =
         serde_json::from_str(&run_ppn(&["--yes", "debug", "confirm", "--json"])).unwrap();
-    assert_eq!(json, serde_json::json!({"schema": 1, "confirmed": true}));
+    assert_eq!(
+        json,
+        serde_json::json!({"schema": 1, "kind": "confirmation", "confirmed": true})
+    );
 }
 
 #[cfg(unix)]
@@ -60,7 +63,7 @@ fn confirmation_accepts_yes_and_no_from_a_terminal() {
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"schema": 1, "confirmed": confirmed})
+            serde_json::json!({"schema": 1, "kind": "confirmation", "confirmed": confirmed})
         );
     }
 }
@@ -99,7 +102,7 @@ fn reads_text_from_an_argument_stdin_or_a_file() {
     assert_eq!(output.stdout, file_output.as_bytes());
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&file_output).unwrap(),
-        serde_json::json!({"schema": 1, "text": text})
+        serde_json::json!({"schema": 1, "kind": "text", "text": text})
     );
 
     let output = ppn()
@@ -114,4 +117,17 @@ fn reads_text_from_an_argument_stdin_or_a_file() {
         .output()
         .unwrap();
     assert_json_error(output, 3, "not_found");
+}
+
+#[test]
+fn debug_results_are_discriminated() {
+    let confirmation = common::as_json(&common::run_ppn(&["debug", "confirm", "--yes", "--json"]));
+    assert_eq!(confirmation["kind"], "confirmation");
+    let input = common::as_json(&common::run_ppn(&[
+        "debug",
+        "input",
+        "Build the seed box",
+        "--json",
+    ]));
+    assert_eq!(input["kind"], "text");
 }

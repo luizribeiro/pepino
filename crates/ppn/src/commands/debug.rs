@@ -61,7 +61,10 @@ impl Render for Confirmation {
     }
 
     fn json_fields(self) -> Map<String, Value> {
-        Map::from_iter([("confirmed".into(), json!(self.confirmed))])
+        Map::from_iter([
+            ("kind".into(), json!("confirmation")),
+            ("confirmed".into(), json!(self.confirmed)),
+        ])
     }
 }
 
@@ -75,7 +78,10 @@ impl Render for Text {
     }
 
     fn json_fields(self) -> Map<String, Value> {
-        Map::from_iter([("text".into(), self.text.into())])
+        Map::from_iter([
+            ("kind".into(), "text".into()),
+            ("text".into(), self.text.into()),
+        ])
     }
 }
 
