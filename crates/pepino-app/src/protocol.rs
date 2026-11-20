@@ -106,7 +106,6 @@ pub enum WriteRequest {
     SaveView {
         name: String,
         filter: FilterInput,
-        today: Date,
     },
     DeleteView {
         name: String,

@@ -845,19 +845,30 @@ async fn saved_views_migrate_v1_state_and_survive_concurrent_opens() {
     )
     .await;
     let mut peer = App::open(directory.path(), NOW).await.unwrap();
+    assert!(
+        serde_json::from_value::<Request>(json!({
+            "op":"save_view","name":"latch","filter":"due:tomorrow","today":"2026-11-20"
+        }))
+        .is_err()
+    );
     let latch = json!({"name":"latch","filter":"due:tomorrow tag:hardware"});
-    read_golden(&mut app, json!({"op":"save_view","name":"latch","filter":["due:tomorrow","tag:hardware"],"today":"2026-11-20"}), json!({"ok":{"kind":"view_saved","view":latch,"replaced":false}})).await;
+    read_golden(
+        &mut app,
+        json!({"op":"save_view","name":"latch","filter":["due:tomorrow","tag:hardware"]}),
+        json!({"ok":{"kind":"view_saved","view":latch,"replaced":false}}),
+    )
+    .await;
     let weekend = json!({"name":"weekend","filter":"@latch is:open"});
     read_golden(
         &mut peer,
-        json!({"op":"save_view","name":"weekend","filter":"@latch is:open","today":"2026-11-20"}),
+        json!({"op":"save_view","name":"weekend","filter":"@latch is:open"}),
         json!({"ok":{"kind":"view_saved","view":weekend,"replaced":false}}),
     )
     .await;
     let latch = json!({"name":"latch","filter":"tag:hinges"});
     read_golden(
         &mut app,
-        json!({"op":"save_view","name":"latch","filter":"tag:hinges","today":"2026-11-20"}),
+        json!({"op":"save_view","name":"latch","filter":"tag:hinges"}),
         json!({"ok":{"kind":"view_saved","view":latch,"replaced":true}}),
     )
     .await;
@@ -894,12 +905,12 @@ async fn saved_views_migrate_v1_state_and_survive_concurrent_opens() {
     )
     .await;
     for request in [
-        json!({"op":"save_view","name":"Weekend Plan","filter":"","today":"2026-11-20"}),
+        json!({"op":"save_view","name":"Weekend Plan","filter":""}),
         json!({"op":"delete_view","name":"weekend.plan"}),
     ] {
         read_golden(&mut app, request, json!({"error":{"kind":"invalid_input","field":"name","reason":"expected [a-z][a-z0-9_-]* within 64 bytes"}})).await;
     }
-    read_golden(&mut app, json!({"op":"save_view","name":"latch","filter":"tags:hardware","today":"2026-11-20"}), json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown filter key \"tags\"","hint":"Use \"tag\"","term":"tags:hardware","position":{"kind":"byte","byte":0}}})).await;
+    read_golden(&mut app, json!({"op":"save_view","name":"latch","filter":"tags:hardware"}), json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown filter key \"tags\"","hint":"Use \"tag\"","term":"tags:hardware","position":{"kind":"byte","byte":0}}})).await;
 }
 
 async fn list_golden(
@@ -977,7 +988,7 @@ async fn task_lists_sort_limit_and_search_project_records_with_both_filter_forms
     ] {
         handle(
             &mut app,
-            json!({"op":"save_view","name":name,"filter":filter,"today":"2026-11-20"}),
+            json!({"op":"save_view","name":name,"filter":filter}),
         )
         .await
         .unwrap();
@@ -998,7 +1009,7 @@ async fn task_lists_sort_limit_and_search_project_records_with_both_filter_forms
     .await;
     handle(
         &mut app,
-        json!({"op":"save_view","name":"remote","filter":"board:Workshop","today":"2026-11-20"}),
+        json!({"op":"save_view","name":"remote","filter":"board:Workshop"}),
     )
     .await
     .unwrap();
@@ -1202,15 +1213,14 @@ fn replace_saved_views(directory: &std::path::Path, views: Value) {
 async fn saving_rejects_missing_and_cyclic_references_without_persisting() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = App::open(dir.path(), NOW).await.unwrap();
-    let save =
-        |name, filter| json!({"op":"save_view","name":name,"filter":filter,"today":"2026-11-20"});
+    let save = |name, filter| json!({"op":"save_view","name":name,"filter":filter});
     handle(&mut app, save("first", "tag:hardware"))
         .await
         .unwrap();
     handle(&mut app, save("last", "is:open @first"))
         .await
         .unwrap();
-    read_golden(&mut app, json!({"op":"save_view","name":"first","filter":["tag:hardware","  @missing"],"today":"2026-11-20"}), json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown saved view \"missing\"","term":"@missing","position":{"kind":"argument","index":1,"byte":2},"view_chain":["first"],"hint":"Use list_views to see available saved views"}})).await;
+    read_golden(&mut app, json!({"op":"save_view","name":"first","filter":["tag:hardware","  @missing"]}), json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown saved view \"missing\"","term":"@missing","position":{"kind":"argument","index":1,"byte":2},"view_chain":["first"],"hint":"Use list_views to see available saved views"}})).await;
     read_golden(&mut app, save("first", "@last"), json!({"error":{"kind":"invalid_input","field":"filter","reason":"saved view cycle: first -> last -> first","term":"@first","position":{"kind":"byte","byte":8},"view_chain":["first","last","first"]}})).await;
     read_golden(&mut app, json!({"op":"list_views"}), json!({"ok":{"kind":"views","views":[{"name":"first","filter":"tag:hardware"},{"name":"last","filter":"is:open @first"}]}})).await;
 }

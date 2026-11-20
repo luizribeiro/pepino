@@ -76,11 +76,9 @@ impl App {
         let guard = lock(&self.directory, self.lock_timeout).await?;
         match request {
             Request::Read(request) => self.read(request).await,
-            Request::Write(WriteRequest::SaveView {
-                name,
-                filter,
-                today,
-            }) => self.save_view(name, &filter, today, guard).await,
+            Request::Write(WriteRequest::SaveView { name, filter }) => {
+                self.save_view(name, &filter, guard).await
+            }
             Request::Write(WriteRequest::DeleteView { name, force }) => {
                 self.delete_view(name, force, guard).await
             }

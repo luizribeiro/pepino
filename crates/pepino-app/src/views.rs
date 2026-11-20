@@ -45,7 +45,7 @@ impl SavedViews {
 use crate::app::{invalid, worker};
 use crate::filter::ViewFilters;
 use crate::list::query_error;
-use crate::{App, AppError, ConflictReference, Date, FilterInput, MissingReference, Response};
+use crate::{App, AppError, ConflictReference, FilterInput, MissingReference, Response};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SavedView {
@@ -85,7 +85,6 @@ impl App {
         &mut self,
         name: String,
         filter: &FilterInput,
-        _today: Date,
         guard: File,
     ) -> Result<Response, AppError> {
         validate_name(&name)?;

@@ -156,7 +156,6 @@ async fn simultaneous_view_saves_preserve_both_definitions() {
                 Request::Write(WriteRequest::SaveView {
                     name: name.into(),
                     filter: FilterInput::Text(filter.into()),
-                    today: "2026-11-20".parse().unwrap(),
                 }),
                 NOW,
             )
