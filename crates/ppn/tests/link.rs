@@ -6,8 +6,22 @@ fn link_orients_each_kind_and_reports_an_existing_link() {
     let (sandbox, _) = task_sandbox();
     let p = small_project(&sandbox);
     let human = sandbox.run(&["link", &p.parent[..8], "blocks", &p.blocker]);
-    assert!(human.starts_with("Linked "));
+    let relation = format!(
+        "{} Renovate the greenhouse blocks {} Order stainless fittings",
+        &p.parent[..6],
+        &p.blocker[..6]
+    );
+    assert_eq!(human, format!("Linked {relation}\n"));
+    assert_eq!(
+        sandbox.run(&["link", &p.parent, "blocks", &p.blocker]),
+        format!("Already linked {relation}\n")
+    );
+
     assert_eq!(show_task(&sandbox, &p.blocker)["blocked_by"][0], p.parent);
+    assert_eq!(
+        sandbox.run(&["unlink", &p.blocker, "blocked-by", &p.parent]),
+        format!("Unlinked {relation}\n")
+    );
 
     let json = as_json(&sandbox.run(&["link", &p.downstream, "blocked-by", &p.parent, "--json"]));
     assert_write(&json, true);

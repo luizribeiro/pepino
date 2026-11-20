@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use pepino_app::Response;
+use pepino_app::{EdgeKind, Response};
 use serde_json::{Map, json};
 
 use super::{ShortIds, edge_reason, link_description, single_line};
@@ -19,6 +19,63 @@ pub fn write_document(
         CommandResult::app_document(context, response, move |_, _| Ok(message))?
             .with_warnings(warnings),
     )
+}
+
+pub fn relation_document(
+    context: &Context<'_>,
+    response: Response,
+    verb: &str,
+    (from, kind, to): (&str, EdgeKind, &str),
+) -> Result<CommandResult, CliError> {
+    let write = response.write()?;
+    let endpoint = |reference: &str| {
+        let prefix = reference.to_ascii_lowercase();
+        write
+            .tasks
+            .iter()
+            .find(|task| task.id.starts_with(&prefix))
+            .ok_or_else(|| {
+                CliError::new(
+                    ErrorKind::Failure,
+                    "The app omitted a linked task from its response.",
+                )
+            })
+    };
+    let (from, to) = (endpoint(from)?, endpoint(to)?);
+    let ids = ShortIds::new(
+        write
+            .edges
+            .iter()
+            .flat_map(|edge| [edge.from.as_str(), edge.to.as_str()])
+            .chain([from.id.as_str(), to.id.as_str()]),
+    );
+    let relation = match kind {
+        EdgeKind::Blocks => "blocks",
+        EdgeKind::Parent => "has parent",
+        EdgeKind::Relates => "relates to",
+        _ => "links to",
+    };
+    let label = write_label(*write.changed, verb);
+    let message = format!(
+        "{label} {} {} {relation} {} {}",
+        ids.get(&from.id),
+        single_line(&from.title),
+        ids.get(&to.id),
+        single_line(&to.title)
+    );
+    let (_, warnings) = write_output_with_ids(&response, verb, Some(&ids))?;
+    Ok(
+        CommandResult::app_document(context, response, move |_, _| Ok(message))?
+            .with_warnings(warnings),
+    )
+}
+
+fn write_label(changed: bool, verb: &str) -> String {
+    if changed {
+        verb.into()
+    } else {
+        format!("Already {}", verb.to_lowercase())
+    }
 }
 
 pub fn write_documents(
@@ -175,11 +232,7 @@ fn write_output_with_ids(
             .map(String::as_str),
     );
     let ids = batch_ids.unwrap_or(&ids);
-    let label = if *write.changed {
-        verb.into()
-    } else {
-        format!("Already {}", verb.to_lowercase())
-    };
+    let label = write_label(*write.changed, verb);
     let message = targets
         .iter()
         .map(|task| {

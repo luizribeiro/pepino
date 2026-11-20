@@ -3,7 +3,7 @@ use ppn::app::AppClient;
 use ppn::error::CliError;
 use ppn::help_tree::example_help;
 use ppn::output::CommandResult;
-use ppn::render::write_document;
+use ppn::render::relation_document;
 use ppn::terminal::Context;
 
 #[derive(clap::Args)]
@@ -51,7 +51,10 @@ impl RelationArgs {
 
 pub fn run(context: &Context<'_>, Args { relation }: Args) -> Result<CommandResult, CliError> {
     let (from, kind, to) = relation.endpoints();
-    let response =
-        AppClient::open(context)?.call(Request::Write(WriteRequest::Link { from, kind, to }))?;
-    write_document(context, response, "Linked")
+    let response = AppClient::open(context)?.call(Request::Write(WriteRequest::Link {
+        from: from.clone(),
+        kind,
+        to: to.clone(),
+    }))?;
+    relation_document(context, response, "Linked", (&from, kind, &to))
 }
