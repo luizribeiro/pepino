@@ -142,6 +142,15 @@ impl CliError {
                 writeln!(stderr, "  {id}")?;
             }
         }
+        if let Some(position) = self.details.get("position")
+            && let Some(byte) = position.get("byte").and_then(Value::as_u64)
+        {
+            if let Some(index) = position.get("index").and_then(Value::as_u64) {
+                writeln!(stderr, "  at argument {index}, byte {byte}")?;
+            } else {
+                writeln!(stderr, "  at byte {byte}")?;
+            }
+        }
         if let Some(hint) = &self.hint {
             writeln!(stderr, "hint: {hint}")?;
         }
@@ -154,12 +163,20 @@ impl From<AppError> for CliError {
         let (kind, hint) = match error.kind() {
             AppErrorKind::NotFound => (ErrorKind::NotFound, None),
             AppErrorKind::AmbiguousId => (ErrorKind::AmbiguousId, Some("Use a longer task ID.")),
-            AppErrorKind::InvalidInput => (ErrorKind::InvalidInput, None),
+            AppErrorKind::InvalidInput => (
+                ErrorKind::InvalidInput,
+                Some("Check the value at the reported field."),
+            ),
             AppErrorKind::Conflict => (ErrorKind::Conflict, None),
             AppErrorKind::Busy => (ErrorKind::Busy, Some("Retry or increase --timeout.")),
-            AppErrorKind::Storage if error.retryable() => {
-                (ErrorKind::Failure, Some("Retry the request."))
-            }
+            AppErrorKind::Storage => (
+                ErrorKind::Failure,
+                error.retryable().then_some("Retry the request."),
+            ),
+            AppErrorKind::UnsupportedVersion => (
+                ErrorKind::Failure,
+                Some("Use a ppn version that supports the app protocol."),
+            ),
             AppErrorKind::WriteCommitted => (
                 ErrorKind::Failure,
                 Some("Read the current state before retrying."),
@@ -192,15 +209,57 @@ mod tests {
         }))
         .unwrap();
         let mut buffer = Vec::new();
-        assert_eq!(
-            CliError::from(error).report(true, &mut buffer),
-            ExitCode::from(2)
+        let error = CliError::from(error);
+        error.write(false, &mut buffer).unwrap();
+        assert!(
+            String::from_utf8(buffer)
+                .unwrap()
+                .contains("at byte 2\nhint: Use tag")
         );
+        let mut buffer = Vec::new();
+        assert_eq!(error.report(true, &mut buffer), ExitCode::from(2));
         let body: Value = serde_json::from_slice(&buffer).unwrap();
         assert_eq!(body["error"]["code"], "invalid_input");
         assert_eq!(body["error"]["field"], "filter");
         assert_eq!(body["error"]["position"]["byte"], 2);
         assert_eq!(body["error"]["hint"], "Use tag");
+    }
+
+    #[test]
+    fn transport_errors_keep_retry_guidance() {
+        for (error, hint) in [
+            (
+                AppError::Storage {
+                    retryable: false,
+                    reason: "bad schema".into(),
+                },
+                None,
+            ),
+            (
+                AppError::Storage {
+                    retryable: true,
+                    reason: "database busy".into(),
+                },
+                Some("Retry the request."),
+            ),
+            (
+                AppError::UnsupportedVersion {
+                    requested: 2,
+                    supported: 1,
+                },
+                Some("Use a ppn version that supports the app protocol."),
+            ),
+            (
+                AppError::WriteCommitted {
+                    reason: "projection failed".into(),
+                },
+                Some("Read the current state before retrying."),
+            ),
+        ] {
+            let error = CliError::from(error);
+            assert_eq!(error.kind(), ErrorKind::Failure);
+            assert_eq!(error.hint.as_deref(), hint);
+        }
     }
 
     #[test]

@@ -1365,3 +1365,37 @@ fn add_warns_for_a_recorded_exclusion_and_succeeds() {
     assert_eq!(detail["edges"][0]["reason"], "cycle");
     assert_eq!(detail["edges"][0]["effective"], false);
 }
+
+fn task_error(output: Output, status: i32, code: &str) -> Value {
+    assert_eq!(output.status.code(), Some(status), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    let diagnostic: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(diagnostic["error"]["code"], code);
+    diagnostic["error"].clone()
+}
+
+#[test]
+fn task_diagnostics_include_request_locations_and_validation_hints() {
+    let (sandbox, _) = task_sandbox();
+    let error = |args: &[&str], status, code| {
+        let output = sandbox.command().args(args).arg("--json").output().unwrap();
+        task_error(output, status, code)
+    };
+    let missing = error(&["show", "deadbeef"], 3, "not_found");
+    assert_eq!(missing["field"], "task");
+    assert_eq!(missing["task"], "deadbeef");
+    let invalid = error(
+        &["add", "Repair the latch", "-t", "bad tag"],
+        2,
+        "invalid_input",
+    );
+    assert_eq!(invalid["field"], "tags[0]");
+    assert!(invalid["hint"].as_str().unwrap().contains("field"));
+    let due = error(
+        &["add", "Repair the latch", "--due", "Friday"],
+        2,
+        "invalid_input",
+    );
+    assert_eq!(due["field"], "due");
+    assert!(due["hint"].as_str().unwrap().contains("lowercase weekday"));
+}
