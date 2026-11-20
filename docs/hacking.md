@@ -29,3 +29,18 @@ nix build --no-link --print-build-logs ".#checks.$system.clippy"  # Rust linting
 nix build --no-link --print-build-logs ".#checks.$system.test"    # Rust tests
 nix build --no-link --print-build-logs .#checks.x86_64-linux.vm  # NixOS VM on x86_64-linux
 ```
+
+From the development shell, warm the test build and measure the workspace
+without synthetic load, then run the same suite with one load worker per
+available CPU on Linux.
+
+```sh
+scripts/test-under-load.sh 1 0
+scripts/test-under-load.sh 20 "$(nproc)"
+```
+
+The arguments specify the number of workspace runs and busy-loop processes.
+The harness enables network tests, uses Cargo's usual parallel test execution,
+and continues running all test binaries and subsequent iterations after a
+failure. It prints each failed run's output, retains every run's log under
+`target/test-under-load.*`, and exits unsuccessfully if any run failed.
