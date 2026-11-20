@@ -137,8 +137,7 @@ pub(crate) async fn task_rows(
 
 pub(crate) fn records(
     rows: Vec<TaskRow>,
-    edges: &[edges::EdgeRecord],
-    edge_rows: Vec<edges::EdgeRow>,
+    edges: &[edges::ProjectedEdge],
 ) -> Result<Vec<TaskRecord>, StoreError> {
     let mut tasks = BTreeMap::new();
     for row in rows {
@@ -147,7 +146,11 @@ pub(crate) fn records(
             .or_insert_with(|| row.record())
             .read_register(row)?;
     }
-    for (edge, row) in edges.iter().zip(edge_rows) {
+    for &edges::ProjectedEdge {
+        record: edge,
+        blocker_open,
+    } in edges
+    {
         if !edge.is_effective() {
             continue;
         }
@@ -170,7 +173,7 @@ pub(crate) fn records(
                 }
                 EdgeKind::Blocks => {
                     task.blocked_by.insert(edge.from);
-                    task.blocked |= task.status.is_open() && row.source_is_open()?;
+                    task.blocked |= task.status.is_open() && blocker_open;
                 }
                 EdgeKind::Relates => {
                     task.relates.insert(edge.from);

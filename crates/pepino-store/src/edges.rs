@@ -38,10 +38,11 @@ pub(crate) struct EdgeRow {
 }
 
 impl EdgeRow {
-    pub(crate) fn source_is_open(&self) -> Result<bool, StoreError> {
-        if let Some(bytes) = &self.source_status
-            && let FieldValue::Status(status) = crate::task::decode_field(bytes)?
-        {
+    fn source_is_open(&self) -> Result<bool, StoreError> {
+        let Some(bytes) = &self.source_status else {
+            return Ok(false);
+        };
+        if let FieldValue::Status(status) = crate::task::decode_field(bytes)? {
             return Ok(status.is_open());
         }
         Err(StoreError::ViewValue(
@@ -73,7 +74,12 @@ pub(crate) async fn edge_rows(
     .await
 }
 
-pub(crate) fn project(rows: &[EdgeRow]) -> Result<Vec<EdgeRecord>, StoreError> {
+pub(crate) struct ProjectedEdge {
+    pub(crate) record: EdgeRecord,
+    pub(crate) blocker_open: bool,
+}
+
+pub(crate) fn project(rows: &[EdgeRow]) -> Result<Vec<ProjectedEdge>, StoreError> {
     let mut newest_parent = HashMap::new();
     let mut edges = Vec::with_capacity(rows.len());
     for row in rows {
@@ -82,17 +88,21 @@ pub(crate) fn project(rows: &[EdgeRow]) -> Result<Vec<EdgeRecord>, StoreError> {
         if kind == EdgeKind::Parent {
             newest_parent.insert(from, edges.len());
         }
-        edges.push(EdgeRecord {
-            from,
-            kind,
-            to,
-            exclusion: (!row.live).then_some(EdgeExclusion::MissingEndpoint),
+        edges.push(ProjectedEdge {
+            record: EdgeRecord {
+                from,
+                kind,
+                to,
+                exclusion: (!row.live).then_some(EdgeExclusion::MissingEndpoint),
+            },
+            blocker_open: row.source_is_open()?,
         });
     }
     let mut parents = Parents::default();
     let mut blocks = Blocks::default();
     for (index, edge) in edges
         .iter_mut()
+        .map(|edge| &mut edge.record)
         .enumerate()
         .filter(|(_, edge)| edge.is_effective())
     {

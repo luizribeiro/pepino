@@ -468,8 +468,39 @@ proptest::proptest! {
             }
             ring.sort_unstable_by_key(|(key, _)| *key);
             let rows: Vec<_> = ring.into_iter().map(|(_, row)| row).collect();
-            let exclusions: Vec<_> = project(&rows).unwrap().into_iter().map(|edge| edge.exclusion).collect();
+            let exclusions: Vec<_> = project(&rows).unwrap().into_iter().map(|edge| edge.record.exclusion).collect();
             proptest::prop_assert_eq!(exclusions, [None, None, Some(EdgeExclusion::Cycle)]);
         }
     }
+}
+
+#[tokio::test]
+async fn blocker_with_no_status_register_leaves_its_dependents_ready() {
+    let (store, [_, door, hinges, _]) = setup().await;
+    add(&store, 10, 1, hinges, EdgeKind::Blocks, door).await;
+    assert!(
+        store
+            .board(BOARD)
+            .await
+            .unwrap()
+            .task(door)
+            .unwrap()
+            .blocked
+    );
+
+    sqlx::query(
+        "DELETE FROM task_register WHERE board = ? AND task = ? AND kind = 'field' AND member = ?",
+    )
+    .bind(crate::BoardKey(BOARD))
+    .bind(hinges.as_bytes().as_slice())
+    .bind(b"status".as_slice())
+    .execute(&mut *store.connection.lock().await)
+    .await
+    .unwrap();
+
+    let view = store.board(BOARD).await.unwrap();
+    let door = view.task(door).unwrap();
+    assert_eq!(door.blocked_by, [hinges].into());
+    assert_eq!((door.blocked, door.ready), (false, true));
+    assert!(view.edges(door.id)[0].is_effective());
 }

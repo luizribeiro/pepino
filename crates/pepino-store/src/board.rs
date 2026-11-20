@@ -60,8 +60,9 @@ impl Store {
                 Ok((tasks, edges))
             })
             .await?;
-        let edges = edges::project(&edge_rows)?;
-        let mut tasks = task::records(task_rows, &edges, edge_rows)?;
+        let projected = edges::project(&edge_rows)?;
+        let mut tasks = task::records(task_rows, &projected)?;
+        let edges: Vec<_> = projected.into_iter().map(|edge| edge.record).collect();
         tasks.sort_unstable_by_key(|task| (task.created, task.id));
         let by_id = tasks
             .iter()
