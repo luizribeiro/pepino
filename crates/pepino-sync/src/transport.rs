@@ -32,6 +32,10 @@ pub trait TransportBoard: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Option<BTreeSet<DeviceId>>, Error>> + Send {
         async { Ok(None) }
     }
+    fn manages(&self, _device: DeviceId) -> impl Future<Output = bool> + Send {
+        async { false }
+    }
+
     fn remove_revoked(
         &self,
         _own: DeviceId,
@@ -120,6 +124,12 @@ impl TransportBoard for BoardHandle {
             }
         }
         Ok(Some(ids))
+    }
+
+    async fn manages(&self, device: DeviceId) -> bool {
+        self.members()
+            .await
+            .is_ok_and(|members| members.contains(&(device, Role::Manage)))
     }
 
     async fn remove_revoked(&self, own: DeviceId, device: DeviceId) -> Removal {

@@ -59,7 +59,7 @@ async fn reconcile<T: Transport>(
     revocations: &mut crate::revoke::Repairs,
     generation: u64,
 ) -> Result<(), Error> {
-    let local = reconcile_roster(boards, boards.app.fresh_local_state().await?).await?;
+    let mut local = reconcile_roster(boards, boards.app.fresh_local_state().await?).await?;
     boards.open_missing(&local).await?;
     let node_status = boards.node.status();
     let mut members = BTreeMap::new();
@@ -106,6 +106,10 @@ async fn reconcile<T: Transport>(
         }
         changed
     });
+
+    if local.check_device_write().is_ok() {
+        local = crate::revoke::Repairs::complete_requests(boards, local).await;
+    }
 
     let catalog = local.catalog_board();
     if local.device_revocation().is_none()

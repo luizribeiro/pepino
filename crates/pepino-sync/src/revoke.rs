@@ -57,6 +57,32 @@ pub(crate) struct Repairs {
 }
 
 impl Repairs {
+    pub(crate) async fn complete_requests<T: Transport>(
+        workers: &BoardWorkers<T>,
+        mut local: pepino_app::LocalState,
+    ) -> pepino_app::LocalState {
+        let requested = local
+            .roster()
+            .into_values()
+            .filter(|row| row.leave_requested_at.is_some());
+        let own = local.device_id;
+        let Some(catalog) = workers.handle(local.catalog_board()) else {
+            return local;
+        };
+        for row in requested {
+            if row.id != own
+                && catalog.manages(own).await
+                && let Ok(updated) = workers
+                    .app
+                    .record_device_revocation(row.id, std::time::SystemTime::now().into())
+                    .await
+            {
+                local = updated;
+            }
+        }
+        local
+    }
+
     fn notice_pending(
         &mut self,
         id: DeviceId,
