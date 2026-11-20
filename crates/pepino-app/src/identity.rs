@@ -8,4 +8,5 @@ pub(crate) use edit::SignedEdit;
 pub(crate) use ledger::IdentityCatalog;
 pub use record::{RosterDevice, RosterState};
 mod admission;
+mod lookup;
 mod migration;

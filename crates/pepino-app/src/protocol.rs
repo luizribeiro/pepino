@@ -390,6 +390,11 @@ pub enum AppError {
         board: String,
         candidates: Vec<crate::LocalBoard>,
     },
+    #[error("device reference {reference:?} matches several devices")]
+    AmbiguousDevice {
+        reference: String,
+        candidates: Vec<String>,
+    },
     #[error("task reference {task} at {field} matches {count} tasks")]
     AmbiguousId {
         field: String,
@@ -448,6 +453,7 @@ pub enum MissingReference {
     },
     View(String),
     Board(String),
+    Device(String),
 }
 
 impl MissingReference {
@@ -471,6 +477,7 @@ impl std::fmt::Display for MissingReference {
             Self::DeletedTask { task, title: None } => write!(f, "task {task} was deleted"),
             Self::View(view) => write!(f, "view {view}"),
             Self::Board(board) => write!(f, "board {board}"),
+            Self::Device(device) => write!(f, "device {device}"),
         }
     }
 }
@@ -529,7 +536,9 @@ impl AppError {
             Self::DeviceRequestPending => AppErrorKind::DeviceRequestPending,
             Self::IncompatibleLocalState { .. } => AppErrorKind::IncompatibleLocalState,
             Self::PermissionDenied { .. } => AppErrorKind::PermissionDenied,
-            Self::AmbiguousId { .. } | Self::AmbiguousBoard { .. } => AppErrorKind::AmbiguousId,
+            Self::AmbiguousId { .. }
+            | Self::AmbiguousBoard { .. }
+            | Self::AmbiguousDevice { .. } => AppErrorKind::AmbiguousId,
             Self::InvalidInput { .. } => AppErrorKind::InvalidInput,
             Self::Conflict { .. } => AppErrorKind::Conflict,
             Self::Busy => AppErrorKind::Busy,
