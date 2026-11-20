@@ -1,4 +1,5 @@
 use super::support::{Host, until};
+use crate::common::task_error;
 
 fn task(host: &Host, args: &[&str]) -> String {
     host.json(args)["created"].as_str().unwrap().into()
@@ -263,7 +264,6 @@ fn a_timed_out_join_completes_when_the_grantor_returns() {
 
 #[test]
 fn rejects_corrupt_truncated_unsupported_and_other_device_grants() {
-    use crate::common::task_error;
     use ppn::device_code::Kind;
 
     let (_dir, network) = network();
