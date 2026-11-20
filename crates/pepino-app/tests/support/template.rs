@@ -105,7 +105,9 @@ async fn store_fixture(directory: &Path, board: BoardId) {
     let credentials =
         DeviceCredentials::load_or_create(directory.join("credentials.cbor")).unwrap();
     let device = credentials.device_id();
-    let identity = IdentityId::from_bytes(*device.as_bytes());
+    let mut identity = *device.as_bytes();
+    identity[0] ^= 0x80;
+    let identity = IdentityId::from_bytes(identity);
     let database = directory.join("pepino.sqlite");
     let store = Store::open(&database).await.unwrap();
     store.bind_local(board, identity, device).await.unwrap();
