@@ -2,7 +2,7 @@ use pepino_core::*;
 use proptest::prelude::*;
 
 #[test]
-fn round_trips_task_creation_with_local_or_external_id() {
+fn round_trips_task_creation_with_a_content_id() {
     let author = DeviceId::from_bytes([31; 32]);
     let hlc = Hlc {
         wall_ms: 1_795_144_800_000,
@@ -16,23 +16,17 @@ fn round_trips_task_creation_with_local_or_external_id() {
             ..Default::default()
         },
     };
-    let local = Envelope::new(author, hlc, event.clone()).unwrap();
-    let external =
-        Envelope::with_id(EventId::from_bytes([19; 32]), author, hlc, event.clone()).unwrap();
-    assert_eq!(external.created_task(), Some(TaskId(external.id())));
-    assert_eq!(external.author(), author);
-    assert_eq!(external.hlc(), hlc);
-    assert_eq!(external.event(), &event);
-    let encoded = local.encode().unwrap();
-    assert_eq!(
-        Envelope::decode(&encoded).unwrap(),
-        DecodeOutcome::Known(local)
-    );
-    let decoded = Envelope::decode_with_id(external.id(), &encoded).unwrap();
-    assert_eq!(decoded.id(), external.id());
+    let envelope = Envelope::new(author, hlc, event.clone()).unwrap();
+    assert_eq!(envelope.created_task(), Some(TaskId(envelope.id())));
+    assert_eq!(envelope.author(), author);
+    assert_eq!(envelope.hlc(), hlc);
+    assert_eq!(envelope.event(), &event);
+    let encoded = envelope.encode().unwrap();
+    let decoded = Envelope::decode(&encoded).unwrap();
+    assert_eq!(decoded.id().as_bytes(), blake3::hash(&encoded).as_bytes());
     assert_eq!(decoded.author(), Some(author));
     assert_eq!(decoded.hlc(), Some(hlc));
-    assert_eq!(decoded, DecodeOutcome::Known(external));
+    assert_eq!(decoded, DecodeOutcome::Known(envelope));
 }
 
 #[test]
@@ -67,7 +61,6 @@ fn unknown_version_still_requires_a_complete_frame() {
 
 #[test]
 fn future_frames_preserve_metadata_when_available() {
-    let id = EventId::from_bytes([81; 32]);
     let author = DeviceId::from_bytes([12; 32]);
     let hlc = Hlc {
         wall_ms: 45,
@@ -82,7 +75,8 @@ fn future_frames_preserve_metadata_when_available() {
     ]);
     let mut bytes = Vec::new();
     ciborium::into_writer(&(12, content, "future payload"), &mut bytes).unwrap();
-    let decoded = Envelope::decode_with_id(id, &bytes).unwrap();
+    let id = EventId::from_bytes(*blake3::hash(&bytes).as_bytes());
+    let decoded = Envelope::decode(&bytes).unwrap();
     assert_eq!(decoded.id(), id);
     assert_eq!(decoded.author(), Some(author));
     assert_eq!(decoded.hlc(), Some(hlc));
@@ -120,7 +114,6 @@ proptest! {
     fn envelope_order_key_is_a_total_order(raw in any::<[(u64, u32, [u8; 32]); 3]>()) {
         use std::cmp::Ordering;
 
-        let author = DeviceId::from_bytes([55; 32]);
         let task = TaskId::from_bytes([19; 32]);
         for shared_prefix in 0..=3 {
             let raw_keys = raw.map(|(mut wall_ms, mut counter, mut id)| {
@@ -129,16 +122,17 @@ proptest! {
                 if shared_prefix >= 3 { id = raw[0].2; }
                 (wall_ms, counter, id)
             });
-            let keys = raw_keys.map(|(wall_ms, counter, id)| {
-                Envelope::with_id(
-                    EventId::from_bytes(id), author, Hlc { wall_ms, counter }, Event::TaskDeleted { task }
-                ).unwrap().order_key()
+            let envelopes = raw_keys.map(|(wall_ms, counter, author)| {
+                Envelope::new(
+                    DeviceId::from_bytes(author), Hlc { wall_ms, counter }, Event::TaskDeleted { task },
+                ).unwrap()
             });
+            let keys = envelopes.each_ref().map(Envelope::order_key);
 
             for (i, j, k) in [(0, 1, 2), (1, 2, 0), (2, 0, 1)] {
                 let (a, b, c) = (keys[i], keys[j], keys[k]);
                 let order = a.cmp(&b);
-                prop_assert_eq!(order, raw_keys[i].cmp(&raw_keys[j]));
+                prop_assert_eq!(order, (envelopes[i].hlc(), envelopes[i].id()).cmp(&(envelopes[j].hlc(), envelopes[j].id())));
                 prop_assert_eq!(order, b.cmp(&a).reverse());
                 prop_assert_eq!(order == Ordering::Equal, a == b);
                 if a <= b && b <= c {

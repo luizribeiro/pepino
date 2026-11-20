@@ -210,13 +210,8 @@ fn event_superset_preserves_known_encodings() {
             hlc,
             bytes: bytes.clone(),
         };
-        let id = EventId::from_bytes([12; 32]);
-        assert_eq!(
-            Envelope::decode(&bytes).unwrap(),
-            expected(EventId::from_bytes(*blake3::hash(&bytes).as_bytes()))
-        );
-        let decoded = Envelope::decode_with_id(id, &bytes).unwrap();
-        assert_eq!(decoded.id(), id);
+        let id = EventId::from_bytes(*blake3::hash(&bytes).as_bytes());
+        let decoded = Envelope::decode(&bytes).unwrap();
         assert_eq!(decoded.author(), Some(author));
         assert_eq!(decoded.hlc(), Some(hlc));
         assert_eq!(decoded, expected(id));

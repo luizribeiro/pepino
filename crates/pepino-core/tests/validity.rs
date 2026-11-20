@@ -187,12 +187,7 @@ fn rejects_local_invalid_events_and_preserves_invalid_wire_metadata() {
         Envelope::new(author, hlc, event.clone()),
         Err(NewEnvelopeError::InvalidEvent(InvalidEvent::EmptyTitle))
     ));
-    let external = EventId::from_bytes([81; 32]);
     let (bytes, id) = invalid_wire_event(author, hlc, &event);
-    assert_eq!(
-        Envelope::with_id(external, author, hlc, event),
-        Err(InvalidEvent::EmptyTitle)
-    );
     let invalid = |id| DecodeOutcome::InvalidEvent {
         id,
         author,
@@ -200,10 +195,6 @@ fn rejects_local_invalid_events_and_preserves_invalid_wire_metadata() {
         reason: InvalidEvent::EmptyTitle,
     };
     assert_eq!(Envelope::decode(&bytes).unwrap(), invalid(id));
-    assert_eq!(
-        Envelope::decode_with_id(external, &bytes).unwrap(),
-        invalid(external)
-    );
     let overlong_version = [&[0x82, 0x18, 1], &bytes[2..]].concat();
     assert!(matches!(
         Envelope::decode(&overlong_version),

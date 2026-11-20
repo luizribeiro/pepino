@@ -24,10 +24,6 @@ fn rejects_equivalent_cbor_encodings() {
             Envelope::decode(&alternate),
             Err(DecodeError::NonCanonical)
         ));
-        assert!(matches!(
-            Envelope::decode_with_id(envelope.id(), &alternate),
-            Err(DecodeError::NonCanonical)
-        ));
     }
 
     let frame: Value = ciborium::from_reader(bytes.as_slice()).unwrap();

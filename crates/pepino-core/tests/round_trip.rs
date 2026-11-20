@@ -129,11 +129,9 @@ proptest! {
     fn every_event_variant_round_trips(
         events in events(),
         author in any::<[u8; 32]>(),
-        external_id in any::<[u8; 32]>(),
         (wall_ms, counter) in any::<(u64, u32)>(),
     ) {
         let author = DeviceId::from_bytes(author);
-        let id = EventId::from_bytes(external_id);
         let hlc = Hlc { wall_ms, counter };
         for event in events {
             let local = Envelope::new(author, hlc, event.clone()).unwrap();
@@ -143,10 +141,7 @@ proptest! {
             let DecodeOutcome::Known(decoded) = decoded else { unreachable!() };
             let reencoded = decoded.encode().unwrap();
             prop_assert_eq!(&reencoded, &bytes);
-            prop_assert_eq!(
-                Envelope::decode_with_id(id, &bytes).unwrap(),
-                DecodeOutcome::Known(Envelope::with_id(id, author, hlc, event).unwrap()),
-            );
+            prop_assert_eq!(*decoded.id().as_bytes(), *blake3::hash(&bytes).as_bytes());
         }
     }
 }
