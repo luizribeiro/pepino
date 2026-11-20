@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use pepino_core::{
     EdgeKind, Event, FieldName, FieldValue, IdentityId, InitialFields, InvalidEvent, TaskId,
+    filter::Assignee,
 };
 use pepino_store::{BoardView, TaskRecord};
 
@@ -114,7 +115,7 @@ impl App {
                     due: due.map(Into::into),
                     priority,
                     tags: tags.iter().cloned().collect(),
-                    assignees: self.identities(assignees)?,
+                    assignees: self.identities(view, assignees)?,
                     custom: custom_fields(fields)?,
                 };
                 let title = normalize_title(&title, "title")?;
@@ -174,11 +175,11 @@ impl App {
             }
             WriteRequest::Assign { task, assignees } => {
                 let current = resolve(view, "task", &task)?;
-                set_assignees(batch, current, self.identities(assignees)?, true)?;
+                set_assignees(batch, current, self.identities(view, assignees)?, true)?;
             }
             WriteRequest::Unassign { task, assignees } => {
                 let current = resolve(view, "task", &task)?;
-                set_assignees(batch, current, self.identities(assignees)?, false)?;
+                set_assignees(batch, current, self.identities(view, assignees)?, false)?;
             }
             WriteRequest::Link { from, kind, to } => {
                 Self::set_edge(view, batch, &from, kind, &to, true)?;
@@ -253,21 +254,27 @@ impl App {
         Ok(())
     }
 
-    fn identities(&self, references: Vec<String>) -> Result<BTreeSet<IdentityId>, AppError> {
+    fn identities(
+        &self,
+        view: &BoardView,
+        references: Vec<String>,
+    ) -> Result<BTreeSet<IdentityId>, AppError> {
+        let people = |name: &str| self.local.person_candidates(Some(view), name);
         references
             .into_iter()
             .enumerate()
             .map(|(index, reference)| {
-                if reference == "me" {
-                    Ok(self.local.identity_id)
+                let assignee = if reference == "me" {
+                    Assignee::Me
                 } else {
-                    reference.parse().map_err(|_| {
-                        invalid(
-                            format!("assignees[{index}]"),
-                            format!("invalid assignee {reference:?}: expected a full hexadecimal identity ID or me"),
-                        )
-                    })
-                }
+                    Assignee::Person(reference)
+                };
+                pepino_store::query::resolve_person(
+                    Some(self.local.identity_id),
+                    &people,
+                    &assignee,
+                )
+                .map_err(|error| invalid(format!("assignees[{index}]"), error))
             })
             .collect()
     }

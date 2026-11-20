@@ -1807,3 +1807,14 @@ async fn default_priority_sort_treats_missing_priority_as_zero() {
     );
     assert_eq!(tasks[1].priority, None);
 }
+
+#[tokio::test]
+async fn an_assignee_write_resolves_the_local_display_name() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let name = app.local_state().display_name.clone();
+    let task = add(&mut app, "Inspect the greenhouse latch").await;
+    let request = json!({"op":"assign","task":task,"assignees":[name]});
+    assert!(write(&mut app, request).await.0);
+    assert_eq!(get(&mut app, &task).await.assignees.len(), 1);
+}

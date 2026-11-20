@@ -1,15 +1,18 @@
 use std::collections::BTreeMap;
 
 use pepino_core::{
-    BoardId,
+    BoardId, IdentityId,
     filter::{Clause, Filter, State, Term},
 };
+use pepino_store::BoardView;
 use pepino_store::query::{Context, Query, QueryError, QueryErrorKind, Sort};
 
 use crate::app::{invalid, store_error};
 use crate::filter::ViewFilters;
 use crate::projection::project_summary;
-use crate::{App, AppError, Date, FilterDiagnostic, FilterInput, MissingReference, Response};
+use crate::{
+    App, AppError, Date, FilterDiagnostic, FilterInput, LocalState, MissingReference, Response,
+};
 
 impl App {
     pub(super) async fn list_tasks(
@@ -28,12 +31,7 @@ impl App {
         self.reload_state().await?;
         let views = ViewFilters::new(&self.local.saved_views);
         let saved = |name: &str| views.resolve(name);
-        let people = |name: &str| {
-            (name == self.local.display_name)
-                .then_some(self.local.identity_id)
-                .into_iter()
-                .collect()
-        };
+        let people = |name: &str| self.local.person_candidates(None, name);
         let context = || Context {
             today: today.into(),
             me: Some(self.local.identity_id),
@@ -69,9 +67,13 @@ impl App {
                 self.store.board(board).await
             }
             .map_err(store_error)?;
+            let people = |name: &str| self.local.person_candidates(Some(&view), name);
             let prepared = (Query {
                 filter: &filter,
-                context: context(),
+                context: Context {
+                    people: &people,
+                    ..context()
+                },
             })
             .prepare(&view)
             .map_err(diagnostic)?;
@@ -114,6 +116,33 @@ impl App {
             resolved_dates,
             sort: sort.to_string(),
         })
+    }
+}
+
+impl LocalState {
+    pub(super) fn person_candidates(
+        &self,
+        view: Option<&BoardView>,
+        name: &str,
+    ) -> Vec<IdentityId> {
+        if let Ok(id) = name.parse() {
+            return vec![id];
+        }
+        let named = (name == self.display_name).then_some(self.identity_id);
+        if name.len() < 4 || !name.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return named.into_iter().collect();
+        }
+        let prefix = name.to_ascii_lowercase();
+        named
+            .into_iter()
+            .chain(
+                view.into_iter()
+                    .flat_map(BoardView::assignee_ids)
+                    .copied()
+                    .chain([self.identity_id])
+                    .filter(|id| id.to_string().starts_with(&prefix)),
+            )
+            .collect()
     }
 }
 
