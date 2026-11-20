@@ -2,7 +2,8 @@ use std::io;
 use std::path::Path;
 
 use super::diagnostics::invalid_config;
-use super::validate::Draft;
+use super::model::Draft;
+use super::validate::default_error;
 use super::{
     Config, ConfigFile, Env, FileStatus, Flags, PlatformDirs, Setting, Source, select_files,
 };
@@ -20,7 +21,7 @@ pub fn load(
     read: impl FnMut(&Path) -> io::Result<String>,
     dirs: &PlatformDirs,
 ) -> Result<LoadedConfig, CliError> {
-    let mut draft = Draft::new(dirs)?;
+    let mut draft = Draft::new(dirs);
     let mut problems = Vec::new();
     let files = match select_files(flags, env, dirs) {
         Ok(files) => visit_files(&files, read, &mut problems, |file, text| {
@@ -36,13 +37,13 @@ pub fn load(
     }
     invalid_config(problems)?;
     if let Some(value) = flags.color {
-        draft.config.ui.color = Setting {
-            value,
+        draft.ui.color = Setting {
+            value: Some(value),
             source: Source::Flag,
         };
     }
     Ok(LoadedConfig {
-        config: draft.finish()?,
+        config: draft.finish().map_err(default_error)?,
         files,
     })
 }
@@ -54,7 +55,7 @@ pub fn check(
 ) -> Result<Vec<FileStatus>, CliError> {
     let mut problems = Vec::new();
     let statuses = visit_files(files, read, &mut problems, |file, text| {
-        Draft::new(dirs)?.apply_file(&file.path, text, &file.source)
+        Draft::new(dirs).apply_file(&file.path, text, &file.source)
     });
     invalid_config(problems)?;
     Ok(statuses)

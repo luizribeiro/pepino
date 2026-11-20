@@ -4,9 +4,14 @@ use std::path::PathBuf;
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use super::document::{Input, Validator};
 use super::path::serialize_path;
-use super::{AbsolutePath, DateFormat, Network, NodeId, PlatformDirs, RelayUrl, ValueError};
+use super::{
+    AbsolutePath, CONFIG_ENV, DateFormat, Network, NodeId, PlatformDirs, RelayUrl, ValueError,
+};
+use super::{env, validate};
 use crate::terminal::Color;
+use toml::de::DeValue;
 
 pub const DEFAULT_RELAY_URLS: &[&str] = &[
     "https://use1-1.relay.n0.iroh.link.",
@@ -44,9 +49,9 @@ pub struct Setting<T> {
 }
 
 impl<T> Setting<T> {
-    pub(crate) fn defaulted(value: T) -> Self {
-        Self {
-            value,
+    fn pending() -> Setting<Option<T>> {
+        Setting {
+            value: None,
             source: Source::Default,
         }
     }
@@ -58,99 +63,147 @@ pub struct BootstrapNode {
     pub relay_url: RelayUrl,
 }
 
-#[derive(Clone, Debug)]
-pub struct Config<P = AbsolutePath> {
-    pub network: Setting<Network>,
-    pub relay_urls: Setting<Vec<RelayUrl>>,
-    pub mdns: Setting<bool>,
-    pub credentials_file: Setting<P>,
-    pub trusted_devices: Setting<Vec<NodeId>>,
-    pub bootstrap_nodes: Setting<Vec<BootstrapNode>>,
-    pub data_dir: Setting<P>,
-    pub ui: UiConfig,
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct EnvironmentVariable {
+    pub variable: &'static str,
+    pub key: &'static str,
+    pub value: &'static str,
 }
 
-#[derive(Clone, Debug)]
-pub struct UiConfig {
-    pub color: Setting<Color>,
-    pub date_format: Setting<DateFormat>,
+pub(crate) struct Key {
+    pub environment: EnvironmentVariable,
+    pub env_input: for<'a> fn(&'a str) -> DeValue<'a>,
+    pub apply: fn(&mut Draft<'_>, &Input<'_>, &Source, &mut Validator<'_>),
 }
 
-impl Config {
-    pub fn defaults(dirs: &PlatformDirs) -> Result<Self, ValueError> {
-        Config::initial(None).and_then(|config| config.resolve_paths(dirs))
-    }
+pub fn environment_variables() -> impl Iterator<Item = EnvironmentVariable> {
+    std::iter::once(EnvironmentVariable {
+        variable: CONFIG_ENV,
+        key: "File selection",
+        value: "Path to one required TOML file. --config takes precedence.",
+    })
+    .chain(ROOT_KEYS.iter().chain(UI_KEYS).map(|key| key.environment))
+}
 
-    pub fn values(&self) -> BTreeMap<&'static str, Value> {
-        BTreeMap::from([
-            ("network", json!(self.network)),
-            ("relay_urls", json!(self.relay_urls)),
-            ("mdns", json!(self.mdns)),
-            ("credentials_file", json!(self.credentials_file)),
-            ("trusted_devices", json!(self.trusted_devices)),
-            ("bootstrap_nodes", json!(self.bootstrap_nodes)),
-            ("data_dir", json!(self.data_dir)),
-            ("ui.color", json!(self.ui.color)),
-            ("ui.date_format", json!(self.ui.date_format)),
-        ])
+impl<T> Setting<Option<T>> {
+    fn resolve(
+        self,
+        default: impl FnOnce() -> Result<T, ValueError>,
+    ) -> Result<Setting<T>, ValueError> {
+        Ok(Setting {
+            value: self.value.map_or_else(default, Ok)?,
+            source: self.source,
+        })
     }
 }
 
-impl<P: Clone> Config<P> {
-    pub(crate) fn initial(path: P) -> Result<Self, ValueError> {
-        Ok(Self {
-            network: Setting::defaulted("pepino".parse()?),
-            relay_urls: Setting::defaulted(
-                DEFAULT_RELAY_URLS
-                    .iter()
-                    .map(|url| url.parse())
-                    .collect::<Result<_, _>>()?,
-            ),
-            mdns: Setting::defaulted(true),
-            credentials_file: Setting::defaulted(path.clone()),
-            trusted_devices: Setting::defaulted(Vec::new()),
-            bootstrap_nodes: Setting::defaulted(Vec::new()),
-            data_dir: Setting::defaulted(path),
-            ui: UiConfig {
-                color: Setting::defaulted(Color::Auto),
-                date_format: Setting::defaulted("%Y-%m-%d".parse()?),
+macro_rules! parse_setting {
+    (path, $draft:ident, $validator:ident, $key:expr, $input:ident) => {
+        validate::path($validator, $key, $input, $draft.dirs)
+    };
+    ($parser:ident, $draft:ident, $validator:ident, $key:expr, $input:ident) => {
+        validate::$parser($validator, $key, $input).map(Some)
+    };
+}
+
+macro_rules! key {
+    ($name:expr, $variable:literal, $description:literal, $parser:ident, $($field:ident).+) => {
+        Key {
+            environment: EnvironmentVariable { variable: $variable, key: $name, value: $description },
+            env_input: env::$parser,
+            apply: |draft, input, source, validator| {
+                if let Some(value) = parse_setting!($parser, draft, validator, $name, input) {
+                    draft.$($field).+ = Setting { value, source: source.clone() };
+                }
             },
-        })
-    }
+        }
+    };
 }
 
-impl Config<Option<AbsolutePath>> {
-    pub(crate) fn resolve_paths(self, dirs: &PlatformDirs) -> Result<Config, ValueError> {
-        let Config {
-            network,
-            relay_urls,
-            mdns,
-            credentials_file,
-            trusted_devices,
-            bootstrap_nodes,
-            data_dir,
-            ui,
-        } = self;
-        let data_dir = Setting {
-            value: data_dir.value.map_or_else(|| dirs.data_dir(), Ok)?,
-            source: data_dir.source,
-        };
-        let credentials_file = Setting {
-            value: credentials_file
-                .value
-                .unwrap_or_else(|| data_dir.value.join("credentials.cbor")),
-            source: credentials_file.source,
-        };
-        Ok(Config {
-            network,
-            relay_urls,
-            mdns,
-            credentials_file,
-            trusted_devices,
-            bootstrap_nodes,
-            data_dir,
-            ui,
-        })
+macro_rules! settings {
+    ($dirs:ident;
+     root { $($field:ident: $ty:ty = $parser:ident($variable:literal, $description:literal, $default:expr);)* }
+     ui { $($ui:ident: $ui_ty:ty = $ui_parser:ident($ui_variable:literal, $ui_description:literal, $ui_default:expr);)* }
+    ) => {
+        #[derive(Clone, Debug)]
+        pub struct Config {
+            $(pub $field: Setting<$ty>,)*
+            pub ui: UiConfig,
+        }
+
+        #[derive(Clone, Debug)]
+        pub struct UiConfig {
+            $(pub $ui: Setting<$ui_ty>,)*
+        }
+
+        pub(crate) struct Draft<'a> {
+            pub dirs: &'a PlatformDirs,
+            $($field: Setting<Option<$ty>>,)*
+            pub ui: DraftUi,
+        }
+
+        pub(crate) struct DraftUi {
+            $(pub $ui: Setting<Option<$ui_ty>>,)*
+        }
+
+        impl<'a> Draft<'a> {
+            pub fn new(dirs: &'a PlatformDirs) -> Self {
+                Self {
+                    dirs,
+                    $($field: Setting::<$ty>::pending(),)*
+                    ui: DraftUi { $($ui: Setting::<$ui_ty>::pending(),)* },
+                }
+            }
+
+            pub fn finish(self) -> Result<Config, ValueError> {
+                let $dirs = self.dirs;
+                $(let $field = self.$field.resolve(|| $default)?;)*
+                Ok(Config {
+                    $($field,)*
+                    ui: UiConfig { $($ui: self.ui.$ui.resolve(|| $ui_default)?,)* },
+                })
+            }
+        }
+
+        impl Config {
+            pub fn defaults(dirs: &PlatformDirs) -> Result<Self, ValueError> {
+                Draft::new(dirs).finish()
+            }
+
+            pub fn values(&self) -> BTreeMap<&'static str, Value> {
+                BTreeMap::from([
+                    $((stringify!($field), json!(self.$field)),)*
+                    $((concat!("ui.", stringify!($ui)), json!(self.ui.$ui)),)*
+                ])
+            }
+        }
+
+        pub(crate) const ROOT_KEYS: &[Key] = &[
+            $(key!(stringify!($field), $variable, $description, $parser, $field),)*
+        ];
+        pub(crate) const UI_KEYS: &[Key] = &[
+            $(key!(concat!("ui.", stringify!($ui)), $ui_variable, $ui_description, $ui_parser, ui.$ui),)*
+        ];
+    };
+}
+
+settings! {
+    dirs;
+    root {
+        network: Network = scalar("PPN_NETWORK", "Non-empty network name.", "pepino".parse());
+        relay_urls: Vec<RelayUrl> = list("PPN_RELAY_URLS", "Comma-separated HTTPS URLs.",
+            DEFAULT_RELAY_URLS.iter().map(|url| url.parse()).collect());
+        mdns: bool = boolean("PPN_MDNS", "true, false, 1, or 0.", Ok(true));
+        data_dir: AbsolutePath = path("PPN_DATA_DIR", "Absolute path or a path beginning with ~.", dirs.data_dir());
+        credentials_file: AbsolutePath = path("PPN_CREDENTIALS_FILE", "Absolute path or a path beginning with ~.",
+            Ok(data_dir.value.join("credentials.cbor")));
+        trusted_devices: Vec<NodeId> = list("PPN_TRUSTED_DEVICES", "Comma-separated 64-digit hex node IDs.", Ok(Vec::new()));
+        bootstrap_nodes: Vec<BootstrapNode> = bootstrap_list("PPN_BOOTSTRAP_NODES",
+            "Comma-separated node_id=https://relay.example pairs with 64-digit hex node IDs.", Ok(Vec::new()));
+    }
+    ui {
+        color: Color = color("PPN_COLOR", "auto, always, or never. --color takes precedence.", Ok(Color::Auto));
+        date_format: DateFormat = scalar("PPN_DATE_FORMAT", "Strftime format.", "%Y-%m-%d".parse());
     }
 }
 
@@ -165,7 +218,16 @@ mod tests {
     fn defaults_cover_the_schema_with_default_sources() {
         let dirs = PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None);
         let values = Config::defaults(&dirs).unwrap().values();
-        assert_eq!(values.len(), 9);
+        assert_eq!(
+            values
+                .keys()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            environment_variables()
+                .skip(1)
+                .map(|variable| variable.key)
+                .collect()
+        );
         assert!(values.values().all(|value| value["source"] == "default"));
         assert_eq!(values["network"]["value"], "pepino");
         assert_eq!(values["relay_urls"]["value"], json!(DEFAULT_RELAY_URLS));

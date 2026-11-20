@@ -10,7 +10,10 @@ mod types;
 mod validate;
 
 pub use dirs::{Platform, PlatformDirs, SYSTEM_CONFIG};
-pub use model::{BootstrapNode, Config, DEFAULT_RELAY_URLS, Setting, Source, UiConfig};
+pub use model::{
+    BootstrapNode, Config, DEFAULT_RELAY_URLS, EnvironmentVariable, Setting, Source, UiConfig,
+    environment_variables,
+};
 pub use path::AbsolutePath;
 pub use types::{DateFormat, Network, NodeId, RelayUrl, ValueError};
 

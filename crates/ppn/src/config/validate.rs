@@ -1,28 +1,17 @@
 use std::path::Path;
+use std::str::FromStr;
 
 use clap::ValueEnum;
-use toml::de::DeValue;
 
 use super::diagnostics::invalid_config;
-use super::document::{Input, Validator, parse_value, text};
-use super::{AbsolutePath, BootstrapNode, Config, PlatformDirs, Setting, Source, ValueError};
+use super::document::{Input, Validator, text};
+use super::model::{Draft, Key, ROOT_KEYS, UI_KEYS};
+use super::{AbsolutePath, BootstrapNode, Config, PlatformDirs, Source, ValueError};
 use crate::error::CliError;
 use crate::terminal::Color;
 
-pub(crate) const ROOT_KEYS: &[&str] = &[
-    "network",
-    "relay_urls",
-    "mdns",
-    "credentials_file",
-    "trusted_devices",
-    "bootstrap_nodes",
-    "data_dir",
-    "ui",
-];
-pub(crate) const UI_KEYS: &[&str] = &["ui.color", "ui.date_format"];
-
 pub fn validate_file(path: &Path, text: &str, dirs: &PlatformDirs) -> Result<Config, CliError> {
-    let mut draft = Draft::new(dirs)?;
+    let mut draft = Draft::new(dirs);
     draft.apply_file(
         path,
         text,
@@ -30,26 +19,10 @@ pub fn validate_file(path: &Path, text: &str, dirs: &PlatformDirs) -> Result<Con
             path: path.to_owned(),
         },
     )?;
-    draft.finish()
+    draft.finish().map_err(default_error)
 }
 
-pub(crate) struct Draft<'a> {
-    pub dirs: &'a PlatformDirs,
-    pub config: Config<Option<AbsolutePath>>,
-}
-
-impl<'a> Draft<'a> {
-    pub fn new(dirs: &'a PlatformDirs) -> Result<Self, CliError> {
-        Ok(Self {
-            dirs,
-            config: Config::initial(None).map_err(default_error)?,
-        })
-    }
-
-    pub fn finish(self) -> Result<Config, CliError> {
-        self.config.resolve_paths(self.dirs).map_err(default_error)
-    }
-
+impl Draft<'_> {
     pub fn apply_file(&mut self, path: &Path, text: &str, source: &Source) -> Result<(), CliError> {
         let mut validator = Validator::new(Some((path, text)));
         for (key, value) in validator.document(text) {
@@ -62,96 +35,88 @@ impl<'a> Draft<'a> {
                     if let Some(table) = validator.require("ui", &value, table) {
                         for (key, value) in table {
                             let name = format!("ui.{}", key.get_ref());
-                            if UI_KEYS.contains(&name.as_str()) {
-                                self.apply(&name, value, source, &mut validator);
+                            if let Some(entry) = find_key(UI_KEYS, &name) {
+                                (entry.apply)(self, value, source, &mut validator);
                             } else {
-                                validator.unknown(&name, key.span(), UI_KEYS);
+                                validator.unknown(&name, key.span(), names(UI_KEYS));
                             }
                         }
                     }
                 }
-                name if ROOT_KEYS.contains(&name) => {
-                    self.apply(name, &value, source, &mut validator)
-                }
-                name => validator.unknown(name, key.span(), ROOT_KEYS),
+                name => match find_key(ROOT_KEYS, name) {
+                    Some(entry) => (entry.apply)(self, &value, source, &mut validator),
+                    None => validator.unknown(name, key.span(), names(ROOT_KEYS).chain(["ui"])),
+                },
             }
         }
         invalid_config(validator.problems)
     }
-
-    pub fn apply(
-        &mut self,
-        key: &str,
-        input: &Input<'_>,
-        source: &Source,
-        validator: &mut Validator<'_>,
-    ) {
-        let value = input.get_ref();
-        macro_rules! assign {
-            ($field:expr, $result:expr) => {
-                if let Some(value) = validator.require(key, input, $result) {
-                    $field = Setting {
-                        value,
-                        source: source.clone(),
-                    };
-                }
-            };
-        }
-        match key {
-            "network" => assign!(self.config.network, parse_value(value)),
-            "mdns" => assign!(
-                self.config.mdns,
-                value.as_bool().ok_or(ValueError("expected a boolean"))
-            ),
-            "ui.color" => assign!(
-                self.config.ui.color,
-                text(value).and_then(|value| {
-                    Color::from_str(value, false)
-                        .map_err(|_| ValueError("expected auto, always, or never"))
-                })
-            ),
-            "ui.date_format" => assign!(self.config.ui.date_format, parse_value(value)),
-            "data_dir" => assign!(self.config.data_dir, self.configured_path(value)),
-            "credentials_file" => {
-                assign!(self.config.credentials_file, self.configured_path(value))
-            }
-            "relay_urls" => {
-                if let Some(values) = validator.list(key, input, Validator::parse) {
-                    self.config.relay_urls = Setting {
-                        value: values,
-                        source: source.clone(),
-                    };
-                }
-            }
-            "trusted_devices" => {
-                if let Some(values) = validator.list(key, input, Validator::parse) {
-                    self.config.trusted_devices = Setting {
-                        value: values,
-                        source: source.clone(),
-                    };
-                }
-            }
-            "bootstrap_nodes" => {
-                if let Some(values) = validator.list(key, input, bootstrap_node) {
-                    self.config.bootstrap_nodes = Setting {
-                        value: values,
-                        source: source.clone(),
-                    };
-                }
-            }
-            _ => unreachable!("keys are checked before applying them"),
-        }
-    }
-
-    fn configured_path(&self, input: &DeValue<'_>) -> Result<Option<AbsolutePath>, ValueError> {
-        match text(input)? {
-            "" => Ok(None),
-            value => AbsolutePath::new(self.dirs.expand_home(Path::new(value))?).map(Some),
-        }
-    }
 }
 
-fn default_error(error: ValueError) -> CliError {
+fn find_key<'key>(entries: &'key [Key], name: &str) -> Option<&'key Key> {
+    entries.iter().find(|entry| entry.environment.key == name)
+}
+
+fn names(entries: &[Key]) -> impl Iterator<Item = &'static str> {
+    entries.iter().map(|entry| entry.environment.key)
+}
+
+pub(crate) fn scalar<T: FromStr<Err = ValueError>>(
+    validator: &mut Validator<'_>,
+    key: &str,
+    input: &Input<'_>,
+) -> Option<T> {
+    validator.parse(key, input)
+}
+
+pub(crate) fn boolean(validator: &mut Validator<'_>, key: &str, input: &Input<'_>) -> Option<bool> {
+    validator.require(
+        key,
+        input,
+        input
+            .get_ref()
+            .as_bool()
+            .ok_or(ValueError("expected a boolean")),
+    )
+}
+
+pub(crate) fn color(validator: &mut Validator<'_>, key: &str, input: &Input<'_>) -> Option<Color> {
+    let color = text(input.get_ref()).and_then(|value| {
+        Color::from_str(value, false).map_err(|_| ValueError("expected auto, always, or never"))
+    });
+    validator.require(key, input, color)
+}
+
+pub(crate) fn path(
+    validator: &mut Validator<'_>,
+    key: &str,
+    input: &Input<'_>,
+    dirs: &PlatformDirs,
+) -> Option<Option<AbsolutePath>> {
+    let path = text(input.get_ref()).and_then(|value| match value {
+        "" => Ok(None),
+        value => AbsolutePath::new(dirs.expand_home(Path::new(value))?).map(Some),
+    });
+    validator.require(key, input, path)
+}
+
+pub(crate) fn list<T: FromStr<Err = ValueError>>(
+    validator: &mut Validator<'_>,
+    key: &str,
+    input: &Input<'_>,
+) -> Option<Vec<T>> {
+    validator.list(key, input, Validator::parse)
+}
+
+pub(crate) fn bootstrap_list(
+    validator: &mut Validator<'_>,
+    key: &str,
+    input: &Input<'_>,
+) -> Option<Vec<BootstrapNode>> {
+    validator.list(key, input, bootstrap_node)
+}
+
+pub(crate) fn default_error(error: ValueError) -> CliError {
     CliError::new(
         crate::error::ErrorKind::InvalidConfig,
         format!("Configuration defaults: {error}"),
@@ -178,7 +143,7 @@ fn bootstrap_node(
             field => validator.unknown(
                 &format!("{key}.{field}"),
                 name.span(),
-                &[&keys[0], &keys[1]],
+                keys.iter().map(String::as_str),
             ),
         }
     }
@@ -296,7 +261,7 @@ date_format = "%Q"
     fn derives_generated_credentials_after_merging_paths() {
         let home = Path::new("/home/release");
         let dirs = PlatformDirs::new(Platform::Linux, home, None, None);
-        let mut draft = Draft::new(&dirs).unwrap();
+        let mut draft = Draft::new(&dirs);
         draft
             .apply_file(
                 &home.join("config.toml"),

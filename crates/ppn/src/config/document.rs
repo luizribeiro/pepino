@@ -83,8 +83,14 @@ impl<'a> Validator<'a> {
         (values.len() == array.len()).then_some(values)
     }
 
-    pub fn unknown(&mut self, key: &str, span: Range<usize>, keys: &[&str]) {
-        let suggestion = nearest_key(key, keys.iter().copied());
+    pub fn unknown<'key>(
+        &mut self,
+        key: &str,
+        span: Range<usize>,
+        keys: impl IntoIterator<Item = &'key str>,
+    ) {
+        let suggestion = nearest_key(key, keys);
+
         let message = match suggestion {
             Some(suggestion) => format!("unknown key; did you mean `{suggestion}`?"),
             None => "unknown key".into(),

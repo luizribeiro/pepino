@@ -5,21 +5,9 @@ use toml::de::{DeTable, DeValue};
 
 use super::diagnostics::invalid_config;
 use super::document::{Input, Validator};
-use super::validate::Draft;
+use super::model::{Draft, ROOT_KEYS, UI_KEYS};
 use super::{Env, Source, ValueError};
 use crate::error::CliError;
-
-const VARIABLES: &[(&str, &str)] = &[
-    ("PPN_NETWORK", "network"),
-    ("PPN_RELAY_URLS", "relay_urls"),
-    ("PPN_MDNS", "mdns"),
-    ("PPN_CREDENTIALS_FILE", "credentials_file"),
-    ("PPN_TRUSTED_DEVICES", "trusted_devices"),
-    ("PPN_BOOTSTRAP_NODES", "bootstrap_nodes"),
-    ("PPN_DATA_DIR", "data_dir"),
-    ("PPN_COLOR", "ui.color"),
-    ("PPN_DATE_FORMAT", "ui.date_format"),
-];
 
 pub fn env_value<'a>(env: &'a Env, name: &str) -> Result<Option<&'a str>, ValueError> {
     env.get(OsStr::new(name))
@@ -30,7 +18,9 @@ pub fn env_value<'a>(env: &'a Env, name: &str) -> Result<Option<&'a str>, ValueE
 
 pub(crate) fn apply(draft: &mut Draft<'_>, env: &Env) -> Result<(), CliError> {
     let mut problems = Vec::new();
-    for &(variable, key) in VARIABLES {
+    for entry in ROOT_KEYS.iter().chain(UI_KEYS) {
+        let variable = entry.environment.variable;
+        let key = entry.environment.key;
         let raw = match env_value(env, variable) {
             Ok(Some(raw)) => raw,
             Ok(None) => continue,
@@ -40,7 +30,12 @@ pub(crate) fn apply(draft: &mut Draft<'_>, env: &Env) -> Result<(), CliError> {
             }
         };
         let mut validator = Validator::new(None);
-        draft.apply(key, &wrapped(value(key, raw)), &Source::Env, &mut validator);
+        (entry.apply)(
+            draft,
+            &wrapped((entry.env_input)(raw)),
+            &Source::Env,
+            &mut validator,
+        );
         problems.extend(
             validator
                 .problems
@@ -51,28 +46,37 @@ pub(crate) fn apply(draft: &mut Draft<'_>, env: &Env) -> Result<(), CliError> {
     invalid_config(problems)
 }
 
-fn value<'a>(key: &str, raw: &'a str) -> DeValue<'a> {
-    match key {
-        "mdns" => match raw {
-            "1" | "true" => DeValue::Boolean(true),
-            "0" | "false" => DeValue::Boolean(false),
-            _ => DeValue::String(raw.into()),
-        },
-        "relay_urls" | "trusted_devices" | "bootstrap_nodes" => DeValue::Array(
-            raw.split(',')
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
-                .map(|item| {
-                    wrapped(if key == "bootstrap_nodes" {
-                        bootstrap(item)
-                    } else {
-                        DeValue::String(item.into())
-                    })
-                })
-                .collect(),
-        ),
-        _ => DeValue::String(raw.into()),
+pub(crate) fn scalar(raw: &str) -> DeValue<'_> {
+    DeValue::String(raw.into())
+}
+
+pub(crate) use scalar as color;
+pub(crate) use scalar as path;
+
+pub(crate) fn boolean(raw: &str) -> DeValue<'_> {
+    match raw {
+        "1" | "true" => DeValue::Boolean(true),
+        "0" | "false" => DeValue::Boolean(false),
+        _ => scalar(raw),
     }
+}
+
+pub(crate) fn list(raw: &str) -> DeValue<'_> {
+    comma_list(raw, scalar)
+}
+
+pub(crate) fn bootstrap_list(raw: &str) -> DeValue<'_> {
+    comma_list(raw, bootstrap)
+}
+
+fn comma_list<'a>(raw: &'a str, item: fn(&'a str) -> DeValue<'a>) -> DeValue<'a> {
+    DeValue::Array(
+        raw.split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(|value| wrapped(item(value)))
+            .collect(),
+    )
 }
 
 fn bootstrap(value: &str) -> DeValue<'_> {
@@ -180,9 +184,7 @@ mod tests {
                 "no-node-at-relay,invalid=http://relay.example".into(),
             ),
         ]);
-        let error = apply(&mut Draft::new(&dirs).unwrap(), &env)
-            .unwrap_err()
-            .to_string();
+        let error = apply(&mut Draft::new(&dirs), &env).unwrap_err().to_string();
         for key in [
             "PPN_MDNS: mdns",
             "PPN_BOOTSTRAP_NODES: bootstrap_nodes[0]",
