@@ -16,11 +16,21 @@
       systemModule = platform: import ./nix/system.nix { inherit self lib platform; };
       workspace = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package;
     in
-    flake-utils.lib.eachDefaultSystem
+    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ]
       (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
           inherit (pkgs.lib) fileset;
+
+          # Devenv's default task runner imports fetched and patched derivations.
+          taskPkgs = import devenv.inputs.nixpkgs.inputs.nixpkgs-src {
+            inherit system;
+            overlays = [ devenv.inputs.rust-overlay.overlays.default ];
+          };
+          taskWorkspace = taskPkgs.callPackage (devenv.outPath + "/nix/workspace.nix") {
+            rustc = taskPkgs.rust-bin.stable.latest.default;
+            cargo = taskPkgs.rust-bin.stable.latest.default;
+          };
 
           packageArgs = {
             pname = "ppn";
@@ -66,6 +76,7 @@
               ({ lib, pkgs, ... }: {
                 packages = [ pkgs.git ];
                 languages.rust.enable = true;
+                task.package = taskWorkspace.crates.devenv-tasks;
 
                 git-hooks.hooks =
                   let
