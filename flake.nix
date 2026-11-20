@@ -32,11 +32,13 @@
               ];
             };
             cargoLock.lockFile = ./Cargo.lock;
+            buildInputs = [ pkgs.sqlite ];
+            nativeBuildInputs = [ pkgs.pkg-config ];
           };
 
           mkCargoCheck = name: tool: command: pkgs.rustPlatform.buildRustPackage (packageArgs // {
             pname = "ppn-${name}";
-            nativeBuildInputs = [ tool ];
+            nativeBuildInputs = packageArgs.nativeBuildInputs ++ [ tool ];
             buildPhase = ''
               runHook preBuild
               ${command}
