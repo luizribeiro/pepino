@@ -1,5 +1,6 @@
+use pepino_core::DeviceId;
 use pepino_node::DeviceCredentials;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{AppError, DeviceGrant, DeviceRequest, app::invalid};
 
@@ -26,7 +27,14 @@ impl SignedGrant {
         {
             return Err(invalid("grant", "invalid granting device or request"));
         }
-        let secret = request.secret.ok_or_else(missing_secret)?;
+        Self::issue_body(grant, request.secret.ok_or_else(missing_secret)?, keys)
+    }
+
+    pub fn issue_body(
+        grant: &impl Serialize,
+        secret: [u8; 32],
+        keys: &DeviceCredentials,
+    ) -> Result<Self, AppError> {
         let mut body = Vec::new();
         ciborium::into_writer(grant, &mut body)
             .map_err(|_| invalid("grant", "could not encode grant body"))?;
@@ -39,7 +47,17 @@ impl SignedGrant {
     }
 
     pub fn verify(self, request: &DeviceRequest) -> Result<DeviceGrant, AppError> {
-        let secret = request.secret.ok_or_else(missing_secret)?;
+        self.verify_body(
+            request.secret.ok_or_else(missing_secret)?,
+            |grant: &DeviceGrant| grant.peer.id,
+        )
+    }
+
+    pub fn verify_body<T: DeserializeOwned>(
+        self,
+        secret: [u8; 32],
+        issuer: impl FnOnce(&T) -> DeviceId,
+    ) -> Result<T, AppError> {
         let hash = grant_hash(&self.body);
         if blake3::keyed_hash(&secret, &hash) != self.mac {
             return Err(invalid(
@@ -48,9 +66,9 @@ impl SignedGrant {
             ));
         }
         let mut bytes = self.body.as_slice();
-        let grant: DeviceGrant = ciborium::from_reader(&mut bytes)
+        let grant = ciborium::from_reader(&mut bytes)
             .map_err(|_| invalid("grant", "invalid grant body"))?;
-        if !bytes.is_empty() || !DeviceCredentials::verify(grant.peer.id, &hash, &self.signature) {
+        if !bytes.is_empty() || !DeviceCredentials::verify(issuer(&grant), &hash, &self.signature) {
             return Err(invalid("grant", "invalid granting device signature"));
         }
         Ok(grant)
@@ -122,5 +140,27 @@ fn grant_authentication_detects_body_and_signature_changes() {
             .unwrap()
             .to_string()
             .contains("invalid granting device signature")
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn signed_grants_support_distinct_body_schemas() {
+    let dir = tempfile::tempdir().unwrap();
+    let keys = DeviceCredentials::load_or_create(dir.path().join("board manager")).unwrap();
+    let recipient = DeviceId::from_bytes([18; 32]);
+    let body = (keys.device_id(), recipient, "Greenhouse");
+    let sign = || SignedGrant::issue_body(&body, [72; 32], &keys).unwrap();
+    let verify = |grant: SignedGrant, secret| {
+        grant.verify_body(secret, |&(issuer, _, _): &(DeviceId, DeviceId, String)| {
+            issuer
+        })
+    };
+    assert_eq!(verify(sign(), [72; 32]).unwrap().1, recipient);
+    assert!(verify(sign(), [73; 32]).is_err());
+    assert!(
+        sign()
+            .verify_body([72; 32], |_: &DeviceGrant| keys.device_id())
+            .is_err()
     );
 }
