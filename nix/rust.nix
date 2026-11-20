@@ -30,7 +30,6 @@ in
       # The sandbox does not inherit CI, which the network opt-in assertion reads.
       env.CI = "true";
       env.PEPINO_NETWORK_TESTS = "1";
-      env.RUST_TEST_THREADS = "1";
       # The sandbox's loopback has no IPv4 multicast route. Keep the network tests isolated.
       checkPhase = ''
         runHook preCheck
