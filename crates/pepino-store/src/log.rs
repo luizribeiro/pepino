@@ -20,7 +20,6 @@ pub enum SkipReason {
         values: Vec<UnknownValue>,
     },
     Invalid(InvalidEvent),
-    EdgeViewPending,
     UnknownOutcome,
 }
 
@@ -31,7 +30,6 @@ impl SkipReason {
             Self::UnknownEvent(_) | Self::UnknownOutcome => "unknown_event",
             Self::UnknownValue { .. } => "unknown_value",
             Self::Invalid(_) => "invalid",
-            Self::EdgeViewPending => "known",
         }
     }
 }
@@ -122,13 +120,8 @@ impl Decoded {
         Ok(match self.event {
             Ok((envelope, task)) => {
                 history::index(connection, board, &envelope).await?;
-                match fold::fold(connection, board, task, &envelope).await? {
-                    Some(task) => AppendOutcome::Applied { id, task },
-                    None => AppendOutcome::Skipped {
-                        id,
-                        reason: SkipReason::EdgeViewPending,
-                    },
-                }
+                fold::fold(connection, board, task, &envelope).await?;
+                AppendOutcome::Applied { id, task }
             }
             Err(reason) => AppendOutcome::Skipped { id, reason },
         })

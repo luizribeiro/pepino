@@ -1,7 +1,7 @@
 use pepino_core::{
     BoardId, DeviceId, EdgeKind, Envelope, Event, EventId, Hlc, InitialFields, TaskId,
 };
-use pepino_store::{AppendOutcome, EventRecord, IdSource, SkipReason, Store};
+use pepino_store::{AppendOutcome, EventRecord, IdSource, Store};
 
 #[tokio::test]
 async fn history_includes_creation_and_both_edge_endpoints_in_envelope_order() {
@@ -45,25 +45,12 @@ async fn history_includes_creation_and_both_edge_endpoints_in_envelope_order() {
     ] {
         let id = EventId::from_bytes([id; 32]);
         let author = DeviceId::from_bytes([author; 32]);
-        let bytes = Envelope::new(author, hlc, event.clone())
-            .unwrap()
-            .encode()
-            .unwrap();
+        let bytes = Envelope::new(author, hlc, event).unwrap().encode().unwrap();
         let outcome = store
             .append(board, &bytes, IdSource::Trusted(id))
             .await
             .unwrap();
-        if matches!(event, Event::EdgeAdded { .. } | Event::EdgeRemoved { .. }) {
-            assert_eq!(
-                outcome,
-                AppendOutcome::Skipped {
-                    id,
-                    reason: SkipReason::EdgeViewPending
-                }
-            );
-        } else {
-            assert_eq!(outcome, AppendOutcome::Applied { id, task });
-        }
+        assert_eq!(outcome, AppendOutcome::Applied { id, task });
         expected.push(EventRecord {
             id,
             author,
@@ -71,6 +58,7 @@ async fn history_includes_creation_and_both_edge_endpoints_in_envelope_order() {
             bytes,
         });
     }
+    assert_eq!(store.rebuild(board).await.unwrap().skipped, 0);
     assert!(store.tasks(board).await.unwrap().is_empty());
     assert!(
         store

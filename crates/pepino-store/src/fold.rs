@@ -25,12 +25,12 @@ pub(crate) async fn fold(
     board: BoardId,
     task: TaskId,
     envelope: &Envelope,
-) -> Result<Option<TaskId>, StoreError> {
+) -> Result<(), StoreError> {
     if matches!(
         envelope.event(),
         Event::EdgeAdded { .. } | Event::EdgeRemoved { .. }
     ) {
-        return Ok(None);
+        return Ok(());
     }
     let created = envelope.created_task();
     let hlc = envelope.hlc().to_key();
@@ -58,8 +58,7 @@ pub(crate) async fn fold(
         envelope,
     }
     .apply()
-    .await?;
-    Ok(Some(task))
+    .await
 }
 
 pub(crate) async fn upgrade(
