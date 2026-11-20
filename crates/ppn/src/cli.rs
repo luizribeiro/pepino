@@ -16,7 +16,8 @@ use ppn::terminal::{Context, Terminal};
 
 use crate::commands::add;
 use crate::commands::show;
-use crate::{config_command, debug, help, status, version};
+use crate::commands::status;
+use crate::{config_command, debug, help, version};
 
 #[derive(Parser)]
 #[command(
@@ -50,9 +51,7 @@ enum Command {
         #[command(subcommand)]
         command: config_command::Command,
     },
-    /// Show local identity, board, and task counts.
-    #[command(after_help = example_help(&["ppn status", "ppn status --json"]))]
-    Status,
+    Status(status::Args),
     Add(add::Args),
     Show(show::Args),
     /// Exercise CLI behavior.
@@ -190,7 +189,7 @@ fn dispatch(
     match cli.command {
         Some(Command::Show(args)) => show::run(context, args),
         Some(Command::Add(args)) => add::run(context, args, json),
-        Some(Command::Status) => status::run(context),
+        Some(Command::Status(args)) => status::run(context, args),
         Some(Command::Version) => Ok(version::run(context)),
         Some(Command::Help { path }) => {
             let mut definition = Cli::command();

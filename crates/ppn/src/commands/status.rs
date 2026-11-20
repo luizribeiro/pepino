@@ -1,12 +1,18 @@
 use pepino_app::{ReadRequest, Request};
 use ppn::app::AppClient;
 use ppn::error::CliError;
+use ppn::help_tree::example_help;
 use ppn::output::CommandResult;
 use ppn::render::{short_id, single_line};
 use ppn::response::{ResponseExt, Status};
 use ppn::terminal::Context;
 
-pub fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
+#[derive(clap::Args)]
+/// Show local identity, board, and task counts.
+#[command(after_help = example_help(&["ppn status", "ppn status --json"]))]
+pub struct Args {}
+
+pub fn run(context: &Context<'_>, _: Args) -> Result<CommandResult, CliError> {
     let response = AppClient::open(context)?.call(Request::Read(ReadRequest::Status))?;
     CommandResult::app_document(context, response, |response, _| {
         let Status {
