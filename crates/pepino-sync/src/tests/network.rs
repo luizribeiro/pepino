@@ -25,7 +25,7 @@ async fn freshly_enrolled_engines_report_idle_and_shut_down() {
 
 use serde_json::json;
 
-use super::directory::write;
+use super::{directory::write, until};
 use fixture::{WAIT, views_match};
 
 #[tokio::test]
@@ -176,16 +176,22 @@ async fn a_forged_transport_author_is_logged_without_changing_the_view() {
     )
     .unwrap();
     board.publish(forged.encode().unwrap()).await.unwrap();
-    b.await_events(&right, 2).await;
-    views_match(&a, &b).await;
-    let history = b.app.store().history(b.board(), None, None).await.unwrap();
-    assert!(
-        history
-            .events
-            .iter()
-            .any(|entry| entry.decoded.id() == forged.id()
-                && entry.classification == EventClassification::ForgedAuthor)
-    );
+    let mut ticks = tokio::time::interval(std::time::Duration::from_millis(25));
+    until(
+        async || {
+            ticks.tick().await;
+            b.app.store().history(b.board(), None, None).await.unwrap()
+        },
+        |history| {
+            history.events.iter().any(|entry| {
+                entry.decoded.id() == forged.id()
+                    && entry.classification == EventClassification::ForgedAuthor
+            })
+        },
+        WAIT,
+    )
+    .await;
+    right.engine.wait_idle(WAIT).await.unwrap();
     assert_eq!(
         before,
         b.app.store().board_with_comments(b.board()).await.unwrap()
