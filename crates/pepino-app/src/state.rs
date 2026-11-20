@@ -102,9 +102,10 @@ impl LocalState {
     }
 
     pub fn devices(&self) -> BTreeMap<DeviceId, String> {
-        let mut devices = self.other_devices.clone();
-        devices.insert(self.device_id, self.device_name.clone());
-        devices
+        self.roster()
+            .into_iter()
+            .map(|(id, device)| (id, device.name))
+            .collect()
     }
 
     pub(super) fn task_names<'a>(
@@ -124,11 +125,11 @@ impl LocalState {
         ids.into_iter()
             .filter(|id| {
                 *id == identity
-                    || id.parse::<DeviceId>().is_ok_and(|device| {
-                        device == self.device_id || self.other_devices.contains_key(&device)
-                    })
+                    || id
+                        .parse::<DeviceId>()
+                        .is_ok_and(|device| self.knows_roster_device(device))
             })
-            .map(|id| (id.to_owned(), self.display_name.clone()))
+            .map(|id| (id.to_owned(), self.display_name().to_owned()))
             .collect()
     }
 

@@ -1,11 +1,12 @@
-#[cfg(test)]
+#[allow(dead_code)]
 mod edit;
-
-#[cfg(test)]
+#[allow(dead_code)]
 mod fold;
-
-#[cfg(test)]
+#[allow(dead_code)]
+mod ledger;
+mod local;
+#[allow(dead_code)]
 mod record;
 
-#[cfg(test)]
-mod ledger;
+pub(crate) use ledger::IdentityCatalog;
+pub use record::{RosterDevice, RosterState};

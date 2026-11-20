@@ -15,6 +15,8 @@ pub(crate) struct CatalogState {
     joins: BTreeMap<BoardId, BoardJoinState>,
     created_here: BTreeSet<BoardId>,
     bundles: BTreeMap<DeviceId, String>,
+    #[serde(default)]
+    pub(crate) identity: crate::identity::IdentityCatalog,
 }
 
 impl CatalogState {
