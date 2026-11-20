@@ -1,15 +1,21 @@
-use ppn::error::{CliError, ErrorKind};
+use ppn::error::CliError;
 use ppn::help_tree::example_help;
 use ppn::output::CommandResult;
 use ppn::terminal::Context;
 
-#[derive(clap::Args)]
-#[command(hide = true, about = "List tasks that are ready to start.", after_help = example_help(&["ppn ready", "ppn ready --json"]))]
-pub struct Args {}
+use super::ls;
 
-pub fn run(_: &Context<'_>, _: Args) -> Result<CommandResult, CliError> {
-    Err(CliError::new(
-        ErrorKind::Failure,
-        "ppn ready is not implemented.",
-    ))
+#[derive(clap::Args)]
+#[group(skip)]
+#[command(about = "List tasks that are ready to start.", after_help = example_help(&[
+    "ppn ready tag:hardware", "ppn ready assignee:me --json",
+]))]
+pub struct Args {
+    #[command(flatten)]
+    listing: ls::Args,
+}
+
+pub fn run(context: &Context<'_>, mut args: Args) -> Result<CommandResult, CliError> {
+    args.listing.filter.push("is:ready".into());
+    ls::run(context, args.listing)
 }
