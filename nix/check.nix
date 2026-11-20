@@ -44,18 +44,21 @@ let
     let result = builtins.tryEval (passes (evaluate settings));
     in !result.success || !result.value;
 
-  verify = evaluate:
+  verify = evaluate: full:
     lib.all (settings: let config = evaluate settings; in passes config && config.warnings == [ ])
-      [ fixtures.empty fixtures.outsideStore fixtures.cleared fixtures.typical fixtures.full ]
+      [ fixtures.empty fixtures.outsideStore fixtures.cleared fixtures.typical full ]
     && (evaluate fixtures.untrusted).warnings != [ ]
     && lib.all (rejects evaluate) fixtures.invalid;
 
   linux = evaluate self.nixosModules.default;
   darwin = evaluate self.darwinModules.default;
   fullLinux = linux fixtures.full;
-  fullDarwin = darwin fixtures.full;
+  fullDarwinSettings = lib.recursiveUpdate fixtures.full { services.pepino.openFirewall = false; };
+  fullDarwin = darwin fullDarwinSettings;
 in
-assert verify linux && verify darwin;
+assert verify linux fixtures.full && verify darwin fullDarwinSettings;
+assert rejects linux fixtures.invalidLinux;
+assert rejects darwin fixtures.invalidDarwinFirewall;
 assert (linux fixtures.empty).environment.systemPackages == [ package ];
 assert (linux fixtures.empty).services.pepino.configFile == null;
 assert !((linux fixtures.empty).environment.etc ? "pepino/node.toml");
@@ -70,7 +73,6 @@ assert fullDarwin.users.knownUsers == [ "pepino-relay" ];
 assert fullDarwin.users.knownGroups == [ "pepino-relay" ];
 assert fullDarwin.users.users.pepino-relay.gid == 450;
 assert lib.hasInfix "/srv/pepino" fullDarwin.system.activationScripts.postActivation.text;
-assert lib.hasInfix "port 44123" fullDarwin.environment.etc."pf.anchors/pepino".text;
 pkgs.runCommand "pepino-config-check"
 {
   nativeBuildInputs = [ package ];

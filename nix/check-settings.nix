@@ -66,12 +66,13 @@ in
       port = 44123;
     };
   };
+  invalidLinux = { services.pepino = { enable = true; openFirewall = true; }; };
+  invalidDarwinFirewall = { services.pepino = { enable = true; openFirewall = true; port = 44123; }; };
   invalid =
     map (node: { programs.pepino = node; }) (lib.attrValues invalidNode)
     ++ map (node: { services.pepino = node; }) (lib.attrValues invalidNode)
     ++ [
       { programs.pepino.ui.color = "sometimes"; }
-      { services.pepino.openFirewall = true; }
       { services.pepino.port = 0; }
       { services.pepino.port = 65536; }
       { services.pepino.port = "44123"; }

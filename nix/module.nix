@@ -97,11 +97,7 @@ in
     in
     {
       assertions = validateNode "programs.pepino" config.programs.pepino
-        ++ validateNode "services.pepino" service
-        ++ [{
-        assertion = !service.openFirewall || service.port != null;
-        message = "services.pepino.openFirewall requires services.pepino.port.";
-      }];
+        ++ validateNode "services.pepino" service;
       warnings = lib.optional (service.enable && nullableList service.trustedDevices == [ ])
         "services.pepino.enable is set with no trusted devices, so the node will accept boards from nobody.";
     };

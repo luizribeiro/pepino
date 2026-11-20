@@ -5,6 +5,10 @@ let
 in
 {
   config = lib.mkIf node.enable {
+    assertions = [{
+      assertion = !node.openFirewall;
+      message = "services.pepino.openFirewall is not supported on nix-darwin. Configure the firewall manually.";
+    }];
     users.knownUsers = [ node.user ];
     users.knownGroups = [ node.group ];
     users.groups.${node.group}.description = "Pepino node group";
@@ -15,8 +19,5 @@ in
     system.activationScripts.postActivation.text = ''
       /usr/bin/install -d -m 0700 -o ${quote node.user} -g ${quote node.group} -- ${quote node.dataDir}
     '';
-    environment.etc."pf.anchors/pepino" = lib.mkIf (node.openFirewall && node.port != null) {
-      text = "pass in quick proto udp from any to any port ${toString node.port}\n";
-    };
   };
 }

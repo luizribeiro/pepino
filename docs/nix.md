@@ -59,16 +59,7 @@ defaults.
 You can leave the firewall closed for outbound relay connections. To allow
 incoming UDP, set both `services.pepino.openFirewall` and `services.pepino.port`.
 On NixOS the module adds the port to `networking.firewall.allowedUDPPorts`.
-On nix-darwin it writes `/etc/pf.anchors/pepino`. If you manage a PF firewall,
-include these lines at the desired position in your active PF ruleset and reload
-that ruleset when the anchor changes.
-
-```pf
-anchor "pepino"
-load anchor "pepino" from "/etc/pf.anchors/pepino"
-```
-
-If you turn off this option, remove the anchor inclusion before reloading.
+On nix-darwin, configure the firewall manually.
 `ppn` still needs support for binding the fixed port from its configuration.
 
 ## Options
@@ -89,7 +80,7 @@ If you turn off this option, remove the anchor inclusion before reloading.
 | `programs.pepino.ui.dateFormat` | String | Unset | Strftime format for displayed dates. |
 | `services.pepino.user` | String | `"pepino"` | Always-on node account. |
 | `services.pepino.group` | String | `"pepino"` | Always-on node primary group. |
-| `services.pepino.openFirewall` | Boolean | `false` | Allow the fixed UDP port. Requires `port`. |
+| `services.pepino.openFirewall` | Boolean | `false` | Allow the fixed UDP port on NixOS. Requires `port`. |
 | `services.pepino.port` | Integer from 1 to 65535 | Unset | Fixed UDP port for firewall configuration. |
 | `services.pepino.configFile` | Read-only path | Unset when disabled | Generated always-on node configuration. |
 
