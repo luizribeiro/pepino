@@ -203,7 +203,7 @@ impl ProcessInputs {
             color: explicit_color.then_some(globals.color),
         };
         let level = globals.log_level;
-        Context::new(
+        let mut context = Context::new(
             Terminal::detect(globals.color, &self.env),
             globals.yes,
             globals.timeout,
@@ -218,7 +218,13 @@ impl ProcessInputs {
                 }
                 Ok(loaded)
             },
-        )
+        );
+        context.board_flag.clone_from(&globals.board);
+        context.board_env = self
+            .env
+            .get(std::ffi::OsStr::new(ppn::flags::BOARD_ENV))
+            .cloned();
+        context
     }
 }
 

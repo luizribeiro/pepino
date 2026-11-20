@@ -17,6 +17,7 @@ pub struct AppClient {
     wrote: std::rc::Rc<std::cell::Cell<bool>>,
     runtime: Runtime,
     now_ms: u64,
+    board_override: Result<Option<(String, &'static str)>, CliError>,
 }
 
 impl AppClient {
@@ -61,6 +62,13 @@ impl AppClient {
         }
         Ok(Self {
             app,
+            board_override: if initialize {
+                Ok(None)
+            } else {
+                context
+                    .board_override()
+                    .map(|board| board.map(|(reference, source)| (reference.into(), source)))
+            },
             wrote: context.wrote.clone(),
             runtime,
             now_ms,
@@ -93,11 +101,60 @@ impl AppClient {
         }
     }
 
+    pub fn selected_board(&self) -> Result<(&pepino_app::LocalBoard, &'static str), CliError> {
+        let local = self.local_state();
+        if let Some((reference, source)) = self.board_override.as_ref().map_err(Clone::clone)? {
+            Ok((local.resolve_board(reference, source)?, source))
+        } else {
+            Ok((local.current_board(), "current"))
+        }
+    }
+
     pub fn call(&mut self, request: Request) -> Result<Response, CliError> {
-        let write = matches!(&request, Request::Write(_));
+        self.call_listing(request, false)
+    }
+
+    pub fn call_unscoped(&mut self, request: Request) -> Result<Response, CliError> {
+        let write = matches!(&request, Request::Write(_))
+            && !matches!(
+                &request,
+                Request::Write(pepino_app::WriteRequest::BoardUse { .. })
+            );
         let response = self
             .runtime
             .block_on(self.app.handle(request, self.now_ms))?;
+        if write {
+            self.wrote.set(true);
+        }
+        Ok(response)
+    }
+
+    pub fn call_listing(
+        &mut self,
+        request: Request,
+        all_boards: bool,
+    ) -> Result<Response, CliError> {
+        let write = matches!(&request, Request::Write(_));
+        let identity_local = matches!(
+            &request,
+            Request::Read(ReadRequest::ListViews)
+                | Request::Write(
+                    pepino_app::WriteRequest::SaveView { .. }
+                        | pepino_app::WriteRequest::DeleteView { .. }
+                )
+        );
+        let board = if identity_local {
+            None
+        } else {
+            self.board_override
+                .as_ref()
+                .map_err(Clone::clone)?
+                .as_ref()
+                .map(|(reference, source)| (reference.as_str(), *source))
+        };
+        let response =
+            self.runtime
+                .block_on(self.app.handle_on(request, self.now_ms, board, all_boards))?;
         if write {
             self.wrote.set(true);
         }

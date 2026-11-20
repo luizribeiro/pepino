@@ -105,6 +105,8 @@ pub struct Context<'a> {
     pub yes: bool,
     pub timeout: Option<Duration>,
     pub time: InvocationTime,
+    pub board_flag: Option<String>,
+    pub board_env: Option<std::ffi::OsString>,
 }
 
 impl<'a> Context<'a> {
@@ -123,7 +125,30 @@ impl<'a> Context<'a> {
             yes,
             timeout,
             time,
+            board_flag: None,
+            board_env: None,
         }
+    }
+
+    pub fn board_override(&self) -> Result<Option<(&str, &'static str)>, CliError> {
+        if let Some(board) = &self.board_flag {
+            return Ok(Some((board, "--board")));
+        }
+        self.board_env
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                value
+                    .to_str()
+                    .map(|board| (board, "PPN_BOARD"))
+                    .ok_or_else(|| {
+                        CliError::new(
+                            ErrorKind::InvalidInput,
+                            "PPN_BOARD must contain a UTF-8 board reference.",
+                        )
+                    })
+            })
+            .transpose()
     }
 
     pub fn wrote(&self) -> bool {

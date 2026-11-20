@@ -8,6 +8,8 @@ use crate::config::{Env, LogLevel, env_value};
 use crate::error::{CliError, ErrorKind};
 use crate::terminal::Color;
 
+pub const BOARD_ENV: &str = "PPN_BOARD";
+
 pub(crate) const JSON_ENV: &str = "PPN_JSON";
 
 #[derive(Args)]
@@ -15,6 +17,10 @@ pub struct Globals {
     /// Render output as JSON. PPN_JSON also enables this.
     #[arg(long, global = true)]
     pub json: bool,
+
+    /// Select a board by name or ID prefix. Overrides PPN_BOARD and the host's current board.
+    #[arg(long, global = true, value_name = "BOARD")]
+    pub board: Option<String>,
 
     /// Show device details and daemon notification diagnostics.
     #[arg(long, global = true)]
@@ -77,6 +83,7 @@ impl Globals {
         Self {
             json,
             config: None,
+            board: None,
             log_level: None,
             verbose: false,
             yes: options(args).iter().any(|arg| arg == "--yes"),

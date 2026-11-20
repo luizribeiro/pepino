@@ -351,7 +351,7 @@ impl From<AppError> for CliError {
             AppError::NotFound {
                 field,
                 reference: reference @ pepino_app::MissingReference::Board(_),
-            } if matches!(field.as_str(), "--board" | "PPN_BOARD") => {
+            } if field == "PPN_BOARD" => {
                 diagnostic.message = format!("{reference} from {field} was not found");
             }
             AppError::AmbiguousBoard {
@@ -454,6 +454,7 @@ fn input_root(path: &str) -> &str {
 fn input_name(details: &Map<String, Value>) -> Option<&'static str> {
     let field = details.get("field")?.as_str()?;
     Some(match input_root(field) {
+        "--board" => "--board",
         "title" => "<TITLE>",
         "task" | "tasks" => "<TASK>",
         "from" => "<FROM>",
