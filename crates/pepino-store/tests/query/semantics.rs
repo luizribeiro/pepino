@@ -135,6 +135,7 @@ fn views_expand_recursively_and_negate_the_entire_saved_filter() {
     check("tag:garden -@weekend", &[2]);
     check("@weekend @garden-open @weekend", &[0, 7, 11]);
     check("-@empty", &[]);
+    check("tag:garden -@empty @weekend", &[]);
     let filter = filter("@empty -tag:garden");
     let task = board().task(id(1)).unwrap();
     assert!(matches(board(), task, &query(&filter)).unwrap());

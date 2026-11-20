@@ -61,7 +61,7 @@ pub struct Query<'a> {
 
 /// A query resolved against a particular board snapshot.
 pub struct Prepared<'view> {
-    predicates: Vec<Predicate<'view>>,
+    predicates: Vec<Check<'view>>,
 }
 
 impl fmt::Debug for Prepared<'_> {
@@ -103,8 +103,15 @@ pub fn select<'view>(
 
 type Predicate<'a> = Box<dyn Fn(&TaskRecord) -> bool + 'a>;
 
-fn all_match(predicates: &[Predicate<'_>], task: &TaskRecord) -> bool {
-    predicates.iter().all(|predicate| predicate(task))
+struct Check<'view> {
+    predicate: Predicate<'view>,
+    negated: bool,
+}
+
+fn all_match(checks: &[Check<'_>], task: &TaskRecord) -> bool {
+    checks
+        .iter()
+        .all(|check| (check.predicate)(task) != check.negated)
 }
 
 fn prepare<'a>(
@@ -112,8 +119,8 @@ fn prepare<'a>(
     filter: &Filter,
     context: &Context<'_>,
     chain: &mut Vec<String>,
-) -> Result<Vec<Predicate<'a>>, QueryError> {
-    let mut predicates = Vec::<Predicate<'a>>::new();
+) -> Result<Vec<Check<'a>>, QueryError> {
+    let mut predicates = Vec::new();
     let mut terms: Vec<_> = filter.terms().iter().collect();
     terms.sort_by_cached_key(|term| term.to_string());
     for term in terms {
@@ -139,11 +146,10 @@ fn prepare<'a>(
                 predicate
             }
         };
-        if term.negated {
-            predicates.push(Box::new(move |task| !predicate(task)));
-        } else {
-            predicates.push(predicate);
-        }
+        predicates.push(Check {
+            predicate,
+            negated: term.negated,
+        });
     }
     Ok(predicates)
 }
