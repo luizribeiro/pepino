@@ -361,6 +361,12 @@ pub enum AppError {
         #[serde(flatten)]
         reference: MissingReference,
     },
+    #[error("board reference {board:?} at {field} is ambiguous")]
+    AmbiguousBoard {
+        field: String,
+        board: String,
+        candidates: Vec<crate::LocalBoard>,
+    },
     #[error("task reference {task} at {field} matches {count} tasks")]
     AmbiguousId {
         field: String,
@@ -496,7 +502,7 @@ impl AppError {
             Self::DeviceRequestPending => AppErrorKind::DeviceRequestPending,
             Self::IncompatibleLocalState { .. } => AppErrorKind::IncompatibleLocalState,
             Self::PermissionDenied { .. } => AppErrorKind::PermissionDenied,
-            Self::AmbiguousId { .. } => AppErrorKind::AmbiguousId,
+            Self::AmbiguousId { .. } | Self::AmbiguousBoard { .. } => AppErrorKind::AmbiguousId,
             Self::InvalidInput { .. } => AppErrorKind::InvalidInput,
             Self::Conflict { .. } => AppErrorKind::Conflict,
             Self::Busy => AppErrorKind::Busy,

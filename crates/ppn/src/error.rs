@@ -334,6 +334,14 @@ impl From<AppError> for CliError {
                     .map_or_else(String::new, |title| format!(" {title:?}"));
                 diagnostic.message = format!("Task {task}{title} was deleted");
             }
+            AppError::AmbiguousBoard {
+                board,
+                field,
+                candidates,
+            } => {
+                diagnostic.message = format!("Board reference {board:?} at {field} is ambiguous");
+                diagnostic.hint = Some(format!("Choose one of {}.", board_candidates(candidates)));
+            }
             AppError::NotFound { reference, .. } => {
                 diagnostic.message = format!("{reference} was not found");
             }
@@ -467,6 +475,23 @@ fn input_hint(field: &str, reason: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+fn board_candidates(boards: &[pepino_app::LocalBoard]) -> String {
+    let ids: Vec<_> = boards.iter().map(|board| board.id.to_string()).collect();
+    let short = crate::render::ShortIds::new(ids.iter().map(String::as_str));
+    boards
+        .iter()
+        .zip(&ids)
+        .map(|(board, id)| {
+            format!(
+                "{} ({})",
+                crate::render::single_line(&board.name),
+                short.get(id)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]

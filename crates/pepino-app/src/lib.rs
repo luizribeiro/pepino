@@ -8,6 +8,7 @@
 
 mod app;
 mod batch;
+mod board;
 mod device_grant;
 mod device_grant_auth;
 mod device_install;
