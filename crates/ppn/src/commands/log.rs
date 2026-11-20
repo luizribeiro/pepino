@@ -25,15 +25,11 @@ pub struct Args {
     /// Show the full history regardless of --limit.
     #[arg(long)]
     all: bool,
-
-    /// Show each author's device.
-    #[arg(long)]
-    verbose: bool,
 }
 
-pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError> {
+pub fn run(context: &Context<'_>, args: Args, verbose: bool) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
-    let authors = client.author_labels(args.verbose);
+    let authors = client.author_labels(verbose);
     let response = client.call(Request::Read(ReadRequest::Log {
         task: args.task,
         limit: (!args.all).then_some(args.limit),

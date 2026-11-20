@@ -16,6 +16,10 @@ pub struct Globals {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Show device details and daemon notification diagnostics.
+    #[arg(long, global = true)]
+    pub verbose: bool,
+
     /// Confirm without prompting.
     #[arg(long, global = true)]
     pub yes: bool,
@@ -74,6 +78,7 @@ impl Globals {
             json,
             config: None,
             log_level: None,
+            verbose: false,
             yes: options(args).iter().any(|arg| arg == "--yes"),
             color: option_values(args, "--color")
                 .filter_map(|value| Color::from_str(value, false).ok())

@@ -226,7 +226,7 @@ fn dispatch(
     json: bool,
 ) -> Result<CommandResult, CliError> {
     match cli.command {
-        Some(Command::Show(args)) => show::run(context, args),
+        Some(Command::Show(args)) => show::run(context, args, cli.globals.verbose),
         Some(Command::Add(args)) => add::run(context, args),
         Some(Command::Status(args)) => status::run(context, args),
         Some(Command::Init(args)) => status::init(context, args),
@@ -239,7 +239,7 @@ fn dispatch(
         Some(Command::Ready(args)) => commands::ready::run(context, args),
         Some(Command::Tree(args)) => commands::tree::run(context, args),
         Some(Command::Deps(args)) => commands::deps::run(context, args),
-        Some(Command::Log(args)) => commands::log::run(context, args),
+        Some(Command::Log(args)) => commands::log::run(context, args, cli.globals.verbose),
         Some(Command::View(args)) => commands::view::run(context, args),
         Some(Command::Edit(args)) => commands::edit::run(context, args, json),
         Some(Command::Start(args)) => commands::start::run(context, args),

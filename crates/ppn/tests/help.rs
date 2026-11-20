@@ -97,6 +97,7 @@ fn help_describes_the_cli_in_both_formats() {
     assert_eq!(flag("json")["env"], "PPN_JSON");
     assert_eq!(flag("json")["type"], "boolean");
     assert_eq!(flag("yes")["default"], false);
+    assert_eq!(flag("verbose")["type"], "boolean");
     assert_eq!(flag("timeout")["type"], "duration");
     assert_eq!(flag("color")["default"], "auto");
     assert_eq!(

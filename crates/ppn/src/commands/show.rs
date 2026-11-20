@@ -13,12 +13,13 @@ use ppn::terminal::Context;
 pub struct Args {
     /// Task ID or unambiguous prefix.
     task: String,
-    /// Show each author's device.
-    #[arg(long)]
-    verbose: bool,
 }
 
-pub fn run(context: &Context<'_>, Args { task, verbose }: Args) -> Result<CommandResult, CliError> {
+pub fn run(
+    context: &Context<'_>,
+    Args { task }: Args,
+    verbose: bool,
+) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
     let authors = client.author_labels(verbose);
     let mut response = client.call(Request::Read(ReadRequest::GetTask { task }))?;
