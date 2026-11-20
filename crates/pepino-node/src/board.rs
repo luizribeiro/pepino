@@ -1,4 +1,8 @@
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    sync::{Arc, Weak},
+    time::Duration,
+};
 
 use p2panda::{
     Hash,
@@ -29,6 +33,7 @@ pub struct OpenBoardOptions {
 
 pub struct BoardHandle {
     id: BoardId,
+    pub(crate) node: Weak<p2panda::Node>,
     runtime: Handle,
     joined: watch::Receiver<JoinState>,
     receipts: Receipts,
@@ -117,6 +122,7 @@ impl BoardHandle {
         };
         Self {
             id,
+            node: Arc::downgrade(node),
             runtime: Handle::current(),
             joined: state,
             receipts,

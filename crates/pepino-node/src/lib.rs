@@ -4,6 +4,7 @@ mod board_lease;
 mod board_task;
 mod credentials;
 mod events;
+mod membership;
 mod node;
 mod receipt;
 mod settings;
@@ -13,12 +14,15 @@ pub use ack::Ack;
 pub use board::{BoardHandle, OpenBoardOptions};
 pub use credentials::DeviceCredentials;
 pub use events::{BoardEvent, BoardEvents};
+pub use membership::{MemberInfo, Role};
 pub use node::Node;
 pub use settings::{BootstrapNode, MdnsMode, NodeSettings};
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    #[error("invalid member info: {0}")]
+    Member(String),
     #[error("the board's event stream has already been taken")]
     EventsTaken,
     #[error("waiting for board membership timed out")]
