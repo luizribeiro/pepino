@@ -52,6 +52,7 @@ pub(super) async fn enroll(root: &Path, owner: &Device, name: &str) -> Device {
     let a = Node::spawn(owner.settings.clone()).await.unwrap();
     let b = Node::spawn(settings.clone()).await.unwrap();
     let board = a.open_board(owner.board()).await.unwrap();
+    board.wait_until_joined(WAIT).await.unwrap();
     let peer = b.open_board(owner.board()).await.unwrap();
     board
         .add_member(&b.member_info().await.unwrap(), Role::Write)
