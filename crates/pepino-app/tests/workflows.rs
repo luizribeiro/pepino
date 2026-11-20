@@ -254,3 +254,48 @@ async fn link_and_unlink_use_present_edges_including_excluded_ones() {
         );
     }
 }
+
+#[tokio::test]
+async fn comments_are_ordered_and_preserve_repeated_text() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let id = add(&mut app, "Install the latch").await;
+    let author = app.local_state().device_id.to_string();
+    let note = "The latch is in the tool cabinet.";
+    for text in [note, note, "The door now closes flush."] {
+        let (changed, _, tasks) =
+            write(&mut app, json!({"op":"comment","task":&id,"text":text})).await;
+        assert!(changed);
+        let task = get(&mut app, &id).await;
+        assert_eq!(tasks, std::slice::from_ref(&task));
+        let comment = task.comments.last().unwrap();
+        assert_eq!(
+            (comment.author.as_str(), comment.text.as_str()),
+            (author.as_str(), text)
+        );
+    }
+    let task = get(&mut app, &id).await;
+    assert_ne!(task.comments[0].id, task.comments[1].id);
+    assert!(
+        task.comments
+            .windows(2)
+            .all(|pair| pair[0].hlc < pair[1].hlc)
+    );
+    let oversized = json!({"op":"comment","task":&id,"text":"x".repeat(65_537)});
+    assert!(
+        matches!(handle(&mut app, oversized).await, Err(AppError::InvalidInput { field, .. }) if field == "text")
+    );
+    assert_eq!(get(&mut app, &id).await, task);
+
+    let response = Response::Task {
+        task: Box::new(task),
+    };
+    let json = serde_json::to_vec(&response).unwrap();
+    assert_eq!(serde_json::from_slice::<Response>(&json).unwrap(), response);
+    let mut cbor = Vec::new();
+    ciborium::into_writer(&response, &mut cbor).unwrap();
+    assert_eq!(
+        ciborium::from_reader::<Response, _>(cbor.as_slice()).unwrap(),
+        response
+    );
+}

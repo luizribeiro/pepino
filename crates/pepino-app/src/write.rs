@@ -97,6 +97,10 @@ impl App {
             Request::Unlink { from, kind, to } => {
                 self.set_edge(view, batch, &from, kind, &to, false).await?;
             }
+            Request::Comment { task, text } => {
+                let task = self.resolve(view, "task", &task).await?.id;
+                batch.push(Event::CommentAdded { task, text }, "text")?;
+            }
             _ => return Err(invalid("op", "write operation is unavailable")),
         }
         Ok(())
