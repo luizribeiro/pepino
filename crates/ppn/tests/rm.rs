@@ -94,3 +94,59 @@ fn rm_lists_titles_and_accepts_yes_and_no_on_a_terminal() {
     assert_deleted(&sandbox, &project.parent);
     assert_deleted(&sandbox, &project.blocker);
 }
+
+#[test]
+fn rm_returns_one_batch_outcome_for_multiple_tasks() {
+    let (sandbox, _) = task_sandbox();
+    let project = small_project(&sandbox);
+    let output =
+        as_json(&sandbox.run(&["rm", &project.blocker, &project.parent, "--yes", "--json"]));
+    assert_write(&output, true);
+    assert_eq!(
+        output["targets"],
+        serde_json::json!([project.blocker, project.parent])
+    );
+    assert_eq!(output["deleted"].as_array().unwrap().len(), 2);
+    assert_deleted(&sandbox, &project.blocker);
+    assert_deleted(&sandbox, &project.parent);
+}
+
+#[cfg(unix)]
+#[test]
+fn rm_leaves_other_tasks_live_when_one_is_deleted_at_the_prompt() {
+    use std::{
+        fs::File,
+        io::{BufRead, BufReader, Read, Write},
+        process::Stdio,
+    };
+
+    let (sandbox, _) = task_sandbox();
+    let project = small_project(&sandbox);
+    let terminal = nix::pty::openpty(None, None).unwrap();
+    let mut input = File::from(terminal.master);
+    let mut child = sandbox
+        .command()
+        .args(["rm", &project.parent, &project.blocker])
+        .stdin(File::from(terminal.slave))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stderr = BufReader::new(child.stderr.take().unwrap());
+    let mut prompt = String::new();
+    stderr.read_line(&mut prompt).unwrap();
+    assert_eq!(prompt, "Permanently delete these tasks?\n");
+
+    sandbox.run(&["rm", &project.blocker, "--yes"]);
+    input.write_all(b"y\n").unwrap();
+    let mut diagnostic = String::new();
+    stderr.read_to_string(&mut diagnostic).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(diagnostic.ends_with(&format!(
+        "error: Task {} \"Order stainless fittings\" was deleted\n",
+        &project.blocker[..6]
+    )));
+    assert_eq!(show_task(&sandbox, &project.parent)["id"], project.parent);
+}

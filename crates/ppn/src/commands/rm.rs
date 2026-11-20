@@ -1,11 +1,11 @@
 use std::collections::BTreeSet;
 
-use pepino_app::{Request, Response, WriteRequest};
+use pepino_app::{Request, Response, TaskChange, WriteRequest};
 use ppn::app::AppClient;
 use ppn::error::CliError;
 use ppn::help_tree::example_help;
 use ppn::output::CommandResult;
-use ppn::render::{single_line, write_documents};
+use ppn::render::{batch_write_document, single_line};
 use ppn::terminal::Context;
 
 #[derive(clap::Args)]
@@ -50,9 +50,9 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
         });
     }
 
-    let responses = tasks
-        .into_iter()
-        .map(|task| client.call(Request::Write(WriteRequest::Delete { task: task.id })))
-        .collect::<Result<Vec<_>, _>>()?;
-    write_documents(context, &responses, "Deleted")
+    let response = client.call(Request::Write(WriteRequest::ApplyToTasks {
+        tasks: tasks.into_iter().map(|task| task.id).collect(),
+        change: TaskChange::Delete,
+    }))?;
+    batch_write_document(context, response, "Deleted")
 }
