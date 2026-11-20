@@ -1,3 +1,5 @@
+#[path = "query/errors.rs"]
+mod errors;
 #[path = "query/fixture.rs"]
 mod fixture;
 #[path = "query/semantics.rs"]

@@ -56,6 +56,18 @@ fn creation_and_updates_compare_by_utc_wall_date_at_midnight() {
 }
 
 #[test]
+fn relations_use_resolved_prefixes_and_effective_direct_edges() {
+    check("parent:0808", &[1]);
+    check("parent:abcd01", &[6]);
+    check("parent:0808,abcd01", &[1, 6]);
+    check("blocks:abcd01", &[1]);
+    check("blocks:ABCD02", &[]);
+    check("blocks:0707", &[0]);
+    check("blocked-by:ABCD02", &[0]);
+    check("blocked-by:abcd01,0303", &[6, 8]);
+}
+
+#[test]
 fn state_predicates_use_status_and_effective_blockers() {
     check("is:open", &[0, 1, 4, 6, 7, 8, 9, 11, 12, 13]);
     check("is:closed", &[2, 3, 5, 10]);

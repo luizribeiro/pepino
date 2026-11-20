@@ -1,9 +1,9 @@
 use pepino_core::{
-    IdentityId,
+    IdentityId, TaskId,
     filter::{Clause, Filter},
 };
 
-use crate::{BoardView, TaskRecord};
+use crate::{BoardView, PrefixResolution, TaskRecord};
 
 use super::{
     QueryError, QueryErrorKind,
@@ -80,7 +80,7 @@ fn prepare<'a>(
 }
 
 fn prepare_clause<'a>(
-    _view: &'a BoardView,
+    view: &'a BoardView,
     clause: &'a Clause,
     _context: &Context<'a>,
 ) -> Result<Option<Predicate<'a>>, QueryErrorKind> {
@@ -91,6 +91,18 @@ fn prepare_clause<'a>(
             Box::new(move |task| values.iter().any(|tag| task.tags.contains(tag)))
         }
         Clause::Status(values) => Box::new(move |task| values.contains(&task.status)),
+        Clause::Parent(values) => {
+            let ids = resolve_prefixes(view, values)?;
+            Box::new(move |task| task.parent.is_some_and(|parent| ids.contains(&parent)))
+        }
+        Clause::Blocks(values) => {
+            let ids = resolve_prefixes(view, values)?;
+            Box::new(move |task| ids.iter().any(|id| task.blocks.contains(id)))
+        }
+        Clause::BlockedBy(values) => {
+            let ids = resolve_prefixes(view, values)?;
+            Box::new(move |task| ids.iter().any(|id| task.blocked_by.contains(id)))
+        }
         Clause::Priority(values) => Box::new(move |task| compare(task.priority, values)),
         Clause::Due(values) => Box::new(move |task| compare(task.due, values)),
         Clause::Created(values) => Box::new(move |task| utc_days(task.created, values)),
@@ -98,4 +110,26 @@ fn prepare_clause<'a>(
         _ => return Ok(None),
     };
     Ok(Some(predicate))
+}
+
+fn resolve_prefixes(view: &BoardView, prefixes: &[String]) -> Result<Vec<TaskId>, QueryErrorKind> {
+    prefixes
+        .iter()
+        .map(|prefix| match view.resolve_prefix(prefix) {
+            Ok(PrefixResolution::One(id)) => Ok(id),
+            Ok(PrefixResolution::None) => Err(QueryErrorKind::UnknownTaskPrefix {
+                prefix: prefix.clone(),
+            }),
+            Ok(PrefixResolution::Ambiguous { count, candidates }) => {
+                Err(QueryErrorKind::AmbiguousTaskPrefix {
+                    prefix: prefix.clone(),
+                    count,
+                    candidates,
+                })
+            }
+            Err(_) => Err(QueryErrorKind::InvalidTaskPrefix {
+                prefix: prefix.clone(),
+            }),
+        })
+        .collect()
 }
