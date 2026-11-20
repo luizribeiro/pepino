@@ -3630,6 +3630,7 @@ dependencies = [
  "blake3",
  "chrono",
  "clap",
+ "futures-util",
  "hex",
  "humantime",
  "nix",
