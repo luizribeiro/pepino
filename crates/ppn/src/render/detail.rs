@@ -4,7 +4,7 @@ use std::fmt::Write;
 use clap::builder::styling::AnsiColor;
 use pepino_app::{EdgeEffect, TaskRecord};
 
-use super::detail_fields::indented;
+use super::detail_fields::{indented, task_timestamps};
 use super::{Dates, ShortIds, short_id, single_line, task_fields, task_relations};
 use crate::terminal::Terminal;
 
@@ -31,6 +31,7 @@ pub fn task_detail(
     let mut text = format!("{id}  {title}\n");
     text.push_str(&task_fields(task, names, dates, terminal));
     text.push_str(&task_relations(task, edges, &ids, titles));
+    text.push_str(&task_timestamps(task, names, dates, terminal));
     let _ = writeln!(text, "Comments ({}):", task.comment_count);
     for comment in &task.comments {
         let _ = writeln!(

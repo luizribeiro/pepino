@@ -1,23 +1,15 @@
 97ad97a  Replace the greenhouse latch
-Status: todo
-Description:
-  Use stainless hardware.
-Tags: hardware
-Assignees: Ada Gardener
-Due: tomorrow
-Priority: 2
-Blocked: yes
-Ready: no
-Author: 6b376b
-Created: 20/11/2026 04:45:00.000 UTC #2
-Updated: 20/11/2026 04:45:00.000 UTC #2
-Field estimate: 3
+Use stainless hardware.
+
+#hardware  @Ada Gardener  due tomorrow  p2
+estimate: 3
 Parent: -
 Children: -
 Blocks: -
 Blocked by: 97ad97f  Order a replacement screw
 Relates: -
 Excluded link: 97ad97a blocks 97ad97f  Order a replacement screw (it would create a cycle)
+created 19/11/2026 by 6b376b · updated 2 hours ago
 Comments (1):
   c201ef by 6b376b at 20/11/2026 04:45:00.000 UTC #2
     The new latch arrived.

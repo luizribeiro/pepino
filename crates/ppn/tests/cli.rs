@@ -1089,7 +1089,7 @@ fn show_renders_the_protocol_task_and_configured_due_date() {
     let id = write["created"].as_str().unwrap();
     let human = sandbox.run(&["show", &id[..6], "--color", "always"]);
     assert!(human.starts_with(&format!("{}  Check the greenhouse hinges\n", &id[..6])));
-    assert!(human.contains("Due: 01 Dec 2026\n"));
+    assert!(human.contains("due 01 Dec 2026\n"));
     assert!(human.contains("Comments (0):\n"));
     let mut detail = as_json(&sandbox.run(&["show", id, "--json"]));
     let names = detail.as_object_mut().unwrap().remove("names").unwrap();
@@ -1282,8 +1282,8 @@ fn task_flags_round_trip_through_add_show_and_status() {
         "Order stainless fittings",
         "Renovate the greenhouse",
         "Test the new latch",
-        "Due: 01 Dec 2026",
-        "Field estimate: 3",
+        "due 01 Dec 2026",
+        "estimate: 3",
         status["identity"]["display_name"].as_str().unwrap(),
     ] {
         assert!(human.contains(text), "{human}");
@@ -1538,12 +1538,12 @@ fn show_uses_tty_dates_and_configured_color() {
     assert!(
         plain
             .lines()
-            .any(|line| line.starts_with("Due: ") && line.as_bytes()[5].is_ascii_digit())
+            .any(|line| line.starts_with("due ") && line.as_bytes()[4].is_ascii_digit())
     );
     let args = ["show", &id, "--config", sandbox.config.to_str().unwrap()];
     let colored = String::from_utf8(tty_output(&args, None)).unwrap();
     assert!(colored.contains("\x1b[36m"));
-    assert!(colored.contains("Due: tomorrow") || colored.contains("Due: today"));
+    assert!(colored.contains("due tomorrow") || colored.contains("due today"));
     let suppressed = String::from_utf8(tty_output(&args, Some("1"))).unwrap();
     assert!(!suppressed.contains('\x1b'));
 }

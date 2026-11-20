@@ -3,7 +3,8 @@ use std::fmt::Write;
 
 use pepino_app::{FieldValue, Status, TaskSummary};
 
-use super::{Dates, assignee_label, short_id, single_line};
+use super::row::task_metadata;
+use super::{Dates, assignee_label, single_line};
 use crate::terminal::Terminal;
 
 fn status_text(status: Status) -> &'static str {
@@ -28,52 +29,41 @@ pub fn task_fields(
     dates: Dates<'_>,
     terminal: &Terminal,
 ) -> String {
-    let list = |values: Vec<String>| {
-        if values.is_empty() {
-            "-".into()
-        } else {
-            values.join(", ")
-        }
-    };
-    let tags = list(task.tags.iter().cloned().collect());
-    let assignees = list(
-        task.assignees
-            .iter()
-            .map(|id| assignee_label(id, names))
-            .collect(),
-    );
-    let due = task
-        .due
-        .map_or_else(|| "-".into(), |date| dates.due(date, terminal));
-    let priority = task
-        .priority
-        .map_or_else(|| "-".into(), |priority| priority.to_string());
-    let description = task.description.as_deref().map_or_else(
-        || ": -\n".into(),
-        |text| format!(":\n{}", indented(text, "  ")),
-    );
-    let yn = |value| if value { "yes" } else { "no" };
-    let mut output = format!(
-        "Status: {}\nDescription{description}Tags: {tags}\nAssignees: {assignees}\nDue: {due}\nPriority: {priority}\nBlocked: {}\nReady: {}\nAuthor: {}\nCreated: {}\nUpdated: {}\n",
-        status_text(task.status),
-        yn(task.blocked),
-        yn(task.ready),
-        short_id(&task.author),
-        dates.timestamp(task.created),
-        dates.timestamp(task.updated)
-    );
+    let mut output = String::new();
+    if let Some(description) = task.description.as_deref().filter(|text| !text.is_empty()) {
+        output.push_str(&indented(description, ""));
+        output.push('\n');
+    }
+    let metadata = task_metadata(task, names, dates, terminal);
+    if !metadata.is_empty() {
+        let _ = writeln!(output, "{}", metadata.join("  "));
+    }
     for (key, value) in &task.fields {
         let value = match value {
             FieldValue::Text(value) => single_line(value),
             FieldValue::Integer(value) => value.to_string(),
             FieldValue::Date(value) => dates.calendar(*value),
             FieldValue::Status(value) => status_text(*value).into(),
-            FieldValue::Unset => "-".into(),
+            FieldValue::Unset => continue,
             _ => "unknown".into(),
         };
-        let _ = writeln!(output, "Field {key}: {value}");
+        let _ = writeln!(output, "{key}: {value}");
     }
     output
+}
+
+pub(super) fn task_timestamps(
+    task: &TaskSummary,
+    names: &BTreeMap<String, String>,
+    dates: Dates<'_>,
+    terminal: &Terminal,
+) -> String {
+    format!(
+        "created {} by {} · updated {}\n",
+        dates.local_date(task.created),
+        assignee_label(&task.author, names),
+        dates.relative_time(task.updated, terminal)
+    )
 }
 
 #[cfg(test)]
@@ -82,7 +72,7 @@ mod tests {
     use crate::render::samples::{dates, task};
 
     #[test]
-    fn empty_optional_fields_have_readable_labels() {
+    fn empty_optional_fields_are_omitted() {
         let mut task = task();
         task.description = None;
         task.tags.clear();
@@ -96,7 +86,6 @@ mod tests {
             dates(),
             &Terminal::fixed(None, false),
         );
-        assert!(rendered.contains("Description: -\nTags: -\nAssignees: -\nDue: -\nPriority: -\n"));
-        assert!(!rendered.contains("Field"));
+        assert!(rendered.is_empty());
     }
 }
