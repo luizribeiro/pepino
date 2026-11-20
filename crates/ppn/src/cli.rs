@@ -62,6 +62,7 @@ enum Command {
     Assign(commands::assign::Args),
     Comment(commands::comment::Args),
     Link(commands::link::Args),
+    Unlink(commands::unlink::Args),
     Debug(debug::Args),
 }
 
@@ -209,6 +210,7 @@ fn dispatch(
         Some(Command::Assign(args)) => commands::assign::run(context, args),
         Some(Command::Comment(args)) => commands::comment::run(context, args),
         Some(Command::Link(args)) => commands::link::run(context, args),
+        Some(Command::Unlink(args)) => commands::unlink::run(context, args),
         Some(Command::Debug(args)) => debug::run(context, args),
         None => Ok(help::run(context, Cli::command(), None)),
     }

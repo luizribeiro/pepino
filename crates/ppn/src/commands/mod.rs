@@ -18,5 +18,6 @@ pub mod start;
 pub mod status;
 pub mod tag;
 pub mod tree;
+pub mod unlink;
 pub mod version;
 pub mod view;
