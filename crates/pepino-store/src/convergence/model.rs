@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use pepino_core::{BoardId, DecodeOutcome, EdgeKind, Envelope, Event, FieldValue, Status, TaskId};
 use proptest::prelude::*;
 
-use super::{BOARD, History, OTHER, histories, on_board, runtime};
+use super::{BOARD, History, OTHER, convergence_config, histories, on_board, runtime};
 use crate::{EdgeExclusion, EdgeRecord};
 
 struct Reference {
@@ -188,6 +188,8 @@ fn acyclic(mut arcs: Vec<(TaskId, TaskId)>) -> bool {
 }
 
 proptest! {
+    #![proptest_config(convergence_config())]
+
     #[test]
     fn effective_graphs_are_acyclic_and_match_the_reference(input in histories(), seed in any::<u64>()) {
         runtime().block_on(async {

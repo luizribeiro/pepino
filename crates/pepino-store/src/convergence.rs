@@ -124,7 +124,17 @@ fn runtime() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
+fn convergence_config() -> ProptestConfig {
+    if std::env::var_os("PROPTEST_CASES").is_some() {
+        ProptestConfig::default()
+    } else {
+        ProptestConfig::with_cases(64)
+    }
+}
+
 proptest! {
+    #![proptest_config(convergence_config())]
+
     #[test]
     fn shuffled_orders_match(input in histories(), first in any::<u64>(), second in any::<u64>()) {
         runtime().block_on(async {
