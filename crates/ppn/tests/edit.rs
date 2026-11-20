@@ -165,7 +165,7 @@ fn edit_opens_editor_on_a_terminal_and_writes_the_form_difference() {
     let script = sandbox.home.path().join("edit task.sh");
     std::fs::write(
         &script,
-        r#"sed 's/Renovate the greenhouse/Rebuild the greenhouse/' "$1" > "$1.edited"
+        r#"sed -e 's/Renovate the greenhouse/Rebuild the greenhouse/' -e 's/"garden"/"carpentry"/' -e 's/"assignees": \[\]/"assignees": ["me"]/' "$1" > "$1.edited"
     mv "$1.edited" "$1"
 "#,
     )
@@ -179,4 +179,23 @@ fn edit_opens_editor_on_a_terminal_and_writes_the_form_difference() {
     assert_write(&json, true);
     let task = show_task(&sandbox, &p.parent);
     assert_eq!(task["title"], "Rebuild the greenhouse");
+    assert_eq!(task["tags"], serde_json::json!(["carpentry"]));
+    let status = as_json(&sandbox.run(&["status", "--json"]));
+    assert_eq!(
+        task["assignees"],
+        serde_json::json!([status["identity"]["id"]])
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn edit_prefers_visual_and_preserves_an_unchanged_form() {
+    let (sandbox, _) = task_sandbox();
+    let p = small_project(&sandbox);
+    let mut command = sandbox.command();
+    command
+        .args(["edit", &p.parent, "--json"])
+        .env("VISUAL", "true")
+        .env("EDITOR", "false");
+    assert_write(&as_json(&success(task_terminal(command, Some(b"")))), false);
 }

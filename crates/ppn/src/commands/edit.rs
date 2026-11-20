@@ -1,14 +1,15 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use pepino_app::{Date, FieldValue, Request, Status, TaskSummary, WriteRequest};
+use pepino_app::{Date, FieldValue, ReadRequest, Request, Status, TaskSummary, WriteRequest};
 use ppn::app::AppClient;
 use ppn::error::{CliError, ErrorKind};
 use ppn::help_tree::example_help;
 use ppn::input::edit_text;
 use ppn::output::CommandResult;
 use ppn::render::{merge_write_responses, write_document};
+use ppn::response::ResponseExt;
 use ppn::terminal::Context;
-use ppn::write_args::{FieldArgs, MembershipArgs};
+use ppn::write_args::{AddMembershipArgs, FieldArgs, MembershipArgs};
 use serde::{Deserialize, Serialize};
 
 #[derive(clap::Args)]
@@ -39,6 +40,14 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
     if !changes.is_empty() {
         requests.insert(0, WriteRequest::SetFields { task, changes });
     }
+    apply(context, &mut client, requests)
+}
+
+fn apply(
+    context: &Context<'_>,
+    client: &mut AppClient,
+    requests: Vec<WriteRequest>,
+) -> Result<CommandResult, CliError> {
     let responses = requests
         .into_iter()
         .map(|request| client.call(Request::Write(request)))
@@ -60,13 +69,18 @@ fn edit_interactively(context: &Context<'_>, reference: &str) -> Result<CommandR
         )
     })?;
     let edited = edit_text(&(text + "\n"))?;
-    let after: Form = serde_json::from_str(&edited)
+    let mut after: Form = serde_json::from_str(&edited)
         .map_err(|error| CliError::new(ErrorKind::Usage, format!("Invalid edit form: {error}")))?;
-    let response = client.call(Request::Write(WriteRequest::SetFields {
-        task: task.id,
-        changes: after.changes_from(before),
-    }))?;
-    write_document(context, response, "Edited")
+    after.resolve_assignees(&mut client)?;
+    let mut requests = after.membership_from(&before).requests(&task.id);
+    requests.insert(
+        0,
+        WriteRequest::SetFields {
+            task: task.id,
+            changes: after.changes_from(before),
+        },
+    );
+    apply(context, &mut client, requests)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -78,6 +92,8 @@ struct Form {
     priority: Option<i64>,
     status: Status,
     fields: BTreeMap<String, FieldValue>,
+    tags: BTreeSet<String>,
+    assignees: BTreeSet<String>,
 }
 
 impl From<&TaskSummary> for Form {
@@ -89,11 +105,44 @@ impl From<&TaskSummary> for Form {
             priority: task.priority,
             status: task.status,
             fields: task.fields.clone(),
+            tags: task.tags.clone(),
+            assignees: task.assignees.clone(),
         }
     }
 }
 
 impl Form {
+    fn resolve_assignees(&mut self, client: &mut AppClient) -> Result<(), CliError> {
+        if self.assignees.remove("me") {
+            let status = client.call(Request::Read(ReadRequest::Status))?;
+            self.assignees.insert(status.status()?.identity.id.clone());
+        }
+        self.assignees = std::mem::take(&mut self.assignees)
+            .into_iter()
+            .map(|id| id.to_ascii_lowercase())
+            .collect();
+        Ok(())
+    }
+
+    fn membership_from(&self, before: &Self) -> MembershipArgs {
+        MembershipArgs {
+            add: AddMembershipArgs {
+                tags: self.tags.difference(&before.tags).cloned().collect(),
+                assignees: self
+                    .assignees
+                    .difference(&before.assignees)
+                    .cloned()
+                    .collect(),
+            },
+            remove_tags: before.tags.difference(&self.tags).cloned().collect(),
+            remove_assignees: before
+                .assignees
+                .difference(&self.assignees)
+                .cloned()
+                .collect(),
+        }
+    }
+
     fn values(self) -> BTreeMap<String, FieldValue> {
         let mut fields = self.fields;
         fields.extend([
