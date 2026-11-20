@@ -74,6 +74,10 @@ async fn closed_board_can_be_reopened_on_a_restarted_node() {
         .await
         .unwrap();
     board
+        .wait_until_replayed(Duration::from_secs(1))
+        .await
+        .unwrap();
+    board
         .publish(b"Roll out the migration".to_vec())
         .await
         .unwrap();

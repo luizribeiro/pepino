@@ -43,6 +43,7 @@ pub(crate) struct BoardTask {
     pub(crate) acks: AckStore,
     pub(crate) status: broadcast::Sender<NodeEvent>,
     pub(crate) ready: watch::Sender<JoinState>,
+    pub(crate) replay_status: watch::Sender<bool>,
     pub(crate) stop: oneshot::Receiver<()>,
     pub(crate) events: DeliveryWriter,
     pub(crate) receipts: Receipts,
@@ -94,6 +95,15 @@ impl BoardTask {
     }
 
     async fn forward(&self, event: StreamEvent<Payload>) -> Result<(), Error> {
+        match &event {
+            StreamEvent::ReplayStarted { .. } => {
+                self.replay_status.send_replace(true);
+            }
+            StreamEvent::ReplayEnded | StreamEvent::ReplayFailed { .. } => {
+                self.replay_status.send_replace(false);
+            }
+            _ => (),
+        }
         board_status(&self.status, self.lease.id, &event);
         if let StreamEvent::Processed { operation, source } = event {
             let id = EventId::from_bytes(*operation.id().as_bytes());
@@ -144,6 +154,7 @@ mod tests {
             acks,
             status: broadcast::channel(4).0,
             ready,
+            replay_status: watch::channel(false).0,
             stop: stop_rx,
             events,
             receipts,

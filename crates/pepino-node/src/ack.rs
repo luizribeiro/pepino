@@ -7,7 +7,7 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub(crate) struct AckStore(SqlitePool, pub(crate) crate::spool::Spool);
+pub(crate) struct AckStore(pub(crate) SqlitePool, pub(crate) crate::spool::Spool);
 
 impl AckStore {
     pub(crate) async fn create(pool: SqlitePool) -> Result<Self, Error> {

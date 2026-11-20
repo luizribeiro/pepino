@@ -110,6 +110,42 @@ impl Position {
     }
 }
 
+pub(crate) async fn needs_replay(
+    pool: &sqlx::SqlitePool,
+    board: BoardId,
+    local: VerifyingKey,
+) -> Result<bool, Error> {
+    use p2panda_core::AnyOperation;
+    use p2panda_store::{SqliteStore, logs::LogStore, topics::TopicStore};
+
+    let mut conn = pool.acquire().await.map_err(Error::storage)?;
+    let cursor = load(&mut conn, board).await?;
+    drop(conn);
+
+    let store = SqliteStore::from_pool(pool.clone());
+    let mut logs: std::collections::BTreeMap<VerifyingKey, Vec<LogId>> =
+        store.resolve(&topic(board)).await.map_err(Error::storage)?;
+    // space_from associates the local key bundle log before computing its replay range.
+    logs.entry(local)
+        .or_default()
+        .push(LogId::digest(b"member_control/v1"));
+    for (author, logs) in logs {
+        let heights = LogStore::<AnyOperation, VerifyingKey, LogId, u32, Hash>::get_log_heights(
+            &store, &author, &logs,
+        )
+        .await
+        .map_err(Error::storage)?;
+        if heights.is_some_and(|heights| {
+            heights
+                .into_iter()
+                .any(|(log, seq)| !Position { author, log, seq }.covered(&cursor))
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

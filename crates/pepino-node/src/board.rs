@@ -22,6 +22,7 @@ use crate::{
     ack::AckStore,
     board_lease::BoardLease,
     board_task::{BoardTask, JoinState},
+    cursor,
     delivery::DeliveryWriter,
     events::subscribe,
     receipt::{Payload, Receipts},
@@ -35,11 +36,19 @@ pub struct OpenBoardOptions {
     pub from_start: bool,
 }
 
+struct BoardConfig {
+    acks: AckStore,
+    status: broadcast::Sender<NodeEvent>,
+    confirmation_timeout: Duration,
+    replaying: bool,
+}
+
 pub struct BoardHandle {
     id: BoardId,
     pub(crate) node: Weak<p2panda::Node>,
     runtime: Handle,
     joined: watch::Receiver<JoinState>,
+    replaying: watch::Receiver<bool>,
     receipts: Receipts,
     confirmation_timeout: Duration,
     events: Option<mpsc::Receiver<Result<BoardEvent, Error>>>,
@@ -63,9 +72,12 @@ impl Node {
                 let board = BoardHandle::attach(
                     &node,
                     lease,
-                    acks,
-                    status,
-                    confirmation_timeout,
+                    BoardConfig {
+                        acks,
+                        status,
+                        confirmation_timeout,
+                        replaying: false,
+                    },
                     subscription,
                     async { Ok(space) },
                 );
@@ -102,6 +114,7 @@ impl Node {
                 } else {
                     StreamFrom::Frontier
                 };
+                let replaying = cursor::needs_replay(&acks.0, id, node.id()).await?;
                 let (pending, subscription) = node
                     .space_from::<Payload>(Hash::from_bytes(*id.as_bytes()), from)
                     .await
@@ -109,9 +122,12 @@ impl Node {
                 Ok(BoardHandle::attach(
                     &node,
                     lease,
-                    acks,
-                    status,
-                    confirmation_timeout,
+                    BoardConfig {
+                        acks,
+                        status,
+                        confirmation_timeout,
+                        replaying,
+                    },
                     subscription,
                     pending.joined(),
                 ))
@@ -124,16 +140,21 @@ impl BoardHandle {
     fn attach(
         node: &Arc<p2panda::Node>,
         lease: BoardLease,
-        acks: AckStore,
-        status: broadcast::Sender<NodeEvent>,
-        confirmation_timeout: Duration,
+        config: BoardConfig,
         subscription: SpaceSubscription<Payload>,
         joined: impl Future<Output = Result<Space<Payload>, SpacesManagerError>> + Send + 'static,
     ) -> Self {
+        let BoardConfig {
+            acks,
+            status,
+            confirmation_timeout,
+            replaying,
+        } = config;
         let id = lease.id;
         let lease = lease.attached();
         let (events_tx, events) = DeliveryWriter::start(id, acks.1.clone(), acks.clone());
         let (ready, state) = watch::channel(JoinState::Pending);
+        let (replay_status, replaying) = watch::channel(replaying);
         let (stop, stop_rx) = oneshot::channel();
         let receipts = Receipts::default();
         let task = BoardTask {
@@ -141,6 +162,7 @@ impl BoardHandle {
             acks,
             status,
             ready,
+            replay_status,
             events: events_tx,
             receipts: receipts.clone(),
             author: node.id(),
@@ -151,6 +173,7 @@ impl BoardHandle {
             node: Arc::downgrade(node),
             runtime: Handle::current(),
             joined: state,
+            replaying,
             receipts,
             confirmation_timeout,
             events: Some(events),
@@ -180,6 +203,16 @@ impl BoardHandle {
         state.space().map(|_| ())
     }
 
+    /// Wait until the local replay has finished feeding the delivery queue.
+    pub async fn wait_until_replayed(&self, limit: Duration) -> Result<(), Error> {
+        let mut replaying = self.replaying.clone();
+        timeout(limit, replaying.wait_for(|running| !*running))
+            .await
+            .map_err(|_| Error::Replay("waiting for local replay timed out".into()))?
+            .map_err(|_| Error::Closed)?;
+        Ok(())
+    }
+
     pub(crate) fn space(&self) -> Result<Arc<Space<Payload>>, Error> {
         self.joined.borrow().space()
     }
@@ -200,7 +233,13 @@ impl BoardHandle {
     /// [`Error::PublishUnconfirmed`] the operation may or may not be durable.
     /// Retrying may create a second operation. The application store deduplicates
     /// identical payloads by their content-derived event ID.
+    ///
+    /// A local replay in progress yields `PublishNotSubmitted` immediately.
+    /// Use [`Self::wait_until_replayed`] to wait for the board to become writable.
     pub async fn publish(&self, bytes: Vec<u8>) -> Result<EventId, Error> {
+        if *self.replaying.borrow() {
+            return Err(Error::PublishNotSubmitted("local replay is running".into()));
+        }
         let space = self
             .space()
             .map_err(|error| Error::PublishNotSubmitted(error.to_string()))?;
