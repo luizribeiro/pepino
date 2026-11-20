@@ -1,3 +1,7 @@
+#[cfg(test)]
+#[path = "../render/tree_guides.rs"]
+mod guides;
+
 use ppn::error::{CliError, ErrorKind};
 use ppn::help_tree::example_help;
 use ppn::output::CommandResult;
