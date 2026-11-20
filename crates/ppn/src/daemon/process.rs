@@ -89,7 +89,14 @@ pub fn wait_started(
 
 pub fn wait_for_service(client: &Client, limit: Duration) -> io::Result<()> {
     let start = Instant::now();
-    while client.status()?.is_none() {
+    loop {
+        match client.status() {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => {}
+            // The listener is bound before a starting daemon can serve requests.
+            Err(error) if error.kind() == io::ErrorKind::TimedOut => {}
+            Err(error) => return Err(error),
+        }
         if start.elapsed() >= limit {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
@@ -98,7 +105,6 @@ pub fn wait_for_service(client: &Client, limit: Duration) -> io::Result<()> {
         }
         thread::sleep(POLL_INTERVAL);
     }
-    Ok(())
 }
 
 pub fn nudge_on_startup(client: &Client, mut child: Child) -> io::Result<()> {
@@ -143,6 +149,22 @@ pub fn stop(client: &Client, limit: Duration) -> io::Result<()> {
         thread::sleep(POLL_INTERVAL);
     }
     Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn service_readiness_retries_a_bound_socket_with_no_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = Client {
+        path: dir.path().join("daemon.sock"),
+    };
+    let _listener = std::os::unix::net::UnixListener::bind(&client.path).unwrap();
+    let error = wait_for_service(&client, Duration::from_millis(400)).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    assert_eq!(
+        error.to_string(),
+        "Start the service for this data directory and repeat the join."
+    );
 }
 
 #[cfg(test)]
