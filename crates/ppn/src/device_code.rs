@@ -7,6 +7,7 @@ use serde::{Serialize, de::DeserializeOwned};
 const VERSION: u8 = 2;
 const CHECKSUM_LEN: usize = 8;
 const MAX_PAYLOAD: usize = 64 * 1024;
+pub const MAX_CODE_TEXT: usize = 2 * (MAX_PAYLOAD + CHECKSUM_LEN) + "PPN-REQUEST-".len();
 
 #[derive(Clone, Copy)]
 pub enum Kind {
@@ -52,7 +53,7 @@ impl Kind {
     }
 
     pub fn decode<T: DeserializeOwned>(self, text: &str) -> Result<T, Error> {
-        if text.len() > 2 * (MAX_PAYLOAD + CHECKSUM_LEN) + self.prefix().len() {
+        if text.len() > MAX_CODE_TEXT {
             return Err(Error::Payload);
         }
         let text = text.trim().to_ascii_uppercase();
