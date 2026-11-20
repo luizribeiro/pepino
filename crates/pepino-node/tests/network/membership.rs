@@ -8,7 +8,7 @@ use p2panda::{
 use p2panda_store::{SqliteStore, operations::OperationStore};
 use pepino_core::{DeviceId, EventId};
 use pepino_node::{
-    Error, MemberState, MembershipChange, MembershipEvent, MembershipEvents, NodeEvent,
+    Error, MemberState, MembershipChange, MembershipEvent, MembershipEvents, Node, NodeEvent,
     OpenBoardOptions, Role,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -42,7 +42,8 @@ async fn the_first_publishes_after_removal_use_rotated_keys() {
     let b_settings = settings(&network, dir.path().join("ben"));
     let a = start(&a_settings).await;
     let b = start(&b_settings).await;
-    let c = start(&settings(&network, dir.path().join("chloe"))).await;
+    let c_settings = settings(&network, dir.path().join("chloe"));
+    let c = start(&c_settings).await;
     let mut alice = a.create_board().await.unwrap();
     let mut ben = enroll(&alice, &b, Role::Write).await;
     let mut chloe = enroll(&alice, &c, Role::Write).await;
@@ -85,7 +86,13 @@ async fn the_first_publishes_after_removal_use_rotated_keys() {
     let old = secret_id(&a_settings.database_path, before).await;
     assert_ne!(old, secret_id(&a_settings.database_path, first).await);
     assert_ne!(old, secret_id(&b_settings.database_path, second).await);
+    let removed = c.device_id();
     c.shutdown().await.unwrap();
+    let saved = Node::persisted_members(&c_settings.database_path, alice.id())
+        .await
+        .unwrap();
+    assert_eq!(saved[&removed], MemberState::Removed);
+    assert_eq!(saved[&a.device_id()], MemberState::Member(Role::Manage));
     b.shutdown().await.unwrap();
     a.shutdown().await.unwrap();
 }

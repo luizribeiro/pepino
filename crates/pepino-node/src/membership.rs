@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 
 use p2panda::{AccessLevel, Hash, operation::Extensions, spaces::MemberId};
 use p2panda_spaces::SpacesStoreState;
@@ -7,7 +7,10 @@ use p2panda_store::{
     spaces::{SpacesStore, SqliteSpacesStore},
 };
 use pepino_core::{BoardId, DeviceId};
-use sqlx::SqlitePool;
+use sqlx::{
+    SqlitePool,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+};
 
 use crate::{BoardHandle, Error, Node};
 
@@ -82,6 +85,19 @@ impl Role {
 }
 
 impl Node {
+    /// Read the last processed board membership without opening a network node.
+    pub async fn persisted_members(path: &Path, board: BoardId) -> Result<MemberStates, Error> {
+        let options = SqliteConnectOptions::new().filename(path).read_only(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .map_err(Error::storage)?;
+        let members = read_members(pool.clone(), board).await;
+        pool.close().await;
+        members
+    }
+
     pub async fn member_info(&self) -> Result<MemberInfo, Error> {
         let node = self.inner.clone();
         self.worker
