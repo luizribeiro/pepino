@@ -28,16 +28,7 @@ impl Node {
         let worker_pool = worker.pool.clone();
         let started = worker
             .run(async move {
-                let options = SqliteConnectOptions::new()
-                    .filename(settings.database_path)
-                    .create_if_missing(true)
-                    .journal_mode(SqliteJournalMode::Wal)
-                    .synchronous(SqliteSynchronous::Full);
-                let pool = SqlitePoolOptions::new()
-                    .max_connections(16)
-                    .connect_with(options)
-                    .await
-                    .map_err(Error::storage)?;
+                let pool = open_database(&settings.database_path).await?;
                 worker_pool.set(pool.clone()).map_err(|_| Error::Closed)?;
                 p2panda_store::sqlite::run_pending_migrations(&pool)
                     .await
@@ -92,10 +83,55 @@ impl Node {
     }
 }
 
+async fn open_database(path: &std::path::Path) -> Result<sqlx::SqlitePool, Error> {
+    let mut file = std::fs::OpenOptions::new();
+    file.write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        file.mode(0o600);
+    }
+    file.open(path).map_err(Error::storage)?;
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Full);
+    SqlitePoolOptions::new()
+        .max_connections(16)
+        .connect_with(options)
+        .await
+        .map_err(Error::storage)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::DeviceCredentials;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn database_and_live_wal_files_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open_database(&dir.path().join("node.sqlite"))
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE test (id INTEGER PRIMARY KEY)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for file in ["node.sqlite", "node.sqlite-wal", "node.sqlite-shm"] {
+            let mode = dir
+                .path()
+                .join(file)
+                .metadata()
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600, "{file}");
+        }
+    }
 
     #[tokio::test]
     async fn rejects_an_unusable_database_path_before_binding() {
