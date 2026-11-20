@@ -1,3 +1,4 @@
+use crate::commands::config as config_command;
 use std::ffi::OsString;
 use std::path::Path;
 use std::{env, fs, io, process::ExitCode};
@@ -17,7 +18,7 @@ use ppn::terminal::{Context, Terminal};
 use crate::commands::add;
 use crate::commands::show;
 use crate::commands::status;
-use crate::{config_command, debug, help, version};
+use crate::{debug, help, version};
 
 #[derive(Parser)]
 #[command(
@@ -45,12 +46,7 @@ enum Command {
         /// Command and optional subcommands to describe.
         path: Vec<String>,
     },
-    /// Inspect ppn configuration.
-    #[command(disable_help_subcommand = true, after_help = config_command::help_footer())]
-    Config {
-        #[command(subcommand)]
-        command: config_command::Command,
-    },
+    Config(config_command::Args),
     Status(status::Args),
     Add(add::Args),
     Show(show::Args),
@@ -93,13 +89,13 @@ fn invocation_time(time: chrono::DateTime<impl chrono::TimeZone>) -> InvocationT
     }
 }
 
-struct ProcessInputs {
+pub(crate) struct ProcessInputs {
     args: Vec<OsString>,
     env: Env,
     time: InvocationTime,
-    dirs: PlatformDirs,
-    read: fn(&Path) -> io::Result<String>,
-    exists: fn(&Path) -> io::Result<bool>,
+    pub(crate) dirs: PlatformDirs,
+    pub(crate) read: fn(&Path) -> io::Result<String>,
+    pub(crate) exists: fn(&Path) -> io::Result<bool>,
 }
 
 fn execute(inputs: &ProcessInputs) -> (Result<CommandResult, CliError>, bool, Terminal) {
@@ -147,7 +143,7 @@ fn execute(inputs: &ProcessInputs) -> (Result<CommandResult, CliError>, bool, Te
 }
 
 impl ProcessInputs {
-    fn files(
+    pub(crate) fn files(
         &self,
         config: Option<std::path::PathBuf>,
         file: Option<&Path>,
@@ -197,20 +193,8 @@ fn dispatch(
             help_target(&definition, path.iter().map(String::as_str))
                 .map(|command| help::run(context, command.clone(), None))
         }
-        Some(Command::Config {
-            command: config_command::Command::Show { key },
-        }) => config_command::show(context, key.as_deref()),
-        Some(Command::Config {
-            command: config_command::Command::Path,
-        }) => {
-            let files = inputs.files(cli.globals.config, None)?;
-            config_command::path(&files, inputs.exists)
-        }
-        Some(Command::Config {
-            command: config_command::Command::Check { file },
-        }) => {
-            let files = inputs.files(cli.globals.config, file.as_deref())?;
-            config_command::check(&files, &inputs.dirs, inputs.read)
+        Some(Command::Config(args)) => {
+            config_command::run(context, inputs, cli.globals.config, args)
         }
         Some(Command::Debug { command }) => debug::run(context, command),
         None => Ok(help::run(context, Cli::command(), None)),

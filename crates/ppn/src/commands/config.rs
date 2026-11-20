@@ -181,3 +181,27 @@ impl Render for Check {
         ])
     }
 }
+
+#[derive(clap::Args)]
+#[command(about = "Inspect ppn configuration.", disable_help_subcommand = true, after_help = help_footer())]
+pub struct Args {
+    #[command(subcommand)]
+    command: Command,
+}
+
+pub fn run(
+    context: &Context<'_>,
+    inputs: &crate::cli::ProcessInputs,
+    config: Option<std::path::PathBuf>,
+    args: Args,
+) -> Result<CommandResult, CliError> {
+    match args.command {
+        Command::Show { key } => show(context, key.as_deref()),
+        Command::Path => path(&inputs.files(config, None)?, inputs.exists),
+        Command::Check { file } => check(
+            &inputs.files(config, file.as_deref())?,
+            &inputs.dirs,
+            inputs.read,
+        ),
+    }
+}
