@@ -23,7 +23,7 @@ fn each_explicit_key_supports_both_directions_and_keeps_missing_values_last() {
         (Updated, 3, 13, 14),
         (Due, 2, 10, 7),
         (Priority, 4, 2, 8),
-        (Status, 4, 3, 14),
+        (Status, 11, 3, 14),
         (Title, 8, 12, 14),
     ] {
         let mut asc: Vec<_> = board().iter().collect();
@@ -56,8 +56,9 @@ proptest! {
         })).collect());
         for sort in [Sort::default(), custom] {
             let mut listed: Vec<_> = board().iter().collect();
-            let mut permuted = listed.clone();
-            permuted.sort_by_key(|task| weights[usize::from(task.id.as_bytes()[2] - 1)]);
+            let mut shuffled: Vec<_> = weights.into_iter().zip(listed.iter().copied()).collect();
+            shuffled.sort_by_key(|(weight, _)| *weight);
+            let mut permuted: Vec<_> = shuffled.into_iter().map(|(_, task)| task).collect();
             sort.sort(&mut listed);
             sort.sort(&mut permuted);
             prop_assert_eq!(&listed, &permuted);

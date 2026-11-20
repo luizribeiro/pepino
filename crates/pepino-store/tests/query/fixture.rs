@@ -1,8 +1,8 @@
 use std::sync::OnceLock;
 
 use pepino_core::{
-    BoardId, Date, DeviceId, EdgeKind, Envelope, Event, EventId, FieldName, FieldValue, Hlc,
-    IdentityId, InitialFields, Status, TaskId,
+    BoardId, Date, DeviceId, EdgeKind, Envelope, Event, FieldName, FieldValue, Hlc, IdentityId,
+    InitialFields, Status, TaskId,
 };
 use pepino_store::{AppendOutcome, BoardView, IdSource, Store};
 
@@ -15,15 +15,15 @@ pub fn date(day: u32) -> Date {
 }
 
 pub fn id(index: u8) -> TaskId {
-    let mut bytes = [index + 1; 32];
-    if index < 2 {
-        bytes[..2].copy_from_slice(&[0xab, 0xcd]);
-    }
-    TaskId::from_bytes(bytes)
+    fixture().1[usize::from(index)]
 }
 
 pub fn board() -> &'static BoardView {
-    static VIEW: OnceLock<BoardView> = OnceLock::new();
+    &fixture().0
+}
+
+fn fixture() -> &'static (BoardView, Vec<TaskId>) {
+    static VIEW: OnceLock<(BoardView, Vec<TaskId>)> = OnceLock::new();
     VIEW.get_or_init(|| {
         tokio::runtime::Builder::new_current_thread()
             .build()
@@ -32,7 +32,7 @@ pub fn board() -> &'static BoardView {
     })
 }
 
-async fn load() -> BoardView {
+async fn load() -> (BoardView, Vec<TaskId>) {
     let store = Store::open_in_memory().await.unwrap();
     let midnight = date(20).to_epoch_days() as u64 * 86_400_000;
     let rows = [
@@ -115,6 +115,7 @@ async fn load() -> BoardView {
             &[],
         ),
     ];
+    let mut ids = Vec::new();
     for (index, (title, status, priority, due, tags, assignees)) in (0u8..).zip(rows) {
         let mut fields = InitialFields {
             status,
@@ -159,24 +160,24 @@ async fn load() -> BoardView {
             13 => u64::MAX,
             _ => midnight - 86_401_000 + u64::from(index),
         };
-        record(
+        let creation = record(
             &store,
             index,
             wall_ms,
-            EventId::from_bytes(*id(index).as_bytes()),
             Event::TaskCreated {
                 title: title.into(),
                 fields,
             },
         )
         .await;
+        ids.push(creation.created_task().unwrap());
     }
+    let id = |index: usize| ids[index];
     for (counter, field) in [(30, "description"), (31, "estimate")] {
         record(
             &store,
             counter,
             midnight - 86_400_990,
-            EventId::from_bytes([counter; 32]),
             Event::TaskFieldSet {
                 task: id(4),
                 field: FieldName::new(field).unwrap(),
@@ -210,30 +211,30 @@ async fn load() -> BoardView {
         },
         Event::TaskDeleted { task: id(14) },
     ]) {
-        record(
-            &store,
-            index,
-            midnight,
-            EventId::from_bytes([index; 32]),
-            event,
-        )
-        .await;
+        record(&store, index, midnight, event).await;
     }
-    store.board_with_comments(BOARD).await.unwrap()
+    (store.board_with_comments(BOARD).await.unwrap(), ids)
 }
 
-async fn record(store: &Store, index: u8, wall_ms: u64, event_id: EventId, event: Event) {
-    let author = DeviceId::from_bytes([index % 3 + 1; 32]);
+async fn record(store: &Store, index: u8, wall_ms: u64, event: Event) -> Envelope {
+    let mut author = [index % 3 + 1; 32];
+    // The first two creations share the abcd prefix used by the query tests.
+    if let Some(nonce) = [114615_u32, 55642].get(usize::from(index)) {
+        author[..4].copy_from_slice(&nonce.to_le_bytes());
+    }
+    let author = DeviceId::from_bytes(author);
     let hlc = Hlc {
         wall_ms,
         counter: u32::from(index),
     };
-    let bytes = Envelope::new(author, hlc, event).unwrap().encode().unwrap();
+    let envelope = Envelope::new(author, hlc, event).unwrap();
+    let bytes = envelope.encode().unwrap();
     assert!(matches!(
         store
-            .append(BOARD, &bytes, IdSource::Trusted(event_id))
+            .append(BOARD, &bytes, IdSource::Content)
             .await
             .unwrap(),
         AppendOutcome::Applied { .. }
     ));
+    envelope
 }

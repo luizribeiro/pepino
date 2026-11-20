@@ -67,16 +67,16 @@ fn creation_and_updates_compare_by_utc_wall_date_at_midnight() {
 
 #[test]
 fn relations_use_resolved_prefixes_and_effective_direct_edges() {
-    check("parent:0808", &[1]);
-    check("parent:abcd01", &[6]);
-    check("parent:0808,abcd01", &[1, 6]);
-    check("blocks:abcd01", &[1]);
-    check("blocks:ABCD02", &[]);
-    check("blocks:0707", &[0]);
-    check("blocks:ABCD01 blocks:abcd01 -parent:abcd01", &[1]);
-    check("blocked-by:ABCD02", &[0]);
-    check("blocked-by:abcd01,0303", &[6, 8]);
-    check("tag:garden -parent:0808,abcd01 blocks:0707", &[0]);
+    check("parent:31d6", &[1]);
+    check("parent:abcd87", &[6]);
+    check("parent:31d6,abcd87", &[1, 6]);
+    check("blocks:abcd87", &[1]);
+    check("blocks:ABCD9B", &[]);
+    check("blocks:949b", &[0]);
+    check("blocks:ABCD87 blocks:abcd87 -parent:abcd87", &[1]);
+    check("blocked-by:ABCD9B", &[0]);
+    check("blocked-by:abcd87,aa64", &[6, 8]);
+    check("tag:garden -parent:31d6,abcd87 blocks:949b", &[0]);
 }
 
 #[test]

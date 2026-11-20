@@ -13,9 +13,9 @@ const ALTERNATIVES: &[(&str, &[&str])] = &[
     ("tag", &["garden", "hardware", "paint", "nonexistent"]),
     ("status", &["todo", "doing", "done", "cancelled"]),
     ("assignee", &["me", "bob", r#""Ana Maria""#]),
-    ("parent", &["abcd01", "0808", "0404"]),
-    ("blocks", &["abcd01", "0707", "abcd02"]),
-    ("blocked-by", &["abcd01", "0303", "abcd02"]),
+    ("parent", &["abcd87", "31d6", "b3dc"]),
+    ("blocks", &["abcd87", "949b", "abcd9b"]),
+    ("blocked-by", &["abcd87", "aa64", "abcd9b"]),
     ("is", &["blocked", "ready", "open", "closed"]),
     (
         "has",
