@@ -45,14 +45,14 @@ impl CustomArgs {
             if matches!(key, "title" | "description" | "status" | "due" | "priority") {
                 return Err(invalid("use the dedicated field option"));
             }
-            fields.insert(key.to_owned(), infer(value, today).map_err(invalid)?);
+            fields.insert(key.to_owned(), custom_value(value, today).map_err(invalid)?);
         }
         fields.extend(self.unset.into_iter().map(|key| (key, FieldValue::Unset)));
         Ok(())
     }
 }
 
-fn infer(value: &str, today: Date) -> Result<FieldValue, &'static str> {
+pub(crate) fn custom_value(value: &str, today: Date) -> Result<FieldValue, &'static str> {
     if value.contains('"') {
         return quoted_text(value).map(FieldValue::Text);
     }
@@ -115,7 +115,7 @@ mod tests {
         assert_eq!(fields["part"], FieldValue::Text("007".into()));
         assert_eq!(fields["notes"], FieldValue::Text("Use a 3mm screw".into()));
         assert_eq!(fields["old"], FieldValue::Unset);
-        assert!(infer("9223372036854775808", "2026-11-20".parse().unwrap()).is_err());
+        assert!(custom_value("9223372036854775808", "2026-11-20".parse().unwrap()).is_err());
     }
 }
 
