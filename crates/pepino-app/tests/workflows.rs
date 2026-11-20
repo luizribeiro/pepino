@@ -991,3 +991,35 @@ async fn task_lists_sort_limit_and_search_project_records_with_both_filter_forms
     list_golden(&mut app, json!("-@weekend"), None, None,
         json!({"error":{"kind":"invalid_input","field":"filter","reason":"negated saved view @weekend selects boards","term":"-@weekend","position":{"kind":"byte","byte":0}}})).await;
 }
+
+#[tokio::test]
+async fn listing_errors_report_source_positions_and_saved_view_chains() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    list_golden(&mut app,json!(""),Some("-deadline"),None,
+        json!({"error":{"kind":"invalid_input","field":"sort","reason":"unknown sort key \"deadline\""}})).await;
+    list_golden(&mut app,json!(["is:open","  tags:hardware"]),None,None,
+        json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown filter key \"tags\"","hint":"Use \"tag\"","term":"tags:hardware","position":{"kind":"argument","index":1,"byte":2}}})).await;
+    list_golden(&mut app,json!(" \"é \\\"hinge\\\"\"  parent:bad"),None,None,
+        json!({"error":{"kind":"invalid_input","field":"filter","reason":"invalid task ID prefix \"bad\" (expected 4 to 64 hexadecimal digits)","term":"parent:bad","position":{"kind":"byte","byte":" \"é \\\"hinge\\\"\"  ".len()}}})).await;
+    list_golden(&mut app,json!(["is:open","  assignee:Ben Gardener"]),None,None,
+        json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown person \"Ben Gardener\"","term":"assignee:\"Ben Gardener\"","position":{"kind":"argument","index":1,"byte":2}}})).await;
+    for (name, filter) in [("first", "@missing"), ("last", "is:open @first")] {
+        handle(
+            &mut app,
+            json!({"op":"save_view","name":name,"filter":filter,"today":"2026-11-20"}),
+        )
+        .await
+        .unwrap();
+    }
+    list_golden(&mut app,json!("@first"),None,None,
+        json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown saved view \"missing\"","term":"@missing","position":{"kind":"byte","byte":0},"view_chain":["first"]}})).await;
+    handle(
+        &mut app,
+        json!({"op":"save_view","name":"first","filter":"@last","today":"2026-11-20"}),
+    )
+    .await
+    .unwrap();
+    list_golden(&mut app,json!("@first"),None,None,
+        json!({"error":{"kind":"invalid_input","field":"filter","reason":"saved view cycle: first -> last -> first","term":"@first","position":{"kind":"byte","byte":8},"view_chain":["first","last","first"]}})).await;
+}
