@@ -28,6 +28,8 @@ unicode-width = "0.2"
 tempfile = "3"
 
 [dev-dependencies]
+pepino-node = { path = "../pepino-node" }
+sqlx.workspace = true
 pepino-core = { path = "../pepino-core" }
 pepino-store = { path = "../pepino-store" }
 

@@ -118,8 +118,14 @@ fn assign_and_filters_agree_on_names_prefixes_and_ambiguity() {
 
 #[test]
 fn display_names_match_case_insensitively_in_writes_and_filters() {
-    let (sandbox, _) = common::uninitialized_task_sandbox();
-    sandbox.run(&["init", "--name", "Luiz da Vitória"]);
+    let (sandbox, data) = common::task_sandbox();
+    common::fixture::set_names(
+        &data,
+        &pepino_app::OpenOptions {
+            display_name: Some("Luiz da Vitória".into()),
+            ..Default::default()
+        },
+    );
     let id = create_task(&sandbox, "Fit the greenhouse latch", &[]);
     let assigned = sandbox.run(&["assign", &id, "luiz da vitória"]);
     assert!(assigned.starts_with("Assigned "));

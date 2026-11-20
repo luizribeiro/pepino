@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+#[path = "../../../pepino-app/tests/support/template.rs"]
+pub mod fixture;
+
 use serde_json::Value;
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -159,9 +162,7 @@ pub fn as_json(text: &str) -> Value {
 
 pub fn task_sandbox() -> (ConfigSandbox, PathBuf) {
     let (sandbox, data) = uninitialized_task_sandbox();
-    fixture_runtime()
-        .block_on(pepino_app::App::init(&data, SEED_NOW))
-        .unwrap();
+    fixture::copy(&data);
     (sandbox, data)
 }
 
