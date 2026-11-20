@@ -1,6 +1,6 @@
 use ciborium::Value;
 use pepino_core::{
-    Date, DeviceId, Envelope, Event, EventId, FieldName, FieldValue, Hlc, IdentityId,
+    Date, DeviceId, EdgeKind, Envelope, Event, EventId, FieldName, FieldValue, Hlc, IdentityId,
     InitialFields, Status, TaskId,
 };
 use proptest::prelude::*;
@@ -16,17 +16,23 @@ pub(super) struct LoggedEvent {
     pub classification: &'static str,
 }
 
-pub(super) fn histories() -> impl Strategy<Value = (usize, Vec<Change>)> {
+pub(super) fn histories() -> impl Strategy<Value = HistoryInput> {
     (
-        3..=5usize,
-        prop::collection::vec((0..=5usize, 0..8usize, 0..15usize, 0..3usize), 12..48),
+        4..=5usize,
+        prop::collection::vec((0..=5usize, 0..8usize, 0..15usize, 0..3usize), 8..24),
+        prop::collection::vec(
+            (0..=5usize, 0..=5usize, 0..8usize, 0..3usize, any::<bool>()),
+            12..28,
+        ),
     )
 }
 
 type Change = (usize, usize, usize, usize);
+type EdgeChange = (usize, usize, usize, usize, bool);
+type HistoryInput = (usize, Vec<Change>, Vec<EdgeChange>);
 
 impl History {
-    pub(super) fn new((count, changes): (usize, Vec<Change>)) -> Self {
+    pub(super) fn new((count, changes, edges): HistoryInput) -> Self {
         let mut history = Self {
             tasks: Vec::new(),
             events: Vec::new(),
@@ -69,7 +75,7 @@ impl History {
                 .unwrap();
             history.tasks.push(id);
         }
-        let last = history.tasks[count - 1];
+        let live = history.tasks[0];
         let missing = TaskId::from_bytes([0x91; 32]);
         history.tasks.push(missing);
         history.add(
@@ -84,7 +90,7 @@ impl History {
             0,
             1,
             Event::CommentAdded {
-                task: last,
+                task: live,
                 text: "Tools are on the lower shelf".into(),
             },
         );
@@ -120,7 +126,7 @@ impl History {
                 8 => Event::TagRemoved { task, tag },
                 9 => Event::AssigneeAdded { task, who },
                 10 => Event::AssigneeRemoved { task, who },
-                11 if task != last => Event::TaskDeleted { task },
+                11 if !history.tasks[..3].contains(&task) => Event::TaskDeleted { task },
                 12 => set(
                     task,
                     "title",
@@ -138,8 +144,57 @@ impl History {
             };
             history.add(author, 2 + (index % 4) as u64, event);
         }
+        history.add_edges(edges);
         history.add_skipped();
         history
+    }
+
+    fn add_edges(&mut self, changes: Vec<EdgeChange>) {
+        let kinds = [EdgeKind::Parent, EdgeKind::Blocks, EdgeKind::Relates];
+        let count = self.tasks.len();
+        for (index, (from, offset, author, kind, present)) in changes.into_iter().enumerate() {
+            let from = from % count;
+            let to = (from + 1 + offset % (count - 1)) % count;
+            let (from, to, kind) = (self.tasks[from], self.tasks[to], kinds[kind]);
+            let event = if present {
+                Event::EdgeAdded { from, kind, to }
+            } else {
+                Event::EdgeRemoved { from, kind, to }
+            };
+            self.add(author, 2 + (index % 4) as u64, event);
+        }
+
+        let (gate, boiler, rail, keys) =
+            (self.tasks[0], self.tasks[1], self.tasks[2], self.tasks[3]);
+        self.add(
+            0,
+            6,
+            Event::EdgeAdded {
+                from: gate,
+                kind: EdgeKind::Relates,
+                to: boiler,
+            },
+        );
+        self.events.rotate_right(1);
+        for (author, (kind, from, to)) in [
+            (EdgeKind::Parent, gate, rail),
+            (EdgeKind::Parent, gate, boiler),
+            (EdgeKind::Parent, boiler, gate),
+            (EdgeKind::Blocks, gate, boiler),
+            (EdgeKind::Blocks, boiler, rail),
+            (EdgeKind::Blocks, rail, gate),
+            (EdgeKind::Relates, keys, gate),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            self.add(
+                author,
+                7 + author as u64,
+                Event::EdgeAdded { from, kind, to },
+            );
+        }
+        self.add(7, 14, Event::TaskDeleted { task: keys });
     }
 
     fn add(&mut self, author: usize, tick: u64, event: Event) -> Envelope {

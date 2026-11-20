@@ -7,7 +7,7 @@ use pepino_core::{BoardId, EventId, Hlc, TaskId};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 
-use crate::{AppendOutcome, CommentRecord, EventRecord, IdSource, Store, TaskRecord};
+use crate::{AppendOutcome, CommentRecord, EdgeRecord, EventRecord, IdSource, Store, TaskRecord};
 
 const BOARD: BoardId = BoardId::from_bytes([29; 32]);
 const OTHER: BoardId = BoardId::from_bytes([47; 32]);
@@ -25,6 +25,7 @@ struct TaskSnapshot {
     task: Option<TaskRecord>,
     comments: Vec<CommentRecord>,
     events: Vec<EventRecord>,
+    edges: Vec<EdgeRecord>,
 }
 
 fn on_board(board: BoardId, index: usize) -> bool {
@@ -80,6 +81,7 @@ impl History {
                     task: store.task(board, id).await.unwrap(),
                     comments: store.comments(board, id).await.unwrap(),
                     events: store.events(board, id).await.unwrap(),
+                    edges: store.edges(board, id).await.unwrap(),
                 },
             );
         }
