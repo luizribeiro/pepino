@@ -40,6 +40,20 @@ impl DeviceRequest {
         serde_json::from_slice(&bytes).map_err(|error| storage("read device request", error, false))
     }
 
+    pub fn from_member_bytes(
+        name: String,
+        bytes: &[u8],
+        secret: [u8; 32],
+    ) -> Result<Self, AppError> {
+        let info = MemberInfo::from_bytes(bytes).map_err(request_info_error)?;
+        Ok(Self {
+            id: info.device_id().map_err(request_info_error)?,
+            name,
+            member_info: info.to_base32(),
+            secret: Some(secret),
+        })
+    }
+
     pub fn member_info(&self) -> Result<MemberInfo, AppError> {
         let info = MemberInfo::from_base32(&self.member_info).map_err(request_info_error)?;
         if info.device_id().ok() != Some(self.id) || self.name.trim().is_empty() {
@@ -253,6 +267,13 @@ async fn persists_a_request_without_creating_an_identity() {
     let reused = App::request_device(path, OpenOptions::default())
         .await
         .unwrap();
+    let decoded = DeviceRequest::from_member_bytes(
+        first.name.clone(),
+        first.member_info().unwrap().as_bytes(),
+        first.secret.unwrap(),
+    )
+    .unwrap();
+    assert_eq!(first.binding(), decoded.binding());
     assert_eq!(first.binding(), reused.binding());
     assert_eq!(reused.member_info().unwrap().device_id().unwrap(), first.id);
     let near_expiry =
