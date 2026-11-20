@@ -10,7 +10,10 @@ mod text;
 
 pub use text::{assignee_label, single_line, truncate_title};
 
+mod listing;
 mod row;
+
+pub use listing::TaskRows;
 
 pub use row::task_row;
 

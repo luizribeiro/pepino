@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use clap::builder::styling::AnsiColor;
-use pepino_app::{Status, TaskSummary};
+use pepino_app::{Date, Status, TaskSummary};
 use unicode_width::UnicodeWidthStr;
 
 use super::{Dates, ShortIds, assignee_label, single_line, truncate_title};
@@ -28,6 +28,16 @@ pub(super) fn task_metadata(
     dates: Dates<'_>,
     terminal: &Terminal,
 ) -> Vec<String> {
+    metadata_with_due(task, names, |date| {
+        format!("due {}", dates.due(date, terminal))
+    })
+}
+
+pub(super) fn metadata_with_due(
+    task: &TaskSummary,
+    names: &BTreeMap<String, String>,
+    format_due: impl FnOnce(Date) -> String,
+) -> Vec<String> {
     let mut metadata = Vec::new();
     metadata.extend(task.tags.iter().map(|tag| format!("#{tag}")));
     metadata.extend(
@@ -35,10 +45,7 @@ pub(super) fn task_metadata(
             .iter()
             .map(|id| format!("@{}", assignee_label(id, names))),
     );
-    metadata.extend(
-        task.due
-            .map(|date| format!("due {}", dates.due(date, terminal))),
-    );
+    metadata.extend(task.due.map(format_due));
     metadata.extend(task.priority.map(|value| format!("p{value}")));
     metadata
 }
@@ -50,13 +57,7 @@ pub(super) fn task_line(
     terminal: &Terminal,
 ) -> String {
     let id = ids.get(&task.id);
-    let (status, color) = match task.status {
-        Status::Todo => ("todo", AnsiColor::Yellow),
-        Status::Doing => ("doing", AnsiColor::Cyan),
-        Status::Done => ("done", AnsiColor::Green),
-        Status::Cancelled => ("cancelled", AnsiColor::BrightBlack),
-        _ => ("unknown", AnsiColor::White),
-    };
+    let (status, color) = status_style(task.status);
     let status = if task.blocked {
         format!("{status} · blocked")
     } else {
@@ -99,6 +100,16 @@ pub(super) fn task_line(
             output
         }
         None => format!("{id}  {title}"),
+    }
+}
+
+pub(super) fn status_style(status: Status) -> (&'static str, AnsiColor) {
+    match status {
+        Status::Todo => ("todo", AnsiColor::Yellow),
+        Status::Doing => ("doing", AnsiColor::Cyan),
+        Status::Done => ("done", AnsiColor::Green),
+        Status::Cancelled => ("cancelled", AnsiColor::BrightBlack),
+        _ => ("unknown", AnsiColor::White),
     }
 }
 
