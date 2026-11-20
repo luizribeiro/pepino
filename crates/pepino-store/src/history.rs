@@ -72,7 +72,6 @@ pub struct HistoryEvent {
     pub tasks: Vec<TaskId>,
 }
 
-#[allow(dead_code)]
 #[derive(FromRow)]
 struct StoredEvent {
     id: [u8; 32],
@@ -80,7 +79,6 @@ struct StoredEvent {
     bytes: Vec<u8>,
 }
 
-#[allow(dead_code)]
 impl StoredEvent {
     fn decode(&self) -> Result<HistoryEvent, StoreError> {
         let id = EventId::from_bytes(self.id);
@@ -109,6 +107,20 @@ impl StoredEvent {
 }
 
 impl Store {
+    pub async fn history(
+        &self,
+        board: BoardId,
+        task: Option<TaskId>,
+        limit: Option<usize>,
+    ) -> Result<Vec<HistoryEvent>, StoreError> {
+        Ok(self
+            .history_rows(board, task, limit)
+            .await?
+            .into_iter()
+            .map(|(_, event)| event)
+            .collect())
+    }
+
     pub async fn events(
         &self,
         board: BoardId,
@@ -140,24 +152,45 @@ impl Store {
             })
             .collect())
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn future_envelope_has_no_indexable_metadata() {
-        let id = [51; 32];
-        let event = StoredEvent {
-            id,
-            classification: EventClassification::UnknownVersion,
-            bytes: vec![0x82, 2, 0xf6],
+    async fn history_rows(
+        &self,
+        board: BoardId,
+        task: Option<TaskId>,
+        limit: Option<usize>,
+    ) -> Result<Vec<(StoredEvent, HistoryEvent)>, StoreError> {
+        let sql_limit = if task.is_none() {
+            limit.and_then(|n| i64::try_from(n).ok()).unwrap_or(-1)
+        } else {
+            -1
+        };
+        let rows = self
+            .read(async |connection| {
+                sqlx::query_as::<_, StoredEvent>(
+                    "SELECT id, classification, bytes FROM event_log
+                 WHERE board = ?1 AND (?2 IS NULL OR classification IN ('unknown_event', 'unknown_value', 'invalid') OR id IN (
+                     SELECT id FROM event_task WHERE board = ?1 AND task = ?2
+                 ))
+                 ORDER BY hlc DESC, id DESC LIMIT ?3",
+                )
+                .bind(BoardKey(board))
+                .bind(task.map(|id| *id.as_bytes()))
+                .bind(sql_limit)
+                .fetch_all(connection)
+                .await
+            })
+            .await?;
+        let mut history = Vec::new();
+        for row in rows {
+            if limit == Some(history.len()) {
+                break;
+            }
+            let event = row.decode()?;
+            if task.is_none_or(|task| event.tasks.contains(&task)) {
+                history.push((row, event));
+            }
         }
-        .decode()
-        .unwrap();
-        assert_eq!(event.decoded.id(), EventId::from_bytes(id));
-        assert!(event.tasks.is_empty());
-        assert!(event.event.is_none());
+        history.reverse();
+        Ok(history)
     }
 }

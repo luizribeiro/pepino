@@ -74,3 +74,16 @@ async fn history_includes_creation_and_both_edge_endpoints_in_envelope_order() {
         [expected[0].clone(), expected[2].clone()]
     );
 }
+
+#[tokio::test]
+async fn empty_board_has_no_history() {
+    let store = Store::open_in_memory().await.unwrap();
+    let board = BoardId::from_bytes([19; 32]);
+    assert!(
+        store
+            .history(board, None, Some(3))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
