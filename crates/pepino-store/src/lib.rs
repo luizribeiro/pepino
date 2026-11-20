@@ -35,6 +35,7 @@ pub use error::{DatabaseErrorKind, StoreError};
 pub use history::{EventClassification, EventRecord, History, HistoryEvent};
 pub use log::{AppendOutcome, RebuildReport, SkipReason};
 pub use prefix::{PrefixResolution, TaskPrefixResolution};
+pub use publication::{Outbox, OutboxEvent};
 pub use statistics::BoardStatistics;
 pub use task::TaskRecord;
 pub use traversal::{Dependencies, Dependency, SubtreeEntry};
