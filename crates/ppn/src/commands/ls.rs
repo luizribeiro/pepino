@@ -1,4 +1,4 @@
-use pepino_app::{FilterInput, ReadRequest, Request};
+use pepino_app::{ReadRequest, Request};
 use ppn::app::AppClient;
 use ppn::error::CliError;
 use ppn::help_tree::example_help;
@@ -30,6 +30,15 @@ pub(super) struct ListingArgs {
     #[arg(value_name = "FILTER", value_parser = crate::cli::filter::unescape_term)]
     pub(super) filter: Vec<String>,
 
+    /// Parse a complete filter string, ANDed with any positional terms.
+    #[arg(
+        short = 'f',
+        long = "filter",
+        value_name = "STRING",
+        allow_hyphen_values = true
+    )]
+    filter_text: Option<String>,
+
     /// Sort by comma-separated keys (created, updated, due, priority, status, title).
     /// A minus reverses a key.
     #[arg(long, value_name = "SPEC", allow_hyphen_values = true)]
@@ -57,7 +66,8 @@ pub(super) fn list(
         let board = board.replace('\\', "\\\\").replace('"', "\\\"");
         args.filter.push(format!("board:\"{board}\""));
     }
-    let filter = FilterInput::Argv(args.filter);
+    let mut client = AppClient::open(context)?;
+    let filter = crate::cli::filter::input(args.filter_text, args.filter)?;
     let (sort, limit, today) = (args.sort, args.limit, context.time.today);
     let request = if all {
         ReadRequest::ListTasks {
@@ -74,7 +84,7 @@ pub(super) fn list(
             today,
         }
     };
-    let response = AppClient::open(context)?.call(Request::Read(request))?;
+    let response = client.call(Request::Read(request))?;
 
     let result = response.tasks()?;
     let warnings: Vec<_> = result

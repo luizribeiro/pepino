@@ -367,3 +367,19 @@ fn a_task_prefix_in_a_filter_has_the_standard_ambiguity_exit_status() {
     assert_eq!(error["term"], term);
     assert_eq!(error["candidates"], serde_json::json!(candidates));
 }
+
+#[test]
+fn listing_accepts_canonical_filters_and_combines_both_grammars() {
+    let (sandbox, _) = task_sandbox();
+    let kept = create_task(&sandbox, "Repair the greenhouse hinge", &["-t", "hardware"]);
+    create_task(&sandbox, "Replace the bad hinge", &["-t", "hardware"]);
+    let original = as_json(&sandbox.run(&["ls", "tag:hardware", "", "--json"]));
+    assert_eq!(original["total"], 2);
+    let canonical = original["filter"].as_str().unwrap();
+    let roundtrip = as_json(&sandbox.run(&["ls", "--filter", canonical, "--json"]));
+    assert_eq!(original["tasks"], roundtrip["tasks"]);
+    let combined =
+        as_json(&sandbox.run(&["ready", "-f", r#"-"bad hinge""#, "tag:hardware", "--json"]));
+    assert_eq!(combined["total"], 1);
+    assert_eq!(combined["tasks"][0]["id"], kept);
+}

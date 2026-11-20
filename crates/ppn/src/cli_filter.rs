@@ -1,5 +1,16 @@
 use std::ffi::OsString;
 
+use pepino_app::FilterInput;
+use ppn::error::CliError;
+
+pub fn input(text: Option<String>, mut terms: Vec<String>) -> Result<FilterInput, CliError> {
+    terms.retain(|term| !term.trim().is_empty());
+    match text {
+        Some(text) => FilterInput::combine(text, terms).map_err(Into::into),
+        None => Ok(FilterInput::Argv(terms)),
+    }
+}
+
 pub fn escape_terms(args: &[OsString]) -> Vec<OsString> {
     let mut args = args.to_vec();
     let mut path = Vec::new();
@@ -16,12 +27,13 @@ pub fn escape_terms(args: &[OsString]) -> Vec<OsString> {
                     options = false;
                     continue;
                 }
-                "--config" | "--color" | "--timeout" | "--sort" | "--limit" | "--board" => {
+                "--config" | "--color" | "--timeout" | "--sort" | "--limit" | "--board"
+                | "--filter" | "-f" => {
                     option_value = true;
                     continue;
                 }
                 "-h" | "-V" => continue,
-                flag if flag.starts_with("--") => continue,
+                flag if flag.starts_with("--") || flag.starts_with("-f=") => continue,
                 _ => {}
             }
         }
