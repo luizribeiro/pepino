@@ -7,7 +7,7 @@ use pepino_app::{Date, FieldValue, Status};
 use super::{AddMembershipArgs, CustomArgs};
 use crate::date::resolve_date;
 use crate::error::CliError;
-use crate::input::read_text;
+use crate::input::read_task_text;
 
 #[derive(Args, Default)]
 pub struct TaskWriteArgs {
@@ -123,7 +123,7 @@ impl DescriptionArgs {
         if self.description.is_none() && self.from_file.is_none() {
             return Ok(None);
         }
-        read_text(self.description, self.from_file.as_deref()).map(Some)
+        read_task_text(self.description, self.from_file.as_deref()).map(Some)
     }
 }
 

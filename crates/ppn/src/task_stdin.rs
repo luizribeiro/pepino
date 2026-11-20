@@ -1,5 +1,6 @@
 use pepino_app::WriteRequest;
 use ppn::error::{CliError, ErrorKind};
+use ppn::input::trim_trailing_newlines;
 use ppn::write_args::new_task;
 use serde_json::{Map, Value};
 
@@ -24,8 +25,11 @@ pub fn request(input: &str, json: bool) -> Result<WriteRequest, CliError> {
             let mut fields: Map<String, Value> =
                 serde_json::from_str(input).map_err(parse_error)?;
             fields.entry("op").or_insert_with(|| "add_task".into());
-            let request = serde_json::from_value(Value::Object(fields)).map_err(parse_error)?;
-            if matches!(request, WriteRequest::AddTask { .. }) {
+            let mut request = serde_json::from_value(Value::Object(fields)).map_err(parse_error)?;
+            if let WriteRequest::AddTask { description, .. } = &mut request {
+                if let Some(description) = description {
+                    trim_trailing_newlines(description);
+                }
                 return Ok(request);
             }
             return Err(invalid("expected an add_task operation"));

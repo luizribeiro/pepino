@@ -59,10 +59,13 @@ fn edit_reads_descriptions_from_stdin_and_files() {
         note,
     );
     assert_write(&as_json(&success(output)), true);
-    assert_eq!(show_task(&sandbox, &p.blocker)["description"], note);
+    assert_eq!(
+        show_task(&sandbox, &p.blocker)["description"],
+        note.trim_end_matches('\n')
+    );
 
     let path = sandbox.home.path().join("fittings.txt");
-    std::fs::write(&path, "Use countersunk screws.").unwrap();
+    std::fs::write(&path, "Use countersunk screws.\r\n\n").unwrap();
     sandbox.run(&["edit", &p.blocker, "--from-file", path.to_str().unwrap()]);
     assert_eq!(
         show_task(&sandbox, &p.blocker)["description"],

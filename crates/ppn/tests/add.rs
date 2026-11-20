@@ -42,7 +42,10 @@ fn add_reads_title_or_description_from_stdin() {
         ],
         description,
     )));
-    assert_eq!(write["tasks"][0]["description"], description);
+    assert_eq!(
+        write["tasks"][0]["description"],
+        description.trim_end_matches('\n')
+    );
     let collision = sandbox
         .command()
         .args(["add", "-", "--description", "-", "--json"])
@@ -63,12 +66,13 @@ fn add_accepts_protocol_fields_on_json_stdin() {
     let result = task_stdin(
         &sandbox,
         &["add", "-", "--json", "--priority", "2", "--tag", "spring"],
-        r#"{"title":"Repair the gate","status":"doing","tags":["hardware"],"priority":1}"#,
+        r#"{"title":"Repair the gate","description":"Check the packing slip.\r\n","status":"doing","tags":["hardware"],"priority":1}"#,
     );
     let task = &as_json(&success(result))["tasks"][0];
     assert_eq!(task["title"], "Repair the gate");
     assert_eq!(task["status"], "doing");
     assert_eq!(task["priority"], 2);
+    assert_eq!(task["description"], "Check the packing slip.");
     assert_eq!(task["tags"], json!(["hardware", "spring"]));
     let malformed = task_stdin(
         &sandbox,
