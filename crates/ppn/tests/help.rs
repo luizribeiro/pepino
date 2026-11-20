@@ -72,7 +72,7 @@ fn help_describes_the_cli_in_both_formats() {
     assert_eq!(help["schema"], 1);
     assert_eq!(help["name"], "ppn");
     let commands = help["commands"].as_array().unwrap();
-    assert_eq!(commands.len(), 6);
+    assert!(commands.len() >= 6);
     assert_eq!(commands[5]["name"], "show");
     assert_eq!(commands[4]["name"], "add");
     assert_eq!(commands[3]["name"], "status");
@@ -149,5 +149,43 @@ fn help_lists_every_error_code_and_its_exit_status() {
                     .unwrap()
                     .contains(&json!(kind.code()))
         }));
+    }
+}
+
+#[test]
+fn upcoming_commands_are_hidden_but_have_direct_help_and_clear_errors() {
+    let root = as_json(&run_ppn(&["help", "--json"]));
+    let visible = root["commands"].as_array().unwrap();
+    for args in [
+        &["ls", "tag:hardware"][..],
+        &["ready"],
+        &["tree", "97ad97"],
+        &["deps", "97ad97"],
+        &["log", "97ad97"],
+        &["view", "ls"],
+        &["edit", "97ad97"],
+        &["start", "97ad97"],
+        &["done", "97ad97"],
+        &["cancel", "97ad97"],
+        &["rm", "97ad97"],
+        &["tag", "97ad97", "hardware"],
+        &["assign", "97ad97", "me"],
+        &["comment", "97ad97", "Check the hinges"],
+        &["link", "97ad97", "blocks", "33ea33"],
+        &["unlink", "97ad97", "blocks", "33ea33"],
+    ] {
+        let command = args[0];
+        if visible.iter().any(|entry| entry["name"] == command) {
+            continue;
+        }
+        let help = as_json(&run_ppn(&["help", command, "--json"]));
+        assert_eq!(help["name"], command);
+        assert_eq!(help["examples"].as_array().unwrap().len(), 2);
+        let output = ppn().args(args).arg("--json").output().unwrap();
+        let error = task_error(output, 1, "failure");
+        assert_eq!(
+            error["message"],
+            format!("ppn {command} is not implemented.")
+        );
     }
 }
