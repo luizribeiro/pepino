@@ -134,38 +134,30 @@ fn parse_view(raw: &str) -> Located<Clause> {
 
 fn parse_keyed(key: String, raw: &str, today: Date) -> Located<Clause> {
     let field = FieldKind::of(&key);
-    let operands = lex::split(raw, ',').map(|(offset, raw)| {
-        parse_operand(&key, field, raw)
-            .map(|(operator, value)| (offset + operator.symbol().len(), operator, value))
-            .map_err(|failure| shifted(failure, offset))
-    });
-    match key.as_str() {
-        "is" => operands
-            .map(|item| {
-                let (offset, _, value) = item?;
-                State::parse(value).map_err(|kind| (offset, kind))
-            })
-            .collect::<Result<_, _>>()
-            .map(Clause::Is),
-        "has" => operands
-            .map(|item| {
-                let (offset, _, value) = item?;
-                parse_presence(value).map_err(|kind| (offset, kind))
-            })
-            .collect::<Result<_, _>>()
-            .map(Clause::Has),
+    match Builtin::find(&key) {
+        Some(Builtin::Is) => {
+            alternatives(raw, &key, false, |_, value| State::parse(value)).map(Clause::Is)
+        }
+        Some(Builtin::Has) => {
+            alternatives(raw, &key, false, |_, value| parse_presence(value)).map(Clause::Has)
+        }
         _ => {
-            let alternatives = operands
-                .map(|item| {
-                    let (offset, operator, value) = item?;
-                    let value = if field == FieldKind::Date {
-                        Value::Date(date::resolve(&value, today).map_err(|kind| (offset, kind))?)
-                    } else {
-                        Value::Text(value)
+            let alternatives =
+                alternatives(raw, &key, field.supports_comparison(), |operator, value| {
+                    let value = match field {
+                        FieldKind::Date => Value::Date(date::resolve(&value, today)?),
+                        FieldKind::Status
+                            if !matches!(
+                                value.as_str(),
+                                "todo" | "doing" | "done" | "cancelled"
+                            ) =>
+                        {
+                            return Err(ErrorKind::UnknownStatus { value });
+                        }
+                        _ => Value::Text(value),
                     };
                     Ok(Comparison { operator, value })
-                })
-                .collect::<Result<_, _>>()?;
+                })?;
             Ok(Clause::Match { key, alternatives })
         }
     }
@@ -208,20 +200,31 @@ impl FieldKind {
     }
 }
 
-fn parse_operand(key: &str, field: FieldKind, raw: &str) -> Located<(Operator, String)> {
-    let (operator, raw) = Operator::split(raw);
-    let offset = operator.symbol().len();
-    let value =
-        decode_required(raw, ErrorKind::EmptyValue).map_err(|failure| shifted(failure, offset))?;
-    if operator != Operator::Eq && !field.supports_comparison() {
-        return Err((0, ErrorKind::UnsupportedComparison { key: key.into() }));
-    }
-    if field == FieldKind::Status
-        && !matches!(value.as_str(), "todo" | "doing" | "done" | "cancelled")
-    {
-        return Err((offset, ErrorKind::UnknownStatus { value }));
-    }
-    Ok((operator, value))
+fn alternatives<T>(
+    raw: &str,
+    key: &str,
+    ordered: bool,
+    mut type_operand: impl FnMut(Operator, String) -> Result<T, ErrorKind>,
+) -> Located<Vec<T>> {
+    lex::split(raw, ',')
+        .map(|(offset, raw)| {
+            let (operator, raw) = split_operator(raw);
+            let operand_start = offset + operator.symbol().len();
+            let value = decode_required(raw, ErrorKind::EmptyValue)
+                .map_err(|failure| shifted(failure, operand_start))?;
+            if operator != Operator::Eq && !ordered {
+                return Err((offset, ErrorKind::UnsupportedComparison { key: key.into() }));
+            }
+            type_operand(operator, value).map_err(|kind| (operand_start, kind))
+        })
+        .collect()
+}
+
+fn split_operator(raw: &str) -> (Operator, &str) {
+    [Operator::Le, Operator::Ge, Operator::Lt, Operator::Gt]
+        .into_iter()
+        .find_map(|op| raw.strip_prefix(op.symbol()).map(|value| (op, value)))
+        .unwrap_or((Operator::Eq, raw))
 }
 
 type Located<T> = Result<T, (usize, ErrorKind)>;

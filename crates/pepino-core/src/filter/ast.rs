@@ -85,11 +85,4 @@ impl Operator {
             Self::Ge => ">=",
         }
     }
-
-    pub(super) fn split(raw: &str) -> (Self, &str) {
-        [Self::Le, Self::Ge, Self::Lt, Self::Gt]
-            .into_iter()
-            .find_map(|op| raw.strip_prefix(op.symbol()).map(|value| (op, value)))
-            .unwrap_or((Self::Eq, raw))
-    }
 }
