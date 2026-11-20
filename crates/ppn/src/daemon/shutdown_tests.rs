@@ -109,3 +109,97 @@ fn an_interrupted_daemon_reopens_the_same_data_directory() {
             .unwrap();
     }
 }
+
+struct Pair {
+    owner: tempfile::TempDir,
+    peer: tempfile::TempDir,
+    network: String,
+    board: pepino_core::BoardId,
+}
+
+impl Pair {
+    async fn enroll() -> (Self, pepino_app::DeviceRequest) {
+        use pepino_app::{App, DeviceGrant, OpenOptions, PeerHint, SignedGrant};
+
+        let owner = tempfile::tempdir().unwrap();
+        let peer = tempfile::tempdir().unwrap();
+        let name = owner.path().file_name().unwrap().to_string_lossy();
+        let network = format!("pepino-recover-{name}");
+        let owner_dir = owner.path().join("board");
+        let peer_dir = peer.path().join("board");
+        let app = App::init(&owner_dir, 0).await.unwrap();
+        let host = app.local_state();
+        let request = App::request_device(
+            &peer_dir,
+            OpenOptions {
+                device_name: Some("Greenhouse tablet".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let mut devices = host.devices();
+        devices.insert(request.id, request.name.clone());
+        let grant = DeviceGrant {
+            recipient: request.id,
+            request: request.binding(),
+            identity: host.identity_id,
+            display_name: host.display_name.clone(),
+            boards: host.boards().to_vec(),
+            devices,
+            peer: PeerHint {
+                id: host.device_id,
+                relay_url: None,
+            },
+        };
+        let keys =
+            pepino_node::DeviceCredentials::load(owner_dir.join("credentials.cbor")).unwrap();
+        let grant = SignedGrant::issue(&grant, &request, &keys).unwrap();
+        App::join_device(&peer_dir, grant, OpenOptions::default())
+            .await
+            .unwrap();
+        (
+            Self {
+                owner,
+                peer,
+                network,
+                board: host.board_id(),
+            },
+            request,
+        )
+    }
+
+    fn client(&self, home: &Path) -> Client {
+        Client {
+            path: socket_path(&config(home, &self.network)),
+        }
+    }
+}
+
+#[test]
+fn a_daemon_reopens_a_board_while_waiting_for_membership() {
+    use pepino_app::BoardJoinState;
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (pair, _) = rt.block_on(Pair::enroll());
+    let owner = Daemon::start(pair.owner.path(), &pair.network);
+    let client = pair.client(pair.owner.path());
+    until(|| client.status().is_ok_and(|status| status.is_some()));
+    let client = pair.client(pair.peer.path());
+    for _ in 0..2 {
+        let peer = Daemon::start(pair.peer.path(), &pair.network);
+        until(|| {
+            client.status().is_ok_and(|status| {
+                status.is_some_and(|status| {
+                    status.network.board_joins.get(&pair.board)
+                        == Some(&BoardJoinState::WaitingToBeAdded)
+                })
+            })
+        });
+        peer.stop(Signal::SIGTERM);
+    }
+    owner.stop(Signal::SIGTERM);
+}
