@@ -58,8 +58,12 @@ pub(super) async fn enroll(root: &Path, owner: &Device, name: &str) -> Device {
         .await
         .unwrap();
     peer.wait_until_joined(WAIT).await.unwrap();
-    tokio::try_join!(board.close(), peer.close()).unwrap();
-    tokio::try_join!(a.shutdown(), b.shutdown()).unwrap();
+    tokio::time::timeout(WAIT, async {
+        tokio::try_join!(board.close(), peer.close()).unwrap();
+        tokio::try_join!(a.shutdown(), b.shutdown()).unwrap();
+    })
+    .await
+    .expect("shutting down enrollment nodes");
     let app = prepare(
         &root.join(name),
         owner.board(),
@@ -115,12 +119,16 @@ impl Device {
 
 impl Live {
     pub(super) async fn stop(self) {
-        self.engine.shutdown().await.unwrap();
-        Arc::into_inner(self.node)
-            .unwrap()
-            .shutdown()
-            .await
-            .unwrap();
+        tokio::time::timeout(WAIT, async {
+            self.engine.shutdown().await.unwrap();
+            Arc::into_inner(self.node)
+                .unwrap()
+                .shutdown()
+                .await
+                .unwrap();
+        })
+        .await
+        .expect("shutting down the engine and node");
     }
 }
 
