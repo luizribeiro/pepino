@@ -155,7 +155,7 @@ mod tests {
         let (ready, joined) = watch::channel(JoinState::Pending);
         let (stop, stop_rx) = oneshot::channel();
         let acks = AckStore::create(pool).await.unwrap();
-        let (events, _) = DeliveryWriter::start(board, acks.1.clone(), acks.clone());
+        let (events, _) = DeliveryWriter::start(board, acks.spool.clone(), acks.clone());
         let receipts = Receipts::default();
         let (_, pending) = receipts.track(b"Update runbook".to_vec());
         assert!(matches!(joined.borrow().space(), Err(Error::NotJoined)));

@@ -109,14 +109,14 @@ impl Node {
         let lease = self.boards.reserve(id)?;
         self.worker
             .run(async move {
-                acks.1.clear(id).await?;
+                acks.spool.clear(id).await?;
                 let from = if options.from_start {
                     acks.reset(id).await?;
                     StreamFrom::Start
                 } else {
                     StreamFrom::Frontier
                 };
-                let replaying = cursor::needs_replay(&acks.0, id, node.id()).await?;
+                let replaying = cursor::needs_replay(&acks.pool, id, node.id()).await?;
                 let (pending, subscription) = node
                     .space_from::<Payload>(Hash::from_bytes(*id.as_bytes()), from)
                     .await
@@ -158,7 +158,7 @@ impl BoardHandle {
             replaying,
         });
         let lease = lease.attached();
-        let (events_tx, events) = DeliveryWriter::start(id, acks.1.clone(), acks.clone());
+        let (events_tx, events) = DeliveryWriter::start(id, acks.spool.clone(), acks.clone());
         let (ready, state) = watch::channel(JoinState::Pending);
         let (replay_status, replaying) = watch::channel(replaying);
         let (stop, stop_rx) = oneshot::channel();

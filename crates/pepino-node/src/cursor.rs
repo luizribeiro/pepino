@@ -18,6 +18,10 @@ pub(crate) async fn load(db: &mut SqliteConnection, board: BoardId) -> Result<Bo
         .fetch_optional(db)
         .await
         .map_err(Error::storage)?;
+    decode(name, bytes)
+}
+
+pub(crate) fn decode(name: String, bytes: Option<Vec<u8>>) -> Result<BoardCursor, Error> {
     match bytes {
         Some(bytes) => decode_cbor(bytes.as_slice()).map_err(Error::storage),
         None => Ok(Cursor::new(name, Default::default())),

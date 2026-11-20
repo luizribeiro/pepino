@@ -7,7 +7,10 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub(crate) struct AckStore(pub(crate) SqlitePool, pub(crate) crate::spool::Spool);
+pub(crate) struct AckStore {
+    pub(crate) pool: SqlitePool,
+    pub(crate) spool: crate::spool::Spool,
+}
 
 impl AckStore {
     pub(crate) async fn create(pool: SqlitePool) -> Result<Self, Error> {
@@ -29,12 +32,12 @@ impl AckStore {
         .await
         .map_err(Error::storage)?;
         let spool = crate::spool::Spool::create(pool.clone()).await?;
-        Ok(Self(pool, spool))
+        Ok(Self { pool, spool })
     }
 
     pub(crate) async fn reset(&self, board: BoardId) -> Result<(), Error> {
         let mut tx = self
-            .0
+            .pool
             .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(Error::storage)?;
@@ -74,7 +77,7 @@ impl Ack {
     pub async fn ack(&self) -> Result<(), Error> {
         let mut tx = self
             .store
-            .0
+            .pool
             .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(Error::storage)?;
@@ -101,35 +104,30 @@ impl Ack {
     }
 
     pub(crate) async fn acknowledged(&self) -> Result<bool, Error> {
-        let mut conn = self.store.0.acquire().await.map_err(Error::storage)?;
+        let name = cursor::topic(self.board).to_string();
         let pos = self.position;
-        if pos.covered(&cursor::load(&mut conn, self.board).await?) {
-            return Ok(true);
-        }
-        let row = sqlx::query(
-            "SELECT 1 FROM pepino_ack_position WHERE board = ? AND author = ? AND log = ? AND seq = ?",
+        let (bytes, positioned, legacy): (Option<Vec<u8>>, bool, bool) = sqlx::query_as(
+            "SELECT (SELECT cursor FROM cursors_v1 WHERE name = ?1),
+                    EXISTS(SELECT 1 FROM pepino_ack_position
+                           WHERE board = ?2 AND author = ?3 AND log = ?4 AND seq = ?5),
+                    EXISTS(SELECT 1 FROM pepino_board_ack WHERE board = ?2 AND event = ?6)",
         )
+        .bind(&name)
         .bind(self.board.as_bytes().as_slice())
         .bind(pos.author.as_bytes().as_slice())
         .bind(pos.log.as_bytes().as_slice())
         .bind(pos.seq)
-        .fetch_optional(&mut *conn)
+        .bind(self.event.as_bytes().as_slice())
+        .fetch_one(&self.store.pool)
         .await
         .map_err(Error::storage)?;
-        if row.is_some() {
+        if positioned || pos.covered(&cursor::decode(name, bytes)?) {
             return Ok(true);
         }
-        let legacy = sqlx::query("SELECT 1 FROM pepino_board_ack WHERE board = ? AND event = ?")
-            .bind(self.board.as_bytes().as_slice())
-            .bind(self.event.as_bytes().as_slice())
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(Error::storage)?;
-        drop(conn);
-        if legacy.is_some() {
+        if legacy {
             self.ack().await?;
         }
-        Ok(legacy.is_some())
+        Ok(legacy)
     }
 }
 
@@ -181,5 +179,33 @@ mod tests {
                 .await
                 .unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn acknowledgement_stays_visible_while_its_row_moves_into_the_cursor() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        p2panda_store::sqlite::run_pending_migrations(&pool)
+            .await
+            .unwrap();
+        let store = AckStore::create(pool).await.unwrap();
+        let board = BoardId::from_bytes([22; 32]);
+        let first = Position {
+            author: p2panda::Credentials::generate().verifying_key(),
+            log: p2panda::operation::LogId::digest(b"support handoff"),
+            seq: 0,
+        };
+        let earlier = store.receipt(board, EventId::from_bytes([46; 32]), first);
+        let later = store.receipt(
+            board,
+            EventId::from_bytes([47; 32]),
+            Position { seq: 1, ..first },
+        );
+        later.ack().await.unwrap();
+        let (ack, ()) = tokio::join!(earlier.ack(), async {
+            for _ in 0..64 {
+                assert!(later.acknowledged().await.unwrap());
+            }
+        });
+        ack.unwrap();
     }
 }
