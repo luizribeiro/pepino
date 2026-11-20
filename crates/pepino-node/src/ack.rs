@@ -28,7 +28,11 @@ impl AckStore {
                 log BLOB NOT NULL,
                 seq INTEGER NOT NULL,
                 PRIMARY KEY (board, author, log, seq)
-            ) WITHOUT ROWID;",
+            ) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS pepino_ack_store (
+                board BLOB PRIMARY KEY,
+                instance BLOB NOT NULL CHECK (length(instance) = 16)
+            ) STRICT, WITHOUT ROWID;",
         )
         .execute(&pool)
         .await
@@ -37,12 +41,39 @@ impl AckStore {
         Ok(Self { pool, spool })
     }
 
-    pub(crate) async fn reset(&self, board: BoardId) -> Result<(), Error> {
+    pub(crate) async fn reset_for(
+        &self,
+        board: BoardId,
+        instance: Option<[u8; 16]>,
+        from_start: bool,
+    ) -> Result<bool, Error> {
+        if instance.is_none() && !from_start {
+            return Ok(false);
+        }
         let mut tx = self
             .pool
             .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(Error::storage)?;
+        let mut reset = from_start;
+        if let Some(instance) = instance {
+            reset |= sqlx::query(
+                "INSERT INTO pepino_ack_store VALUES (?, ?)
+                 ON CONFLICT (board) DO UPDATE SET instance = excluded.instance
+                 WHERE pepino_ack_store.instance != excluded.instance",
+            )
+            .bind(board.as_bytes().as_slice())
+            .bind(instance)
+            .execute(&mut *tx)
+            .await
+            .map_err(Error::storage)?
+            .rows_affected()
+                != 0;
+        }
+        if !reset {
+            tx.commit().await.map_err(Error::storage)?;
+            return Ok(false);
+        }
         sqlx::query("DELETE FROM pepino_board_ack WHERE board = ?")
             .bind(board.as_bytes().as_slice())
             .execute(&mut *tx)
@@ -54,7 +85,8 @@ impl AckStore {
             .await
             .map_err(Error::storage)?;
         cursor::reset(&mut tx, board).await?;
-        tx.commit().await.map_err(Error::storage)
+        tx.commit().await.map_err(Error::storage)?;
+        Ok(true)
     }
 
     pub(crate) fn receipt(&self, board: BoardId, event: EventId, position: Position) -> Ack {
@@ -146,6 +178,7 @@ mod tests {
             seq: 0,
         };
         let second = Position { seq: 1, ..first };
+        assert!(store.reset_for(board, Some([1; 16]), false).await.unwrap());
         let earlier = store.receipt(board, EventId::from_bytes([48; 32]), first);
         let later_id = EventId::from_bytes([49; 32]);
         let later = store.receipt(board, later_id, second);
@@ -165,7 +198,12 @@ mod tests {
             .unwrap();
         assert_eq!(count, 0);
         drop(conn);
-        store.reset(board).await.unwrap();
+        assert!(!store.reset_for(board, Some([1; 16]), false).await.unwrap());
+        assert!(later.acknowledged().await.unwrap());
+        assert!(store.reset_for(board, Some([2; 16]), false).await.unwrap());
+        assert!(!later.acknowledged().await.unwrap());
+        later.ack().await.unwrap();
+        assert!(store.reset_for(board, None, true).await.unwrap());
         assert!(!later.acknowledged().await.unwrap());
         assert!(
             !store

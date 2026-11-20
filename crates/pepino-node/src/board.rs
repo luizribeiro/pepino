@@ -102,6 +102,26 @@ impl Node {
         id: BoardId,
         options: OpenBoardOptions,
     ) -> Result<BoardHandle, Error> {
+        self.open(id, options, None).await
+    }
+
+    /// Open a board, replaying its full history when the event store changes.
+    /// Like [`Self::open_board`], reopening requires a new node instance.
+    pub async fn open_board_for_store(
+        &self,
+        id: BoardId,
+        store_instance: [u8; 16],
+    ) -> Result<BoardHandle, Error> {
+        self.open(id, OpenBoardOptions::default(), Some(store_instance))
+            .await
+    }
+
+    async fn open(
+        &self,
+        id: BoardId,
+        options: OpenBoardOptions,
+        store_instance: Option<[u8; 16]>,
+    ) -> Result<BoardHandle, Error> {
         let node = self.inner.clone();
         let acks = self.acks.clone();
         let status = self.status.clone();
@@ -110,8 +130,10 @@ impl Node {
         self.worker
             .run(async move {
                 acks.spool.clear(id).await?;
-                let from = if options.from_start {
-                    acks.reset(id).await?;
+                let from = if acks
+                    .reset_for(id, store_instance, options.from_start)
+                    .await?
+                {
                     StreamFrom::Start
                 } else {
                     acks.upgrade_legacy(id).await?;
