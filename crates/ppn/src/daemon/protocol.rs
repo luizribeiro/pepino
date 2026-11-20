@@ -110,6 +110,8 @@ pub struct DaemonStatus {
 pub struct Network {
     pub peers_seen: Vec<String>,
     pub peers_connected: Vec<String>,
+    #[serde(default)]
+    pub peers_synced: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub last_seen: BTreeMap<String, chrono::DateTime<chrono::Utc>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

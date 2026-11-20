@@ -9,6 +9,7 @@ pub struct NodeStatus {
     pub peers_seen: BTreeSet<DeviceId>,
     pub last_seen: BTreeMap<DeviceId, std::time::SystemTime>,
     pub connected_peers: BTreeSet<DeviceId>,
+    pub synced_peers: BTreeSet<DeviceId>,
     pub boards: BTreeMap<BoardId, BoardStatus>,
 }
 
@@ -144,6 +145,9 @@ mod tracking {
                     if let Some(item) = state.boards.get_mut(board) {
                         item.caught_up.insert(*peer);
                         item.synced_with_peer = true;
+                        state.synced_peers.insert(*peer);
+                        state.peers_seen.insert(*peer);
+                        state.last_seen.insert(*peer, std::time::SystemTime::now());
                     }
                 }
                 _ => (),
@@ -227,6 +231,8 @@ fn reconnect_requires_a_fresh_catch_up() {
     status.send(NodeEvent::PeerConnected { peer });
     let snapshot = status.snapshot();
     assert!(!snapshot.boards[&board].caught_up.contains(&peer));
+    assert!(snapshot.synced_peers.contains(&peer));
+    assert!(snapshot.last_seen.contains_key(&peer));
     assert!(snapshot.boards[&board].joined && snapshot.boards[&board].synced_with_peer);
     assert!(snapshot.last_seen.contains_key(&peer));
 }

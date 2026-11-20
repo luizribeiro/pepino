@@ -15,6 +15,12 @@ pub fn snapshot(status: pepino_sync::Status) -> Network {
             .iter()
             .map(ToString::to_string)
             .collect(),
+        peers_synced: status
+            .node
+            .synced_peers
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
         peers_connected: status
             .node
             .connected_peers
@@ -61,6 +67,7 @@ mod tests {
         let peer = DeviceId::from_bytes([26; 32]);
         let mut status = pepino_sync::Status::default();
         status.node.peers_seen.insert(peer);
+        status.node.synced_peers.insert(peer);
         status
             .node
             .last_seen
@@ -74,6 +81,7 @@ mod tests {
         let network = snapshot(status);
         assert_eq!(network.peers_seen, [peer.to_string()]);
         assert!(network.peers_connected.is_empty());
+        assert_eq!(network.peers_synced, [peer.to_string()]);
         assert_eq!(network.last_seen[&peer.to_string()].timestamp(), 0);
         assert_eq!(
             network.board_joins[&board],
