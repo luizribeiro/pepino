@@ -2,16 +2,20 @@
 let
   inherit (pkgs) lib;
   inherit (lib) mkOption types;
+
   package = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+  fixtures = import ./check-settings.nix { inherit lib package; };
+
   pepino = import ./module.nix { inherit lib; };
+  list = mkOption { type = types.listOf types.unspecified; default = [ ]; };
   evaluate = settings: (lib.evalModules {
     specialArgs.pkgs = pkgs // { ppn = package; };
     modules = [
       pepino.options
       pepino.validation
       {
-        options.assertions = mkOption { type = types.listOf types.unspecified; };
-        options.warnings = mkOption { type = types.listOf types.str; };
+        options.assertions = list;
+        options.warnings = list;
         config.services.pepino.configFile = null;
       }
       settings
@@ -26,21 +30,13 @@ let
   rejects = settings:
     let result = builtins.tryEval (passes (evaluate settings));
     in !result.success || !result.value;
-  id = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
-  bootstrap = { nodeId = id; relayUrl = "https://relay.example.com"; };
+
+  verify =
+    lib.all (settings: let config = evaluate settings; in passes config && config.warnings == [ ])
+      [ fixtures.empty fixtures.cleared fixtures.typical fixtures.full ]
+    && (evaluate fixtures.untrusted).warnings != [ ]
+    && lib.all rejects fixtures.invalid;
+
 in
-assert (evaluate { services.pepino.enable = true; }).warnings != [ ];
-assert rejects { programs.pepino.credentialsFile = "${builtins.storeDir}/pepino-credentials"; };
-assert rejects { services.pepino.credentialsFile = builtins.storeDir; };
-assert rejects { programs.pepino.trustedDevices = [ id (lib.toUpper id) ]; };
-assert rejects { services.pepino.bootstrapNodes = [ bootstrap bootstrap ]; };
-assert rejects { services.pepino.openFirewall = true; };
-assert passes (evaluate { programs.pepino.enable = true; });
-assert rejects { programs.pepino.trustedDevices = [ "invalid" ]; };
-assert rejects { programs.pepino.relayUrls = [ "http://relay.example.com" ]; };
-assert rejects { programs.pepino.credentialsFile = "keys/pepino.cbor"; };
-assert rejects { programs.pepino.ui.color = "sometimes"; };
-assert rejects { services.pepino.port = 0; };
-assert rejects { services.pepino.port = 65536; };
-assert rejects { services.pepino.configFile = "/tmp/pepino.toml"; };
+assert verify;
 pkgs.runCommand "pepino-config-check" { } ''touch "$out"''
