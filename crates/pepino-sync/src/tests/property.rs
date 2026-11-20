@@ -5,8 +5,7 @@ use pepino_core::{BoardId, DeviceId, EventId};
 use proptest::prelude::*;
 use serde_json::json;
 
-use super::{directory, simulation::Device};
-use crate::Transport;
+use super::{directory, simulation::Device, wire::Wire};
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(16))]
@@ -38,10 +37,11 @@ async fn scenario(actions: Vec<(u8, u8)>) -> Result<(), TestCaseError> {
     for device in &mut devices {
         device.start().await;
     }
+    let mut wire = Wire::new(board);
     let mut written = BTreeSet::<EventId>::new();
     for (step, (action, choice)) in actions.into_iter().enumerate() {
         let who = usize::from(choice % 2);
-        let sender = &devices[1 - who].node;
+        collect(&mut wire, &devices);
         match action % 7 {
             0 | 1 => {
                 let request =
@@ -60,48 +60,52 @@ async fn scenario(actions: Vec<(u8, u8)>) -> Result<(), TestCaseError> {
                 }
             }
             3 | 4 => {
-                let wire = sender.published();
-                if devices[who].engine.is_some() && !wire.is_empty() {
-                    let bytes = &wire[usize::from(choice) % wire.len()];
-                    for _ in 0..=(action % 7 == 4) as u8 {
-                        devices[who]
-                            .node
-                            .deliver(board, sender.device_id(), bytes.clone());
-                    }
+                if devices[who].engine.is_some() {
+                    let author = usize::from((choice / 2) % 2);
+                    wire.send(
+                        who,
+                        &devices[who].node,
+                        author,
+                        usize::from(action % 7 == 4) + 1,
+                        0,
+                    );
                 }
             }
             5 => {
                 if devices[who].engine.take().is_none() {
                     devices[who].start().await;
+                } else {
+                    wire.restart(who);
                 }
             }
             _ => devices[who].drain().await,
         }
+        assert_safe(&wire, &devices, board).await?;
     }
-    for device in &mut devices {
-        if device.engine.is_none() {
-            device.start().await;
-        }
+
+    for (who, device) in devices.iter_mut().enumerate() {
+        drop(device.engine.take());
+        wire.restart(who);
+        device.start().await;
         device.drain().await;
     }
-    for (index, receiver) in devices.iter().enumerate() {
-        let sender = &devices[1 - index].node;
-        for bytes in sender.published().into_iter().rev() {
-            receiver.node.deliver(board, sender.device_id(), bytes);
+    collect(&mut wire, &devices);
+    let operations = devices
+        .iter()
+        .map(|device| device.node.published().len())
+        .sum::<usize>();
+    for (who, receiver) in devices.iter().enumerate() {
+        loop {
+            let sent =
+                wire.send(who, &receiver.node, 1, 1, 0) | wire.send(who, &receiver.node, 0, 1, 0);
+            if !sent {
+                break;
+            }
+            receiver.drain().await;
+            assert_safe(&wire, &devices, board).await?;
         }
-        receiver.drain().await;
-        let history = receiver
-            .app
-            .store()
-            .history(board, None, None)
-            .await
-            .unwrap();
-        let got = history
-            .events
-            .iter()
-            .map(|item| item.decoded.id())
-            .collect::<BTreeSet<_>>();
-        prop_assert_eq!(&got, &written);
+        prop_assert_eq!(wire.acknowledged(who).count(), operations);
+        prop_assert_eq!(stored(receiver, board).await, written.clone());
     }
     let [a, b] = &mut devices;
     prop_assert_eq!(
@@ -111,4 +115,41 @@ async fn scenario(actions: Vec<(u8, u8)>) -> Result<(), TestCaseError> {
     a.engine.take().unwrap().shutdown().await.unwrap();
     b.engine.take().unwrap().shutdown().await.unwrap();
     Ok(())
+}
+
+fn collect(wire: &mut Wire, devices: &[Device; 2]) {
+    for (author, device) in devices.iter().enumerate() {
+        wire.collect(author, &device.node);
+    }
+}
+
+async fn assert_safe(
+    wire: &Wire,
+    devices: &[Device; 2],
+    board: BoardId,
+) -> Result<(), TestCaseError> {
+    for (who, device) in devices.iter().enumerate() {
+        let acknowledged = wire.acknowledged(who).collect::<Vec<_>>();
+        let held = stored(device, board).await;
+        for id in acknowledged {
+            prop_assert!(
+                held.contains(&id),
+                "receiver {who} acknowledged an event it lacks: {id}"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn stored(device: &Device, board: BoardId) -> BTreeSet<EventId> {
+    device
+        .app
+        .store()
+        .history(board, None, None)
+        .await
+        .unwrap()
+        .events
+        .iter()
+        .map(|item| item.decoded.id())
+        .collect()
 }
