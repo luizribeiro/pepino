@@ -929,6 +929,114 @@ async fn list_golden(
 }
 
 #[tokio::test]
+async fn saved_relative_dates_follow_each_listing_date() {
+    let directory = tempfile::tempdir().unwrap();
+    let early = "2026-11-12T12:00:00Z"
+        .parse::<chrono::DateTime<chrono::Utc>>()
+        .unwrap();
+    let early = u64::try_from(early.timestamp_millis()).unwrap();
+    let mut app = App::open(directory.path(), early).await.unwrap();
+    for (title, due, now) in [
+        ("Order weatherstripping", "2026-11-18", early),
+        ("Check the old seal", "2026-11-25", early),
+        ("Fit the replacement seal", "2026-11-25", NOW),
+        ("Seal the vent frame", "2026-11-27", NOW),
+    ] {
+        let request = json!({"op":"add_task","title":title,"due":due});
+        app.handle(serde_json::from_value(request).unwrap(), now)
+            .await
+            .unwrap();
+    }
+
+    let view = json!({"name":"maintenance","filter":"due:<fri due:tomorrow updated:>-1w"});
+    read_golden(
+        &mut app,
+        json!({"op":"save_view","name":"maintenance","filter":["due:<friday","due:tomorrow","updated:>-01w"]}),
+        json!({"ok":{"kind":"view_saved","view":view,"replaced":false}}),
+    ).await;
+    drop(app);
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    for (today, friday, tomorrow, cutoff, expected) in [
+        (
+            "2026-11-17",
+            "2026-11-20",
+            "2026-11-18",
+            "2026-11-10",
+            &["Order weatherstripping"][..],
+        ),
+        (
+            "2026-11-24",
+            "2026-11-27",
+            "2026-11-25",
+            "2026-11-17",
+            &["Fit the replacement seal"][..],
+        ),
+        (
+            "2026-11-26",
+            "2026-11-27",
+            "2026-11-27",
+            "2026-11-19",
+            &[][..],
+        ),
+    ] {
+        let listing = handle(
+            &mut app,
+            json!({"op":"list_tasks","filter":"@maintenance","today":today}),
+        )
+        .await
+        .unwrap();
+        let Response::Tasks {
+            tasks,
+            filter,
+            resolved_dates,
+            total,
+            ..
+        } = listing
+        else {
+            panic!("expected task listing");
+        };
+        assert_eq!(filter, "@maintenance");
+        assert_eq!(total, expected.len());
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task.title.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            serde_json::to_value(resolved_dates).unwrap(),
+            json!({"fri":friday,"tomorrow":tomorrow,"-1w":cutoff}),
+        );
+        read_golden(
+            &mut app,
+            json!({"op":"list_views"}),
+            json!({"ok":{"kind":"views","views":[view]}}),
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn listing_reports_relative_overflow_on_the_offending_term() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    list_golden(
+        &mut app,
+        json!(["  updated:>+9223372036854775807w"]),
+        None,
+        None,
+        json!({"error":{
+            "kind":"invalid_input","field":"filter",
+            "reason":"date \"+9223372036854775807w\" is outside the supported calendar range",
+            "term":"updated:>+9223372036854775807w",
+            "position":{"kind":"argument","index":0,"byte":2}
+        }}),
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn task_lists_sort_limit_and_search_project_records_with_both_filter_forms() {
     use pepino_app::OpenOptions;
     let directory = tempfile::tempdir().unwrap();
