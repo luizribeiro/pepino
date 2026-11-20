@@ -240,6 +240,9 @@ impl App {
     ) -> Result<Response, AppError> {
         let guard = lock(&self.directory, self.lock_timeout).await?;
         self.reload_state().await?;
+        if matches!(&request, Request::Write(_)) {
+            self.local.check_device_write()?;
+        }
         self.selected = board
             .map(|(reference, field)| {
                 self.local

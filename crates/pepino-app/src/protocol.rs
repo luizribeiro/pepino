@@ -437,6 +437,14 @@ pub enum AppError {
     IncompatibleLocalState { version: u64, directory: String },
     #[error("permission denied for {path}: {reason}")]
     PermissionDenied { path: String, reason: String },
+    #[error("This device was revoked from identity {identity} on {at} by {by}.")]
+    DeviceRevoked {
+        identity: String,
+        at: chrono::DateTime<chrono::Utc>,
+        by: pepino_core::DeviceId,
+    },
+    #[error("This device has requested to leave. Another active device must complete the removal.")]
+    DeviceLeaving,
     #[error("another pepino process holds the data directory")]
     Busy,
     #[error("storage error: {reason}")]
@@ -545,7 +553,9 @@ impl AppError {
             Self::NotInitialized { .. } => AppErrorKind::NotInitialized,
             Self::DeviceRequestPending => AppErrorKind::DeviceRequestPending,
             Self::IncompatibleLocalState { .. } => AppErrorKind::IncompatibleLocalState,
-            Self::PermissionDenied { .. } => AppErrorKind::PermissionDenied,
+            Self::PermissionDenied { .. } | Self::DeviceRevoked { .. } | Self::DeviceLeaving => {
+                AppErrorKind::PermissionDenied
+            }
             Self::AmbiguousId { .. }
             | Self::AmbiguousBoard { .. }
             | Self::AmbiguousDevice { .. } => AppErrorKind::AmbiguousId,

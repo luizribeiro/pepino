@@ -6,7 +6,8 @@ mod record;
 
 pub(crate) use edit::SignedEdit;
 pub(crate) use ledger::IdentityCatalog;
-pub use record::{RosterDevice, RosterState};
+pub use record::{Revocation, RosterDevice, RosterState};
+mod access;
 mod admission;
 mod lookup;
 mod migration;
