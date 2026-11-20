@@ -1,6 +1,7 @@
 mod comment;
 mod fold;
 mod log;
+mod prefix;
 mod task;
 
 use std::path::Path;
@@ -16,12 +17,15 @@ use tokio::sync::Mutex;
 
 pub use comment::CommentRecord;
 pub use log::{AppendOutcome, IdSource, SkipReason};
+pub use prefix::PrefixResolution;
 pub use task::TaskRecord;
 
 static MIGRATOR: Migrator = sqlx::migrate!();
 
 #[derive(Debug, Error)]
 pub enum StoreError {
+    #[error("expected a prefix of 1 to 64 hexadecimal digits")]
+    InvalidPrefix,
     #[error("invalid event bytes: {0}")]
     Decode(#[from] DecodeError),
     #[error("the store does not support this decoded event")]
