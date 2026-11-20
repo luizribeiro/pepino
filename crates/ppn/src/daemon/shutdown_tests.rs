@@ -312,6 +312,10 @@ fn write_tasks(rt: &tokio::runtime::Runtime, home: &Path, range: std::ops::Range
     write_board_tasks(rt, home, None, range);
 }
 
+fn task_title(item: usize) -> String {
+    format!("Inspect greenhouse vent {item}")
+}
+
 fn write_board_tasks(
     rt: &tokio::runtime::Runtime,
     home: &Path,
@@ -325,7 +329,7 @@ fn write_board_tasks(
         for item in range {
             let request = serde_json::json!({
                 "op": "add_task",
-                "title": format!("Inspect greenhouse vent {item}"),
+                "title": task_title(item),
             });
             app.handle_on(
                 serde_json::from_value(request).unwrap(),
@@ -336,6 +340,40 @@ fn write_board_tasks(
             .await
             .unwrap();
         }
+    });
+}
+
+fn seed_outbox(rt: &tokio::runtime::Runtime, pair: &Pair, range: std::ops::Range<usize>) {
+    use pepino_core::{Clock, Envelope, Event, InitialFields};
+
+    rt.block_on(async {
+        let app =
+            pepino_app::App::open_with_options(pair.owner.path().join("board"), 0, app_options())
+                .await
+                .unwrap();
+        let author = app.local_state().device_id;
+        let store = app.store();
+        let mut clock = Clock::from_hlc(store.latest_hlc(pair.board).await.unwrap().unwrap());
+        let bytes: Vec<_> = range
+            .map(|item| {
+                Envelope::new(
+                    author,
+                    clock.tick(1_795_144_800_000).unwrap(),
+                    Event::TaskCreated {
+                        title: task_title(item),
+                        fields: InitialFields::default(),
+                    },
+                )
+                .unwrap()
+                .encode()
+                .unwrap()
+            })
+            .collect();
+        let writes: Vec<_> = bytes
+            .iter()
+            .map(|event| (event.as_slice(), Some(author)))
+            .collect();
+        store.append_batch(pair.board, &writes).await.unwrap();
     });
 }
 
@@ -424,6 +462,10 @@ async fn verify_databases(pair: &Pair) {
 }
 
 fn recover_active_sync(signal: Signal) {
+    const AFTER_PUBLISH_RESTART: usize = 3;
+    // The node caches 64 deliveries in memory before leaving the rest in SQLite.
+    const AFTER_INGEST_RESTART: usize = AFTER_PUBLISH_RESTART + 67;
+
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -437,7 +479,7 @@ fn recover_active_sync(signal: Signal) {
     sender.nudge().unwrap();
     wait_for_views(&rt, &pair, 1);
 
-    write_tasks(&rt, pair.owner.path(), 1..25);
+    write_tasks(&rt, pair.owner.path(), 1..AFTER_PUBLISH_RESTART);
     let lock = std::fs::File::open(pair.owner.path().join("board/local.lock")).unwrap();
     lock.lock().unwrap();
     sender.nudge().unwrap();
@@ -448,13 +490,10 @@ fn recover_active_sync(signal: Signal) {
             app_options(),
         ))
         .unwrap();
+    let first_pending = task_title(1);
     until(
         || rt.block_on(peer_app.store().tasks(pair.board)).unwrap(),
-        |tasks| {
-            tasks
-                .iter()
-                .any(|task| task.title == "Inspect greenhouse vent 1")
-        },
+        |tasks| tasks.iter().any(|task| task.title == first_pending),
         WAIT,
     );
     drop(peer_app);
@@ -463,20 +502,19 @@ fn recover_active_sync(signal: Signal) {
     owner.wait_stopped(signal);
     drop(lock_until_exit);
     let owner = Daemon::start(pair.owner.path(), &pair.network);
-    wait_for_views(&rt, &pair, 25);
+    wait_for_views(&rt, &pair, AFTER_PUBLISH_RESTART);
 
     let lock = std::fs::File::open(pair.peer.path().join("board/local.lock")).unwrap();
     lock.lock().unwrap();
-    // The node caches 64 deliveries in memory before leaving the rest in SQLite.
-    write_tasks(&rt, pair.owner.path(), 25..100);
+    seed_outbox(&rt, &pair, AFTER_PUBLISH_RESTART..AFTER_INGEST_RESTART);
     sender.nudge().unwrap();
-    wait_for_spooled_task(&rt, &pair, "Inspect greenhouse vent 99");
+    wait_for_spooled_task(&rt, &pair, &task_title(AFTER_INGEST_RESTART - 1));
     peer.interrupt(signal);
     let lock_until_exit = (signal == Signal::SIGKILL).then_some(lock);
     peer.wait_stopped(signal);
     drop(lock_until_exit);
     let peer = Daemon::start(pair.peer.path(), &pair.network);
-    wait_for_views(&rt, &pair, 100);
+    wait_for_views(&rt, &pair, AFTER_INGEST_RESTART);
     peer.stop(Signal::SIGTERM);
     owner.stop(Signal::SIGTERM);
     rt.block_on(verify_databases(&pair));
