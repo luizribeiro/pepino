@@ -58,6 +58,17 @@ impl Status {
         self.idle_with(&self.node)
     }
 
+    pub fn board_caught_up(&self, board: BoardId, node: &NodeStatus) -> bool {
+        node.boards.get(&board).is_some_and(|signals| {
+            node.connected_peers.iter().all(|peer| {
+                self.members
+                    .get(&board)
+                    .is_some_and(|members| !members.contains(peer))
+                    || signals.caught_up.contains(peer)
+            })
+        })
+    }
+
     pub(crate) fn idle_with(&self, node: &NodeStatus) -> bool {
         self.restart_required.is_none()
             && self.boards.iter().all(|(id, board)| {
@@ -69,12 +80,7 @@ impl Status {
                         !signals.replaying
                             && signals.active_syncs.is_empty()
                             && signals.pending_deliveries == 0
-                            && node.connected_peers.iter().all(|peer| {
-                                self.members
-                                    .get(id)
-                                    .is_some_and(|members| !members.contains(peer))
-                                    || signals.caught_up.contains(peer)
-                            })
+                            && self.board_caught_up(*id, node)
                     })
             })
     }

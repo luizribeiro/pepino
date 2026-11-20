@@ -1,6 +1,11 @@
 use super::protocol::{Board, Network};
 
 pub fn snapshot(status: pepino_sync::Status) -> Network {
+    let caught_up = status
+        .boards
+        .keys()
+        .map(|&id| (id, status.board_caught_up(id, &status.node)))
+        .collect::<std::collections::BTreeMap<_, _>>();
     Network {
         board_joins: status.board_join_states(),
         board_members: status.members,
@@ -40,7 +45,7 @@ pub fn snapshot(status: pepino_sync::Status) -> Network {
                             || status.node.boards.get(&id).is_some_and(|node| {
                                 node.pending_deliveries != 0
                                     || !node.active_syncs.is_empty()
-                                    || !status.node.connected_peers.is_subset(&node.caught_up)
+                                    || !caught_up[&id]
                             }),
                         starting_up: status
                             .node
