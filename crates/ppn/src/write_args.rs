@@ -18,7 +18,7 @@ pub struct CustomArgs {
     /// Set a custom field from KEY=VALUE. Repeat for more fields.
     #[arg(long = "set", value_name = "KEY=VALUE")]
     set: Vec<String>,
-    /// Clear a custom field. Repeat for more fields.
+    /// Clear a custom field or due, description, or priority. Repeat for more fields.
     #[arg(long = "unset", value_name = "KEY")]
     unset: Vec<String>,
 }
@@ -122,3 +122,7 @@ mod tests {
 mod membership;
 
 pub use membership::{AddMembershipArgs, MembershipArgs};
+
+mod edit;
+
+pub use edit::FieldArgs;
