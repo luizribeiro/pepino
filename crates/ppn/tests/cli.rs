@@ -238,7 +238,8 @@ fn help_describes_the_cli_in_both_formats() {
     assert_eq!(help["schema"], 1);
     assert_eq!(help["name"], "ppn");
     let commands = help["commands"].as_array().unwrap();
-    assert_eq!(commands.len(), 3);
+    assert_eq!(commands.len(), 4);
+    assert_eq!(commands[3]["name"], "status");
     assert!(!human.contains("debug"));
     assert_eq!(commands[0]["name"], "version");
     assert_eq!(
@@ -1002,4 +1003,51 @@ fn config_help_lists_environment_variables_from_the_settings_table() {
             .unwrap()
             .contains("node_id=https://relay.example")
     );
+}
+
+fn task_sandbox() -> (ConfigSandbox, PathBuf) {
+    let sandbox = ConfigSandbox::new();
+    let data = sandbox.home.path().join("board");
+    std::fs::write(
+        &sandbox.config,
+        "data_dir = '~/board'\n[ui]\ndate_format = '%d %b %Y'\n",
+    )
+    .unwrap();
+    (sandbox, data)
+}
+
+#[test]
+fn status_renders_empty_local_state_through_the_binary() {
+    let (sandbox, data) = task_sandbox();
+    let human = sandbox.run(&["status"]);
+    for label in [
+        "Identity:",
+        "Device:",
+        "Board: Personal",
+        "Tasks: 0 open, 0 closed",
+        "Events: 0 total, 0 applied",
+    ] {
+        assert!(human.contains(label), "{human}");
+    }
+    assert!(human.contains(&format!("Data directory: {}", data.display())));
+    let status = as_json(&sandbox.run(&["status", "--json"]));
+    assert_eq!(
+        status,
+        json!({
+            "schema":1, "kind":"status", "identity": status["identity"], "device": status["device"],
+            "board":{"id": status["board"]["id"], "name":"Personal"}, "data_dir":data,
+            "counts":{"open":0,"closed":0,"events":0,"applied":0,"skipped":{
+                "unknown_version":0,"unknown_event":0,"unknown_value":0,"invalid":0
+            }},
+            "protocol_version":1
+        })
+    );
+    for (kind, name) in [
+        ("identity", "display_name"),
+        ("device", "name"),
+        ("board", "name"),
+    ] {
+        assert_eq!(status[kind]["id"].as_str().unwrap().len(), 64);
+        assert!(!status[kind][name].as_str().unwrap().is_empty());
+    }
 }
