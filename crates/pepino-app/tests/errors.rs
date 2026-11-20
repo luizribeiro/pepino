@@ -2,7 +2,7 @@ use std::fs::File;
 use std::time::Duration;
 
 use pepino_app::{App, AppError, AppErrorKind, OpenOptions};
-use pepino_core::{DeviceId, Envelope, Event, EventId, Hlc, InitialFields};
+use pepino_core::{DeviceId, Envelope, Event, Hlc, InitialFields};
 use pepino_store::{IdSource, Store};
 use serde_json::{Value, json};
 
@@ -77,16 +77,15 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
         .unwrap();
 
     let mut ids = Vec::new();
-    for (bytes, title) in [
-        ([0xab, 0xcd, 0xf1], "Order the latch"),
-        ([0xab, 0xcd, 0xf2], "Order the hinges"),
-        ([0xbe, 0xef, 0x81], "Weatherproof the door"),
+    for (nonce, title) in [
+        (24312_u32, "Order the latch"),
+        (37367, "Order the hinges"),
+        (0, "Weatherproof the door"),
     ] {
-        let mut id = [31; 32];
-        id[..3].copy_from_slice(&bytes);
-        let id = EventId::from_bytes(id);
+        let mut author = [41; 32];
+        author[..4].copy_from_slice(&nonce.to_le_bytes());
         let envelope = Envelope::new(
-            DeviceId::from_bytes([41; 32]),
+            DeviceId::from_bytes(author),
             Hlc {
                 wall_ms: NOW - 10,
                 counter: 0,
@@ -98,10 +97,10 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
         )
         .unwrap();
         store
-            .append(board, &envelope.encode().unwrap(), IdSource::Trusted(id))
+            .append(board, &envelope.encode().unwrap(), IdSource::Content)
             .await
             .unwrap();
-        ids.push(id.to_string());
+        ids.push(envelope.id().to_string());
     }
     let (left, right, peer) = (&ids[0], &ids[1], &ids[2]);
     let before = store.latest_hlc(board).await.unwrap();
@@ -113,7 +112,7 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
         .unwrap_err();
     assert!(
         matches!(&error, AppError::AmbiguousId { field, task, count: 2, candidates, diagnostic: Some(diagnostic) }
-        if field == "filter" && task == "abcd" && candidates == &vec![left.clone(), right.clone()]
+        if field == "filter" && task == "abcd" && candidates == &vec![right.clone(), left.clone()]
             && diagnostic.term == "parent:abcd")
     );
 
@@ -135,7 +134,7 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
                         field: field.into(),
                         task: reference.into(),
                         count: 2,
-                        candidates: vec![left.clone(), right.clone()],
+                        candidates: vec![right.clone(), left.clone()],
                         diagnostic: None,
                     }
                 );
@@ -177,7 +176,7 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
             .unwrap();
     }
     let before = store.latest_hlc(board).await.unwrap();
-    for (request, field) in operations("abcdf1", peer) {
+    for (request, field) in operations(&left[..6], peer) {
         if request["op"] == "delete" {
             let outcome = app
                 .handle(serde_json::from_value(request).unwrap(), NOW)

@@ -308,50 +308,39 @@ fn fixture_runtime() -> tokio::runtime::Runtime {
 }
 
 pub fn ambiguous_tasks(data: &std::path::Path) -> (String, [String; 2]) {
-    use pepino_core::{Clock, DeviceId, Envelope, Event, EventId, InitialFields};
+    use pepino_core::{DeviceId, Envelope, Event, Hlc, InitialFields};
     use pepino_store::{IdSource, Store};
 
     seed_tasks(data, async |app| {
         let board = app.local_state().board_id;
         let store = Store::open(data.join("pepino.sqlite")).await.unwrap();
-        let view = store.board(board).await.unwrap();
-        let prefix = (0x7faeu16..=u16::MAX)
-            .map(|prefix| format!("{prefix:04x}"))
-            .find(|prefix| {
-                matches!(
-                    view.resolve_task_prefix(prefix).unwrap(),
-                    pepino_store::TaskPrefixResolution::Unknown
-                )
-            })
-            .unwrap();
-        let mut clock = store
-            .latest_hlc(board)
-            .await
-            .unwrap()
-            .map(Clock::from_hlc)
-            .unwrap_or_default();
-        let first = format!("{prefix}01{}", "51".repeat(29));
-        let second = format!("{prefix}02{}", "51".repeat(29));
-        for (id, title) in [
-            (&first, "Inspect the greenhouse hinge"),
-            (&second, "Inspect the frame joint"),
+        let mut ids = Vec::new();
+        // These envelopes share a four-digit prefix.
+        for (nonce, counter, title) in [
+            (21336_u32, 2, "Inspect the frame joint"),
+            (200292, 1, "Inspect the greenhouse hinge"),
         ] {
+            let mut author = [71; 32];
+            author[..4].copy_from_slice(&nonce.to_le_bytes());
             let event = Envelope::new(
-                DeviceId::from_bytes([71; 32]),
-                clock.tick(SEED_NOW).unwrap(),
+                DeviceId::from_bytes(author),
+                Hlc {
+                    wall_ms: 1_795_144_800_000,
+                    counter,
+                },
                 Event::TaskCreated {
                     title: title.into(),
                     fields: InitialFields::default(),
                 },
             )
             .unwrap();
-            let id: EventId = id.parse().unwrap();
             store
-                .append(board, &event.encode().unwrap(), IdSource::Trusted(id))
+                .append(board, &event.encode().unwrap(), IdSource::Content)
                 .await
                 .unwrap();
+            ids.push(event.id().to_string());
         }
-        (prefix, [first, second])
+        (ids[0][..4].to_owned(), ids.try_into().unwrap())
     })
 }
 
