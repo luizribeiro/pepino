@@ -27,7 +27,7 @@ fn mixed_filter_has_one_canonical_spelling() {
         "is:blocked,ready",
         r#"effort:">threshold",>=5"#,
     ];
-    let expected = r#"tag:garden status:todo assignee:me due:<2026-11-20 -tag:someday "fix\u{20}the\u{20}fence" -@weekend-backlog -has:parent is:blocked,ready effort:">threshold",>=5"#;
+    let expected = r#"tag:garden status:todo assignee:me due:<2026-11-20 -tag:someday "fix the fence" -@weekend-backlog -has:parent is:blocked,ready effort:">threshold",>=5"#;
     let filter = parse(input).unwrap();
     assert_eq!(parse_argv(&argv).unwrap(), filter);
     assert_eq!(filter.to_string(), expected);
@@ -437,7 +437,9 @@ fn argv_parses_keyed_values_with_whitespace() {
     ];
     let input =
         r#"assignee:"Ana Maria" -board:"House Move","Tools, Seeds" client:"Acme Corp" @garden"#;
-    assert_eq!(parse_argv(&argv).unwrap(), parse(input).unwrap());
+    let filter = parse_argv(&argv).unwrap();
+    assert_eq!(filter.to_string(), input);
+    assert_eq!(filter, parse(input).unwrap());
     assert_eq!(
         parse("board:\"//Tools\"").unwrap().to_string(),
         "board:\"//Tools\""
@@ -534,23 +536,20 @@ fn errors_point_inside_the_offending_term() {
 }
 
 #[test]
-fn whitespace_escapes_keep_canonical_terms_in_one_argument() {
-    let text = r#""say \"hi\"\\there\n" -"<first" "a　b""#;
+fn canonical_quotes_preserve_literal_whitespace() {
+    let text = concat!(
+        r#""say \"hi\"\\there\\n" -"<first" "a　b" "#,
+        "\"line one\nline two\tend\""
+    );
     let filter = parse(text).unwrap();
     assert_eq!(
         filter.terms()[0].clause,
         Clause::Text(r#"say "hi"\there\n"#.into())
     );
-    let argv = filter
-        .terms()
-        .iter()
-        .map(Term::to_string)
-        .collect::<Vec<_>>();
-    assert!(argv.iter().all(|term| !term.contains(char::is_whitespace)));
-    assert_eq!(parse_argv(&argv), Ok(filter));
+    assert_eq!(filter.to_string(), text);
     assert_eq!(
-        parse(r#""\\u{20} \u{xyz} \u{61}""#).unwrap().terms()[0].clause,
-        Clause::Text(r"\u{20} \u{xyz} \u{61}".into())
+        parse(r#""\u{20} \n""#).unwrap().terms()[0].clause,
+        Clause::Text(r"\u{20} \n".into())
     );
 }
 

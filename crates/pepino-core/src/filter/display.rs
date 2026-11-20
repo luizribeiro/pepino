@@ -134,10 +134,6 @@ fn atom(f: &mut fmt::Formatter<'_>, value: &str) -> fmt::Result {
 fn quoted(f: &mut fmt::Formatter<'_>, value: &str) -> fmt::Result {
     f.write_char('"')?;
     for ch in value.chars() {
-        if ch.is_whitespace() {
-            write!(f, r"\u{{{:x}}}", u32::from(ch))?;
-            continue;
-        }
         if matches!(ch, '"' | '\\') {
             f.write_char('\\')?;
         }

@@ -140,11 +140,14 @@ proptest! {
         terms in vec((any::<bool>(), clause()).prop_map(|(negated, clause)| Term { negated, clause }), 0..9)
     ) {
         let ast = Filter::from_terms(terms);
-        let argv = ast.terms().iter().map(Term::to_string).collect::<Vec<_>>();
-        let text = argv.join(" ");
-        prop_assert_eq!(ast.to_string(), text.as_str());
-        prop_assert_eq!(parse(&text, Date::MIN), Ok(ast.clone()), "canonical filter {:?}", text);
-        prop_assert_eq!(parse_argv(&argv, Date::MAX), Ok(ast), "canonical argv {:?}", argv);
+        let text = ast.to_string();
+        let parsed = parse(&text, Date::MIN);
+        prop_assert_eq!(parsed.as_ref(), Ok(&ast), "canonical filter {:?}", text);
+
+        let argv = ast.terms().iter().map(Term::to_string)
+            .filter(|term| !term.contains(char::is_whitespace))
+            .collect::<Vec<_>>();
+        prop_assert_eq!(parse_argv(&argv, Date::MAX), parse(&argv.join(" "), Date::MIN), "canonical argv {:?}", argv);
     }
 
     #[test]

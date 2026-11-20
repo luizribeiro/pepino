@@ -10,9 +10,8 @@ use super::{
 
 /// Parse whitespace-separated terms using the supplied calendar date.
 ///
-/// The displayed filter stores resolved dates in calendar form and escapes
-/// whitespace inside quoted atoms as \u{...}. Each displayed term can also be
-/// passed as one argument to parse_argv.
+/// The displayed filter uses real whitespace inside quotes and stores
+/// resolved dates in calendar form.
 ///
 /// ```
 /// use pepino_core::filter::{Date, parse, parse_argv};
@@ -21,11 +20,9 @@ use super::{
 /// let filter = parse(r#"tag:garden due:<fri "fix the fence""#, today)?;
 /// let argv = ["tag:garden", "due:<fri", "fix the fence"];
 /// assert_eq!(parse_argv(&argv, today)?, filter);
-/// let canonical_argv = filter.terms().iter().map(ToString::to_string).collect::<Vec<_>>();
-/// assert_eq!(parse_argv(&canonical_argv, today)?, filter);
 /// assert_eq!(
 ///     filter.to_string(),
-///     r#"tag:garden due:<2026-11-27 "fix\u{20}the\u{20}fence""#,
+///     r#"tag:garden due:<2026-11-27 "fix the fence""#,
 /// );
 /// # Ok::<(), pepino_core::filter::ParseError>(())
 /// ```

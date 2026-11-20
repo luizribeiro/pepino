@@ -11,36 +11,18 @@ pub(super) fn characters(input: &str) -> impl Iterator<Item = Result<(usize, cha
                         Some(offset)
                     };
                 }
-                '\\' if opening.is_some() => {
-                    if chars
+                '\\' if opening.is_some()
+                    && chars
                         .peek()
-                        .is_some_and(|&(_, next)| matches!(next, '"' | '\\'))
-                    {
-                        return chars.next().map(|(_, escaped)| Ok((offset, escaped, true)));
-                    }
-                    if let Some((space, size)) = whitespace_escape(&input[offset + 1..]) {
-                        chars.by_ref().take(size).for_each(drop);
-                        return Some(Ok((offset, space, true)));
-                    }
-                    return Some(Ok((offset, ch, true)));
+                        .is_some_and(|&(_, next)| matches!(next, '"' | '\\')) =>
+                {
+                    return chars.next().map(|(_, escaped)| Ok((offset, escaped, true)));
                 }
                 _ => return Some(Ok((offset, ch, opening.is_some()))),
             }
         }
         opening.take().map(Err)
     })
-}
-
-fn whitespace_escape(input: &str) -> Option<(char, usize)> {
-    let digits = input.strip_prefix("u{")?;
-    let end = digits.bytes().take(7).position(|byte| byte == b'}')?;
-    let digits = digits.get(..end)?;
-    if !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    let scalar = u32::from_str_radix(digits, 16).ok()?;
-    let space = char::from_u32(scalar)?;
-    space.is_whitespace().then_some((space, end + 3))
 }
 
 pub(super) fn term_end(input: &str) -> Result<usize, usize> {
