@@ -77,7 +77,7 @@ fn edit_interactively(context: &Context<'_>, reference: &str) -> Result<CommandR
         0,
         WriteRequest::SetFields {
             task: task.id,
-            changes: after.changes_from(before),
+            changes: after.changes_from(before)?,
         },
     );
     apply(context, &mut client, requests)
@@ -143,39 +143,105 @@ impl Form {
         }
     }
 
-    fn values(self) -> BTreeMap<String, FieldValue> {
+    fn values(self) -> Result<BTreeMap<String, FieldValue>, CliError> {
         let mut fields = self.fields;
-        fields.extend([
-            ("title".into(), FieldValue::Text(self.title)),
+        for (name, value) in [
+            ("title", FieldValue::Text(self.title)),
             (
-                "description".into(),
+                "description",
                 self.description.map_or(FieldValue::Unset, FieldValue::Text),
             ),
+            ("due", self.due.map_or(FieldValue::Unset, FieldValue::Date)),
             (
-                "due".into(),
-                self.due.map_or(FieldValue::Unset, FieldValue::Date),
-            ),
-            (
-                "priority".into(),
+                "priority",
                 self.priority.map_or(FieldValue::Unset, FieldValue::Integer),
             ),
-            ("status".into(), FieldValue::Status(self.status)),
-        ]);
-        fields
+            ("status", FieldValue::Status(self.status)),
+        ] {
+            if fields.insert(name.into(), value).is_some() {
+                return Err(CliError::new(
+                    ErrorKind::Usage,
+                    format!("Set {name} at the top level of the edit form."),
+                ));
+            }
+        }
+        Ok(fields)
     }
 
-    fn changes_from(self, previous: Self) -> BTreeMap<String, FieldValue> {
-        let previous = previous.values();
-        let mut values = self.values();
+    fn changes_from(self, previous: Self) -> Result<BTreeMap<String, FieldValue>, CliError> {
+        let previous = previous.values()?;
+        let mut values = self.values()?;
         for key in previous.keys() {
             values.entry(key.clone()).or_insert(FieldValue::Unset);
         }
         values.retain(|key, value| previous.get(key) != Some(value));
-        values
+        if let Some((name, _)) = values
+            .iter()
+            .find(|(name, value)| *name != "status" && matches!(value, FieldValue::Status(_)))
+        {
+            return Err(CliError::new(
+                ErrorKind::Usage,
+                format!("Use a text, integer, or date value for custom field {name:?}."),
+            ));
+        }
+        Ok(values)
     }
 }
 
 fn flags_required() -> CliError {
     CliError::new(ErrorKind::Usage, "Editing without flags requires a terminal.")
         .with_hint("Use --title, --description (or --description - for stdin), --from-file, --due, --priority, --status, --set, --unset, --tag, --untag, --assign, or --unassign.")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn latch_form() -> Form {
+        serde_json::from_value(serde_json::json!({
+            "title": "Replace the greenhouse latch",
+            "description": "Use stainless fittings.",
+            "due": "2026-12-01",
+            "priority": 3,
+            "status": "doing",
+            "fields": {"estimate": {"type": "integer", "value": 2}},
+            "tags": ["hardware"],
+            "assignees": []
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn form_differences_clear_fields_and_preserve_unchanged_values() {
+        let mut edited = latch_form();
+        edited.description = None;
+        edited.fields.remove("estimate");
+        let changes = edited.changes_from(latch_form()).unwrap();
+        assert_eq!(
+            changes,
+            BTreeMap::from([
+                ("description".into(), FieldValue::Unset),
+                ("estimate".into(), FieldValue::Unset),
+            ])
+        );
+    }
+
+    #[test]
+    fn form_rejects_changes_that_have_no_flag_equivalent() {
+        let mut edited = latch_form();
+        edited
+            .fields
+            .insert("inspection".into(), FieldValue::Status(Status::Done));
+        let error = edited.changes_from(latch_form()).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Usage);
+        assert!(error.to_string().contains("inspection"));
+
+        let mut edited = latch_form();
+        edited
+            .fields
+            .insert("priority".into(), FieldValue::Integer(2));
+        let error = edited.changes_from(latch_form()).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Usage);
+        assert!(error.to_string().contains("priority"));
+    }
 }
