@@ -58,27 +58,19 @@ fn value<'a>(key: &str, raw: &'a str) -> DeValue<'a> {
             "0" | "false" => DeValue::Boolean(false),
             _ => DeValue::String(raw.into()),
         },
-        "relay_urls" | "trusted_devices" | "bootstrap_nodes" => {
-            let items = if raw.trim().is_empty() {
-                None
-            } else {
-                Some(raw.split(','))
-            };
-            DeValue::Array(
-                items
-                    .into_iter()
-                    .flatten()
-                    .map(|item| {
-                        let item = item.trim();
-                        wrapped(if key == "bootstrap_nodes" {
-                            bootstrap(item)
-                        } else {
-                            DeValue::String(item.into())
-                        })
+        "relay_urls" | "trusted_devices" | "bootstrap_nodes" => DeValue::Array(
+            raw.split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(|item| {
+                    wrapped(if key == "bootstrap_nodes" {
+                        bootstrap(item)
+                    } else {
+                        DeValue::String(item.into())
                     })
-                    .collect(),
-            )
-        }
+                })
+                .collect(),
+        ),
         _ => DeValue::String(raw.into()),
     }
 }
@@ -116,13 +108,13 @@ mod tests {
         let dirs =
             PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None).unwrap();
         let id = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
-        let bootstrap = format!("{id}=https://bootstrap.release.example");
+        let bootstrap = format!(" , {id} = https://bootstrap.release.example , ");
         let env = Env::from(
             [
                 ("PPN_NETWORK", "env-release"),
                 (
                     "PPN_RELAY_URLS",
-                    "https://use.release.example, https://eu.release.example",
+                    "https://use.release.example,, https://eu.release.example,",
                 ),
                 ("PPN_MDNS", "0"),
                 ("PPN_CREDENTIALS_FILE", "~/keys/device.cbor"),
