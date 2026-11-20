@@ -15,6 +15,10 @@ pub(super) async fn operate(
     started: Instant,
 ) -> Outcome {
     match operation {
+        Operation::CreateBoard { name } => match engine.create_board(&name).await {
+            Ok(board) => Outcome::BoardCreated { board },
+            Err(_) => Outcome::BoardCreationFailed,
+        },
         Operation::Nudge => {
             engine.nudge();
             Outcome::Nudged

@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use futures_util::{Stream, StreamExt};
 use pepino_app::{App, DeviceRequest, OpenOptions, PeerHint};
-use pepino_core::DeviceId;
+use pepino_core::{BoardId, DeviceId};
 use pepino_node::{Node, Role};
 use tokio::{
     sync::{Mutex, watch},
@@ -275,6 +275,23 @@ impl SyncEngine {
         self.app.remember_member_bundle(&member).await?;
         self.nudge();
         Ok(())
+    }
+
+    pub async fn create_board(&self, name: &str) -> Result<BoardId, Error> {
+        App::validate_board_name(name)?;
+        let mut boards = self.boards.lock().await;
+        let handle = self.node.create_board().await?;
+        let id = handle.id();
+        let local = match self.app.register_created_board(id, name).await {
+            Ok(local) => local,
+            Err(error) => {
+                let _ = handle.close().await;
+                return Err(error.into());
+            }
+        };
+        boards.start_board(&local, id, handle)?;
+        self.nudge();
+        Ok(id)
     }
 
     pub async fn register_peer_hint(&self, peer: PeerHint) -> Result<(), Error> {

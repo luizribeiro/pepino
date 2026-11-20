@@ -17,6 +17,9 @@ pub struct Request {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
     Nudge,
+    CreateBoard {
+        name: String,
+    },
     Status,
     WaitIdle {
         timeout_ms: u64,
@@ -64,6 +67,10 @@ pub struct Response {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Outcome {
     Nudged,
+    BoardCreated {
+        board: BoardId,
+    },
+    BoardCreationFailed,
     Status {
         status: DaemonStatus,
     },
