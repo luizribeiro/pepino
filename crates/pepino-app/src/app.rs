@@ -84,6 +84,9 @@ impl App {
             Request::Write(WriteRequest::DeleteView { name, force }) => {
                 self.delete_view(name, force, guard).await
             }
+            Request::Write(WriteRequest::ApplyToTasks { tasks, change }) => {
+                self.apply_to_tasks(tasks, change, now).await
+            }
             Request::Write(request) => {
                 let board = self.board().await?;
                 let mut batch = self.batch(now).await?;

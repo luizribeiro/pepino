@@ -8,9 +8,59 @@ use pepino_store::{BoardView, TaskRecord};
 use crate::app::invalid;
 use crate::batch::{Batch, invalid_event};
 use crate::projection::resolve;
-use crate::{App, AppError, WriteRequest};
+use crate::{App, AppError, Response, TaskChange, WriteRequest};
 
 impl App {
+    pub(super) async fn apply_to_tasks(
+        &mut self,
+        tasks: Vec<String>,
+        change: TaskChange,
+        now: u64,
+    ) -> Result<Response, AppError> {
+        if tasks.is_empty() {
+            return Err(invalid("tasks", "expected at least one task"));
+        }
+        let view = self.board().await?;
+        let mut batch = self.batch(now).await?;
+        let mut seen = BTreeSet::new();
+        let mut order = Vec::new();
+        let mut changed_targets = Vec::new();
+        for (index, reference) in tasks.into_iter().enumerate() {
+            let field = format!("tasks[{index}]");
+            let current = resolve(&view, &field, &reference)?;
+            if !seen.insert(current.id) {
+                continue;
+            }
+            let before = batch.event_count();
+            match &change {
+                TaskChange::SetFields { changes } => {
+                    set_fields(&mut batch, current, changes.clone())?
+                }
+                TaskChange::Delete => {
+                    batch.push(Event::TaskDeleted { task: current.id }, &field)?;
+                }
+            }
+            order.push(current.id.to_string());
+            if batch.event_count() != before {
+                changed_targets.push(current.id.to_string());
+            }
+        }
+        let mut outcome = self.commit_batch(&view, batch).await?;
+        if let Response::Write {
+            targets, changed, ..
+        } = &mut outcome
+        {
+            *targets = order;
+            if !*changed {
+                changed_targets.clear();
+            }
+        }
+        Ok(Response::BatchWrite {
+            outcome: Box::new(outcome),
+            changed_targets,
+        })
+    }
+
     pub(super) fn plan_write(
         &self,
         view: &BoardView,
@@ -18,8 +68,10 @@ impl App {
         request: WriteRequest,
     ) -> Result<(), AppError> {
         match request {
-            WriteRequest::SaveView { .. } | WriteRequest::DeleteView { .. } => {
-                return Err(invalid("request", "saved views do not produce task events"));
+            WriteRequest::SaveView { .. }
+            | WriteRequest::DeleteView { .. }
+            | WriteRequest::ApplyToTasks { .. } => {
+                return Err(invalid("request", "expected a single task write"));
             }
 
             WriteRequest::AddTask {
@@ -343,5 +395,39 @@ fn field_path(object: &str, field: &str) -> String {
         format!("{object}.{field}")
     } else {
         format!("{object}[{}]", serde_json::Value::String(field.into()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ReadRequest, Request};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn a_batch_with_a_later_invalid_target_leaves_the_first_task_live() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = App::open(directory.path(), 100).await.unwrap();
+        let create =
+            serde_json::from_value(json!({"op":"add_task","title":"Paint the shed"})).unwrap();
+        let Response::Write {
+            created: Some(task),
+            ..
+        } = app.handle(create, 100).await.unwrap()
+        else {
+            panic!("expected a task");
+        };
+        let request = serde_json::from_value(json!({
+            "op":"apply_to_tasks", "tasks":[task, "bad"], "change":{"type":"delete"}
+        }))
+        .unwrap();
+        assert!(
+            matches!(app.handle(request, 200).await, Err(AppError::InvalidInput { field, .. }) if field == "tasks[1]")
+        );
+        let response = app
+            .handle(Request::Read(ReadRequest::GetTask { task }), 200)
+            .await
+            .unwrap();
+        assert!(matches!(response, Response::Task { .. }));
     }
 }

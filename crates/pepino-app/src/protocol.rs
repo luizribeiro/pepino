@@ -72,6 +72,10 @@ pub enum WriteRequest {
         #[serde(default)]
         blocked_by: Vec<String>,
     },
+    ApplyToTasks {
+        tasks: Vec<String>,
+        change: TaskChange,
+    },
     SetFields {
         task: String,
         changes: BTreeMap<String, FieldValue>,
@@ -121,9 +125,23 @@ pub enum WriteRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[non_exhaustive]
+pub enum TaskChange {
+    SetFields {
+        changes: BTreeMap<String, FieldValue>,
+    },
+    Delete,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Response {
+    BatchWrite {
+        outcome: Box<Response>,
+        changed_targets: Vec<String>,
+    },
     Write {
         changed: bool,
         #[serde(skip_serializing_if = "Option::is_none")]

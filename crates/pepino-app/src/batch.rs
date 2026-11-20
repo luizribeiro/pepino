@@ -19,6 +19,10 @@ pub(super) struct Batch {
 }
 
 impl Batch {
+    pub(super) fn event_count(&self) -> usize {
+        self.events.len()
+    }
+
     pub(super) fn stage(
         &mut self,
         event: Event,
