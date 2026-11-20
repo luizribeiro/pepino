@@ -49,6 +49,23 @@ impl LocalState {
         })
     }
 
+    pub fn check_board_write(&self, board: &crate::LocalBoard) -> Result<(), AppError> {
+        let denied = |reason: &str| AppError::PermissionDenied {
+            path: format!("board {:?}", board.name),
+            reason: reason.into(),
+        };
+        if self.waiting_for_access(board.id) {
+            return Err(denied("this device is waiting for access"));
+        }
+        if self
+            .shared_access(board.id)
+            .is_some_and(|access| access.role == BoardRole::Read)
+        {
+            return Err(denied("the read role cannot publish changes"));
+        }
+        Ok(())
+    }
+
     pub fn check_invitable(&self, board: BoardId) -> Result<(), AppError> {
         if board == self.catalog_board() {
             return Err(invalid(
@@ -82,4 +99,41 @@ async fn access_on_another_persons_board_is_device_specific() {
     assert!(local.waiting_for_access(house));
     local.catalog.shared.get_mut(&house).unwrap().admitted = local.device_id;
     assert!(!local.waiting_for_access(house));
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn read_members_cannot_enqueue_task_writes() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = crate::write::fixture::open(directory.path(), 0)
+        .await
+        .unwrap();
+    let house = BoardId::from_bytes([86; 32]);
+    app.register_created_board(house, "House").await.unwrap();
+    app.update_local(move |local| {
+        local.catalog.shared.insert(
+            house,
+            SharedAccess {
+                owner: IdentityId::from_bytes([87; 32]),
+                role: BoardRole::Read,
+                admitted: local.device_id,
+            },
+        );
+    })
+    .await
+    .unwrap();
+    let outcome = app
+        .handle_on(
+            crate::Request::Write(crate::WriteRequest::ApplyToTasks {
+                tasks: vec!["repair window".into()],
+                change: crate::TaskChange::Reopen,
+            }),
+            0,
+            Some(("House", "board")),
+            false,
+        )
+        .await;
+    assert!(
+        matches!(outcome, Err(AppError::PermissionDenied { path, reason }) if path.contains("House") && reason.contains("read role"))
+    );
 }

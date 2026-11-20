@@ -285,9 +285,11 @@ impl App {
                 self.delete_view(name, force, guard).await
             }
             Request::Write(WriteRequest::ApplyToTasks { tasks, change }) => {
+                self.local.check_board_write(self.selected_board())?;
                 self.apply_to_tasks(tasks, change, now).await
             }
             Request::Write(request) => {
+                self.local.check_board_write(self.selected_board())?;
                 let board = self.board().await?;
                 let mut batch = self.batch(now).await?;
                 match self.plan_write(&board, &mut batch, request) {
