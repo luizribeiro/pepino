@@ -60,6 +60,10 @@ async fn history_includes_creation_and_both_edge_endpoints_in_envelope_order() {
     }
     assert_eq!(store.rebuild(board).await.unwrap().skipped, 0);
     assert!(store.tasks(board).await.unwrap().is_empty());
+    assert_eq!(
+        store.task_titles(board, &[task, to]).await.unwrap(),
+        [(task, "Paint the hallway".into())].into()
+    );
     assert!(
         store
             .events(BoardId::from_bytes([23; 32]), task)

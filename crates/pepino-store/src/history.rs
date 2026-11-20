@@ -1,5 +1,7 @@
+use std::collections::BTreeMap;
+
 use pepino_core::{BoardId, DecodeOutcome, DeviceId, Envelope, Event, EventId, Hlc, TaskId};
-use sqlx::{Connection, FromRow, SqliteConnection};
+use sqlx::{Connection, FromRow, QueryBuilder, SqliteConnection};
 
 use crate::{BoardKey, Store, StoreError};
 
@@ -126,6 +128,53 @@ impl StoredEvent {
 }
 
 impl Store {
+    /// Reads the latest title registers, including those of deleted tasks.
+    pub async fn task_titles(
+        &self,
+        board: BoardId,
+        tasks: &[TaskId],
+    ) -> Result<BTreeMap<TaskId, String>, StoreError> {
+        if tasks.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let rows = self
+            .read(async |connection| {
+                let mut snapshot = connection.begin().await?;
+                let mut rows = Vec::new();
+                for tasks in tasks.chunks(500) {
+                    let mut query = QueryBuilder::new(
+                        "SELECT task, value FROM task_register
+                     WHERE kind = 'field' AND member = ",
+                    );
+                    query
+                        .push_bind(b"title".as_slice())
+                        .push(" AND board = ")
+                        .push_bind(BoardKey(board))
+                        .push(" AND task IN (");
+                    let mut list = query.separated(", ");
+                    for task in tasks {
+                        list.push_bind(task.as_bytes().as_slice());
+                    }
+                    list.push_unseparated(")");
+                    rows.extend(
+                        query
+                            .build_query_as::<([u8; 32], Vec<u8>)>()
+                            .fetch_all(&mut *snapshot)
+                            .await?,
+                    );
+                }
+                snapshot.commit().await?;
+                Ok(rows)
+            })
+            .await?;
+        rows.into_iter()
+            .map(|(id, bytes)| match crate::task::decode_field(&bytes)? {
+                pepino_core::FieldValue::Text(title) => Ok((TaskId::from_bytes(id), title)),
+                _ => Err(StoreError::ViewValue("invalid title register".into())),
+            })
+            .collect()
+    }
+
     pub async fn events(
         &self,
         board: BoardId,
