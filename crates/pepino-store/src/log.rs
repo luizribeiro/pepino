@@ -163,6 +163,43 @@ impl Decoded {
 }
 
 impl Store {
+    /// Retains undecodable transport bytes with the verified signer.
+    pub async fn record_undecodable(
+        &self,
+        board: BoardId,
+        signer: DeviceId,
+        bytes: &[u8],
+    ) -> Result<(), StoreError> {
+        sqlx::query("INSERT INTO undecodable VALUES (?, ?, ?) ON CONFLICT DO NOTHING")
+            .bind(BoardKey(board))
+            .bind(signer.as_bytes())
+            .bind(bytes)
+            .execute(&mut *self.connection.lock().await)
+            .await?;
+        Ok(())
+    }
+
+    /// Reads retained deliveries so they can be reprocessed by a later decoder.
+    pub async fn undecodable(
+        &self,
+        board: BoardId,
+    ) -> Result<Vec<(DeviceId, Vec<u8>)>, StoreError> {
+        let rows: Vec<([u8; 32], Vec<u8>)> = self
+            .read(async |db| {
+                sqlx::query_as(
+                    "SELECT signer, bytes FROM undecodable WHERE board = ? ORDER BY signer, bytes",
+                )
+                .bind(BoardKey(board))
+                .fetch_all(db)
+                .await
+            })
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(signer, bytes)| (DeviceId::from_bytes(signer), bytes))
+            .collect())
+    }
+
     pub async fn append(
         &self,
         board: BoardId,

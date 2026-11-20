@@ -110,6 +110,7 @@ async fn retains_each_skipped_classification_and_exact_bytes() {
             unknown_value: 1,
             invalid: 1,
             forged_author: 0,
+            undecodable: 0,
         }
     );
     assert_eq!(
@@ -671,4 +672,28 @@ async fn verified_signers_gate_projection_and_survive_rebuild() {
     assert_eq!(entry.classification, EventClassification::ForgedAuthor);
     assert!(entry.event.is_none());
     assert!(entry.tasks.is_empty());
+}
+
+#[tokio::test]
+async fn retains_undecodable_bytes_by_board_and_signer() {
+    let store = Store::open_in_memory().await.unwrap();
+    let board = BoardId::from_bytes([25; 32]);
+    let other = BoardId::from_bytes([26; 32]);
+    let a = DeviceId::from_bytes([27; 32]);
+    let b = DeviceId::from_bytes([28; 32]);
+    let bytes = [0xff, 0xfe];
+    for signer in [a, a, b] {
+        store
+            .record_undecodable(board, signer, &bytes)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        store.undecodable(board).await.unwrap(),
+        [(a, bytes.to_vec()), (b, bytes.to_vec())]
+    );
+    let stats = store.statistics(board).await.unwrap();
+    assert_eq!((stats.total, stats.undecodable, stats.applied), (2, 2, 0));
+    assert!(store.undecodable(other).await.unwrap().is_empty());
+    assert_eq!(store.statistics(other).await.unwrap(), Default::default());
 }
