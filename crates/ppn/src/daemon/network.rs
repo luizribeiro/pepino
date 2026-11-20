@@ -34,6 +34,11 @@ pub fn snapshot(status: pepino_sync::Status) -> Network {
                 (
                     id.to_string(),
                     Board {
+                        starting_up: status
+                            .node
+                            .boards
+                            .get(&id)
+                            .is_none_or(|board| board.replaying),
                         events_waiting: board.outbox_pending,
                         published: board.published,
                         received: board.received,
@@ -88,5 +93,6 @@ mod tests {
             pepino_app::BoardJoinState::Joined
         );
         assert_eq!(network.boards[&board.to_string()].events_waiting, None);
+        assert!(network.boards[&board.to_string()].starting_up);
     }
 }

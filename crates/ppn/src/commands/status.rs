@@ -148,13 +148,18 @@ fn describe_network(network: &Network, settings: &RenderSettings) -> String {
                 |time| settings.dates().timestamp(time, &settings.terminal),
             )
         };
+        let starting = if board.starting_up {
+            "starting up, "
+        } else {
+            ""
+        };
         let error = board
             .last_error
             .as_deref()
             .map_or_else(|| "none".into(), single_line);
         let _ = write!(
             text,
-            "\n  Board {}: {pending} events waiting to be sent, last sent {}, last received {}, last error {error}",
+            "\n  Board {}: {starting}{pending} events waiting to be sent, last sent {}, last received {}, last error {error}",
             short_id(id),
             time(board.last_sent),
             time(board.last_received)

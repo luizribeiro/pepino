@@ -121,6 +121,8 @@ pub struct Network {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Board {
+    #[serde(default)]
+    pub starting_up: bool,
     pub events_waiting: Option<u64>,
     pub published: u64,
     pub received: u64,
