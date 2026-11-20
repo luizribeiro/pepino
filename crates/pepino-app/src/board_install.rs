@@ -62,6 +62,15 @@ impl LocalState {
             },
         );
         self.name_board(id, &grant.board.name);
+        if let Some(channel) = grant.card_exchange {
+            self.add_card_exchange(
+                channel,
+                crate::CardExchange {
+                    board: id,
+                    person: self.identity_id,
+                },
+            )?;
+        }
         self.catalog.joined_shares.insert(
             id,
             JoinedShare {
@@ -148,6 +157,7 @@ async fn joining_adds_one_board_to_the_existing_local_catalog() {
             name: "House".into(),
         },
         role: BoardRole::Read,
+        card_exchange: Some(BoardId::from_bytes([86; 32])),
         owner,
         peer: PeerHint {
             id: pepino_core::DeviceId::from_bytes([84; 32]),
@@ -158,6 +168,7 @@ async fn joining_adds_one_board_to_the_existing_local_catalog() {
     local.install_share(&grant).unwrap();
     assert_eq!(local.boards().len(), 2);
     assert_eq!(local.catalog_board(), private);
+    assert_eq!(local.card_exchanges().values().next().unwrap().board, id);
     assert_eq!(local.board_join_state(id), BoardJoinState::WaitingToBeAdded);
     assert!(local.shared_peers().next() == Some(grant.peer.clone()));
     grant.board.id = BoardId::from_bytes([85; 32]);

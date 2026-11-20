@@ -17,6 +17,8 @@ pub(crate) struct CatalogState {
     pub(crate) shared: BTreeMap<BoardId, crate::SharedAccess>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) people: BTreeMap<BoardId, BTreeMap<IdentityId, crate::BoardPerson>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) card_exchanges: BTreeMap<BoardId, crate::CardExchange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) board_request: Option<crate::BoardRequest>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

@@ -16,6 +16,8 @@ pub struct BoardGrant {
     pub role: BoardRole,
     pub owner: IdentityCard,
     pub peer: PeerHint,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_exchange: Option<pepino_core::BoardId>,
 }
 
 impl BoardGrant {
@@ -38,6 +40,12 @@ impl BoardGrant {
         let grant = signed.verify_body(request.secret()?, |body: &Self| body.peer.id)?;
         grant.check_request(request)?;
         crate::App::validate_board_name(&grant.board.name)?;
+        if grant
+            .card_exchange
+            .is_some_and(|id| id == grant.board.id || grant.role != BoardRole::Read)
+        {
+            return Err(invalid("grant", "invalid identity update channel"));
+        }
         if let Some(url) = grant.peer.relay_url.as_deref() {
             pepino_node::peer_relay_url(url)
                 .map_err(|_| invalid("grant", "invalid granting device relay URL"))?;
@@ -88,6 +96,7 @@ async fn board_grants_are_bound_to_the_original_request() {
             name: "Workshop".into(),
         },
         role: BoardRole::Write,
+        card_exchange: None,
         owner: request.identity.clone(),
         peer: PeerHint {
             id: keys.device_id(),

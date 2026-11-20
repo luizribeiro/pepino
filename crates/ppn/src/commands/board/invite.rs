@@ -89,6 +89,7 @@ pub(super) fn run(
         board: board.clone(),
         role,
         owner,
+        card_exchange: None,
         peer: PeerHint {
             id: keys.device_id(),
             relay_url: config
