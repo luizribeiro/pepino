@@ -11,6 +11,7 @@ mod fold;
 mod history;
 mod log;
 mod prefix;
+mod publication;
 pub mod query;
 mod statistics;
 mod task;
