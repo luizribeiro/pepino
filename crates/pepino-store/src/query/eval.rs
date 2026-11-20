@@ -114,7 +114,9 @@ fn prepare<'a>(
     chain: &mut Vec<String>,
 ) -> Result<Vec<Predicate<'a>>, QueryError> {
     let mut predicates = Vec::<Predicate<'a>>::new();
-    for term in filter.terms() {
+    let mut terms: Vec<_> = filter.terms().iter().collect();
+    terms.sort_by_cached_key(|term| term.to_string());
+    for term in terms {
         let at_term = |kind| QueryError {
             term: term.to_string(),
             kind,

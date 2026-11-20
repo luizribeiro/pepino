@@ -133,3 +133,20 @@ fn direct_and_indirect_view_cycles_report_the_chain_and_closing_term() {
         check(&query(&filter(input)), term, kind);
     }
 }
+
+#[test]
+fn preparation_errors_are_independent_of_term_order() {
+    for input in [
+        "parent:xy tag:garden assignee:missing",
+        "tag:garden assignee:missing parent:xy",
+        "assignee:missing parent:xy tag:garden",
+    ] {
+        check(
+            &query(&filter(input)),
+            "assignee:missing",
+            QueryErrorKind::UnknownPerson {
+                text: "missing".into(),
+            },
+        );
+    }
+}
