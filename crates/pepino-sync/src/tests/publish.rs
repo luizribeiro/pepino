@@ -108,3 +108,80 @@ async fn the_periodic_scan_recovers_a_missed_nudge() {
     assert_eq!(node.published().len(), 1);
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_crash_after_confirmation_resends_once_and_the_receiver_deduplicates() {
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([50; 32]);
+    let local = DeviceId::from_bytes([51; 32]);
+    let peer = DeviceId::from_bytes([52; 32]);
+    let mut app = directory::prepare(dir.path(), board, local).await;
+    directory::write(
+        &mut app,
+        json!({"op":"add_task","title":"Replace the gate hinges"}),
+    )
+    .await;
+    let node = Arc::new(Stub::new(local));
+    node.reject(true);
+    let settings = crate::Settings {
+        lock_timeout: Duration::ZERO,
+        ..Default::default()
+    };
+    let engine = SyncEngine::start(settings, node.clone(), dir.path())
+        .await
+        .unwrap();
+    until(&engine, |state| state.boards[&board].last_error.is_some()).await;
+    let lock = std::fs::File::options()
+        .write(true)
+        .open(dir.path().join("local.lock"))
+        .unwrap();
+    lock.try_lock().unwrap();
+    node.reject(false);
+    until(&engine, |state| {
+        state.boards[&board]
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("record publication"))
+    })
+    .await;
+    assert_eq!(node.published().len(), 1);
+    assert_eq!(
+        app.store()
+            .outbox(board, local, 1.try_into().unwrap())
+            .await
+            .unwrap()
+            .pending,
+        1
+    );
+    drop(engine);
+    drop(lock);
+
+    let restarted = Arc::new(node.restarted());
+    let engine = SyncEngine::start(Default::default(), restarted.clone(), dir.path())
+        .await
+        .unwrap();
+    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+    engine.sync_once().await.unwrap();
+    let sent = restarted.published();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0], sent[1]);
+    engine.shutdown().await.unwrap();
+
+    let peer_path = dir.path().join("peer");
+    let receiver = directory::prepare(&peer_path, board, peer).await;
+    let node = Arc::new(Stub::new(peer));
+    let engine = SyncEngine::start(Default::default(), node.clone(), &peer_path)
+        .await
+        .unwrap();
+    for bytes in sent {
+        node.deliver(board, local, bytes);
+    }
+    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+    assert_eq!(receiver.store().statistics(board).await.unwrap().total, 1);
+    assert_eq!(
+        receiver.store().board_with_comments(board).await.unwrap(),
+        app.store().board_with_comments(board).await.unwrap()
+    );
+    assert!(node.published().is_empty());
+    engine.shutdown().await.unwrap();
+}

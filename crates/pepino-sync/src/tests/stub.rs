@@ -28,6 +28,13 @@ pub(super) struct Stub {
 }
 
 impl Stub {
+    pub(super) fn restarted(&self) -> Self {
+        Self {
+            publisher: self.publisher.clone(),
+            ..Self::new(self.device)
+        }
+    }
+
     pub(super) fn new(device: DeviceId) -> Self {
         Self {
             device,
