@@ -93,6 +93,7 @@ in
       inherit package;
       credentialsFile = "/run/secrets/pepino-client";
       dataDir = "/var/lib/pepino-client";
+      port = 44124;
       ui = { color = "never"; dateFormat = "%d/%m/%Y"; };
     };
     services.pepino = network // {

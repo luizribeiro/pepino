@@ -26,7 +26,6 @@ let
       ({ settings, ... }: !(builtins.tryEval (forceOptions (evaluate settings))).success)
       (lib.attrValues fixtures.invalidTypes);
 
-  portWarning = "services.pepino.port only drives the NixOS firewall rule. The node does not bind this port.";
   untrustedWarning = "services.pepino.enable is set with no trusted devices, so the node will accept boards from nobody.";
 
   linux = evaluate self.nixosModules.default;
@@ -76,13 +75,13 @@ assert (linux fixtures.typical).services.pepino.package == package;
 assert (linux fixtures.empty).services.pepino.configFile == null;
 assert !((linux fixtures.empty).environment.etc ? "pepino/node.toml");
 assert !((linux fixtures.untrusted).environment.etc ? "pepino/config.toml");
-assert accepts fullLinux [ portWarning ];
+assert accepts fullLinux [ ];
 assert fullLinux.environment.etc."pepino/node.toml".source == fullLinux.services.pepino.configFile;
 assert fullDarwin.environment.etc."pepino/node.toml".source == fullDarwin.services.pepino.configFile;
 assert fullLinux.networking.firewall.allowedUDPPorts == [ 44123 ];
 assert fullLinux.users.users.pepino-relay.isSystemUser;
 assert fullLinux.systemd.tmpfiles.settings.pepino."/srv/pepino".d.mode == "0700";
-assert accepts fullDarwin [ portWarning ];
+assert accepts fullDarwin [ ];
 assert fullDarwin.users.knownUsers == [ "pepino-relay" ];
 assert fullDarwin.users.knownGroups == [ "pepino-relay" ];
 assert fullDarwin.users.users.pepino-relay.uid == 451;
@@ -131,7 +130,9 @@ pkgs.runCommand "pepino-config-check"
     grep -qx 'date_format = "%d/%m/%Y"' "$client"
     grep -qx 'credentials_file = "/run/secrets/pepino-node"' "$node"
     grep -qx 'data_dir = "/srv/pepino"' "$node"
-    if grep -Eq '^(port =|\[ui\])' "$node"; then
+    grep -qx 'port = 44123' "$node"
+    grep -qx 'port = 44124' "$client"
+    if grep -Fxq '[ui]' "$node"; then
       exit 1
     fi
     touch "$out"

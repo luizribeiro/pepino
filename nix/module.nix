@@ -17,6 +17,7 @@ let
   nodeOptions = {
     network = optional (types.strMatching ".*[^[:space:]].*") "Name of the Pepino network.";
     relayUrls = optional (types.listOf relayUrl) "HTTPS relay URLs.";
+    port = optional (types.ints.between 1 65535) "Fixed IPv4 UDP port for the sync node.";
     mdns = optional types.bool "Whether to discover peers over multicast DNS.";
     credentialsFile = optional absolutePath "Path to the credentials file outside the Nix store.";
     trustedDevices = optional (types.listOf nodeId) "Node IDs allowed to request board relaying.";
@@ -65,7 +66,6 @@ in
       group = mkOption { type = types.nonEmptyStr; default = "pepino"; description = "Node primary group."; };
       dataDir = nodeOptions.dataDir // { type = absolutePath; default = "/var/lib/pepino"; };
       openFirewall = mkEnableOption "opening the node's fixed UDP port";
-      port = optional (types.ints.between 1 65535) "UDP port for the NixOS firewall rule.";
       configFile = mkOption {
         type = types.nullOr types.path;
         readOnly = true;
@@ -101,8 +101,6 @@ in
       warnings = lib.optionals service.enable (
         lib.optional (nullableList service.trustedDevices == [ ])
           "services.pepino.enable is set with no trusted devices, so the node will accept boards from nobody."
-        ++ lib.optional (service.port != null)
-          "services.pepino.port only drives the NixOS firewall rule. The node does not bind this port."
       );
     };
 
@@ -115,7 +113,7 @@ in
     in
     (pkgs.formats.toml { }).generate name (withoutNulls
       {
-        inherit (node) network mdns;
+        inherit (node) network mdns port;
         relay_urls = node.relayUrls;
         credentials_file = node.credentialsFile;
         trusted_devices = node.trustedDevices;

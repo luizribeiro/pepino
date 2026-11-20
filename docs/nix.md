@@ -69,8 +69,9 @@ You can leave the firewall closed for outbound relay connections. To allow
 incoming UDP, set both `services.pepino.openFirewall` and `services.pepino.port`.
 On NixOS the module adds the port to `networking.firewall.allowedUDPPorts`.
 On nix-darwin, configure the firewall manually.
-Until `ppn` supports a `port` setting, `services.pepino.port` only drives the
-NixOS firewall rule. The node does not bind that port.
+The daemon binds the configured port over IPv4. Set `programs.pepino.port` for a
+user daemon and `services.pepino.port` for the system node. Use distinct ports
+when running both on the same host.
 
 ## Options
 
@@ -91,8 +92,9 @@ NixOS firewall rule. The node does not bind that port.
 | `programs.pepino.ui.dateFormat` | String | Unset | Strftime format for displayed dates. |
 | `services.pepino.user` | String | `"pepino"` | Always-on node account. |
 | `services.pepino.group` | String | `"pepino"` | Always-on node primary group. |
+| `programs.pepino.port` | Integer from 1 to 65535 | Unset | Fixed IPv4 UDP port for the user daemon. |
 | `services.pepino.openFirewall` | Boolean | `false` | Allow the fixed UDP port on NixOS. Requires `port`. |
-| `services.pepino.port` | Integer from 1 to 65535 | Unset | UDP port for the NixOS firewall rule. |
+| `services.pepino.port` | Integer from 1 to 65535 | Unset | Fixed IPv4 UDP port for the system node. |
 | `services.pepino.configFile` | Read-only path | Unset when disabled | Generated always-on node configuration. |
 
 Unset settings are omitted from TOML. Use an explicit empty list to override a
