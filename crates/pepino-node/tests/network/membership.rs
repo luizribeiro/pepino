@@ -8,7 +8,8 @@ use p2panda::{
 use p2panda_store::{SqliteStore, operations::OperationStore};
 use pepino_core::{DeviceId, EventId};
 use pepino_node::{
-    Error, MemberState, MembershipChange, MembershipEvent, MembershipEvents, OpenBoardOptions, Role,
+    Error, MemberState, MembershipChange, MembershipEvent, MembershipEvents, NodeEvent,
+    OpenBoardOptions, Role,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tokio::time::timeout;
@@ -243,6 +244,57 @@ async fn a_readmitted_device_can_resume_and_replay() {
         &[(gap, a.device_id(), REVIEW), (after, a.device_id(), DONE)],
     )
     .await;
+    c.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    a.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn remaining_peers_block_a_device_removed_while_offline() {
+    let dir = fixture_dir();
+    let network = network(dir.path());
+    let a = start(&settings(&network, dir.path().join("alice"))).await;
+    let b = start(&settings(&network, dir.path().join("ben"))).await;
+    let c_settings = settings(&network, dir.path().join("chloe"));
+    let c = start(&c_settings).await;
+    let alice = a.create_board().await.unwrap();
+    let ben = enroll(&alice, &b, Role::Write).await;
+    let chloe = enroll(&alice, &c, Role::Read).await;
+    let id = c.device_id();
+    let mut ben_changes = ben.membership_events();
+    assert_eq!(
+        chloe.member_state().await.unwrap(),
+        MemberState::Member(Role::Read)
+    );
+    c.shutdown().await.unwrap();
+
+    alice.remove_member(id, false).await.unwrap();
+    observe(&mut ben_changes, id, MemberState::Removed).await;
+    let c = start(&c_settings).await;
+    let mut status = c.events();
+    let chloe = c.open_board(alice.id()).await.unwrap();
+    timeout(WAIT, async {
+        loop {
+            let item = status.next().await.unwrap().unwrap();
+            if let NodeEvent::SyncEnded {
+                board,
+                error: Some(error),
+                ..
+            } = item
+                && board == alice.id()
+                && error.contains("not authorised")
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the remaining members should reject the returning device's sync");
+    assert_eq!(
+        chloe.member_state().await.unwrap(),
+        MemberState::Member(Role::Read)
+    );
     c.shutdown().await.unwrap();
     b.shutdown().await.unwrap();
     a.shutdown().await.unwrap();
