@@ -100,7 +100,8 @@ impl Query<'_> {
     /// Resolves the filter before evaluating any task.
     pub fn prepare<'view>(&self, view: &'view BoardView) -> Result<Prepared<'view>, QueryError> {
         let mut saved = SavedViews::new(self.context.views);
-        let predicates = prepare(view, self.filter, &self.context, &mut saved)?.value;
+        let mut operands = Operands::new(view, &self.context);
+        let predicates = prepare(self.filter, &mut operands, &mut saved)?.value;
         Ok(Prepared {
             predicates,
             view_count: saved.len(),
@@ -173,9 +174,8 @@ impl TaskEvaluation<'_> {
 }
 
 fn prepare(
-    view: &BoardView,
     filter: &Filter,
-    context: &Context<'_>,
+    operands: &mut Operands<'_>,
     saved: &mut SavedViews<'_, Rc<ViewChecks>>,
 ) -> Result<Expanded<Vec<Check>>, QueryError> {
     let mut predicates = Vec::new();
@@ -187,14 +187,14 @@ fn prepare(
                 continue;
             }
             Clause::Text(text) => {
-                if !view.comments_loaded() {
+                if !operands.view.comments_loaded() {
                     return Err(saved.error(term, QueryErrorKind::CommentsRequired));
                 }
                 CheckKind::Text(fold(text))
             }
             Clause::View(name) => {
                 let nested = saved.expand(term, name, |saved, nested| {
-                    let expanded = prepare(view, nested, context, saved)?;
+                    let expanded = prepare(nested, operands, saved)?;
                     Ok(Expanded {
                         value: Rc::new(ViewChecks {
                             id: saved.len(),
@@ -207,8 +207,8 @@ fn prepare(
                 CheckKind::View(nested.value)
             }
             clause => {
-                let Some(predicate) = prepare_clause(view, clause, context)
-                    .map_err(|kind| saved.error(term, kind))?
+                let Some(predicate) =
+                    prepare_clause(clause, operands).map_err(|kind| saved.error(term, kind))?
                 else {
                     continue;
                 };
@@ -227,9 +227,8 @@ fn prepare(
 }
 
 fn prepare_clause(
-    view: &BoardView,
     clause: &Clause,
-    context: &Context<'_>,
+    operands: &mut Operands<'_>,
 ) -> Result<Option<Predicate>, QueryErrorKind> {
     let predicate: Predicate = match clause.clone() {
         Clause::Is(values) => Box::new(move |task| values.iter().any(|value| is(task, *value))),
@@ -241,14 +240,16 @@ fn prepare_clause(
         Clause::Assignee(values) => {
             let ids = values
                 .iter()
-                .map(|value| resolve_person(context, value))
+                .map(|value| operands.person(value))
                 .collect::<Result<Vec<_>, _>>()?;
             Box::new(move |task| ids.iter().any(|id| task.assignees.contains(id)))
         }
-        Clause::Parent(values) => relation(view, &values, |task, id| task.parent == Some(id))?,
-        Clause::Blocks(values) => relation(view, &values, |task, id| task.blocks.contains(&id))?,
+        Clause::Parent(values) => relation(operands, &values, |task, id| task.parent == Some(id))?,
+        Clause::Blocks(values) => {
+            relation(operands, &values, |task, id| task.blocks.contains(&id))?
+        }
         Clause::BlockedBy(values) => {
-            relation(view, &values, |task, id| task.blocked_by.contains(&id))?
+            relation(operands, &values, |task, id| task.blocked_by.contains(&id))?
         }
         Clause::Priority(values) => Box::new(move |task| compare(task.priority, &values)),
         Clause::Due(values) => Box::new(move |task| compare(task.due, &values)),
@@ -288,34 +289,71 @@ fn resolve_person(
 }
 
 fn relation(
-    view: &BoardView,
+    operands: &mut Operands<'_>,
     values: &[String],
     contains: fn(&TaskRecord, TaskId) -> bool,
 ) -> Result<Predicate, QueryErrorKind> {
-    let ids = resolve_prefixes(view, values)?;
+    let ids = values
+        .iter()
+        .map(|prefix| operands.prefix(prefix))
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Box::new(move |task| {
         ids.iter().any(|&id| contains(task, id))
     }))
 }
 
-fn resolve_prefixes(view: &BoardView, prefixes: &[String]) -> Result<Vec<TaskId>, QueryErrorKind> {
-    prefixes
-        .iter()
-        .map(|prefix| match view.resolve_prefix(prefix) {
+struct Operands<'a> {
+    view: &'a BoardView,
+    context: &'a Context<'a>,
+    people: BTreeMap<String, IdentityId>,
+    prefixes: BTreeMap<String, TaskId>,
+}
+
+impl<'a> Operands<'a> {
+    fn new(view: &'a BoardView, context: &'a Context<'a>) -> Self {
+        Self {
+            view,
+            context,
+            people: BTreeMap::new(),
+            prefixes: BTreeMap::new(),
+        }
+    }
+
+    fn person(&mut self, assignee: &Assignee) -> Result<IdentityId, QueryErrorKind> {
+        if let Assignee::Person(text) = assignee {
+            if let Some(&id) = self.people.get(text) {
+                return Ok(id);
+            }
+            let id = resolve_person(self.context, assignee)?;
+            self.people.insert(text.clone(), id);
+            Ok(id)
+        } else {
+            resolve_person(self.context, assignee)
+        }
+    }
+
+    fn prefix(&mut self, prefix: &str) -> Result<TaskId, QueryErrorKind> {
+        let key = prefix.to_ascii_lowercase();
+        if let Some(&id) = self.prefixes.get(&key) {
+            return Ok(id);
+        }
+        let id = match self.view.resolve_prefix(prefix) {
             Ok(PrefixResolution::One(id)) => Ok(id),
             Ok(PrefixResolution::None) => Err(QueryErrorKind::UnknownTaskPrefix {
-                prefix: prefix.clone(),
+                prefix: prefix.into(),
             }),
             Ok(PrefixResolution::Ambiguous { count, candidates }) => {
                 Err(QueryErrorKind::AmbiguousTaskPrefix {
-                    prefix: prefix.clone(),
+                    prefix: prefix.into(),
                     count,
                     candidates,
                 })
             }
             Err(_) => Err(QueryErrorKind::InvalidTaskPrefix {
-                prefix: prefix.clone(),
+                prefix: prefix.into(),
             }),
-        })
-        .collect()
+        }?;
+        self.prefixes.insert(key, id);
+        Ok(id)
+    }
 }

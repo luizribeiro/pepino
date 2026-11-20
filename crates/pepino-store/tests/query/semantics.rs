@@ -73,6 +73,7 @@ fn relations_use_resolved_prefixes_and_effective_direct_edges() {
     check("blocks:abcd01", &[1]);
     check("blocks:ABCD02", &[]);
     check("blocks:0707", &[0]);
+    check("blocks:ABCD01 blocks:abcd01 -parent:abcd01", &[1]);
     check("blocked-by:ABCD02", &[0]);
     check("blocked-by:abcd01,0303", &[6, 8]);
     check("tag:garden -parent:0808,abcd01 blocks:0707", &[0]);
@@ -183,9 +184,11 @@ fn prepared_queries_reuse_resolved_operands_across_tasks() {
         calls.set(calls.get() + 1);
         vec![super::ANA]
     };
-    let filter = filter("assignee:ana");
+    let filter = filter("assignee:ana assignee:ana,ana @ana");
+    let saved = std::collections::BTreeMap::from([("ana", super::filter("assignee:ana"))]);
     let mut query = query(&filter);
     query.context.people = &people;
+    query.context.views = &saved;
     let prepared = query.prepare(board()).unwrap();
     assert_eq!(calls.get(), 1);
     let matched: Vec<_> = board()
