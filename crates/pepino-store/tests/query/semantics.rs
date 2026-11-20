@@ -145,11 +145,16 @@ fn board_terms_are_ignored_at_each_level_even_when_negated() {
 }
 
 #[test]
-fn query_accepts_contact_maps() {
-    let filter = filter(r#"assignee:"Ana Maria" is:open"#);
-    let contacts = std::collections::BTreeMap::from([("Ana Maria", vec![super::ANA])]);
+fn query_accepts_contact_maps_and_saved_view_closures() {
+    use std::collections::BTreeMap;
+
+    let filter = filter("@weekend");
+    let saved = super::filter(r#"assignee:"Ana Maria" is:open"#);
+    let views = |name: &str| (name == "weekend").then(|| saved.clone());
+    let contacts = BTreeMap::from([("Ana Maria", vec![super::ANA])]);
     let mut query = query(&filter);
     query.context.people = &contacts;
+    query.context.views = &views;
     assert_eq!(
         select(board(), &query)
             .unwrap()

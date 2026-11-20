@@ -15,7 +15,7 @@ use pepino_core::{
     IdentityId,
     filter::{Filter, parse},
 };
-use pepino_store::query::{Context, Query, ViewResolver};
+use pepino_store::query::{Context, Query};
 
 use fixture::{ANA, BOB, date};
 
@@ -29,7 +29,7 @@ fn query(filter: &Filter) -> Query<'_> {
         context: Context {
             me: Some(ANA),
             people: &people,
-            views: &TestViews,
+            views: views(),
         },
     }
 }
@@ -44,28 +44,22 @@ fn people(text: &str) -> Vec<IdentityId> {
     }
 }
 
-struct TestViews;
-
-impl ViewResolver for TestViews {
-    fn resolve(&self, name: &str) -> Option<&Filter> {
-        static VIEWS: OnceLock<BTreeMap<&str, Filter>> = OnceLock::new();
-        VIEWS
-            .get_or_init(|| {
-                [
-                    ("garden-open", "tag:garden is:open"),
-                    ("weekend", "@garden-open due:2026-11-20"),
-                    ("empty", ""),
-                    ("local", "-board:elsewhere tag:garden"),
-                    ("self", "@self"),
-                    ("entry", "@cycle-a"),
-                    ("cycle-a", "@cycle-b"),
-                    ("cycle-b", "-@cycle-a"),
-                    ("unknown", "@missing"),
-                ]
-                .into_iter()
-                .map(|(name, input)| (name, filter(input)))
-                .collect()
-            })
-            .get(name)
-    }
+fn views() -> &'static BTreeMap<&'static str, Filter> {
+    static VIEWS: OnceLock<BTreeMap<&str, Filter>> = OnceLock::new();
+    VIEWS.get_or_init(|| {
+        [
+            ("garden-open", "tag:garden is:open"),
+            ("weekend", "@garden-open due:2026-11-20"),
+            ("empty", ""),
+            ("local", "-board:elsewhere tag:garden"),
+            ("self", "@self"),
+            ("entry", "@cycle-a"),
+            ("cycle-a", "@cycle-b"),
+            ("cycle-b", "-@cycle-a"),
+            ("unknown", "@missing"),
+        ]
+        .into_iter()
+        .map(|(name, input)| (name, filter(input)))
+        .collect()
+    })
 }

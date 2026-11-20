@@ -31,7 +31,19 @@ impl<K: Borrow<str> + Ord> PersonResolver for BTreeMap<K, Vec<IdentityId>> {
 
 /// Looks up parsed saved filters by name, without the leading `@`.
 pub trait ViewResolver {
-    fn resolve(&self, name: &str) -> Option<&Filter>;
+    fn resolve(&self, name: &str) -> Option<Filter>;
+}
+
+impl<F: Fn(&str) -> Option<Filter>> ViewResolver for F {
+    fn resolve(&self, name: &str) -> Option<Filter> {
+        self(name)
+    }
+}
+
+impl<K: Borrow<str> + Ord> ViewResolver for BTreeMap<K, Filter> {
+    fn resolve(&self, name: &str) -> Option<Filter> {
+        self.get(name).cloned()
+    }
 }
 
 /// The current identity and in-memory resolvers supplied by the caller.
@@ -73,9 +85,9 @@ fn all_match(predicates: &[Predicate<'_>], task: &TaskRecord) -> bool {
 
 fn prepare<'a>(
     view: &'a BoardView,
-    filter: &'a Filter,
+    filter: &Filter,
     context: &Context<'a>,
-    chain: &mut Vec<&'a str>,
+    chain: &mut Vec<String>,
 ) -> Result<Vec<Predicate<'a>>, QueryError> {
     let mut predicates = Vec::<Predicate<'a>>::new();
     for term in filter.terms() {
@@ -87,8 +99,8 @@ fn prepare<'a>(
             Clause::Board(_) => continue,
             Clause::View(name) => {
                 let nested = resolve_view(context, chain, name).map_err(at_term)?;
-                chain.push(name);
-                let nested = prepare(view, nested, context, chain)?;
+                chain.push(name.clone());
+                let nested = prepare(view, &nested, context, chain)?;
                 chain.pop();
                 Box::new(move |task: &TaskRecord| all_match(&nested, task)) as Predicate<'a>
             }
@@ -103,19 +115,14 @@ fn prepare<'a>(
     Ok(predicates)
 }
 
-fn resolve_view<'a>(
-    context: &Context<'a>,
-    chain: &[&str],
+fn resolve_view(
+    context: &Context<'_>,
+    chain: &[String],
     name: &str,
-) -> Result<&'a Filter, QueryErrorKind> {
-    if chain.contains(&name) {
+) -> Result<Filter, QueryErrorKind> {
+    if chain.iter().any(|active| active == name) {
         return Err(QueryErrorKind::ViewCycle {
-            chain: chain
-                .iter()
-                .copied()
-                .chain([name])
-                .map(str::to_owned)
-                .collect(),
+            chain: chain.iter().cloned().chain([name.to_owned()]).collect(),
         });
     }
     context
@@ -126,12 +133,12 @@ fn resolve_view<'a>(
 
 fn prepare_clause<'a>(
     view: &'a BoardView,
-    clause: &'a Clause,
+    clause: &Clause,
     context: &Context<'a>,
 ) -> Result<Predicate<'a>, QueryErrorKind> {
-    let predicate: Predicate<'a> = match clause {
+    let predicate: Predicate<'a> = match clause.clone() {
         Clause::Text(text) => {
-            let needle = fold(text);
+            let needle = fold(&text);
             Box::new(move |task| text_matches(view, task, &needle))
         }
         Clause::Is(values) => Box::new(move |task| values.iter().any(|value| is(task, *value))),
@@ -148,28 +155,28 @@ fn prepare_clause<'a>(
             Box::new(move |task| ids.iter().any(|id| task.assignees.contains(id)))
         }
         Clause::Parent(values) => {
-            let ids = resolve_prefixes(view, values)?;
+            let ids = resolve_prefixes(view, &values)?;
             Box::new(move |task| task.parent.is_some_and(|parent| ids.contains(&parent)))
         }
         Clause::Blocks(values) => {
-            let ids = resolve_prefixes(view, values)?;
+            let ids = resolve_prefixes(view, &values)?;
             Box::new(move |task| ids.iter().any(|id| task.blocks.contains(id)))
         }
         Clause::BlockedBy(values) => {
-            let ids = resolve_prefixes(view, values)?;
+            let ids = resolve_prefixes(view, &values)?;
             Box::new(move |task| ids.iter().any(|id| task.blocked_by.contains(id)))
         }
-        Clause::Priority(values) => Box::new(move |task| compare(task.priority, values)),
-        Clause::Due(values) => Box::new(move |task| compare(task.due, values)),
-        Clause::Created(values) => Box::new(move |task| utc_days(task.created, values)),
-        Clause::Updated(values) => Box::new(move |task| utc_days(task.updated, values)),
+        Clause::Priority(values) => Box::new(move |task| compare(task.priority, &values)),
+        Clause::Due(values) => Box::new(move |task| compare(task.due, &values)),
+        Clause::Created(values) => Box::new(move |task| utc_days(task.created, &values)),
+        Clause::Updated(values) => Box::new(move |task| utc_days(task.updated, &values)),
         Clause::Custom {
             field,
             alternatives,
         } => Box::new(move |task| {
             task.custom
-                .get(field)
-                .is_some_and(|value| custom(value, alternatives))
+                .get(&field)
+                .is_some_and(|value| custom(value, &alternatives))
         }),
         Clause::Board(_) | Clause::View(_) => unreachable!("handled during filter preparation"),
     };
