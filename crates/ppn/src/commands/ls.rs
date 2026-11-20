@@ -9,7 +9,7 @@ use ppn::terminal::Context;
 use serde_json::{Map, json};
 
 #[derive(clap::Args)]
-#[command(about = "List tasks matching an optional filter.", after_help = example_help(&[
+#[command(about = "List tasks matching an optional filter.", long_about = "List tasks matching an optional filter. See ppn help filters.", after_help = example_help(&[
     "ppn ls tag:hardware",
     "ppn ls status:done assignee:me --sort created,-due",
     "ppn ls 'due:<fri' -tag:someday",

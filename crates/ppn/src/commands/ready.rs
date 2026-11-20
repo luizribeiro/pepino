@@ -7,7 +7,7 @@ use super::ls;
 
 #[derive(clap::Args)]
 #[group(skip)]
-#[command(about = "List tasks that are ready to start.", after_help = example_help(&[
+#[command(about = "List tasks that are ready to start.", long_about = "List tasks that are ready to start. See ppn help filters.", after_help = example_help(&[
     "ppn ready tag:hardware", "ppn ready assignee:me --json",
 ]))]
 pub struct Args {

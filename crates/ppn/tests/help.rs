@@ -211,3 +211,11 @@ fn topics_are_available_without_a_board_in_both_formats() {
         6
     );
 }
+
+#[test]
+fn commands_that_accept_filters_link_to_the_grammar() {
+    for path in [&["ls"][..], &["ready"], &["view", "save"]] {
+        let invocation = [path, &["--help"]].concat();
+        assert!(run_ppn(&invocation).contains("ppn help filters"));
+    }
+}

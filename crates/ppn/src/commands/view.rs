@@ -27,7 +27,7 @@ enum Action {
     Save {
         /// Name of the view to save.
         name: String,
-        /// Filter terms to save.
+        /// Filter terms to save. See ppn help filters.
         #[arg(required = true, value_name = "FILTER", value_parser = crate::cli::filter::unescape_term)]
         filter: Vec<String>,
     },
