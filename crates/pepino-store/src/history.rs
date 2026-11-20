@@ -1,5 +1,5 @@
 use pepino_core::{BoardId, DecodeOutcome, DeviceId, Envelope, Event, EventId, Hlc, TaskId};
-use sqlx::{FromRow, SqliteConnection};
+use sqlx::{Connection, FromRow, SqliteConnection};
 
 use crate::{BoardKey, Store, StoreError};
 
@@ -126,20 +126,6 @@ impl StoredEvent {
 }
 
 impl Store {
-    pub async fn history(
-        &self,
-        board: BoardId,
-        task: Option<TaskId>,
-        limit: Option<usize>,
-    ) -> Result<Vec<HistoryEvent>, StoreError> {
-        Ok(self
-            .history_rows(board, task, limit)
-            .await?
-            .into_iter()
-            .map(|(_, event)| event)
-            .collect())
-    }
-
     pub async fn events(
         &self,
         board: BoardId,
@@ -173,12 +159,12 @@ impl Store {
             .collect())
     }
 
-    async fn history_rows(
+    pub async fn history(
         &self,
         board: BoardId,
         task: Option<TaskId>,
         limit: Option<usize>,
-    ) -> Result<Vec<(StoredEvent, HistoryEvent)>, StoreError> {
+    ) -> Result<History, StoreError> {
         let sql_limit = limit.and_then(|n| i64::try_from(n).ok()).unwrap_or(-1);
         if let Some(task) = task {
             let rows = self
@@ -196,35 +182,45 @@ impl Store {
                     .await
                 })
                 .await?;
-            return rows
-                .into_iter()
-                .rev()
-                .map(|row| {
-                    let event = row.decode()?;
-                    Ok((row, event))
-                })
-                .collect();
+            return Ok(History {
+                events: decode_ordered(&rows)?,
+                unordered: Vec::new(),
+            });
         }
-        let rows = self
+        let (rows, unordered) = self
             .read(async |connection| {
-                sqlx::query_as::<_, StoredEvent>(
+                let mut snapshot = connection.begin().await?;
+                let rows = sqlx::query_as::<_, StoredEvent>(
                     "SELECT id, classification, bytes FROM event_log
-                     WHERE board = ? ORDER BY hlc DESC, id DESC LIMIT ?",
+                 WHERE board = ? AND hlc IS NOT NULL ORDER BY hlc DESC, id DESC LIMIT ?",
                 )
                 .bind(BoardKey(board))
                 .bind(sql_limit)
-                .fetch_all(connection)
-                .await
+                .fetch_all(&mut *snapshot)
+                .await?;
+                let unordered = sqlx::query_as::<_, StoredEvent>(
+                    "SELECT id, classification, bytes FROM event_log
+                 WHERE board = ? AND hlc IS NULL ORDER BY id",
+                )
+                .bind(BoardKey(board))
+                .fetch_all(&mut *snapshot)
+                .await?;
+                snapshot.commit().await?;
+                Ok((rows, unordered))
             })
             .await?;
-        rows.into_iter()
-            .rev()
-            .map(|row| {
-                let event = row.decode()?;
-                Ok((row, event))
-            })
-            .collect()
+        Ok(History {
+            events: decode_ordered(&rows)?,
+            unordered: unordered
+                .iter()
+                .map(StoredEvent::decode)
+                .collect::<Result<_, _>>()?,
+        })
     }
+}
+
+fn decode_ordered(rows: &[StoredEvent]) -> Result<Vec<HistoryEvent>, StoreError> {
+    rows.iter().rev().map(StoredEvent::decode).collect()
 }
 
 #[cfg(test)]

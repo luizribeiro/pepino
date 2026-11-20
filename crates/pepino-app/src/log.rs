@@ -93,12 +93,18 @@ impl App {
         } else {
             None
         };
-        let events = self
+        let history = self
             .store
             .history(self.local.board_id, task, limit)
             .await
-            .map_err(store_error)?
-            .into_iter()
+            .map_err(store_error)?;
+        let unordered =
+            history
+                .unordered
+                .into_iter()
+                .take(if limit == Some(0) { 0 } else { usize::MAX });
+        let events = unordered
+            .chain(history.events)
             .map(EventRecord::try_from)
             .collect::<Result<_, _>>()?;
         Ok(Response::Log { events })

@@ -120,32 +120,35 @@ async fn board_history_keeps_skips_and_limits_after_task_filtering() {
             .unwrap();
     }
     let history = store.history(board, None, None).await.unwrap();
+    let events = &history.events;
     assert_eq!(
-        history
+        events
             .iter()
             .map(|item| item.classification)
             .collect::<Vec<_>>(),
-        [UnknownVersion, Applied, UnknownEvent]
+        [Applied, UnknownEvent]
     );
-    assert_eq!(history[0].decoded.hlc(), None);
-    assert_eq!(history[0].decoded.author(), None);
-    assert_eq!(history[1].event, Some(comment));
-    assert_eq!(history[2].decoded.author(), Some(author));
-    assert_eq!(history[2].decoded.hlc(), Some(hlc));
-    assert_eq!(history[2].tasks, [task]);
+    assert_eq!(history.unordered[0].decoded.hlc(), None);
+    assert_eq!(history.unordered[0].decoded.author(), None);
+    assert_eq!(events[0].event, Some(comment));
+    assert_eq!(events[1].decoded.author(), Some(author));
+    assert_eq!(events[1].decoded.hlc(), Some(hlc));
+    assert_eq!(events[1].tasks, [task]);
+    assert_eq!(store.history(board, None, Some(2)).await.unwrap(), history);
     assert_eq!(
-        store.history(board, None, Some(2)).await.unwrap(),
-        history[1..]
-    );
-    assert_eq!(
-        store.history(board, Some(task), Some(1)).await.unwrap(),
-        history[2..]
+        store
+            .history(board, Some(task), Some(1))
+            .await
+            .unwrap()
+            .events,
+        events[1..]
     );
     assert!(
         store
             .history(board, None, Some(0))
             .await
             .unwrap()
+            .events
             .is_empty()
     );
     assert!(
@@ -153,7 +156,12 @@ async fn board_history_keeps_skips_and_limits_after_task_filtering() {
             .history(board, Some(TaskId::from_bytes([3; 32])), None)
             .await
             .unwrap()
+            .events
             .is_empty()
+    );
+    assert_eq!(
+        store.history(board, None, Some(0)).await.unwrap().unordered,
+        history.unordered
     );
     let replay = store.events(board, task).await.unwrap();
     assert_eq!(replay.len(), 1);
