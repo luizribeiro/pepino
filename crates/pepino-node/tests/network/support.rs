@@ -15,15 +15,15 @@ use tokio::time::{Instant, sleep, timeout};
 pub const WAIT: Duration = Duration::from_secs(60);
 
 pub async fn until<T: Debug>(
-    mut observe: impl FnMut() -> T,
+    mut observe: impl AsyncFnMut() -> T,
     condition: impl Fn(&T) -> bool,
     timeout: Duration,
-) {
+) -> T {
     let deadline = Instant::now() + timeout;
     loop {
-        let observed = observe();
+        let observed = observe().await;
         if condition(&observed) {
-            return;
+            return observed;
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(

@@ -41,7 +41,8 @@ async fn dropping_without_shutdown_releases_the_udp_port() {
     let node = start(&settings).await;
     assert!(UdpSocket::bind((address, port)).is_err());
     drop(node);
-    until(|| UdpSocket::bind((address, port)), Result::is_ok, WAIT).await;
+    let bind = async || UdpSocket::bind((address, port));
+    let _socket = until(bind, Result::is_ok, WAIT).await;
 }
 
 #[tokio::test]

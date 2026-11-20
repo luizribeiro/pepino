@@ -1,14 +1,21 @@
 use std::{
     collections::{HashMap, HashSet},
+    net::Ipv6Addr,
     os::unix::process::ExitStatusExt,
     path::PathBuf,
     process::Command,
 };
 
+use p2panda_net::{addrs::NodeInfo, iroh_endpoint::EndpointAddr};
+use p2panda_store::{Transaction, address_book::AddressBookStore, sqlite::SqliteStore};
 use pepino_core::{BoardId, EventId};
-use pepino_node::{BoardHandle, Role};
+use pepino_node::{BoardHandle, MdnsMode, Node, NodeSettings, Role};
+use sqlx::{
+    SqlitePool,
+    sqlite::{SqliteConnectOptions, SqliteJournalMode},
+};
 
-use super::support::{WAIT, fixture_dir, network, next, settings, start};
+use super::support::{WAIT, fixture_dir, network, next, settings, start, until};
 
 const EVENTS: usize = 24;
 
@@ -22,12 +29,17 @@ async fn abort_recovers_exactly_the_random_unacknowledged_subset() {
     let dir = fixture_dir();
     let network = network(dir.path());
     let owner_dir = dir.path().join("alice");
-    let config = settings(&network, owner_dir.clone());
-    let ben = settings(&network, dir.path().join("ben"));
-    let chloe = settings(&network, dir.path().join("chloe"));
-    let (a, b, c) = tokio::join!(start(&config), start(&ben), start(&chloe));
+    let config = local_settings(&network, owner_dir.clone());
+    let ben = local_settings(&network, dir.path().join("ben"));
+    let chloe = local_settings(&network, dir.path().join("chloe"));
+    let a = start(&config).await;
     let mut owner = a.create_board().await.unwrap();
     let board_id = owner.id();
+    let owner_info = owner_peer_info(&config, &a).await;
+    let (b, c) = tokio::join!(
+        start_peer(&ben, &owner_info, board_id),
+        start_peer(&chloe, &owner_info, board_id),
+    );
     let (other, third) = tokio::try_join!(b.open_board(board_id), c.open_board(board_id)).unwrap();
     for member in [&b, &c] {
         owner
@@ -100,6 +112,66 @@ async fn abort_recovers_exactly_the_random_unacknowledged_subset() {
     a.shutdown().await.unwrap();
 }
 
+fn local_settings(network: &str, dir: PathBuf) -> NodeSettings {
+    let mut settings = settings(network, dir);
+    settings.mdns = MdnsMode::Disabled;
+    settings.bind_ip_v6 = Some(Ipv6Addr::LOCALHOST);
+    settings
+}
+
+async fn address_book(settings: &NodeSettings, create: bool) -> SqlitePool {
+    let options = SqliteConnectOptions::new()
+        .filename(&settings.database_path)
+        .create_if_missing(create)
+        .journal_mode(SqliteJournalMode::Wal);
+    SqlitePool::connect_with(options).await.unwrap()
+}
+
+async fn owner_peer_info(settings: &NodeSettings, owner: &Node) -> NodeInfo {
+    let pool = address_book(settings, false).await;
+    let store = SqliteStore::from_pool(pool.clone());
+    let id = p2panda::VerifyingKey::from_bytes(owner.device_id().as_bytes()).unwrap();
+    let endpoint = until(
+        async || {
+            AddressBookStore::<_, NodeInfo>::node_info(&store, &id)
+                .await
+                .unwrap()
+                .and_then(|info| EndpointAddr::try_from(info).ok())
+        },
+        |endpoint| {
+            endpoint
+                .as_ref()
+                .is_some_and(|value| value.ip_addrs().any(|addr| addr.ip().is_loopback()))
+        },
+        WAIT,
+    )
+    .await
+    .unwrap();
+    pool.close().await;
+    let addrs = endpoint
+        .ip_addrs()
+        .copied()
+        .filter(|addr| addr.ip().is_loopback());
+    NodeInfo::from(addrs.fold(EndpointAddr::new(endpoint.id), EndpointAddr::with_ip_addr))
+}
+
+async fn start_peer(settings: &NodeSettings, owner: &NodeInfo, board: BoardId) -> Node {
+    let pool = address_book(settings, true).await;
+    p2panda_store::sqlite::run_pending_migrations(&pool)
+        .await
+        .unwrap();
+    let store = SqliteStore::from_pool(pool.clone());
+    let transaction = store.begin().await.unwrap();
+    store.insert_node_info_tx(owner.clone()).await.unwrap();
+    let topics = [p2panda::Topic::from(*board.as_bytes())].into();
+    AddressBookStore::<_, NodeInfo>::set_topics_tx(&store, owner.node_id, topics)
+        .await
+        .unwrap();
+    store.commit(transaction).await.unwrap();
+    pool.close().await;
+    start(settings).await
+}
+
 async fn publish_history(board: &BoardHandle, author: usize) -> Vec<(EventId, usize)> {
     let mut sent = Vec::new();
     for index in (author..EVENTS).step_by(3) {
@@ -121,7 +193,7 @@ async fn abort_after_acknowledging() {
         .parse()
         .unwrap();
     let mask: u32 = std::env::var("PEPINO_CRASH_MASK").unwrap().parse().unwrap();
-    let node = start(&settings(&network, PathBuf::from(dir))).await;
+    let node = start(&local_settings(&network, PathBuf::from(dir))).await;
     let mut board = node.open_board(board_id).await.unwrap();
     let mut events = board.events().unwrap();
     let mut selected = Vec::new();
