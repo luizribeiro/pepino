@@ -1,25 +1,10 @@
 use std::{sync::Arc, time::Duration};
 
-use futures_util::StreamExt;
 use pepino_core::{BoardId, DeviceId};
 use serde_json::json;
 
-use super::{directory, stub::Stub};
+use super::{directory, stub::Stub, wait_for_status};
 use crate::{Status, SyncEngine};
-
-pub(super) async fn until(engine: &SyncEngine<Stub>, condition: impl Fn(&Status) -> bool) {
-    let mut updates = engine.status_changes().boxed();
-    tokio::time::timeout(Duration::from_secs(10), async {
-        while let Some(status) = updates.next().await {
-            if condition(&status) {
-                return;
-            }
-        }
-        panic!("engine stopped before publishing the expected status");
-    })
-    .await
-    .unwrap();
-}
 
 #[tokio::test]
 async fn publishes_existing_local_writes_in_store_order() {
@@ -40,7 +25,7 @@ async fn publishes_existing_local_writes_in_store_order() {
     let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
         .await
         .unwrap();
-    until(&engine, Status::is_idle).await;
+    wait_for_status(&engine, Status::is_idle).await;
     let snapshot = engine.status();
     assert_eq!(snapshot.boards[&board].published, 2);
     assert_eq!(snapshot.boards[&board].received, 0);
@@ -105,7 +90,7 @@ async fn the_periodic_scan_recovers_a_missed_nudge() {
         json!({"op":"add_task","title":"Rehang the potting-shed door"}),
     )
     .await;
-    until(&engine, |status| {
+    wait_for_status(&engine, |status| {
         status.boards[&board].last_published.is_some()
     })
     .await;
@@ -134,14 +119,14 @@ async fn a_crash_after_confirmation_resends_once_and_the_receiver_deduplicates()
     let engine = SyncEngine::start(settings, node.clone(), dir.path())
         .await
         .unwrap();
-    until(&engine, |state| state.boards[&board].last_error.is_some()).await;
+    wait_for_status(&engine, |state| state.boards[&board].last_error.is_some()).await;
     let lock = std::fs::File::options()
         .write(true)
         .open(dir.path().join("local.lock"))
         .unwrap();
     lock.try_lock().unwrap();
     node.reject(false);
-    until(&engine, |state| {
+    wait_for_status(&engine, |state| {
         state.boards[&board]
             .last_error
             .as_deref()
@@ -311,7 +296,7 @@ async fn retries_a_failed_outbox_read_without_a_nudge_or_periodic_scan() {
     .await;
     let started = tokio::time::Instant::now();
     engine.nudge();
-    until(&engine, |status| {
+    wait_for_status(&engine, |status| {
         status.boards[&board].outbox_pending.is_none()
             && status.boards[&board]
                 .last_error
@@ -325,7 +310,7 @@ async fn retries_a_failed_outbox_read_without_a_nudge_or_periodic_scan() {
         .execute(&mut db)
         .await
         .unwrap();
-    until(&engine, Status::is_idle).await;
+    wait_for_status(&engine, Status::is_idle).await;
     assert!(started.elapsed() >= Duration::from_millis(25));
     assert_eq!(node.published().len(), 1);
     engine.shutdown().await.unwrap();
@@ -348,7 +333,7 @@ async fn a_publication_waits_for_board_startup_without_recording_a_failure() {
     let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
         .await
         .unwrap();
-    until(&engine, Status::is_idle).await;
+    wait_for_status(&engine, Status::is_idle).await;
     assert_eq!(engine.status().boards[&board].published, 1);
     node.fail_next_publish(PublishFault::Joining);
     directory::write(
@@ -357,7 +342,7 @@ async fn a_publication_waits_for_board_startup_without_recording_a_failure() {
     )
     .await;
     engine.nudge();
-    until(&engine, |status| status.boards[&board].published == 2).await;
+    wait_for_status(&engine, |status| status.boards[&board].published == 2).await;
     assert!(engine.status().boards[&board].last_error.is_none());
     engine.shutdown().await.unwrap();
 }

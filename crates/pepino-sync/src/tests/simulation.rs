@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use pepino_app::App;
 use pepino_core::{BoardId, DeviceId};
 
-use super::{directory, stub::Stub};
+use super::{WAIT, directory, stub::Stub};
 use crate::SyncEngine;
 
 pub(super) struct Device {
@@ -29,8 +29,7 @@ impl Device {
     }
 
     pub(super) async fn start_with(&mut self, configure: impl FnOnce(&Stub)) {
-        self.start_with_lock_timeout(Duration::from_secs(60), configure)
-            .await;
+        self.start_with_lock_timeout(WAIT, configure).await;
     }
 
     pub(super) async fn start_with_lock_timeout(
@@ -62,7 +61,7 @@ impl Device {
 
     pub(super) async fn drain(&self) {
         if let Some(engine) = &self.engine {
-            engine.wait_idle(Duration::from_secs(60)).await.unwrap();
+            engine.wait_idle(WAIT).await.unwrap();
         }
     }
 }

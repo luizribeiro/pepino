@@ -88,7 +88,7 @@ async fn scenario(actions: Vec<(u8, u8)>) -> Result<(), TestCaseError> {
                 let lock = devices[who].lock_store();
                 let acknowledged = wire.acknowledged(who).count();
                 if wire.send(who, &devices[who].node, 1 - who, 1, 0) {
-                    super::publish::until(devices[who].engine.as_ref().unwrap(), |status| {
+                    super::wait_for_status(devices[who].engine.as_ref().unwrap(), |status| {
                         status.boards[&board].ingest_pending
                     })
                     .await;
@@ -193,7 +193,7 @@ async fn seed_publications(
     let first = write_event(&mut devices[0], "Check the sash hinges").await;
     let second = write_event(&mut devices[0], "Order a replacement latch").await;
     devices[0].start_with(|node| node.reject(true)).await;
-    super::publish::until(devices[0].engine.as_ref().unwrap(), |status| {
+    super::wait_for_status(devices[0].engine.as_ref().unwrap(), |status| {
         status.boards[&board]
             .last_error
             .as_deref()
@@ -234,7 +234,7 @@ async fn seed_publications(
 }
 
 async fn wait_busy(device: &Device, board: BoardId) {
-    super::publish::until(device.engine.as_ref().unwrap(), |status| {
+    super::wait_for_status(device.engine.as_ref().unwrap(), |status| {
         let board = &status.boards[&board];
         board.last_error.as_deref().is_some_and(|error| {
             error.starts_with("store operation") && error.contains("holds the data directory")

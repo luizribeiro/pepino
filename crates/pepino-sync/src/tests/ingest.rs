@@ -203,7 +203,7 @@ async fn waits_for_a_connected_peers_first_pull_and_ingests_its_events() {
         let idle = engine.wait_idle(limit);
         tokio::pin!(idle);
         assert_eq!(futures_util::poll!(&mut idle).map(|_| ()), Poll::Pending);
-        super::publish::until(&engine, |status| {
+        super::wait_for_status(&engine, |status| {
             status.boards[&board].scan_generation == Some(2)
         })
         .await;
@@ -310,7 +310,7 @@ async fn retries_ack_without_appending_again() {
         vec![0x82, 2, 0xf6],
         ack.clone().with_failures(2),
     );
-    super::publish::until(&engine, |s| {
+    super::wait_for_status(&engine, |s| {
         s.boards[&board]
             .last_error
             .as_deref()

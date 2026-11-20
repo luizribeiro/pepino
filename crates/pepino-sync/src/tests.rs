@@ -7,6 +7,46 @@ mod simulation;
 mod stub;
 mod wire;
 
+use std::{fmt::Debug, time::Duration};
+
+const WAIT: Duration = Duration::from_secs(60);
+
+async fn until<T: Debug>(
+    mut observe: impl AsyncFnMut() -> T,
+    condition: impl Fn(&T) -> bool,
+    deadline: Duration,
+) -> T {
+    let mut last = None;
+    tokio::time::timeout(deadline, async {
+        loop {
+            let observed = observe().await;
+            if condition(&observed) {
+                return observed;
+            }
+            last = Some(observed);
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!("condition timed out after {deadline:?}. Last observation: {last:?}")
+    })
+}
+
+async fn wait_for_status(
+    engine: &crate::SyncEngine<stub::Stub>,
+    condition: impl Fn(&crate::Status) -> bool,
+) -> crate::Status {
+    use futures_util::StreamExt;
+
+    let mut updates = engine.status_changes().boxed();
+    until(
+        async || updates.next().await.expect("engine status stream ended"),
+        condition,
+        WAIT,
+    )
+    .await
+}
+
 #[tokio::test]
 async fn opens_all_local_boards_and_joins_shutdown() {
     use crate::{Error, SyncEngine, Transport};
@@ -51,9 +91,7 @@ async fn opens_all_local_boards_and_joins_shutdown() {
         }
         panic!("node signal stream ended");
     };
-    tokio::time::timeout(std::time::Duration::from_secs(5), signal)
-        .await
-        .unwrap();
+    tokio::time::timeout(WAIT, signal).await.unwrap();
     engine.shutdown().await.unwrap();
     assert!(node.status().boards.is_empty());
 }
@@ -109,7 +147,7 @@ async fn rejected_head_retries_before_its_receipt_is_recorded() {
         );
         node.reject(false);
     };
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    tokio::time::timeout(WAIT, async {
         tokio::join!(
             publish(&app, id, &board, node.instance_id(), &status, event),
             release
