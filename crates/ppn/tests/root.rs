@@ -14,8 +14,7 @@ fn unknown_argument_is_a_usage_error() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.starts_with("error: unexpected argument '--unrecognized'"));
-    assert!(stderr.contains("\nhint: Usage: ppn"));
-    assert!(stderr.contains("try '--help'"));
+    assert!(!stderr.contains("hint:"));
     assert!(!stderr.contains('\x1b'));
 }
 
@@ -113,9 +112,7 @@ fn usage_hints_keep_claps_command_suggestions() {
         "unrecognized subcommand 'versionn'"
     );
     let hint = diagnostic["error"]["hint"].as_str().unwrap();
-    assert!(hint.contains("a similar subcommand exists: 'version'"));
-    assert!(hint.contains("Usage: ppn"));
-    assert!(hint.contains("try '--help'"));
+    assert_eq!(hint, "a similar subcommand exists: 'version'");
 }
 
 #[test]

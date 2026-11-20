@@ -114,13 +114,14 @@ impl CliError {
 
     pub fn usage(error: clap::Error) -> Self {
         let rendered = error.to_string();
-        let (message, details) = rendered
-            .trim()
-            .split_once('\n')
-            .unwrap_or((rendered.trim(), ""));
+        let rendered = rendered.trim();
+        let (message, details) = rendered.split_once("\n\n").unwrap_or((rendered, ""));
         let mut error = Self::new(ErrorKind::Usage, message.trim_start_matches("error: "));
-        if !details.trim().is_empty() {
-            error = error.with_hint(details.trim());
+        if let Some(tip) = details
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("tip: "))
+        {
+            error = error.with_hint(tip);
         }
         error
     }
