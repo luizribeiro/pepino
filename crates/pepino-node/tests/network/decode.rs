@@ -6,13 +6,11 @@ use pepino_core::BoardId;
 use pepino_node::Error;
 use tokio::time::timeout;
 
-use super::support::{WAIT, enabled, network, next, settings, start};
+use super::support::{WAIT, network, next, settings, start};
 
 #[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn a_decode_error_leaves_the_board_stream_open() {
-    if !enabled() {
-        return;
-    }
     let dir = tempfile::tempdir().unwrap();
     let network = network(dir.path());
     let raw = p2panda::builder()

@@ -5,13 +5,11 @@ use std::{
 
 use tokio::time::{sleep, timeout};
 
-use super::support::{enabled, network, settings, start};
+use super::support::{network, settings, start};
 
 #[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn shutdown_releases_the_udp_port_with_a_board_still_open() {
-    if !enabled() {
-        return;
-    }
     let dir = tempfile::tempdir().unwrap();
     let mut settings = settings(&network(dir.path()), dir.path().join("alice"));
     let address = Ipv4Addr::LOCALHOST;
@@ -29,10 +27,8 @@ async fn shutdown_releases_the_udp_port_with_a_board_still_open() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn dropping_without_shutdown_releases_the_udp_port() {
-    if !enabled() {
-        return;
-    }
     let dir = tempfile::tempdir().unwrap();
     let mut settings = settings(&network(dir.path()), dir.path().join("alice"));
     let address = Ipv4Addr::LOCALHOST;
@@ -55,10 +51,8 @@ async fn dropping_without_shutdown_releases_the_udp_port() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn closed_board_can_be_reopened_on_a_restarted_node() {
-    if !enabled() {
-        return;
-    }
     let dir = tempfile::tempdir().unwrap();
     let settings = settings(&network(dir.path()), dir.path().join("alice"));
     let node = start(&settings).await;

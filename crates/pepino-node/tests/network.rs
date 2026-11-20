@@ -17,10 +17,8 @@ const REVIEW: &[u8] = br#"{"kind":"comment","text":"Review rollback steps with o
 const DONE: &[u8] = br#"{"kind":"status","value":"done"}"#;
 
 #[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn two_devices_exchange_events_and_a_late_member_gets_history() {
-    if !enabled() {
-        return;
-    }
     let dir = tempfile::tempdir().unwrap();
     let network = network(dir.path());
     let a = start(&settings(&network, dir.path().join("alice"))).await;
@@ -108,10 +106,8 @@ async fn two_devices_exchange_events_and_a_late_member_gets_history() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn restart_recovers_acks_individually_and_catches_up_offline() {
-    if !enabled() {
-        return;
-    }
     let dir = tempfile::tempdir().unwrap();
     let network = network(dir.path());
     let a = start(&settings(&network, dir.path().join("alice"))).await;

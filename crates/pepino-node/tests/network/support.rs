@@ -1,5 +1,4 @@
 use std::{
-    io::Write,
     net::Ipv4Addr,
     path::{Path, PathBuf},
     time::Duration,
@@ -13,18 +12,6 @@ use pepino_node::{
 use tokio::time::timeout;
 
 pub const WAIT: Duration = Duration::from_secs(8);
-
-pub fn enabled() -> bool {
-    let enabled = std::env::var("PEPINO_NETWORK_TESTS").as_deref() == Ok("1");
-    if !enabled {
-        writeln!(
-            std::io::stderr().lock(),
-            "skipping UDP test; run with PEPINO_NETWORK_TESTS=1"
-        )
-        .unwrap();
-    }
-    enabled
-}
 
 pub fn network(dir: &Path) -> String {
     format!(
