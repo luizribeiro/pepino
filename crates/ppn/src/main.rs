@@ -3,6 +3,7 @@ mod cli;
 mod config_command;
 mod debug;
 mod help;
+mod show;
 mod status;
 mod version;
 

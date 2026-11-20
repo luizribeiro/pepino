@@ -238,7 +238,8 @@ fn help_describes_the_cli_in_both_formats() {
     assert_eq!(help["schema"], 1);
     assert_eq!(help["name"], "ppn");
     let commands = help["commands"].as_array().unwrap();
-    assert_eq!(commands.len(), 5);
+    assert_eq!(commands.len(), 6);
+    assert_eq!(commands[5]["name"], "show");
     assert_eq!(commands[4]["name"], "add");
     assert_eq!(commands[3]["name"], "status");
     assert!(!human.contains("debug"));
@@ -1069,4 +1070,28 @@ fn add_reports_the_created_task_through_the_binary() {
     assert_eq!(write["tasks"][0]["id"], write["created"]);
     assert_eq!(write["created"].as_str().unwrap().len(), 64);
     assert_eq!(write["tasks"][0]["title"], "Check the hinges");
+}
+
+#[test]
+fn show_renders_the_protocol_task_and_configured_due_date() {
+    let (sandbox, _) = task_sandbox();
+    let write = as_json(&sandbox.run(&[
+        "add",
+        "Check the greenhouse hinges",
+        "--due",
+        "2026-12-01",
+        "--json",
+    ]));
+    let id = write["created"].as_str().unwrap();
+    let human = sandbox.run(&["show", &id[..6], "--color", "always"]);
+    assert!(human.starts_with(&format!("{}  Check the greenhouse hinges\n", &id[..6])));
+    assert!(human.contains("Due: 01 Dec 2026\n"));
+    assert!(human.contains("Comments (0):\n"));
+    let detail = as_json(&sandbox.run(&["show", id, "--json"]));
+    let mut task = write["tasks"][0].clone();
+    task["comments"] = json!([]);
+    assert_eq!(
+        detail,
+        json!({"schema":1,"kind":"task","task":task,"edges":[]})
+    );
 }

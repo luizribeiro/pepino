@@ -16,7 +16,7 @@ use ppn::terminal::{Context, Terminal};
 
 use ppn::write_args::TaskWriteArgs;
 
-use crate::{add, config_command, debug, help, status, version};
+use crate::{add, config_command, debug, help, show, status, version};
 
 #[derive(Parser)]
 #[command(
@@ -63,6 +63,12 @@ enum Command {
         title: String,
         #[command(flatten)]
         args: Box<TaskWriteArgs>,
+    },
+    /// Show a task, its relationships, and comments.
+    #[command(after_help = example_help(&["ppn show 97ad97", "ppn show 97ad97 --json"]))]
+    Show {
+        /// Task ID or unambiguous prefix.
+        task: String,
     },
     /// Exercise CLI behavior.
     #[command(
@@ -191,6 +197,7 @@ fn dispatch(
     inputs: &ProcessInputs,
 ) -> Result<CommandResult, CliError> {
     match cli.command {
+        Some(Command::Show { task }) => show::run(context, task),
         Some(Command::Add { title, args }) => add::run(context, title, *args),
         Some(Command::Status) => status::run(context),
         Some(Command::Version) => Ok(version::run(context)),
