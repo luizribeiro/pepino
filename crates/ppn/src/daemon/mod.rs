@@ -5,6 +5,7 @@ pub mod network;
 pub mod node;
 pub mod process;
 pub mod protocol;
+pub mod report;
 pub mod runtime;
 pub mod server;
 pub mod socket;
