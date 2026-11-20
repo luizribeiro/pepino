@@ -187,18 +187,25 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
             assert!(unordered.is_empty());
             continue;
         }
+        let conflict = matches!(request["op"].as_str(), Some("add_task" | "link" | "delete"));
         let error = app
             .handle(serde_json::from_value(request).unwrap(), NOW)
             .await
             .unwrap_err();
+        let task = left.clone();
+        let title = Some("Order the latch".into());
         assert_eq!(
             error,
-            AppError::Conflict {
-                field: field.into(),
-                reference: pepino_app::ConflictReference::Task {
-                    task: left.clone(),
-                    title: Some("Order the latch".into())
-                },
+            if conflict {
+                AppError::Conflict {
+                    field: field.into(),
+                    reference: pepino_app::ConflictReference::Task { task, title },
+                }
+            } else {
+                AppError::NotFound {
+                    field: field.into(),
+                    reference: pepino_app::MissingReference::DeletedTask { task, title },
+                }
             }
         );
     }
@@ -207,9 +214,9 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
         app.handle(serde_json::from_value(request).unwrap(), NOW)
             .await
             .unwrap_err(),
-        AppError::Conflict {
+        AppError::NotFound {
             field: "task".into(),
-            reference: pepino_app::ConflictReference::Task {
+            reference: pepino_app::MissingReference::DeletedTask {
                 task: "abcd".into(),
                 title: None,
             },

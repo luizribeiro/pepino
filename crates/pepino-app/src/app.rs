@@ -9,7 +9,8 @@ use tokio::time::{Instant, sleep};
 
 use crate::state::{io_error, storage};
 use crate::{
-    AppError, ConflictReference, LocalState, OpenOptions, Request, Response, WriteRequest,
+    AppError, ConflictReference, LocalState, MissingReference, OpenOptions, ReadRequest, Request,
+    Response, TaskChange, WriteRequest,
 };
 
 const DATABASE: &str = "pepino.sqlite";
@@ -120,7 +121,19 @@ impl App {
 
     pub async fn handle(&mut self, request: Request, now: u64) -> Result<Response, AppError> {
         let guard = lock(&self.directory, self.lock_timeout).await?;
-        let mut result = match request {
+        let deleted_conflicts = matches!(
+            &request,
+            Request::Write(
+                WriteRequest::AddTask { .. }
+                    | WriteRequest::Link { .. }
+                    | WriteRequest::Delete { .. }
+                    | WriteRequest::ApplyToTasks {
+                        change: TaskChange::Delete,
+                        ..
+                    }
+            ) | Request::Read(ReadRequest::PreviewDelete { .. })
+        );
+        let result = match request {
             Request::Read(request) => self.read(request).await,
             Request::Write(WriteRequest::SaveView { name, filter }) => {
                 self.save_view(name, &filter, guard).await
@@ -140,16 +153,34 @@ impl App {
                 }
             }
         };
-        if let Err(AppError::Conflict {
-            reference: ConflictReference::Task { task, title },
-            ..
-        }) = &mut result
-            && let Ok(id) = task.parse::<TaskId>()
-            && let Ok(mut titles) = self.store.task_titles(self.local.board_id, &[id]).await
-        {
-            *title = titles.remove(&id);
+        match result {
+            Err(AppError::Conflict {
+                field,
+                reference: ConflictReference::Task { task, .. },
+            }) => {
+                let title = if let Ok(id) = task.parse::<TaskId>() {
+                    self.store
+                        .task_titles(self.local.board_id, &[id])
+                        .await
+                        .ok()
+                        .and_then(|mut titles| titles.remove(&id))
+                } else {
+                    None
+                };
+                Err(if deleted_conflicts {
+                    AppError::Conflict {
+                        field,
+                        reference: ConflictReference::Task { task, title },
+                    }
+                } else {
+                    AppError::NotFound {
+                        field,
+                        reference: MissingReference::DeletedTask { task, title },
+                    }
+                })
+            }
+            result => result,
         }
-        result
     }
 }
 

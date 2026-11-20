@@ -468,24 +468,30 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
     let remaining = get(&mut app, &child).await;
     assert_eq!(tasks, std::slice::from_ref(&remaining.summary));
     assert!(remaining.blocked_by.is_empty() && remaining.ready);
-    for (request, field) in [
-        (json!({"op":"get_task","task":&blocker}), "task"),
-        (
-            json!({"op":"delete","task":blocker[..12].to_uppercase()}),
-            "task",
-        ),
-    ] {
-        assert_eq!(
-            handle(&mut app, request).await.unwrap_err(),
-            AppError::Conflict {
-                field: field.into(),
-                reference: pepino_app::ConflictReference::Task {
-                    task: blocker.clone(),
-                    title: Some("Order a replacement latch".into()),
-                },
-            }
-        );
-    }
+    let error = handle(&mut app, json!({"op":"get_task","task":&blocker}))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error,
+        AppError::NotFound {
+            field: "task".into(),
+            reference: pepino_app::MissingReference::DeletedTask {
+                task: blocker.clone(),
+                title: Some("Order a replacement latch".into()),
+            },
+        }
+    );
+    assert_eq!(
+        handle(
+            &mut app,
+            json!({"op":"delete","task":blocker[..12].to_uppercase()})
+        )
+        .await
+        .unwrap_err()
+        .kind()
+        .code(),
+        "conflict"
+    );
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();
