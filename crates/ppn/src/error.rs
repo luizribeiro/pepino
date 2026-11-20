@@ -143,6 +143,9 @@ impl CliError {
                 writeln!(stderr, "  {id}")?;
             }
         }
+        if let Some(term) = self.details.get("term").and_then(Value::as_str) {
+            writeln!(stderr, "  term {term:?}")?;
+        }
         if let Some(position) = self.details.get("position")
             && let Some(byte) = position.get("byte").and_then(Value::as_u64)
         {
@@ -181,14 +184,22 @@ impl From<AppError> for CliError {
             AppError::AmbiguousId { .. } => {
                 diagnostic.hint = Some("Use a longer task ID.".into());
             }
-            AppError::InvalidInput { field, reason, .. } => {
+            AppError::InvalidInput {
+                field,
+                reason,
+                diagnostic: filter,
+            } => {
                 if reason.starts_with("invalid task reference ")
                     || reason.starts_with("invalid tag ")
                     || reason.starts_with("invalid assignee ")
                 {
                     diagnostic.message = reason.clone();
                 }
-                diagnostic.hint = input_hint(field, reason).map(str::to_owned);
+                diagnostic.hint = if filter.is_some() {
+                    Some("Run `ppn ls --help` for filter examples.".into())
+                } else {
+                    input_hint(field, reason).map(str::to_owned)
+                };
             }
             _ => {}
         }
@@ -233,7 +244,7 @@ mod tests {
         assert!(
             String::from_utf8(buffer)
                 .unwrap()
-                .contains("at byte 2\nhint: Use tag")
+                .contains("term \"tags:hardware\"\n  at byte 2\nhint: Use tag")
         );
         let mut buffer = Vec::new();
         assert_eq!(error.report(true, &mut buffer), ExitCode::from(2));
@@ -242,6 +253,23 @@ mod tests {
         assert_eq!(body["error"]["field"], "filter");
         assert_eq!(body["error"]["position"]["byte"], 2);
         assert_eq!(body["error"]["hint"], "Use tag");
+    }
+
+    #[test]
+    fn filter_errors_without_an_app_hint_suggest_filter_help() {
+        let error = serde_json::from_value::<AppError>(serde_json::json!({
+            "kind": "invalid_input", "field": "filter", "reason": "empty value",
+            "term": "tag:", "position": {"kind": "argument", "index": 1, "byte": 4},
+        }))
+        .unwrap();
+        let mut stderr = Vec::new();
+        assert_eq!(
+            CliError::from(error).report(false, &mut stderr),
+            ExitCode::from(2)
+        );
+        assert!(String::from_utf8(stderr).unwrap().ends_with(
+            "  term \"tag:\"\n  at argument 1, byte 4\nhint: Run `ppn ls --help` for filter examples.\n"
+        ));
     }
 
     #[test]
