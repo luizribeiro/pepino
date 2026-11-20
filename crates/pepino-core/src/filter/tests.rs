@@ -270,7 +270,7 @@ fn comparison_operators_apply_to_each_alternative() {
     }
     let error = parse("garden -tag:>=seeds").unwrap_err();
     assert_eq!(error.term, "-tag:>=seeds");
-    assert_eq!(error.position, Position::Byte(7));
+    assert_eq!(error.position, Position::Byte(12));
     assert_eq!(
         error.kind,
         ErrorKind::UnsupportedComparison { key: "tag".into() }
@@ -301,19 +301,19 @@ fn argv_keeps_each_argument_together() {
     assert!(parse_argv::<&str>(&[]).unwrap().terms().is_empty());
 
     let error = parse_argv(&["garden", r#""fix the fence"#]).unwrap_err();
-    assert_eq!(error.position, Position::Argument(1));
+    assert_eq!(error.position, Position::Argument { index: 1, byte: 0 });
     assert_eq!(error.term, r#""fix the fence"#);
     assert_eq!(error.kind, ErrorKind::UnterminatedQuote);
 }
 
 #[test]
 fn invalid_text_terms_include_the_source() {
-    for (input, kind) in [
-        (r#"café "fix fence"#, ErrorKind::UnterminatedQuote),
-        ("café -", ErrorKind::EmptyTerm),
+    for (input, offset, kind) in [
+        (r#"café "fix fence"#, 6, ErrorKind::UnterminatedQuote),
+        ("café -", 7, ErrorKind::EmptyTerm),
     ] {
         let error = parse(input).unwrap_err();
-        assert_eq!(error.position, Position::Byte(6));
+        assert_eq!(error.position, Position::Byte(offset));
         assert_eq!(error.term, input[6..]);
         assert_eq!(error.kind, kind);
     }
@@ -365,4 +365,24 @@ fn offsets_cross_calendar_boundaries() {
             format!("due:{absolute}")
         );
     }
+}
+
+#[test]
+fn errors_point_inside_the_offending_term() {
+    let error = parse("café due:today,<=broken status:todo").unwrap_err();
+    assert_eq!(error.position, Position::Byte("café due:today,<=".len()));
+    assert_eq!(error.term, "due:today,<=broken");
+    let error = parse_argv(&["café", "due:today,<=broken"]).unwrap_err();
+    assert_eq!(
+        error.position,
+        Position::Argument {
+            index: 1,
+            byte: "due:today,<=".len()
+        }
+    );
+    let error = parse(r#"café date:today,"okay""open"#).unwrap_err();
+    assert_eq!(
+        error.position,
+        Position::Byte(r#"café date:today,"okay""#.len())
+    );
 }

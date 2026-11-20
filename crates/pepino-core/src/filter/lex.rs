@@ -1,29 +1,31 @@
-use super::ErrorKind;
-
-pub(super) fn characters(
-    input: &str,
-) -> impl Iterator<Item = Result<(usize, char, bool), ErrorKind>> {
+pub(super) fn characters(input: &str) -> impl Iterator<Item = Result<(usize, char, bool), usize>> {
     let mut chars = input.char_indices().peekable();
-    let mut quoted = false;
+    let mut opening = None;
     std::iter::from_fn(move || {
         while let Some((offset, ch)) = chars.next() {
             match ch {
-                '"' => quoted = !quoted,
-                '\\' if quoted
+                '"' => {
+                    opening = if opening.is_some() {
+                        None
+                    } else {
+                        Some(offset)
+                    };
+                }
+                '\\' if opening.is_some()
                     && chars
                         .peek()
                         .is_some_and(|&(_, next)| matches!(next, '"' | '\\')) =>
                 {
                     return chars.next().map(|(_, escaped)| Ok((offset, escaped, true)));
                 }
-                _ => return Some(Ok((offset, ch, quoted))),
+                _ => return Some(Ok((offset, ch, opening.is_some()))),
             }
         }
-        std::mem::take(&mut quoted).then_some(Err(ErrorKind::UnterminatedQuote))
+        opening.take().map(Err)
     })
 }
 
-pub(super) fn term_end(input: &str) -> Result<usize, ErrorKind> {
+pub(super) fn term_end(input: &str) -> Result<usize, usize> {
     for item in characters(input) {
         let (offset, ch, quoted) = item?;
         if !quoted && ch.is_whitespace() {
@@ -33,7 +35,7 @@ pub(super) fn term_end(input: &str) -> Result<usize, ErrorKind> {
     Ok(input.len())
 }
 
-pub(super) fn decode(input: &str) -> Result<String, ErrorKind> {
+pub(super) fn decode(input: &str) -> Result<String, usize> {
     characters(input)
         .map(|item| item.map(|(_, ch, _)| ch))
         .collect()
@@ -46,14 +48,15 @@ pub(super) fn split_once(input: &str, delimiter: char) -> Option<(&str, &str)> {
     })
 }
 
-pub(super) fn split(input: &str, delimiter: char) -> impl Iterator<Item = &str> {
+pub(super) fn split(input: &str, delimiter: char) -> impl Iterator<Item = (usize, &str)> {
     let mut rest = Some(input);
     std::iter::from_fn(move || {
-        let input = rest.take()?;
-        if let Some((head, tail)) = split_once(input, delimiter) {
+        let remaining = rest.take()?;
+        let offset = input.len() - remaining.len();
+        if let Some((head, tail)) = split_once(remaining, delimiter) {
             rest = Some(tail);
-            return Some(head);
+            return Some((offset, head));
         }
-        Some(input)
+        Some((offset, remaining))
     })
 }

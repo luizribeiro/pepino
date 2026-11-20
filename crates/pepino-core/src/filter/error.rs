@@ -10,18 +10,18 @@ pub struct ParseError {
     pub kind: ErrorKind,
 }
 
-/// Zero-based term position in the original input.
+/// Zero-based UTF-8 byte position in the original string or argument.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Position {
     Byte(usize),
-    Argument(usize),
+    Argument { index: usize, byte: usize },
 }
 
 impl fmt::Display for Position {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Byte(index) => write!(f, "byte {index}"),
-            Self::Argument(index) => write!(f, "argument {index}"),
+            Self::Argument { index, byte } => write!(f, "argument {index}, byte {byte}"),
         }
     }
 }

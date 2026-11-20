@@ -25,7 +25,8 @@ pub fn parse(input: &str, today: Date) -> Result<Filter, ParseError> {
     let mut rest = input.trim_start();
     while !rest.is_empty() {
         let position = Position::Byte(input.len() - rest.len());
-        let end = lex::term_end(rest).map_err(|kind| error(rest, position, kind))?;
+        let end = lex::term_end(rest)
+            .map_err(|offset| error(rest, position, (offset, ErrorKind::UnterminatedQuote)))?;
         terms.push(parse_term(&rest[..end], position, today)?);
         rest = rest[end..].trim_start();
     }
@@ -39,50 +40,63 @@ pub fn parse(input: &str, today: Date) -> Result<Filter, ParseError> {
 pub fn parse_argv<S: AsRef<str>>(argv: &[S], today: Date) -> Result<Filter, ParseError> {
     argv.iter()
         .enumerate()
-        .map(|(index, raw)| parse_term(raw.as_ref(), Position::Argument(index), today))
+        .map(|(index, raw)| parse_term(raw.as_ref(), Position::Argument { index, byte: 0 }, today))
         .collect::<Result<Vec<_>, _>>()
         .map(Filter)
 }
 
 fn parse_term(raw: &str, position: Position, today: Date) -> Result<Term, ParseError> {
     let body = raw.strip_prefix('-');
-    let clause =
-        parse_clause(body.unwrap_or(raw), today).map_err(|kind| error(raw, position, kind))?;
+    let clause = parse_clause(body.unwrap_or(raw), today)
+        .map_err(|failure| error(raw, position, shifted(failure, usize::from(body.is_some()))))?;
     Ok(Term {
         negated: body.is_some(),
         clause,
     })
 }
 
-fn parse_clause(body: &str, today: Date) -> Result<Clause, ErrorKind> {
+fn parse_clause(body: &str, today: Date) -> Located<Clause> {
     if let Some(name) = body.strip_prefix('@') {
-        return decode_required(name, ErrorKind::EmptyView).map(Clause::View);
+        return decode_required(name, ErrorKind::EmptyView)
+            .map(Clause::View)
+            .map_err(|failure| shifted(failure, 1));
     }
     if let Some((key, values)) = lex::split_once(body, ':') {
         let key = decode_required(key, ErrorKind::EmptyKey)?;
-        return parse_keyed(key, values, today);
+        return parse_keyed(key, values, today)
+            .map_err(|failure| shifted(failure, body.len() - values.len()));
     }
     decode_required(body, ErrorKind::EmptyTerm).map(Clause::Text)
 }
 
-fn parse_keyed(key: String, raw: &str, today: Date) -> Result<Clause, ErrorKind> {
+fn parse_keyed(key: String, raw: &str, today: Date) -> Located<Clause> {
     let field = FieldKind::of(&key);
-    let operands = lex::split(raw, ',').map(|raw| parse_operand(&key, field, raw));
+    let operands = lex::split(raw, ',').map(|(offset, raw)| {
+        parse_operand(&key, field, raw)
+            .map(|(operator, value)| (offset + operator.symbol().len(), operator, value))
+            .map_err(|failure| shifted(failure, offset))
+    });
     match key.as_str() {
         "is" => operands
-            .map(|item| State::parse(item?.1))
+            .map(|item| {
+                let (offset, _, value) = item?;
+                State::parse(value).map_err(|kind| (offset, kind))
+            })
             .collect::<Result<_, _>>()
             .map(Clause::Is),
         "has" => operands
-            .map(|item| parse_presence(item?.1))
+            .map(|item| {
+                let (offset, _, value) = item?;
+                parse_presence(value).map_err(|kind| (offset, kind))
+            })
             .collect::<Result<_, _>>()
             .map(Clause::Has),
         _ => {
             let alternatives = operands
                 .map(|item| {
-                    let (operator, value) = item?;
+                    let (offset, operator, value) = item?;
                     let value = if field == FieldKind::Date {
-                        Value::Date(date::resolve(&value, today)?)
+                        Value::Date(date::resolve(&value, today).map_err(|kind| (offset, kind))?)
                     } else {
                         Value::Text(value)
                     };
@@ -130,29 +144,44 @@ impl FieldKind {
     }
 }
 
-fn parse_operand(key: &str, field: FieldKind, raw: &str) -> Result<(Operator, String), ErrorKind> {
+fn parse_operand(key: &str, field: FieldKind, raw: &str) -> Located<(Operator, String)> {
     let (operator, raw) = Operator::split(raw);
-    let value = decode_required(raw, ErrorKind::EmptyValue)?;
+    let offset = operator.symbol().len();
+    let value =
+        decode_required(raw, ErrorKind::EmptyValue).map_err(|failure| shifted(failure, offset))?;
     if operator != Operator::Eq && !field.supports_comparison() {
-        return Err(ErrorKind::UnsupportedComparison { key: key.into() });
+        return Err((0, ErrorKind::UnsupportedComparison { key: key.into() }));
     }
     if field == FieldKind::Status
         && !matches!(value.as_str(), "todo" | "doing" | "done" | "cancelled")
     {
-        return Err(ErrorKind::UnknownStatus { value });
+        return Err((offset, ErrorKind::UnknownStatus { value }));
     }
     Ok((operator, value))
 }
 
-fn decode_required(raw: &str, empty: ErrorKind) -> Result<String, ErrorKind> {
-    let value = lex::decode(raw)?;
+type Located<T> = Result<T, (usize, ErrorKind)>;
+
+fn decode_required(raw: &str, empty: ErrorKind) -> Located<String> {
+    let value = lex::decode(raw).map_err(|offset| (offset, ErrorKind::UnterminatedQuote))?;
     if value.is_empty() {
-        return Err(empty);
+        return Err((0, empty));
     }
     Ok(value)
 }
 
-fn error(term: &str, position: Position, kind: ErrorKind) -> ParseError {
+fn shifted((offset, kind): (usize, ErrorKind), start: usize) -> (usize, ErrorKind) {
+    (start + offset, kind)
+}
+
+fn error(term: &str, position: Position, (offset, kind): (usize, ErrorKind)) -> ParseError {
+    let position = match position {
+        Position::Byte(start) => Position::Byte(start + offset),
+        Position::Argument { index, byte } => Position::Argument {
+            index,
+            byte: byte + offset,
+        },
+    };
     ParseError {
         term: term.to_owned(),
         position,
