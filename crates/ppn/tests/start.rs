@@ -48,7 +48,7 @@ fn reopen_reports_changed_and_unchanged_tasks() {
     assert!(human.starts_with("Reopened "));
     assert_eq!(show_task(&sandbox, &project.parent)["status"], "todo");
     let mixed = sandbox.run(&["reopen", &project.parent, &project.blocker]);
-    assert!(mixed.starts_with("Already reopened "));
+    assert!(mixed.starts_with("Already open "));
     assert!(mixed.lines().nth(1).unwrap().starts_with("Reopened "));
     assert_eq!(show_task(&sandbox, &project.blocker)["status"], "todo");
 
@@ -60,6 +60,22 @@ fn reopen_reports_changed_and_unchanged_tasks() {
     );
     assert_eq!(json["tasks"].as_array().unwrap().len(), 2);
     assert_eq!(json["tasks"][0]["status"], "todo");
+    sandbox.run(&["start", &project.parent]);
+    assert!(
+        sandbox
+            .run(&["reopen", &project.parent])
+            .starts_with("Already open ")
+    );
+    let doing = as_json(&sandbox.run(&["reopen", &project.parent, "--json"]));
+    assert_write(&doing, false);
+    assert_eq!(doing["tasks"][0]["status"], "doing");
+    sandbox.run(&["cancel", &project.parent]);
+    assert!(
+        sandbox
+            .run(&["reopen", &project.parent])
+            .starts_with("Reopened ")
+    );
+    assert_eq!(show_task(&sandbox, &project.parent)["status"], "todo");
 }
 
 #[test]

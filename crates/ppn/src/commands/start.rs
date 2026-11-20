@@ -36,7 +36,7 @@ pub(super) fn set_status(
 }
 
 #[derive(clap::Args)]
-#[command(about = "Reopen tasks as todo.", after_help = example_help(&["ppn reopen 97ad97 33ea33", "ppn reopen 97ad97 --json"]))]
+#[command(about = "Move closed tasks back to todo.", after_help = example_help(&["ppn reopen 97ad97 33ea33", "ppn reopen 97ad97 --json"]))]
 pub struct ReopenArgs {
     /// Task IDs or unambiguous prefixes.
     #[arg(required = true, value_name = "TASK")]
@@ -44,5 +44,9 @@ pub struct ReopenArgs {
 }
 
 pub fn reopen(context: &Context<'_>, args: ReopenArgs) -> Result<CommandResult, CliError> {
-    set_status(context, args.tasks, Status::Todo, "Reopened")
+    let response = AppClient::open(context)?.call(Request::Write(WriteRequest::ApplyToTasks {
+        tasks: args.tasks,
+        change: TaskChange::Reopen,
+    }))?;
+    batch_write_document(context, response, "Reopened")
 }
