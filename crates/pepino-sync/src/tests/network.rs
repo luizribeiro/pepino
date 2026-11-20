@@ -101,3 +101,37 @@ async fn concurrent_edits_to_one_task_converge() {
     views_match(&a, &b).await;
     tokio::join!(left.stop(), right.stop());
 }
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn a_returning_peer_and_a_late_member_both_catch_up() {
+    let (dir, mut a, b) = pair().await;
+    let (left, right) = tokio::join!(a.start(), b.start());
+    write(
+        &mut a.app,
+        json!({"op":"add_task","title":"Inventory greenhouse tools"}),
+    )
+    .await;
+    left.engine.nudge();
+    b.await_events(&right, 1).await;
+    right.stop().await;
+
+    for title in [
+        "Oil the shears",
+        "Sharpen the spade",
+        "Replace the broken rake",
+    ] {
+        write(&mut a.app, json!({"op":"add_task","title":title})).await;
+    }
+    left.engine.wait_idle(WAIT).await.unwrap();
+    let right = b.start().await;
+    b.await_events(&right, 4).await;
+    views_match(&a, &b).await;
+
+    left.stop().await;
+    let c = fixture::enroll(dir.path(), &a, "chloe").await;
+    let (left, third) = tokio::join!(a.start(), c.start());
+    c.await_events(&third, 4).await;
+    views_match(&a, &c).await;
+    tokio::join!(left.stop(), right.stop(), third.stop());
+}
