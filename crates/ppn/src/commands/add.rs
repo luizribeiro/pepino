@@ -34,7 +34,7 @@ pub fn run(context: &Context<'_>, input: Args, json: bool) -> Result<CommandResu
     }
     let input = read_text(Some(title), None)?;
     let request = if from_stdin {
-        crate::task_stdin::request(&input, json)?
+        crate::task_stdin::request(&input, json, context.time.today)?
     } else {
         new_task(input)
     };

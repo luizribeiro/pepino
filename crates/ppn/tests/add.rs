@@ -66,11 +66,18 @@ fn add_accepts_protocol_fields_on_json_stdin() {
     let result = task_stdin(
         &sandbox,
         &["add", "-", "--json", "--priority", "2", "--tag", "spring"],
-        r#"{"title":"Repair the gate","description":"Check the packing slip.\r\n","status":"doing","tags":["hardware"],"priority":1}"#,
+        r#"{"title":"Repair the gate","description":"Check the packing slip.\r\n","status":"doing","due":"today","tags":["hardware"],"priority":1}"#,
     );
     let task = &as_json(&success(result))["tasks"][0];
     assert_eq!(task["title"], "Repair the gate");
     assert_eq!(task["status"], "doing");
+    assert!(
+        task["due"]
+            .as_str()
+            .unwrap()
+            .parse::<chrono::NaiveDate>()
+            .is_ok()
+    );
     assert_eq!(task["priority"], 2);
     assert_eq!(task["description"], "Check the packing slip.");
     assert_eq!(task["tags"], json!(["hardware", "spring"]));
