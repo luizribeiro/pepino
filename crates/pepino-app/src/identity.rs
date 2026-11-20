@@ -11,6 +11,7 @@ mod admission;
 mod lookup;
 mod migration;
 mod rename;
+mod revoke;
 
 #[cfg(test)]
 mod property;
