@@ -106,6 +106,12 @@ impl CliError {
         self
     }
 
+    pub fn with_field(mut self, field: impl Into<String>) -> Self {
+        self.details
+            .insert("field".into(), Value::String(field.into()));
+        self
+    }
+
     pub fn usage(error: clap::Error) -> Self {
         let rendered = error.to_string();
         let (message, details) = rendered

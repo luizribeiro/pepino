@@ -1,5 +1,6 @@
 pub mod app;
 pub mod config;
+pub mod date;
 pub mod error;
 pub mod flags;
 pub mod help_tree;
