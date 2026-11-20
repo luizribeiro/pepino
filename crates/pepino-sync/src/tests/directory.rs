@@ -63,3 +63,25 @@ fn the_engine_defaults_to_the_app_lock_timeout() {
         pepino_app::OpenOptions::default().lock_timeout,
     );
 }
+
+#[tokio::test]
+async fn commits_skipped_events_before_acknowledging() {
+    use crate::{Status, Transport, TransportBoard, inbox};
+
+    let dir = tempfile::tempdir().unwrap();
+    let id = BoardId::from_bytes([43; 32]);
+    let signer = DeviceId::from_bytes([44; 32]);
+    let app = prepare(dir.path(), id, signer).await;
+    let node = super::stub::Stub::new(signer);
+    let mut board = node.open_board(id).await.unwrap();
+    let (status, _) = tokio::sync::watch::channel(Status::default());
+    let mut receipt = node.deliver(id, signer, vec![0x82, 2, 0xf6]);
+    let deliveries = board.deliveries().unwrap();
+    tokio::select! {
+        result = inbox::run(&app, id, deliveries, &status) => panic!("{result:?}"),
+        result = tokio::time::timeout(std::time::Duration::from_secs(5), receipt.wait_for(|acked| *acked)) => {
+            result.unwrap().unwrap();
+            assert_eq!(app.store().statistics(id).await.unwrap().unknown_version, 1);
+        }
+    }
+}
