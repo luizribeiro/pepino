@@ -8,14 +8,16 @@ use p2panda::{
     spaces::{Space, SpacesManagerError},
     streams::{Source, StreamEvent},
 };
-use pepino_core::{DeviceId, EventId};
-use tokio::sync::{broadcast, mpsc, oneshot, watch};
+use pepino_core::EventId;
+use tokio::sync::{broadcast, oneshot, watch};
 
 use crate::{
     Error, NodeEvent,
     ack::AckStore,
     board_lease::BoardLease,
-    events::{BoardEvent, pipeline_error},
+    delivery::DeliveryWriter,
+    delivery_item::Delivery,
+    events::pipeline_error,
     receipt::{Payload, Receipts},
     status::board_status,
 };
@@ -42,7 +44,7 @@ pub(crate) struct BoardTask {
     pub(crate) status: broadcast::Sender<NodeEvent>,
     pub(crate) ready: watch::Sender<JoinState>,
     pub(crate) stop: oneshot::Receiver<()>,
-    pub(crate) events: mpsc::UnboundedSender<Result<BoardEvent, Error>>,
+    pub(crate) events: DeliveryWriter,
     pub(crate) receipts: Receipts,
     pub(crate) author: p2panda::NodeId,
 }
@@ -55,10 +57,10 @@ impl BoardTask {
     ) -> Result<(), Error> {
         let mut joined = std::pin::pin!(joined);
         let mut space = None;
-        loop {
+        let result = loop {
             tokio::select! {
                 biased;
-                _ = &mut self.stop => break,
+                _ = &mut self.stop => break Ok(()),
                 state = &mut joined, if space.is_none() => match state {
                     Ok(state) => {
                         let state = Arc::new(state);
@@ -68,41 +70,55 @@ impl BoardTask {
                     Err(error) => {
                         let details = error.to_string();
                         self.ready.send_replace(JoinState::Failed(details.clone()));
-                        let _ = self.events.send(Err(Error::Node(details)));
-                        break;
+                        break self.events.send(Delivery::Node(details)).await;
                     }
                 },
                 event = subscription.next() => match event {
-                    Some(event) => self.forward(event),
-                    None => break,
+                    Some(event) => {
+                        if let Err(error) = self.forward(event).await {
+                            break Err(error);
+                        }
+                    }
+                    None => break Ok(()),
                 },
             }
+        };
+        if let Err(error) = &result {
+            self.events.fail(error);
         }
         self.receipts.close();
         if let Some(space) = space.and_then(|space| Arc::try_unwrap(space).ok()) {
             space.close().await.map_err(Error::node)?;
         }
-        Ok(())
+        result
     }
 
-    fn forward(&self, event: StreamEvent<Payload>) {
+    async fn forward(&self, event: StreamEvent<Payload>) -> Result<(), Error> {
         board_status(&self.status, self.lease.id, &event);
         if let StreamEvent::Processed { operation, source } = event {
             let id = EventId::from_bytes(*operation.id().as_bytes());
             if matches!(source, Source::Egress) && operation.author() == self.author {
                 self.receipts.resolve(operation.message().nonce, id);
             }
-            let _ = self.events.send(Ok(BoardEvent::new(
-                self.lease.id,
-                DeviceId::from_bytes(*operation.author().as_bytes()),
-                id,
-                operation.message().bytes.clone(),
-                &self.acks,
-                operation.processed().header().into(),
-            )));
+            let position = operation.processed().header().into();
+            if !self
+                .acks
+                .receipt(self.lease.id, id, position)
+                .acknowledged()
+                .await?
+            {
+                self.events
+                    .send(Delivery::Event {
+                        id,
+                        position: Box::new(position),
+                        bytes: operation.message().bytes.clone(),
+                    })
+                    .await?;
+            }
         } else if let Some(error) = pipeline_error(&event) {
-            let _ = self.events.send(Err(error));
+            self.events.send(error).await?;
         }
+        Ok(())
     }
 }
 
@@ -118,13 +134,14 @@ mod tests {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         let (ready, joined) = watch::channel(JoinState::Pending);
         let (stop, stop_rx) = oneshot::channel();
-        let (events, _) = mpsc::unbounded_channel();
+        let acks = AckStore::create(pool).await.unwrap();
+        let (events, _) = DeliveryWriter::start(board, acks.1.clone(), acks.clone());
         let receipts = Receipts::default();
         let (_, pending) = receipts.track(b"Update runbook".to_vec());
         assert!(matches!(joined.borrow().space(), Err(Error::NotJoined)));
         let task = BoardTask {
             lease,
-            acks: AckStore::create(pool).await.unwrap(),
+            acks,
             status: broadcast::channel(4).0,
             ready,
             stop: stop_rx,

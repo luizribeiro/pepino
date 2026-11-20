@@ -22,6 +22,7 @@ use crate::{
     ack::AckStore,
     board_lease::BoardLease,
     board_task::{BoardTask, JoinState},
+    delivery::DeliveryWriter,
     events::subscribe,
     receipt::{Payload, Receipts},
 };
@@ -41,7 +42,7 @@ pub struct BoardHandle {
     joined: watch::Receiver<JoinState>,
     receipts: Receipts,
     confirmation_timeout: Duration,
-    events: Option<mpsc::UnboundedReceiver<Result<BoardEvent, Error>>>,
+    events: Option<mpsc::Receiver<Result<BoardEvent, Error>>>,
     stop: oneshot::Sender<()>,
     done: JoinHandle<Result<(), Error>>,
 }
@@ -94,6 +95,7 @@ impl Node {
         let lease = self.boards.reserve(id)?;
         self.worker
             .run(async move {
+                acks.1.clear(id).await?;
                 let from = if options.from_start {
                     acks.reset(id).await?;
                     StreamFrom::Start
@@ -130,7 +132,7 @@ impl BoardHandle {
     ) -> Self {
         let id = lease.id;
         let lease = lease.attached();
-        let (events_tx, events) = mpsc::unbounded_channel();
+        let (events_tx, events) = DeliveryWriter::start(id, acks.1.clone(), acks.clone());
         let (ready, state) = watch::channel(JoinState::Pending);
         let (stop, stop_rx) = oneshot::channel();
         let receipts = Receipts::default();

@@ -4,16 +4,13 @@ mod board_lease;
 mod board_task;
 mod credentials;
 mod cursor;
-#[cfg(test)]
 mod delivery;
-#[cfg(test)]
 mod delivery_item;
 mod events;
 mod membership;
 mod node;
 mod receipt;
 mod settings;
-#[cfg(test)]
 mod spool;
 mod status;
 mod worker;

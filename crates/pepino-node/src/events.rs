@@ -2,12 +2,13 @@ use futures_util::{StreamExt, stream::BoxStream};
 use p2panda::streams::StreamEvent;
 use pepino_core::{BoardId, DeviceId, EventId};
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
     Error,
     ack::{Ack, AckStore},
     cursor::Position,
+    delivery_item::Delivery,
     receipt::Payload,
 };
 
@@ -42,8 +43,8 @@ impl BoardEvent {
     }
 }
 
-pub(crate) fn subscribe(rx: mpsc::UnboundedReceiver<Result<BoardEvent, Error>>) -> BoardEvents {
-    UnboundedReceiverStream::new(rx)
+pub(crate) fn subscribe(rx: mpsc::Receiver<Result<BoardEvent, Error>>) -> BoardEvents {
+    ReceiverStream::new(rx)
         .filter_map(|event| async move {
             match event {
                 Ok(event) => match event.ack.acknowledged().await {
@@ -57,18 +58,18 @@ pub(crate) fn subscribe(rx: mpsc::UnboundedReceiver<Result<BoardEvent, Error>>) 
         .boxed()
 }
 
-pub(crate) fn pipeline_error(event: &StreamEvent<Payload>) -> Option<Error> {
+pub(crate) fn pipeline_error(event: &StreamEvent<Payload>) -> Option<Delivery> {
     match event {
-        StreamEvent::ProcessingFailed { event, error, .. } => Some(Error::Processing {
-            id: EventId::from_bytes(*event.operation.header.hash().as_bytes()),
-            details: error.to_string(),
-        }),
-        StreamEvent::DecodeFailed { event, error } => Some(Error::Decode {
-            id: EventId::from_bytes(*event.operation.header.hash().as_bytes()),
-            details: error.to_string(),
-        }),
-        StreamEvent::ReplayFailed { error } => Some(Error::Replay(error.to_string())),
-        StreamEvent::AckFailed { error, .. } => Some(Error::storage(error)),
+        StreamEvent::ProcessingFailed { event, error, .. } => Some(Delivery::Processing(
+            EventId::from_bytes(*event.operation.header.hash().as_bytes()),
+            error.to_string(),
+        )),
+        StreamEvent::DecodeFailed { event, error } => Some(Delivery::Decode(
+            EventId::from_bytes(*event.operation.header.hash().as_bytes()),
+            error.to_string(),
+        )),
+        StreamEvent::ReplayFailed { error } => Some(Delivery::Replay(error.to_string())),
+        StreamEvent::AckFailed { error, .. } => Some(Delivery::Storage(error.to_string())),
         _ => None,
     }
 }
@@ -111,10 +112,12 @@ mod tests {
         let error = StreamEvent::ReplayFailed {
             error: std::sync::Arc::new(p2panda::streams::ReplayError::CriticalError),
         };
-        let (tx, rx) = mpsc::unbounded_channel();
-        tx.send(Ok(old)).unwrap();
-        tx.send(Err(pipeline_error(&error).unwrap())).unwrap();
-        tx.send(Ok(recent)).unwrap();
+        let (tx, rx) = mpsc::channel(4);
+        tx.send(Ok(old)).await.unwrap();
+        tx.send(pipeline_error(&error).unwrap().into_event(board, &acks))
+            .await
+            .unwrap();
+        tx.send(Ok(recent)).await.unwrap();
         drop(tx);
         let mut events = subscribe(rx);
         assert!(matches!(events.next().await, Some(Err(Error::Replay(_)))));
