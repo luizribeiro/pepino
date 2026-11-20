@@ -41,3 +41,6 @@ pub use protocol::{
 pub use values::{Date, EdgeKind, FieldValue, InvalidDate, Status};
 pub use views::SavedView;
 pub use wire::{PROTOCOL_VERSION, WireFormat, WireRequest, WireResponse, WireResult};
+
+#[cfg(test)]
+extern crate self as pepino_app;

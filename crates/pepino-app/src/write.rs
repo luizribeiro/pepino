@@ -482,6 +482,10 @@ fn field_path(object: &str, field: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/support/template.rs"]
+mod fixture;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{ReadRequest, Request};
@@ -490,7 +494,7 @@ mod tests {
     #[tokio::test]
     async fn a_batch_with_a_later_invalid_target_leaves_the_first_task_live() {
         let directory = tempfile::tempdir().unwrap();
-        let mut app = App::init(directory.path(), 100).await.unwrap();
+        let mut app = fixture::open(directory.path(), 100).await.unwrap();
         let create =
             serde_json::from_value(json!({"op":"add_task","title":"Paint the shed"})).unwrap();
         let Response::Write {
