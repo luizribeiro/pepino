@@ -43,24 +43,8 @@ let
   };
   fullDarwin = darwinWithAccount fullDarwinSettings;
 
-  nixos = nixpkgs.lib.nixosSystem {
-    modules = [
-      self.nixosModules.default
-      nixpkgs.nixosModules.readOnlyPkgs
-      {
-        nixpkgs.pkgs = pkgs;
-        system.stateVersion = "26.11";
-        boot.loader.grub.devices = [ "nodev" ];
-        fileSystems."/" = {
-          device = "/dev/disk/by-label/pepino-root";
-          fsType = "ext4";
-        };
-      }
-      (lib.recursiveUpdate fixtures.full { programs.pepino.daemon.enable = true; })
-    ];
-  };
 in
-assert system != "x86_64-linux" || builtins.seq nixos.config.system.build.toplevel.drvPath true;
+assert system != "x86_64-linux" || import ./check-nixos.nix { inherit self pkgs fixtures; };
 assert verify linux && verify darwinWithAccount;
 assert lib.all
   (evaluate:
@@ -79,7 +63,6 @@ assert (linux fixtures.empty).environment.systemPackages == [ package ];
 assert (linux fixtures.typical).services.pepino.package == package;
 assert (linux fixtures.empty).services.pepino.configFile == null;
 assert (linux fixtures.empty).systemd.user.services == { };
-assert system != "x86_64-linux" || nixos.config.systemd.user.services.pepino.serviceConfig.Restart == "on-failure";
 assert !((linux fixtures.empty).environment.etc ? "pepino/node.toml");
 assert !((linux fixtures.untrusted).environment.etc ? "pepino/config.toml");
 assert accepts fullLinux [ ];
@@ -87,7 +70,6 @@ assert fullLinux.environment.etc."pepino/node.toml".source == fullLinux.services
 assert fullDarwin.environment.etc."pepino/node.toml".source == fullDarwin.services.pepino.configFile;
 assert fullLinux.networking.firewall.allowedUDPPorts == [ 44123 ];
 assert (linux (lib.recursiveUpdate fixtures.full { services.pepino.mdns = true; })).networking.firewall.allowedUDPPorts == [ 44123 5353 ];
-assert system != "x86_64-linux" || nixos.config.systemd.services.pepino.unitConfig.ConditionPathExists == "/srv/pepino/local.json";
 assert fullLinux.users.users.pepino-relay.isSystemUser;
 assert fullLinux.systemd.tmpfiles.settings.pepino."/srv/pepino".d.mode == "0700";
 assert accepts fullDarwin [ ];
