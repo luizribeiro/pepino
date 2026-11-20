@@ -63,3 +63,32 @@ fn sigterm_during_runtime_board_discovery_recovers_tasks() {
     owner.stop(Signal::SIGTERM);
     rt.block_on(verify_databases(&pair));
 }
+
+#[test]
+fn sigterm_with_several_open_boards_recovers_tasks_on_each() {
+    let (rt, pair, owner, peer) = linked_pair();
+    let boards = [
+        (None, pair.board),
+        (Some("Tool Shed"), create_board(&pair, "Tool Shed")),
+        (Some("Orchard"), create_board(&pair, "Orchard")),
+    ];
+    for (name, board) in boards {
+        pair.board_joined(board);
+        write_board_tasks(&rt, pair.owner.path(), name, 0..1);
+        pair.client(pair.owner.path()).nudge().unwrap();
+        wait_for_board_views(&rt, &pair, board, 1);
+    }
+    peer.stop(Signal::SIGTERM);
+    assert!(!pair.client(pair.peer.path()).path.exists());
+    for (name, _) in boards {
+        write_board_tasks(&rt, pair.owner.path(), name, 1..3);
+    }
+    pair.client(pair.owner.path()).nudge().unwrap();
+    let peer = Daemon::start(pair.peer.path(), &pair.network);
+    for (_, board) in boards {
+        wait_for_board_views(&rt, &pair, board, 3);
+    }
+    peer.stop(Signal::SIGTERM);
+    owner.stop(Signal::SIGTERM);
+    rt.block_on(verify_databases(&pair));
+}
