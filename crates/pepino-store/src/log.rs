@@ -156,17 +156,33 @@ impl Store {
         bytes: &[u8],
         id_source: IdSource,
     ) -> Result<AppendOutcome, StoreError> {
-        let decoded = Decoded::new(bytes, id_source)?;
+        let mut outcomes = self.append_batch(board, &[(bytes, id_source)]).await?;
+        Ok(outcomes.remove(0))
+    }
+
+    /// Appends a batch atomically, returning an outcome per input in input order.
+    pub async fn append_batch(
+        &self,
+        board: BoardId,
+        events: &[(&[u8], IdSource)],
+    ) -> Result<Vec<AppendOutcome>, StoreError> {
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut connection = self.connection.lock().await;
         let mut tx = connection.begin().await?;
-        let id = decoded.id;
-        let outcome = if decoded.insert(&mut tx, board, bytes).await? {
-            decoded.project(&mut tx, board).await?
-        } else {
-            AppendOutcome::Duplicate { id }
-        };
+        let mut outcomes = Vec::with_capacity(events.len());
+        for &(bytes, id_source) in events {
+            let decoded = Decoded::new(bytes, id_source)?;
+            let outcome = if decoded.insert(&mut tx, board, bytes).await? {
+                decoded.project(&mut tx, board).await?
+            } else {
+                AppendOutcome::Duplicate { id: decoded.id }
+            };
+            outcomes.push(outcome);
+        }
         tx.commit().await?;
-        Ok(outcome)
+        Ok(outcomes)
     }
 
     /// Replays the board's log and reports the number of skipped events.

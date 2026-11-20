@@ -360,3 +360,93 @@ async fn file_reads_see_the_committed_view_during_rebuild() {
         "Replace the greenhouse latch"
     );
 }
+
+fn latch_tag(envelope: &Envelope) -> Envelope {
+    Envelope::new(
+        envelope.author(),
+        Hlc {
+            counter: 4,
+            ..envelope.hlc()
+        },
+        Event::TagAdded {
+            task: envelope.created_task().unwrap(),
+            tag: "greenhouse".into(),
+        },
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn batch_reports_each_outcome_in_order() {
+    let store = Store::open_in_memory().await.unwrap();
+    let board = BoardId::from_bytes([19; 32]);
+    let envelope = creation();
+    let task = envelope.created_task().unwrap();
+    let tag = latch_tag(&envelope);
+    let create_bytes = envelope.encode().unwrap();
+    let tag_bytes = tag.encode().unwrap();
+    let future = [0x82, 2, 0xf6];
+    let events = [&create_bytes[..], &future, &create_bytes, &tag_bytes]
+        .map(|bytes| (bytes, IdSource::Content));
+    assert_eq!(
+        store.append_batch(board, &events).await.unwrap(),
+        [
+            AppendOutcome::Applied {
+                id: envelope.id(),
+                task
+            },
+            AppendOutcome::Skipped {
+                id: Envelope::decode(&future).unwrap().id(),
+                reason: SkipReason::UnknownVersion(2),
+            },
+            AppendOutcome::Duplicate { id: envelope.id() },
+            AppendOutcome::Applied { id: tag.id(), task },
+        ]
+    );
+    assert_eq!(store.events(board, task).await.unwrap().len(), 2);
+    assert!(
+        store
+            .task(board, task)
+            .await
+            .unwrap()
+            .unwrap()
+            .tags
+            .contains("greenhouse")
+    );
+    assert!(store.append_batch(board, &[]).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn batch_rolls_back_on_later_decode_or_projection_failure() {
+    let store = Store::open_in_memory().await.unwrap();
+    let board = BoardId::from_bytes([19; 32]);
+    let envelope = creation();
+    let task = envelope.created_task().unwrap();
+    let create_bytes = envelope.encode().unwrap();
+    let tag_bytes = latch_tag(&envelope).encode().unwrap();
+    sqlx::query(
+        "CREATE TRIGGER reject_tag_history BEFORE INSERT ON event_task
+         WHEN (SELECT count(*) FROM event_log) = 2
+         BEGIN SELECT RAISE(ABORT, 'injected history failure'); END",
+    )
+    .execute(&mut *store.connection.lock().await)
+    .await
+    .unwrap();
+    for second in [&[0xff][..], &tag_bytes] {
+        let events = [&create_bytes[..], second].map(|bytes| (bytes, IdSource::Content));
+        let error = store.append_batch(board, &events).await.unwrap_err();
+        if second == tag_bytes {
+            assert!(error.to_string().contains("injected history failure"));
+        } else {
+            assert!(matches!(error, StoreError::Decode(_)));
+        }
+        assert!(store.events(board, task).await.unwrap().is_empty());
+        assert!(store.tasks(board).await.unwrap().is_empty());
+        assert_eq!(store.latest_hlc(board).await.unwrap(), None);
+        let log_count: i64 = sqlx::query_scalar("SELECT count(*) FROM event_log")
+            .fetch_one(&mut *store.connection.lock().await)
+            .await
+            .unwrap();
+        assert_eq!(log_count, 0);
+    }
+}
