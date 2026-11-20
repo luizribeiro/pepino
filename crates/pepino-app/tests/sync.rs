@@ -6,6 +6,16 @@ use serde_json::{Value, json};
 
 const NOW: u64 = 1_795_144_800_000;
 
+fn sync_directory() -> tempfile::TempDir {
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("TMPDIR").is_none()
+        && let Ok(directory) = tempfile::tempdir_in("/dev/shm")
+    {
+        return directory;
+    }
+    tempfile::tempdir().unwrap()
+}
+
 async fn dispatch(app: &mut App, operation: Value) -> Response {
     app.handle(serde_json::from_value(operation).unwrap(), NOW)
         .await
@@ -41,8 +51,8 @@ async fn receive(store: &Store, board: BoardId, events: &[EventRecord]) {
 }
 
 async fn exchange(order: [u8; 8]) -> ([TaskRecord; 2], [TaskRecord; 2]) {
-    let left_dir = tempfile::tempdir().unwrap();
-    let right_dir = tempfile::tempdir().unwrap();
+    let left_dir = sync_directory();
+    let right_dir = sync_directory();
     let mut left = App::init(left_dir.path(), NOW + 3 * 86_400_000)
         .await
         .unwrap();
@@ -140,7 +150,7 @@ proptest! {
 
 #[tokio::test]
 async fn unlink_reports_activation_of_a_dormant_remote_blocker() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = sync_directory();
     let mut app = App::init(directory.path(), NOW).await.unwrap();
     let hinges = create(
         &mut app,
@@ -196,7 +206,7 @@ async fn unlink_reports_activation_of_a_dormant_remote_blocker() {
 
 #[tokio::test]
 async fn deleting_a_live_task_cleans_up_edges_to_already_deleted_batch_targets() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = sync_directory();
     let mut app = App::init(directory.path(), NOW).await.unwrap();
     let bench = create(
         &mut app,
@@ -257,7 +267,7 @@ async fn deleting_a_live_task_cleans_up_edges_to_already_deleted_batch_targets()
 async fn deletion_reports_roots_created_when_older_parent_edges_activate() {
     use pepino_core::{Clock, DeviceId, EdgeKind, Envelope, Event};
 
-    let directory = tempfile::tempdir().unwrap();
+    let directory = sync_directory();
     let mut app = App::init(directory.path(), NOW).await.unwrap();
     let mut tasks = Vec::new();
     for title in [
