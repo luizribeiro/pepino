@@ -195,7 +195,10 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
             error,
             AppError::Conflict {
                 field: field.into(),
-                reference: pepino_app::ConflictReference::Task { task: left.clone() },
+                reference: pepino_app::ConflictReference::Task {
+                    task: left.clone(),
+                    title: Some("Order the latch".into())
+                },
             }
         );
     }
@@ -207,7 +210,8 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
         AppError::Conflict {
             field: "task".into(),
             reference: pepino_app::ConflictReference::Task {
-                task: "abcd".into()
+                task: "abcd".into(),
+                title: None,
             },
         },
     );

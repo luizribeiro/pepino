@@ -372,6 +372,8 @@ impl std::fmt::Display for MissingReference {
 pub enum ConflictReference {
     Task {
         task: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
     },
     View {
         view: String,
@@ -382,7 +384,7 @@ pub enum ConflictReference {
 impl std::fmt::Display for ConflictReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Task { task } => write!(f, "task {task} is deleted"),
+            Self::Task { task, .. } => write!(f, "task {task} is deleted"),
             Self::View {
                 view,
                 referenced_by,

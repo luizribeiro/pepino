@@ -49,6 +49,7 @@ pub(super) fn resolve_id(
             field: field.into(),
             reference: ConflictReference::Task {
                 task: id.map_or_else(|| reference.into(), |id| id.to_string()),
+                title: None,
             },
         }),
         Err(StoreError::InvalidPrefix) => Err(invalid(

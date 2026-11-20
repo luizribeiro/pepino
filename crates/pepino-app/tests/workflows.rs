@@ -488,7 +488,8 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
             AppError::Conflict {
                 field: field.into(),
                 reference: pepino_app::ConflictReference::Task {
-                    task: blocker.clone()
+                    task: blocker.clone(),
+                    title: Some("Order a replacement latch".into()),
                 },
             }
         );

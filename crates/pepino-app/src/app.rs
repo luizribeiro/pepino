@@ -3,12 +3,14 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use pepino_core::{Clock, Hlc};
+use pepino_core::{Clock, Hlc, TaskId};
 use pepino_store::{DatabaseErrorKind, Store, StoreError};
 use tokio::time::{Instant, sleep};
 
 use crate::state::{io_error, storage};
-use crate::{AppError, LocalState, OpenOptions, Request, Response, WriteRequest};
+use crate::{
+    AppError, ConflictReference, LocalState, OpenOptions, Request, Response, WriteRequest,
+};
 
 pub struct App {
     pub(super) store: Store,
@@ -74,7 +76,7 @@ impl App {
 
     pub async fn handle(&mut self, request: Request, now: u64) -> Result<Response, AppError> {
         let guard = lock(&self.directory, self.lock_timeout).await?;
-        match request {
+        let mut result = match request {
             Request::Read(request) => self.read(request).await,
             Request::Write(WriteRequest::SaveView { name, filter }) => {
                 self.save_view(name, &filter, guard).await
@@ -85,10 +87,22 @@ impl App {
             Request::Write(request) => {
                 let board = self.board().await?;
                 let mut batch = self.batch(now).await?;
-                self.plan_write(&board, &mut batch, request)?;
-                self.commit_batch(&board, batch).await
+                match self.plan_write(&board, &mut batch, request) {
+                    Ok(()) => self.commit_batch(&board, batch).await,
+                    Err(error) => Err(error),
+                }
             }
+        };
+        if let Err(AppError::Conflict {
+            reference: ConflictReference::Task { task, title },
+            ..
+        }) = &mut result
+            && let Ok(id) = task.parse::<TaskId>()
+            && let Ok(mut titles) = self.store.task_titles(self.local.board_id, &[id]).await
+        {
+            *title = titles.remove(&id);
         }
+        result
     }
 }
 
