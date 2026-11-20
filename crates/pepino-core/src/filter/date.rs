@@ -12,9 +12,9 @@ pub(super) fn resolve(value: &str, today: Date) -> Result<Date, ErrorKind> {
     if let Some(calendar) = calendar(value) {
         return calendar.ok_or_else(overflow);
     }
-    let Some(days) = relative_days(value, today) else {
+    let Some(relative) = relative(value) else {
         let lowercase = value.to_ascii_lowercase();
-        if lowercase != value && relative_days(&lowercase, today).is_some() {
+        if lowercase != value && relative(&lowercase).is_some() {
             return Err(ErrorKind::LowercaseKeyword {
                 value: value.into(),
                 lowercase,
@@ -22,9 +22,27 @@ pub(super) fn resolve(value: &str, today: Date) -> Result<Date, ErrorKind> {
         }
         return Err(invalid());
     };
-    days.and_then(TimeDelta::try_days)
+    relative_days(&relative, today)
+        .flatten()
+        .and_then(TimeDelta::try_days)
         .and_then(|delta| today.checked_add_signed(delta))
         .ok_or_else(overflow)
+}
+
+fn relative(value: &str) -> Option<String> {
+    match value {
+        "today" | "tomorrow" | "yesterday" => Some(value.into()),
+        _ if weekday(value).is_some() => Some(value[..3].into()),
+        _ => {
+            let (sign, digits, unit) = offset_parts(value)?;
+            let digits = digits.trim_start_matches('0');
+            Some(if digits.is_empty() {
+                format!("+0{unit}")
+            } else {
+                format!("{sign}{digits}{unit}")
+            })
+        }
+    }
 }
 
 fn calendar(value: &str) -> Option<Option<Date>> {
@@ -73,14 +91,21 @@ fn relative_days(value: &str, today: Date) -> Option<Option<i64>> {
 }
 
 fn offset(value: &str) -> Option<Option<i64>> {
+    let (_, _, unit) = offset_parts(value)?;
+    let (number, _) = value.split_at(value.len() - 1);
+    let multiplier = if unit == "w" { 7 } else { 1 };
+    Some(
+        number
+            .parse::<i64>()
+            .ok()
+            .and_then(|amount| amount.checked_mul(multiplier)),
+    )
+}
+
+fn offset_parts(value: &str) -> Option<(&str, &str, &str)> {
     let (number, unit) = value.split_at_checked(value.len().checked_sub(1)?)?;
-    let multiplier = match unit {
-        "d" => 1,
-        "w" => 7,
-        _ => return None,
-    };
-    let magnitude = number.strip_prefix(['+', '-'])?;
-    ascii_digits(magnitude).then(|| number.parse::<i64>().ok()?.checked_mul(multiplier))
+    let digits = number.strip_prefix(['+', '-'])?;
+    (matches!(unit, "d" | "w") && ascii_digits(digits)).then(|| (&number[..1], digits, unit))
 }
 
 fn weekday(value: &str) -> Option<Weekday> {
@@ -93,5 +118,17 @@ fn weekday(value: &str) -> Option<Weekday> {
         "sat" | "saturday" => Some(Weekday::Sat),
         "sun" | "sunday" => Some(Weekday::Sun),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relative_dates_have_one_spelling() {
+        for (raw, canonical) in [("friday", "fri"), ("-01w", "-1w"), ("-00d", "+0d")] {
+            assert_eq!(relative(raw).as_deref(), Some(canonical));
+        }
     }
 }
