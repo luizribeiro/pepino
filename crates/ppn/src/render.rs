@@ -16,3 +16,7 @@ pub use row::task_row;
 
 #[cfg(test)]
 mod samples;
+
+mod relations;
+
+pub use relations::{edge_reason, link_description, task_relations};
