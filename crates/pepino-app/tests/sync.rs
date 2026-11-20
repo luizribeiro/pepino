@@ -25,7 +25,8 @@ async fn create(app: &mut App, operation: Value, title: &str) -> TaskRecord {
 }
 
 async fn get(app: &mut App, id: &str) -> TaskRecord {
-    let Response::Task { task } = dispatch(app, json!({"op":"get_task","task":id})).await else {
+    let Response::Task { task, .. } = dispatch(app, json!({"op":"get_task","task":id})).await
+    else {
         panic!("expected a task record");
     };
     *task

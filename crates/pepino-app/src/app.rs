@@ -7,7 +7,7 @@ use pepino_core::{Clock, Hlc};
 use pepino_store::{DatabaseErrorKind, Store, StoreError};
 use tokio::time::{Instant, sleep};
 
-use crate::projection::resolve;
+use crate::projection::{edge_effect, resolve};
 use crate::state::{FILE_NAME, io_error, storage};
 use crate::{AppError, LocalState, OpenOptions, ReadRequest, Request, Response};
 
@@ -78,9 +78,16 @@ impl App {
         match request {
             Request::Read(ReadRequest::GetTask { task }) => {
                 let task = resolve(&board, "task", &task)?;
+                let edges = board
+                    .edges(task.id)
+                    .into_iter()
+                    .filter(|edge| edge.exclusion.is_some())
+                    .map(|edge| edge_effect(edge.from, edge.kind, edge.to, Some(edge)))
+                    .collect::<Result<_, _>>()?;
                 let task = self.record(task).await?;
                 Ok(Response::Task {
                     task: Box::new(task),
+                    edges,
                 })
             }
             Request::Write(request) => {

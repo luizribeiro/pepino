@@ -37,7 +37,7 @@ async fn add(app: &mut App, title: &str) -> String {
 }
 
 async fn get(app: &mut App, id: &str) -> TaskRecord {
-    let Response::Task { task } = app
+    let Response::Task { task, .. } = app
         .handle(Request::Read(ReadRequest::GetTask { task: id.into() }), NOW)
         .await
         .unwrap()
@@ -309,6 +309,10 @@ async fn link_and_unlink_use_present_edges_including_excluded_ones() {
         reason: Some(EdgeExclusionReason::Cycle),
     };
     assert_eq!(edges, std::slice::from_ref(&excluded));
+    let response = handle(&mut app, json!({"op":"get_task","task":first}))
+        .await
+        .unwrap();
+    assert!(matches!(response, Response::Task { edges, .. } if edges == [excluded.clone()]));
     assert!(get(&mut app, &first).await.blocked_by.is_empty());
     let (changed, _, _, edges) = write(&mut app, link(&second, "blocks", &first)).await;
     assert!(!changed && edges.is_empty());
@@ -367,6 +371,7 @@ async fn comments_are_ordered_and_preserve_repeated_text() {
     assert_eq!(get(&mut app, &id).await, task);
 
     let response = Response::Task {
+        edges: vec![],
         task: Box::new(task),
     };
     let json = serde_json::to_vec(&response).unwrap();

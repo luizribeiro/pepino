@@ -300,8 +300,9 @@ fn task_comments_and_edge_effects_have_stable_shapes() {
         round_trip(&effect);
     }
 
-    let response = json!({"v":1,"result":{"ok":{"kind":"task","task":record}}});
+    let response = json!({"v":1,"result":{"ok":{"kind":"task","task":record,"edges":[]}}});
     let wire = WireResponse::new(Ok(Response::Task {
+        edges: vec![],
         task: Box::new(task),
     }));
     assert_eq!(serde_json::to_value(&wire).unwrap(), response);

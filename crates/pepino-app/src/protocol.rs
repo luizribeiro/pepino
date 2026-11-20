@@ -95,6 +95,8 @@ pub enum Response {
     },
     Task {
         task: Box<TaskRecord>,
+        #[serde(default)]
+        edges: Vec<EdgeEffect>,
     },
 }
 
