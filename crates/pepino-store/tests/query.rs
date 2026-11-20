@@ -1,5 +1,7 @@
 #[path = "query/fixture.rs"]
 mod fixture;
+#[path = "query/semantics.rs"]
+mod semantics;
 #[path = "query/sort.rs"]
 mod sort;
 
@@ -35,12 +37,4 @@ impl ViewResolver for TestViews {
     fn resolve(&self, _: &str) -> Option<&Filter> {
         None
     }
-}
-
-#[test]
-fn query_fixture_keeps_the_parsed_filter() {
-    let filter = filter("tag:garden status:doing");
-    let query = query(&filter);
-    assert_eq!(query.filter, &filter);
-    assert!(query.context.views.resolve("weekend").is_none());
 }
