@@ -146,10 +146,10 @@ fn help_target<'a, 'b>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ppn::help_tree::examples;
+    use ppn::help_tree::{argument_summary, examples};
 
     #[test]
-    fn every_command_has_a_one_line_summary_and_an_example() {
+    fn every_command_and_argument_is_documented() {
         let mut command = Cli::command();
         command.build();
         assert_documented(&command);
@@ -174,6 +174,14 @@ mod tests {
                 .any(|example| rendered.lines().any(|line| line.trim() == example)),
             "{name} needs an example in its help text"
         );
+
+        for arg in command.get_arguments() {
+            assert!(
+                argument_summary(arg).is_some_and(|summary| !summary.trim().is_empty()),
+                "{name} argument {} needs help text",
+                arg.get_id()
+            );
+        }
 
         for child in command.get_subcommands() {
             assert_documented(child);

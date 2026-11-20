@@ -52,6 +52,12 @@ pub fn examples(command: &Command) -> Vec<String> {
         .collect()
 }
 
+pub fn argument_summary(arg: &Arg) -> Option<String> {
+    arg.get_help()
+        .or_else(|| arg.get_long_help())
+        .map(ToString::to_string)
+}
+
 #[derive(Serialize)]
 struct ArgumentInfo {
     name: String,
@@ -129,7 +135,7 @@ impl From<&Arg> for ArgumentInfo {
             name: arg.get_id().to_string(),
             long: arg.get_long().map(str::to_owned),
             short: arg.get_short(),
-            summary: arg.get_help().map(ToString::to_string),
+            summary: argument_summary(arg),
             value_type,
             default,
             env: arg
@@ -154,7 +160,11 @@ mod tests {
             .subcommand(
                 Command::new("archive")
                     .about("Archive a board.")
-                    .arg(Arg::new("board").required(true))
+                    .arg(
+                        Arg::new("board")
+                            .required(true)
+                            .long_help("Board to archive."),
+                    )
                     .arg(
                         Arg::new("days")
                             .long("older-than")
@@ -171,6 +181,7 @@ mod tests {
         assert_eq!(commands[0]["examples"], json!(["ppn archive releases"]));
         assert_eq!(commands[0]["arguments"][0]["name"], "board");
         assert_eq!(commands[0]["arguments"][0]["required"], true);
+        assert_eq!(commands[0]["arguments"][0]["summary"], "Board to archive.");
         assert_eq!(commands[0]["flags"][0]["type"], "integer");
         assert_eq!(commands[0]["flags"][0]["default"], "30");
         assert_eq!(commands[0]["flags"][0]["env"], "PPN_ARCHIVE_AGE");
