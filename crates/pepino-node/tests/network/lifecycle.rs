@@ -9,12 +9,9 @@ use super::support::{network, settings, start};
 
 #[tokio::test]
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
-async fn shutdown_releases_the_offline_udp_port_with_a_board_still_open() {
-    use pepino_node::{DeviceCredentials, NodeSettings};
+async fn shutdown_releases_the_udp_port_with_a_board_still_open() {
     let dir = tempfile::tempdir().unwrap();
-    let credentials =
-        DeviceCredentials::load_or_create(dir.path().join("credentials.cbor")).unwrap();
-    let mut settings = NodeSettings::offline(credentials, dir.path().join("node.sqlite"));
+    let mut settings = settings(&network(dir.path()), dir.path().join("alice"));
     let address = Ipv4Addr::LOCALHOST;
     let port = UdpSocket::bind((address, 0))
         .unwrap()
