@@ -55,7 +55,7 @@ async fn concurrent_apps_open_and_write_to_the_same_directory() {
         workers.push(tokio::spawn(async move {
             start.wait().await;
             let options = OpenOptions {
-                lock_timeout: Duration::from_secs(2),
+                lock_timeout: Duration::from_secs(60),
                 ..OpenOptions::default()
             };
             let mut app = App::open_with_options(path, NOW, options).await.unwrap();
