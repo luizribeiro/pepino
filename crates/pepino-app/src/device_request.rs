@@ -22,6 +22,11 @@ pub struct DeviceRequest {
 }
 
 impl DeviceRequest {
+    pub fn load(directory: &Path) -> Result<Option<Self>, AppError> {
+        let path = directory.join(REQUEST);
+        exists(&path)?.then(|| Self::read(&path)).transpose()
+    }
+
     pub(super) fn read(path: &Path) -> Result<Self, AppError> {
         let bytes =
             fs::read(path).map_err(|error| path_io_error(path, "read device request", error))?;
@@ -146,4 +151,12 @@ async fn persists_a_request_without_creating_an_identity() {
     assert_eq!(reused.member_info().unwrap().device_id().unwrap(), first.id);
     assert!(!path.join(FILE_NAME).exists());
     assert!(!path.join(DATABASE).exists());
+}
+
+#[cfg(test)]
+#[test]
+fn reading_a_pending_request_leaves_an_empty_directory_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(DeviceRequest::load(dir.path()).unwrap().is_none());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }
