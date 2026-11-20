@@ -55,6 +55,8 @@ pub enum Error {
     Closed,
     #[error("node runtime: {0}")]
     Worker(String),
+    #[error("node data directory is still in use (lock: {0})")]
+    DirectoryInUse(std::path::PathBuf),
     #[error("node storage: {0}")]
     Storage(String),
     #[error("node operation: {0}")]

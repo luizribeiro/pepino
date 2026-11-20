@@ -2,10 +2,7 @@ use std::sync::Arc;
 
 use futures_util::StreamExt;
 use pepino_core::DeviceId;
-use sqlx::{
-    SqlitePool,
-    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use tokio::sync::broadcast;
 
 use crate::{
@@ -16,9 +13,10 @@ use crate::{
     worker::Worker,
 };
 
+/// A running transport node. Await [`Node::shutdown`] before opening its data directory again.
+/// Dropping the node initiates background shutdown and keeps the directory locked until it ends.
 pub struct Node {
     pub(crate) inner: Arc<p2panda::Node>,
-    pub(crate) pool: SqlitePool,
     pub(crate) worker: Worker,
     pub(crate) acks: AckStore,
     pub(crate) boards: OpenBoards,
@@ -28,8 +26,9 @@ pub struct Node {
 impl Node {
     pub async fn spawn(settings: NodeSettings) -> Result<Self, Error> {
         let builder = settings.builder()?;
-        let worker = Worker::start().await?;
-        let (inner, pool, acks, status) = worker
+        let worker = Worker::start(&settings.database_path).await?;
+        let worker_pool = worker.pool.clone();
+        let (inner, acks, status) = worker
             .run(async move {
                 let options = SqliteConnectOptions::new()
                     .filename(settings.database_path)
@@ -41,6 +40,7 @@ impl Node {
                     .connect_with(options)
                     .await
                     .map_err(Error::storage)?;
+                worker_pool.set(pool.clone()).map_err(|_| Error::Closed)?;
                 p2panda_store::sqlite::run_pending_migrations(&pool)
                     .await
                     .map_err(Error::storage)?;
@@ -60,12 +60,11 @@ impl Node {
                         }
                     }
                 });
-                Ok((Arc::new(inner), pool, acks, status))
+                Ok((Arc::new(inner), acks, status))
             })
             .await?;
         Ok(Self {
             inner,
-            pool,
             worker,
             acks,
             boards: OpenBoards::default(),
@@ -82,16 +81,9 @@ impl Node {
     }
 
     pub async fn shutdown(self) -> Result<(), Error> {
-        let Self {
-            inner,
-            pool,
-            worker,
-            ..
-        } = self;
+        let Self { inner, worker, .. } = self;
         drop(inner);
-        worker.shutdown().await?;
-        pool.close().await;
-        Ok(())
+        worker.shutdown().await
     }
 }
 
