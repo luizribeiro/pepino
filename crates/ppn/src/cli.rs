@@ -1,6 +1,6 @@
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
-use std::{env, fs, process::ExitCode};
+use std::{env, fs, io, process::ExitCode};
 
 use clap::{
     ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand, error::ErrorKind,
@@ -60,73 +60,103 @@ enum Command {
 }
 
 pub fn run() -> ExitCode {
-    let args = env::args_os().collect::<Vec<_>>();
-    let json_flag = json_on_command_line(&args);
+    let inputs = ProcessInputs {
+        args: env::args_os().collect(),
+        env: env::vars_os().collect(),
+        dirs: platform_dirs,
+        read: |path| fs::read_to_string(path),
+        exists: Path::try_exists,
+    };
+    let (result, json, terminal) = execute(&inputs);
+    finish(result, json, &terminal)
+}
+
+struct ProcessInputs {
+    args: Vec<OsString>,
+    env: Env,
+    dirs: fn(&Env) -> Result<PlatformDirs, CliError>,
+    read: fn(&Path) -> io::Result<String>,
+    exists: fn(&Path) -> io::Result<bool>,
+}
+
+fn execute(inputs: &ProcessInputs) -> (Result<CommandResult, CliError>, bool, Terminal) {
+    let args = &inputs.args;
+    let json_flag = json_on_command_line(args);
     let json_env = match json_from_env() {
         Ok(json) => json,
         Err(error) => {
-            let context = context_for(&Globals::on_early_exit(&args, json_flag));
-            return finish(Err(error), json_flag, &context.terminal);
+            let context = inputs.context(&Globals::on_early_exit(args, json_flag), false);
+            return (Err(error), json_flag, context.terminal);
         }
     };
     let parsed = Cli::command()
-        .try_get_matches_from(&args)
+        .try_get_matches_from(args)
         .and_then(|mut matches| {
             let explicit_color = matches.value_source("color") == Some(ValueSource::CommandLine);
             Cli::from_arg_matches_mut(&mut matches).map(|cli| (cli, explicit_color))
         });
     match parsed {
         Ok((cli, explicit_color)) => {
-            let env = env::vars_os().collect();
-            let flags = Flags {
-                config: cli.globals.config.clone(),
-                color: explicit_color.then_some(cli.globals.color),
-            };
-            let dirs = platform_dirs(&env);
-            let context = Context::new(
-                Terminal::detect(cli.globals.color),
-                cli.globals.yes,
-                cli.globals.timeout,
-                || {
-                    config::load(
-                        &flags,
-                        &env,
-                        |path| fs::read_to_string(path),
-                        dirs.as_ref().map_err(Clone::clone)?,
-                    )
-                },
-            );
+            let context = inputs.context(&cli.globals, explicit_color);
             let json = cli.globals.json;
-            let result = dirs
-                .as_ref()
-                .map_err(Clone::clone)
-                .and_then(|dirs| dispatch(cli, &context, &flags, &env, dirs));
-            finish(result, json, &context.terminal)
+            (dispatch(cli, &context, inputs), json, context.terminal)
         }
         Err(error) => {
             let mut definition = Cli::command();
             let json = json_flag || json_env;
-            let context = context_for(&Globals::on_early_exit(&args, json));
+            let context = inputs.context(&Globals::on_early_exit(args, json), false);
             let result = match error.kind() {
                 ErrorKind::DisplayHelp => {
                     definition.build();
-                    help_flag_target(&definition, &args, json)
+                    help_flag_target(&definition, args, json)
                         .map(|command| help::run(&context, command.clone(), Some(error.render())))
                 }
                 ErrorKind::DisplayVersion => Ok(version::run(&context)),
                 _ => Err(CliError::usage(error)),
             };
-            finish(result, json, &context.terminal)
+            (result, json, context.terminal)
         }
+    }
+}
+
+impl ProcessInputs {
+    fn files(
+        &self,
+        config: Option<std::path::PathBuf>,
+        file: Option<&Path>,
+    ) -> Result<Vec<config::ConfigFile>, CliError> {
+        let dirs = (self.dirs)(&self.env)?;
+        Ok(match file {
+            Some(file) => vec![config::ConfigFile::explicit(file, &dirs)],
+            None => config::select_files(
+                &Flags {
+                    config,
+                    color: None,
+                },
+                &self.env,
+                &dirs,
+            ),
+        })
+    }
+
+    fn context(&self, globals: &Globals, explicit_color: bool) -> Context<'_> {
+        let flags = Flags {
+            config: globals.config.clone(),
+            color: explicit_color.then_some(globals.color),
+        };
+        Context::new(
+            Terminal::detect(globals.color),
+            globals.yes,
+            globals.timeout,
+            move || config::load(&flags, &self.env, self.read, &(self.dirs)(&self.env)?),
+        )
     }
 }
 
 fn dispatch(
     cli: Cli,
     context: &Context<'_>,
-    flags: &Flags,
-    env: &Env,
-    dirs: &PlatformDirs,
+    inputs: &ProcessInputs,
 ) -> Result<CommandResult, CliError> {
     match cli.command {
         Some(Command::Version) => Ok(version::run(context)),
@@ -141,15 +171,15 @@ fn dispatch(
         }) => config_command::show(context, key.as_deref()),
         Some(Command::Config {
             command: config_command::Command::Path,
-        }) => config_command::path(context, &config::select_files(flags, env, dirs)),
+        }) => {
+            let files = inputs.files(cli.globals.config, None)?;
+            config_command::path(&files, inputs.exists)
+        }
         Some(Command::Config {
             command: config_command::Command::Check { file },
         }) => {
-            let files = match file {
-                Some(file) => vec![config::ConfigFile::explicit(&file, dirs)],
-                None => config::select_files(flags, env, dirs),
-            };
-            config_command::check(context, &files, dirs)
+            let files = inputs.files(cli.globals.config, file.as_deref())?;
+            config_command::check(&files, &(inputs.dirs)(&inputs.env)?, inputs.read)
         }
         Some(Command::Debug { command }) => debug::run(context, command),
         None => Ok(help::run(context, Cli::command(), None)),
@@ -181,20 +211,6 @@ fn platform_dirs(env: &Env) -> Result<PlatformDirs, CliError> {
         lookup("XDG_STATE_HOME"),
     )
     .map_err(|error| invalid(&error.to_string()))
-}
-
-fn context_for(globals: &Globals) -> Context<'static> {
-    Context::new(
-        Terminal::detect(globals.color),
-        globals.yes,
-        globals.timeout,
-        || {
-            Err(CliError::new(
-                ppn::error::ErrorKind::Failure,
-                "Configuration is unavailable before argument parsing.",
-            ))
-        },
-    )
 }
 
 fn help_flag_target<'a>(
@@ -247,6 +263,25 @@ mod tests {
     use super::*;
     use ppn::help_tree::{argument_summary, examples};
 
+    fn inputs(args: &[&str]) -> ProcessInputs {
+        ProcessInputs {
+            args: args.iter().map(OsString::from).collect(),
+            env: Env::new(),
+            dirs: |_| panic!("command requested platform directories"),
+            read: |_| panic!("command read a configuration file"),
+            exists: |_| panic!("command probed for a configuration file"),
+        }
+    }
+
+    #[test]
+    fn commands_without_config_do_not_request_process_paths() {
+        for args in [&["ppn", "version"][..], &["ppn", "help"], &["ppn"]] {
+            let mut inputs = inputs(args);
+            inputs.env.insert("PPN_MDNS".into(), "maybe".into());
+            assert!(execute(&inputs).0.is_ok());
+        }
+    }
+
     #[test]
     fn every_command_and_argument_is_documented() {
         let mut command = Cli::command();
@@ -266,7 +301,8 @@ mod tests {
             "--color=never",
         ];
         let cli = Cli::try_parse_from(args).unwrap();
-        let context = context_for(&cli.globals);
+        let inputs = inputs(&args);
+        let context = inputs.context(&cli.globals, true);
         assert_eq!(context.timeout, Some(std::time::Duration::from_secs(5)));
         assert!(context.yes);
         assert!(!context.terminal.color);
@@ -283,7 +319,7 @@ mod tests {
             "--timeout=6",
         ]
         .map(OsString::from);
-        let context = context_for(&Globals::on_early_exit(&early, false));
+        let context = inputs.context(&Globals::on_early_exit(&early, false), false);
         assert_eq!(context.timeout, Some(std::time::Duration::from_secs(5)));
         assert!(context.yes);
         assert!(!context.terminal.color);

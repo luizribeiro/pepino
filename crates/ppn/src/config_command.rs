@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use clap::Subcommand;
@@ -96,8 +96,11 @@ fn display_value(value: &Value) -> String {
     }
 }
 
-pub fn path(_context: &Context, files: &[ConfigFile]) -> Result<CommandResult, CliError> {
-    config::paths(files, Path::try_exists).map(|files| CommandResult::document(PathList(files)))
+pub fn path(
+    files: &[ConfigFile],
+    exists: impl FnMut(&Path) -> io::Result<bool>,
+) -> Result<CommandResult, CliError> {
+    config::paths(files, exists).map(|files| CommandResult::document(PathList(files)))
 }
 
 struct PathList(Vec<FileStatus>);
@@ -119,12 +122,11 @@ impl Render for PathList {
 }
 
 pub fn check(
-    _context: &Context,
     files: &[ConfigFile],
     dirs: &PlatformDirs,
+    read: impl FnMut(&Path) -> io::Result<String>,
 ) -> Result<CommandResult, CliError> {
-    config::check(files, |path| fs::read_to_string(path), dirs)
-        .map(|files| CommandResult::document(Check { files }))
+    config::check(files, read, dirs).map(|files| CommandResult::document(Check { files }))
 }
 
 struct Check {
