@@ -9,3 +9,4 @@ pub mod report;
 pub mod runtime;
 pub mod server;
 pub mod socket;
+pub mod sync_report;
