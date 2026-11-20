@@ -215,17 +215,37 @@ fn document(
     for (info, id) in boards.iter().zip(&ids) {
         let (state, sync) = board_activity(info.board.id, info.membership, network);
         let activity = sync.replace('_', " ");
+        let sharing = if info.shared {
+            info.owner
+                .as_ref()
+                .filter(|owner| !owner.name.is_empty())
+                .map_or_else(
+                    || " · shared".to_owned(),
+                    |owner| format!(" · shared by {}", single_line(&owner.name)),
+                )
+        } else {
+            String::new()
+        };
+        let member = if info.waiting_for_access {
+            "waiting for access"
+        } else {
+            membership(state)
+        };
         rows.push(format!(
-            "{} {} ({})  {}/{} open  {}  {activity}",
+            "{} {} ({})  {}/{} open  {}  {activity}{sharing}",
             if info.current { "*" } else { " " },
             single_line(&info.board.name),
             short.get(id),
             info.open,
             info.total,
-            membership(state),
+            member,
         ));
         let mut record = json!(info);
-        record["membership"] = json!(state);
+        record["membership"] = if info.waiting_for_access {
+            json!("waiting_for_access")
+        } else {
+            json!(state)
+        };
         record["sync"] = json!(sync);
         records.push(record);
     }

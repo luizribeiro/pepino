@@ -13,17 +13,35 @@ pub struct BoardInfo {
     pub open: usize,
     pub total: usize,
     pub membership: BoardJoinState,
+    #[serde(default)]
+    pub shared: bool,
+    #[serde(default)]
+    pub waiting_for_access: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<crate::NamedRecord>,
 }
 
 impl App {
     pub(super) async fn board_info(&self, board: &LocalBoard) -> Result<BoardInfo, AppError> {
         let tasks = self.store.board(board.id).await.map_err(store_error)?;
+        let shared = self.local.shared_access(board.id);
+        let owner = shared.map(|access| crate::NamedRecord {
+            id: access.owner.to_string(),
+            name: self
+                .local
+                .person_labels()
+                .remove(&access.owner)
+                .unwrap_or_default(),
+        });
         Ok(BoardInfo {
             board: board.clone(),
             current: board.id == self.local.board_id(),
             open: tasks.iter().filter(|task| task.status.is_open()).count(),
             total: tasks.tasks().len(),
             membership: self.local.board_join_state(board.id),
+            shared: shared.is_some(),
+            waiting_for_access: self.local.waiting_for_access(board.id),
+            owner,
         })
     }
 
