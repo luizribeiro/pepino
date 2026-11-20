@@ -75,6 +75,7 @@ fn relations_use_resolved_prefixes_and_effective_direct_edges() {
     check("blocks:0707", &[0]);
     check("blocked-by:ABCD02", &[0]);
     check("blocked-by:abcd01,0303", &[6, 8]);
+    check("tag:garden -parent:0808,abcd01 blocks:0707", &[0]);
 }
 
 #[test]

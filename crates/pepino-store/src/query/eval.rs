@@ -131,7 +131,13 @@ fn prepare<'a>(
                 chain.pop();
                 Box::new(move |task: &TaskRecord| all_match(&nested, task)) as Predicate<'a>
             }
-            clause => prepare_clause(view, clause, context).map_err(at_term)?,
+            clause => {
+                let Some(predicate) = prepare_clause(view, clause, context).map_err(at_term)?
+                else {
+                    continue;
+                };
+                predicate
+            }
         };
         if term.negated {
             predicates.push(Box::new(move |task| !predicate(task)));
@@ -162,7 +168,7 @@ fn prepare_clause<'a>(
     view: &'a BoardView,
     clause: &Clause,
     context: &Context<'_>,
-) -> Result<Predicate<'a>, QueryErrorKind> {
+) -> Result<Option<Predicate<'a>>, QueryErrorKind> {
     let predicate: Predicate<'a> = match clause.clone() {
         Clause::Text(text) => {
             let needle = fold(&text);
@@ -181,17 +187,10 @@ fn prepare_clause<'a>(
                 .collect::<Result<Vec<_>, _>>()?;
             Box::new(move |task| ids.iter().any(|id| task.assignees.contains(id)))
         }
-        Clause::Parent(values) => {
-            let ids = resolve_prefixes(view, &values)?;
-            Box::new(move |task| task.parent.is_some_and(|parent| ids.contains(&parent)))
-        }
-        Clause::Blocks(values) => {
-            let ids = resolve_prefixes(view, &values)?;
-            Box::new(move |task| ids.iter().any(|id| task.blocks.contains(id)))
-        }
+        Clause::Parent(values) => relation(view, &values, |task, id| task.parent == Some(id))?,
+        Clause::Blocks(values) => relation(view, &values, |task, id| task.blocks.contains(&id))?,
         Clause::BlockedBy(values) => {
-            let ids = resolve_prefixes(view, &values)?;
-            Box::new(move |task| ids.iter().any(|id| task.blocked_by.contains(id)))
+            relation(view, &values, |task, id| task.blocked_by.contains(&id))?
         }
         Clause::Priority(values) => Box::new(move |task| compare(task.priority, &values)),
         Clause::Due(values) => Box::new(move |task| compare(task.due, &values)),
@@ -205,9 +204,9 @@ fn prepare_clause<'a>(
                 .get(&field)
                 .is_some_and(|value| custom(value, &alternatives))
         }),
-        Clause::Board(_) | Clause::View(_) => unreachable!("handled during filter preparation"),
+        Clause::Board(_) | Clause::View(_) => return Ok(None),
     };
-    Ok(predicate)
+    Ok(Some(predicate))
 }
 
 fn resolve_person(
@@ -228,6 +227,17 @@ fn resolve_person(
             candidates,
         }),
     }
+}
+
+fn relation<'a>(
+    view: &BoardView,
+    values: &[String],
+    contains: fn(&TaskRecord, TaskId) -> bool,
+) -> Result<Predicate<'a>, QueryErrorKind> {
+    let ids = resolve_prefixes(view, values)?;
+    Ok(Box::new(move |task| {
+        ids.iter().any(|&id| contains(task, id))
+    }))
 }
 
 fn resolve_prefixes(view: &BoardView, prefixes: &[String]) -> Result<Vec<TaskId>, QueryErrorKind> {
