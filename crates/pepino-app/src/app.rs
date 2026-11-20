@@ -4,13 +4,13 @@ use std::path::{Path, PathBuf};
 use pepino_core::{Clock, Hlc};
 use pepino_store::{DatabaseErrorKind, Store, StoreError};
 
+use crate::projection::resolve;
 use crate::state::{FILE_NAME, io_error, storage};
 use crate::{AppError, LocalState, OpenOptions, Request, Response};
 
 pub struct App {
     pub(super) store: Store,
     pub(super) local: LocalState,
-    pub(super) database: PathBuf,
     directory: PathBuf,
     pub(super) clock: Clock,
 }
@@ -43,7 +43,6 @@ impl App {
             clock: Clock::from_hlc(hlc),
             store,
             local,
-            database,
             directory,
         })
     }
@@ -61,7 +60,7 @@ impl App {
             .map_err(store_error)?;
         match request {
             Request::GetTask { task } => {
-                let task = self.resolve(&board, "task", &task).await?;
+                let task = resolve(&board, "task", &task)?;
                 let task = self.record(task).await?;
                 Ok(Response::Task {
                     task: Box::new(task),
@@ -69,7 +68,7 @@ impl App {
             }
             request => {
                 let mut batch = self.batch(now).await?;
-                self.plan_write(&board, &mut batch, request).await?;
+                self.plan_write(&board, &mut batch, request)?;
                 self.commit_batch(&board, batch).await
             }
         }

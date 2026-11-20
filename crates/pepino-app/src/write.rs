@@ -5,10 +5,11 @@ use pepino_store::{BoardView, TaskRecord};
 
 use crate::app::invalid;
 use crate::batch::Batch;
+use crate::projection::resolve;
 use crate::{App, AppError, EdgeKind, FieldValue, Request};
 
 impl App {
-    pub(super) async fn plan_write(
+    pub(super) fn plan_write(
         &self,
         view: &BoardView,
         batch: &mut Batch,
@@ -39,7 +40,7 @@ impl App {
                 };
                 let created = TaskId(batch.push(Event::TaskCreated { title, fields }, "fields")?);
                 if let Some(parent) = parent {
-                    let to = self.resolve(view, "parent", &parent).await?.id;
+                    let to = resolve(view, "parent", &parent)?.id;
                     batch.push(
                         Event::EdgeAdded {
                             from: created,
@@ -52,7 +53,7 @@ impl App {
                 for (field, references) in [("blocks", blocks), ("blocked_by", blocked_by)] {
                     let mut ids = BTreeSet::new();
                     for reference in references {
-                        ids.insert(self.resolve(view, field, &reference).await?.id);
+                        ids.insert(resolve(view, field, &reference)?.id);
                     }
                     for target in ids {
                         let (from, to) = if field == "blocks" {
@@ -72,37 +73,37 @@ impl App {
                 }
             }
             Request::SetFields { task, changes } => {
-                let current = self.resolve(view, "task", &task).await?;
+                let current = resolve(view, "task", &task)?;
                 set_fields(batch, current, changes)?;
             }
             Request::AddTags { task, tags } => {
-                let current = self.resolve(view, "task", &task).await?;
+                let current = resolve(view, "task", &task)?;
                 set_tags(batch, current, tags, true)?;
             }
             Request::RemoveTags { task, tags } => {
-                let current = self.resolve(view, "task", &task).await?;
+                let current = resolve(view, "task", &task)?;
                 set_tags(batch, current, tags, false)?;
             }
             Request::Assign { task, assignees } => {
-                let current = self.resolve(view, "task", &task).await?;
+                let current = resolve(view, "task", &task)?;
                 set_assignees(batch, current, self.identities(assignees)?, true)?;
             }
             Request::Unassign { task, assignees } => {
-                let current = self.resolve(view, "task", &task).await?;
+                let current = resolve(view, "task", &task)?;
                 set_assignees(batch, current, self.identities(assignees)?, false)?;
             }
             Request::Link { from, kind, to } => {
-                self.set_edge(view, batch, &from, kind, &to, true).await?;
+                Self::set_edge(view, batch, &from, kind, &to, true)?;
             }
             Request::Unlink { from, kind, to } => {
-                self.set_edge(view, batch, &from, kind, &to, false).await?;
+                Self::set_edge(view, batch, &from, kind, &to, false)?;
             }
             Request::Comment { task, text } => {
-                let task = self.resolve(view, "task", &task).await?.id;
+                let task = resolve(view, "task", &task)?.id;
                 batch.push(Event::CommentAdded { task, text }, "text")?;
             }
             Request::Delete { task } => {
-                let task = self.resolve(view, "task", &task).await?.id;
+                let task = resolve(view, "task", &task)?.id;
                 batch.push(Event::TaskDeleted { task }, "task")?;
             }
             Request::GetTask { .. } => return Err(invalid("op", "expected a write operation")),
@@ -110,8 +111,7 @@ impl App {
         Ok(())
     }
 
-    async fn set_edge(
-        &self,
+    fn set_edge(
         view: &BoardView,
         batch: &mut Batch,
         from: &str,
@@ -119,8 +119,8 @@ impl App {
         to: &str,
         present: bool,
     ) -> Result<(), AppError> {
-        let mut from = self.resolve(view, "from", from).await?.id;
-        let mut to = self.resolve(view, "to", to).await?.id;
+        let mut from = resolve(view, "from", from)?.id;
+        let mut to = resolve(view, "to", to)?.id;
         if kind == EdgeKind::Relates && from > to {
             std::mem::swap(&mut from, &mut to);
         }

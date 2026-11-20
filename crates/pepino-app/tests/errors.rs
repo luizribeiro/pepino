@@ -125,10 +125,8 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
         app.handle(serde_json::from_value(request).unwrap(), NOW)
             .await
             .unwrap_err(),
-        AppError::AmbiguousId {
-            task: "abcd".into(),
-            count: 2,
-            candidates: vec![left.clone(), right.clone()]
+        AppError::Conflict {
+            task: "abcd".into()
         },
     );
     assert_eq!(store.latest_hlc(board).await.unwrap(), before);
