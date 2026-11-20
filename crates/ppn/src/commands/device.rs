@@ -7,11 +7,13 @@ use std::path::Path;
 
 use clap::Subcommand;
 use pepino_app::{App, OpenOptions};
+use pepino_core::DeviceId;
 use ppn::{
     device_code::{Error as CodeError, Kind},
     error::{CliError, ErrorKind},
     help_tree::example_help,
     output::{CommandResult, Render},
+    render::single_line,
     terminal::{Context, Terminal},
 };
 use serde_json::{Map, Value, json};
@@ -75,7 +77,17 @@ pub fn run(
             let (directory, options) = local_options(context, name)?;
             let request = runtime()?.block_on(App::request_device(directory, options))?;
             let code = Kind::Request.encode(&request).map_err(invalid_code)?;
-            Ok(CommandResult::document(RequestCode(code)))
+            let fingerprint = request.fingerprint();
+            let note = format!(
+                "Device {}, fingerprint {fingerprint}. This request code is secret.",
+                single_line(&request.name),
+            );
+            Ok(CommandResult::document(RequestCode {
+                code,
+                fingerprint,
+                id: request.id,
+            })
+            .with_human_note(Some(note)))
         }
     }
 }
@@ -112,17 +124,24 @@ fn invalid_code(error: CodeError) -> CliError {
     CliError::new(ErrorKind::InvalidInput, error.to_string())
 }
 
-struct RequestCode(String);
+struct RequestCode {
+    code: String,
+    fingerprint: String,
+    id: DeviceId,
+}
 
 impl Render for RequestCode {
     fn human(&self, _: &Terminal) -> String {
-        self.0.clone()
+        self.code.clone()
     }
 
     fn json_fields(self) -> Map<String, Value> {
         Map::from_iter([
             ("kind".into(), json!("device_request")),
-            ("request".into(), json!(self.0)),
+            ("request".into(), json!(self.code)),
+            ("fingerprint".into(), json!(self.fingerprint)),
+            ("device_id".into(), json!(self.id)),
+            ("secret".into(), json!(true)),
         ])
     }
 }

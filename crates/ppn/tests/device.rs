@@ -21,12 +21,19 @@ fn device_request_refuses_to_merge_an_existing_identity() {
 fn device_request_is_stable_for_a_piped_script() {
     let (sandbox, data) = uninitialized_task_sandbox();
     let args = ["device", "request", "--name", "Ferrum"];
-    let code = sandbox.run(&args);
+    let output = sandbox.command().args(args).output().unwrap();
+    let note = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(note.contains("Device Ferrum, fingerprint"));
+    assert!(note.contains("request code is secret"));
+    let code = success(output);
     assert!(code.starts_with("PPN-REQUEST-"));
     assert_eq!(sandbox.run(&["device", "request"]), code);
     let json = as_json(&sandbox.run(&["device", "request", "--json"]));
     assert_eq!(json["schema"], 1);
     assert_eq!(json["request"], code.trim());
+    assert_eq!(json["secret"], true);
+    assert!(note.contains(json["fingerprint"].as_str().unwrap()));
+    assert_eq!(json["device_id"].as_str().unwrap().len(), 64);
     assert!(data.join("node.sqlite").exists());
     assert!(!data.join("local.json").exists());
 }
