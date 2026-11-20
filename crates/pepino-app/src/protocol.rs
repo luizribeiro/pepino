@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{Date, EdgeKind, FieldValue, Hlc, Status};
+use crate::{Date, EdgeKind, FieldValue, Hlc, IdentityRecord, NamedRecord, Status, StatusCounts};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -107,6 +107,14 @@ pub enum Response {
         task: Box<TaskRecord>,
         blockers: Vec<DependencyRecord>,
         dependents: Vec<DependencyRecord>,
+    },
+    Status {
+        identity: IdentityRecord,
+        device: NamedRecord,
+        board: NamedRecord,
+        data_dir: String,
+        counts: StatusCounts,
+        protocol_version: u32,
     },
 }
 

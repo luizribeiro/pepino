@@ -13,6 +13,7 @@ mod projection;
 mod protocol;
 mod read;
 mod state;
+mod status;
 mod values;
 mod wire;
 mod write;
@@ -20,6 +21,7 @@ mod write;
 pub use app::App;
 pub use hlc::Hlc;
 pub use state::{LocalState, OpenOptions};
+pub use status::{IdentityRecord, NamedRecord, SkippedCounts, StatusCounts};
 
 pub use protocol::{
     AppError, AppErrorKind, CommentRecord, DependencyRecord, EdgeEffect, EdgeExclusionReason,
