@@ -14,7 +14,7 @@ use crate::{
 
 pub(super) const PENDING: &str = "local.pending.json";
 const STAGING: &str = ".node-init";
-const NODE_DATABASE: &str = "node.sqlite";
+pub(super) const NODE_DATABASE: &str = "node.sqlite";
 
 pub(super) async fn prepare(
     directory: PathBuf,
@@ -98,10 +98,11 @@ enum Prepared {
     Resume(LocalState),
 }
 
-fn credentials(directory: &Path, path: &Path) -> Result<DeviceCredentials, AppError> {
+pub(super) fn credentials(directory: &Path, path: &Path) -> Result<DeviceCredentials, AppError> {
     if path.starts_with(directory.join(STAGING))
         || [
             FILE_NAME,
+            crate::device_request::REQUEST,
             PENDING,
             DATABASE,
             NODE_DATABASE,

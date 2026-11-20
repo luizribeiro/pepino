@@ -1,8 +1,17 @@
+use std::{fs, path::Path};
+
 use pepino_core::DeviceId;
-use pepino_node::MemberInfo;
+use pepino_node::{MemberInfo, Node, NodeSettings};
 use serde::{Deserialize, Serialize};
 
-use crate::{AppError, app::invalid};
+use crate::{
+    App, AppError, LocalState, OpenOptions,
+    app::{DATABASE, exists, invalid, lock},
+    initialize::{NODE_DATABASE, PENDING, credentials},
+    state::{FILE_NAME, path_io_error, storage, write_json},
+};
+
+pub(super) const REQUEST: &str = "device-request.json";
 
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -13,6 +22,12 @@ pub struct DeviceRequest {
 }
 
 impl DeviceRequest {
+    pub(super) fn read(path: &Path) -> Result<Self, AppError> {
+        let bytes =
+            fs::read(path).map_err(|error| path_io_error(path, "read device request", error))?;
+        serde_json::from_slice(&bytes).map_err(|error| storage("read device request", error, false))
+    }
+
     pub fn member_info(&self) -> Result<MemberInfo, AppError> {
         let info = MemberInfo::from_base32(&self.member_info)
             .map_err(|_| invalid("request", "invalid or expired device member info"))?;
@@ -49,4 +64,86 @@ fn request_binding_canonicalizes_member_info_and_covers_the_device_name() {
     equivalent.name = "Ferrum desktop".into();
     assert_ne!(first.binding(), equivalent.binding());
     assert!(first.member_info().is_err());
+}
+
+impl App {
+    pub async fn request_device(
+        directory: &Path,
+        options: OpenOptions,
+    ) -> Result<DeviceRequest, AppError> {
+        LocalState::prepare_directory(directory)?;
+        let _guard = lock(directory, options.lock_timeout).await?;
+        if exists(&directory.join(FILE_NAME))? || exists(&directory.join(PENDING))? {
+            return Err(invalid(
+                "request",
+                "This host already has an identity. This version cannot merge two identities' boards.",
+            ));
+        }
+        let path = directory.join(REQUEST);
+        if exists(&path)? {
+            return DeviceRequest::read(&path);
+        }
+        if exists(&directory.join(DATABASE))? {
+            return Err(invalid(
+                "request",
+                "This directory already contains a task database.",
+            ));
+        }
+        let name = match options.device_name {
+            Some(name) => name,
+            None => whoami::hostname().map_err(|err| storage("get hostname", err, false))?,
+        };
+        if name.trim().is_empty() {
+            return Err(invalid(
+                "name",
+                "name must contain a non-whitespace character",
+            ));
+        }
+        let key_path = options
+            .credentials_file
+            .unwrap_or_else(|| directory.join("credentials.cbor"));
+        let keys = credentials(directory, &key_path)?;
+        let id = keys.device_id();
+        let node = Node::spawn(NodeSettings::offline(keys, directory.join(NODE_DATABASE)))
+            .await
+            .map_err(|_| storage("prepare device", "could not start the offline node", false))?;
+        let info = node.member_info().await;
+        node.shutdown()
+            .await
+            .map_err(|_| storage("prepare device", "could not stop the offline node", false))?;
+        let member_info = info
+            .map_err(|_| storage("prepare device", "could not create member info", false))?
+            .to_base32();
+        let request = DeviceRequest {
+            id,
+            name,
+            member_info,
+        };
+        write_json(&path, &request)?;
+        Ok(request)
+    }
+}
+
+#[cfg(test)]
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn persists_a_request_without_creating_an_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let first = App::request_device(
+        path,
+        OpenOptions {
+            device_name: Some("Ferrum".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let reused = App::request_device(path, OpenOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(first.binding(), reused.binding());
+    assert_eq!(reused.member_info().unwrap().device_id().unwrap(), first.id);
+    assert!(!path.join(FILE_NAME).exists());
+    assert!(!path.join(DATABASE).exists());
 }
