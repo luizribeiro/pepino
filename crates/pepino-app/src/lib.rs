@@ -9,6 +9,7 @@
 mod app;
 mod batch;
 mod device_grant;
+mod device_install;
 mod device_request;
 mod filter;
 mod hlc;

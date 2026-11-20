@@ -111,17 +111,7 @@ impl App {
             }
         };
         let database = directory.join(DATABASE);
-        let runtime = tokio::runtime::Handle::current();
-        // Store startup borrows its migration connection through a non-Send future.
-        let store = worker("open store", move || {
-            if fresh {
-                create_database_file(&database)?;
-            }
-            runtime
-                .block_on(Store::open_existing(&database))
-                .map_err(|error| store_error_at(&database, error))
-        })
-        .await??;
+        let store = open_store(database, fresh).await?;
         store
             .bind_local(local.board_id(), local.identity_id, local.device_id)
             .await
@@ -305,6 +295,20 @@ fn missing_pair(directory: &Path, initialize: bool) -> Result<bool, AppError> {
     }
 }
 
+pub(super) async fn open_store(database: PathBuf, fresh: bool) -> Result<Store, AppError> {
+    let runtime = tokio::runtime::Handle::current();
+    // Store startup borrows its migration connection through a non-Send future.
+    worker("open store", move || {
+        if fresh {
+            create_database_file(&database)?;
+        }
+        runtime
+            .block_on(Store::open_existing(&database))
+            .map_err(|error| store_error_at(&database, error))
+    })
+    .await?
+}
+
 fn create_database_file(path: &Path) -> Result<(), AppError> {
     let mut options = FileOptions::new();
     options.write(true).create_new(true);
@@ -381,7 +385,7 @@ pub(super) fn store_error(error: StoreError) -> AppError {
     store_error_at(Path::new(DATABASE), error)
 }
 
-fn store_error_at(path: &Path, error: StoreError) -> AppError {
+pub(super) fn store_error_at(path: &Path, error: StoreError) -> AppError {
     match error {
         StoreError::Database {
             kind: DatabaseErrorKind::PermissionDenied,
