@@ -280,3 +280,35 @@ fn json_help_describes_repeatability_value_syntax_and_root_globals() {
         no_globals(child);
     }
 }
+
+#[test]
+fn json_help_describes_the_success_document_of_each_leaf() {
+    let help = as_json(&run_ppn(&["help", "--json"]));
+    fn check(node: &serde_json::Value) {
+        let children = node["commands"].as_array().unwrap();
+        if children.is_empty() {
+            assert!(node["output"]["kind"].is_string(), "{}", node["name"]);
+            assert!(node["output"]["fields"]["schema"].is_string());
+        }
+        for child in children {
+            check(child);
+        }
+    }
+    check(&help);
+    let config = as_json(&run_ppn(&["help", "config", "show", "--json"]));
+    assert_eq!(config["output"]["kind"], "config");
+    let add = as_json(&run_ppn(&["help", "add", "--json"]));
+    assert!(
+        add["output"]["fields"]["created"]
+            .as_str()
+            .unwrap()
+            .contains("ID")
+    );
+    let ls = as_json(&run_ppn(&["help", "ls", "--json"]));
+    assert!(
+        ls["output"]["fields"]["tasks"]
+            .as_str()
+            .unwrap()
+            .contains("Matching")
+    );
+}

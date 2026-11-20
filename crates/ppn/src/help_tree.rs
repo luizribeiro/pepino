@@ -7,6 +7,9 @@ use clap::{Arg, ArgAction, Command};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
+#[path = "help_output.rs"]
+mod output;
+
 const EXAMPLES_HEADER: &str = "Examples:";
 
 pub fn example_help(examples: &[&str]) -> String {
@@ -37,6 +40,7 @@ pub fn command_fields(command: &Command) -> Map<String, Value> {
             ("arguments", json!(details(arguments))),
             ("flags", json!(details(flags))),
             ("commands", children.into()),
+            ("output", output::for_command(command)),
         ]
         .map(|(key, value)| (key.into(), value)),
     );
