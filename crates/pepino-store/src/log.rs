@@ -9,9 +9,6 @@ use crate::{BoardKey, Store, StoreError, edges, fold, history};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IdSource {
     Content,
-    /// Use only for an ID assigned by the transport or replayed from the store.
-    /// The ID is not checked against the envelope bytes.
-    Trusted(EventId),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -56,11 +53,8 @@ struct Decoded {
 }
 
 impl Decoded {
-    fn new(bytes: &[u8], source: IdSource) -> Result<Self, StoreError> {
-        let outcome = match source {
-            IdSource::Content => Envelope::decode(bytes),
-            IdSource::Trusted(id) => Envelope::decode_with_id(id, bytes),
-        }?;
+    fn new(bytes: &[u8]) -> Result<Self, StoreError> {
+        let outcome = Envelope::decode(bytes)?;
         let (id, author, hlc) = (outcome.id(), outcome.author(), outcome.hlc());
         let event = match outcome {
             DecodeOutcome::Known(envelope) => match fold::target(&envelope) {
@@ -192,8 +186,8 @@ impl Store {
         let mut connection = self.connection.lock().await;
         let mut tx = connection.begin().await?;
         let mut outcomes = Vec::with_capacity(events.len());
-        for &(bytes, id_source) in events {
-            let decoded = Decoded::new(bytes, id_source)?;
+        for &(bytes, IdSource::Content) in events {
+            let decoded = Decoded::new(bytes)?;
             let outcome = if decoded.insert(&mut tx, board, bytes).await? {
                 decoded.project(&mut tx, board, bytes).await?
             } else {
@@ -263,7 +257,8 @@ pub(crate) async fn rebuild(
         };
         after = last.to_vec();
         for (id, bytes) in rows {
-            let decoded = Decoded::new(&bytes, IdSource::Trusted(EventId::from_bytes(id)))?;
+            let decoded = Decoded::new(&bytes)?;
+            history::check_id(id, decoded.id)?;
             decoded.refresh_metadata(connection, board).await?;
             if matches!(
                 decoded.project(connection, board, &bytes).await?,

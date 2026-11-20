@@ -100,10 +100,20 @@ struct StoredEvent {
     bytes: Vec<u8>,
 }
 
+pub(crate) fn check_id(stored: [u8; 32], content: EventId) -> Result<(), StoreError> {
+    if stored != *content.as_bytes() {
+        return Err(StoreError::ViewValue(format!(
+            "stored event {} has content ID {content}",
+            EventId::from_bytes(stored),
+        )));
+    }
+    Ok(())
+}
+
 impl StoredEvent {
     fn decode(&self) -> Result<HistoryEvent, StoreError> {
-        let id = EventId::from_bytes(self.id);
-        let decoded = Envelope::decode_with_id(id, &self.bytes)?;
+        let decoded = Envelope::decode(&self.bytes)?;
+        check_id(self.id, decoded.id())?;
         let (event, tasks) = match &decoded {
             DecodeOutcome::Known(envelope) => (
                 Some(envelope.event().clone()),

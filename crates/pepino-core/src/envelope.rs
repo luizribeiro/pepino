@@ -151,22 +151,6 @@ impl Envelope {
         })
     }
 
-    /// Validates an event and attaches a trusted ID, such as a stored operation hash.
-    pub fn with_id(
-        id: EventId,
-        author: DeviceId,
-        hlc: Hlc,
-        event: Event,
-    ) -> Result<Self, InvalidEvent> {
-        event.validate()?;
-        Ok(Self {
-            id,
-            author,
-            hlc,
-            event,
-        })
-    }
-
     pub const fn id(&self) -> EventId {
         self.id
     }
@@ -188,13 +172,7 @@ impl Envelope {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<DecodeOutcome, DecodeError> {
-        decode_content(bytes, None)
-    }
-
-    /// Decodes the content using a trusted ID supplied by the caller.
-    /// The supplied ID is not checked against the bytes.
-    pub fn decode_with_id(id: EventId, bytes: &[u8]) -> Result<DecodeOutcome, DecodeError> {
-        decode_content(bytes, Some(id))
+        decode_content(bytes)
     }
 
     pub const fn created_task(&self) -> Option<TaskId> {
@@ -209,7 +187,7 @@ impl Envelope {
     }
 }
 
-fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, DecodeError> {
+fn decode_content(bytes: &[u8]) -> Result<DecodeOutcome, DecodeError> {
     let mut remaining = bytes;
     let frame: Value = ciborium::from_reader(&mut remaining).map_err(|_| DecodeError::Cbor)?;
     if !remaining.is_empty() {
@@ -222,7 +200,7 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
         return Err(DecodeError::InvalidFrame);
     };
     let version = u64::try_from(*version).map_err(|_| DecodeError::InvalidFrame)?;
-    let id = id.unwrap_or_else(|| EventId::hash_content_bytes(bytes));
+    let id = EventId::hash_content_bytes(bytes);
     if version != VERSION {
         return Ok(DecodeOutcome::UnknownVersion {
             version,
@@ -291,16 +269,19 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
     if !is_canonical {
         return Err(DecodeError::NonCanonical);
     }
-    let envelope = match Envelope::with_id(id, author, hlc, event) {
-        Ok(envelope) => envelope,
-        Err(reason) => {
-            return Ok(DecodeOutcome::InvalidEvent {
-                id,
-                author,
-                hlc,
-                reason,
-            });
-        }
+    if let Err(reason) = event.validate() {
+        return Ok(DecodeOutcome::InvalidEvent {
+            id,
+            author,
+            hlc,
+            reason,
+        });
+    }
+    let envelope = Envelope {
+        id,
+        author,
+        hlc,
+        event,
     };
     if let Some((variant, values, _)) = unknown {
         return Ok(DecodeOutcome::UnknownValue {
@@ -411,16 +392,12 @@ mod tests {
             tag: "garden".into(),
         };
         let envelope = Envelope::new(author, hlc, event.clone()).unwrap();
-        let external =
-            Envelope::with_id(EventId::from_bytes([99; 32]), author, hlc, event.clone()).unwrap();
         let bytes = envelope.encode().unwrap();
-        assert_eq!(bytes, external.encode().unwrap());
         assert_eq!(envelope.id.as_bytes(), blake3::hash(&bytes).as_bytes());
         assert_eq!(
             envelope.id,
             EventId::for_content(author, hlc, &event).unwrap()
         );
-        assert_ne!(envelope.id, external.id);
         for (author, hlc, event) in [
             (other_author, hlc, event.clone()),
             (
@@ -458,7 +435,6 @@ mod tests {
 
     #[test]
     fn order_breaks_clock_ties_with_id() {
-        let author = DeviceId::from_bytes([9; 32]);
         let task = TaskId(EventId::from_bytes([5; 32]));
         let early = Hlc {
             wall_ms: 1_795_144_800_000,
@@ -469,9 +445,8 @@ mod tests {
             ..early
         };
         let make = |byte, hlc| {
-            Envelope::with_id(
-                EventId::from_bytes([byte; 32]),
-                author,
+            Envelope::new(
+                DeviceId::from_bytes([byte; 32]),
                 hlc,
                 Event::TaskDeleted { task },
             )
@@ -479,6 +454,7 @@ mod tests {
         };
         let mut events = [make(1, late), make(9, early), make(3, early)];
         events.sort_by_key(Envelope::order_key);
-        assert_eq!(events.map(|event| event.id.as_bytes()[0]), [3, 9, 1]);
+        assert_eq!(events.each_ref().map(Envelope::hlc), [early, early, late]);
+        assert!(events[0].id() < events[1].id());
     }
 }

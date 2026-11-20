@@ -129,22 +129,31 @@ async fn duplicates_are_board_scoped_and_corrupt_bytes_are_rejected() {
     let store = Store::open_in_memory().await.unwrap();
     let board = BoardId::from_bytes([19; 32]);
     let other = BoardId::from_bytes([33; 32]);
-    let bytes = creation().encode().unwrap();
-    let id = EventId::from_bytes([78; 32]);
-    let trusted = IdSource::Trusted(id);
+    let original = creation();
+    let bytes = original.encode().unwrap();
+    let id = original.id();
     assert_eq!(
-        store.append(board, &bytes, trusted).await.unwrap(),
+        store
+            .append(board, &bytes, IdSource::Content)
+            .await
+            .unwrap(),
         AppendOutcome::Applied {
             id,
             task: TaskId(id)
         }
     );
     assert_eq!(
-        store.append(board, &bytes, trusted).await.unwrap(),
+        store
+            .append(board, &bytes, IdSource::Content)
+            .await
+            .unwrap(),
         AppendOutcome::Duplicate { id }
     );
     assert_eq!(
-        store.append(other, &bytes, trusted).await.unwrap(),
+        store
+            .append(other, &bytes, IdSource::Content)
+            .await
+            .unwrap(),
         AppendOutcome::Applied {
             id,
             task: TaskId(id)
@@ -152,7 +161,7 @@ async fn duplicates_are_board_scoped_and_corrupt_bytes_are_rejected() {
     );
     assert!(matches!(
         store
-            .append(board, &bytes[..bytes.len() - 1], trusted)
+            .append(board, &bytes[..bytes.len() - 1], IdSource::Content)
             .await,
         Err(StoreError::Decode(_))
     ));
@@ -164,16 +173,16 @@ async fn duplicates_are_board_scoped_and_corrupt_bytes_are_rejected() {
 }
 
 #[tokio::test]
-async fn rebuild_redecodes_skips_and_retains_trusted_ids() {
+async fn rebuild_redecodes_skips_and_retains_content_ids() {
     let store = Store::open_in_memory().await.unwrap();
     let board = BoardId::from_bytes([19; 32]);
     let other = BoardId::from_bytes([52; 32]);
     let original = creation();
     let bytes = original.encode().unwrap();
-    let id = EventId::from_bytes([0; 32]);
+    let id = original.id();
     for board in [board, other] {
         store
-            .append(board, &bytes, IdSource::Trusted(id))
+            .append(board, &bytes, IdSource::Content)
             .await
             .unwrap();
     }
@@ -208,12 +217,13 @@ async fn rebuild_redecodes_skips_and_retains_trusted_ids() {
     assert_eq!(history[0].id, id);
     assert_eq!(history[0].bytes, bytes);
     assert_eq!(store.latest_hlc(board).await.unwrap(), Some(original.hlc()));
-    let classes: Vec<String> =
-        sqlx::query_scalar("SELECT classification FROM event_log WHERE board = ? ORDER BY id")
-            .bind(BoardKey(board))
-            .fetch_all(&mut *store.connection.lock().await)
-            .await
-            .unwrap();
+    let classes: Vec<String> = sqlx::query_scalar(
+        "SELECT classification FROM event_log WHERE board = ? ORDER BY classification",
+    )
+    .bind(BoardKey(board))
+    .fetch_all(&mut *store.connection.lock().await)
+    .await
+    .unwrap();
     assert_eq!(classes, ["known", "unknown_version"]);
 }
 
@@ -282,7 +292,7 @@ async fn reopening_projects_legacy_edges_on_every_board() {
     )
     .unwrap();
     let edge_bytes = edge.encode().unwrap();
-    let decoded = Decoded::new(&edge_bytes, IdSource::Content).unwrap();
+    let decoded = Decoded::new(&edge_bytes).unwrap();
 
     let older = Store::open_file(&path, 1, true).await.unwrap();
     let fresh = Store::open_in_memory().await.unwrap();
