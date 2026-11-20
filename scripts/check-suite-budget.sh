@@ -26,7 +26,7 @@ cpu_count() {
 }
 
 cpus=$(cpu_count)
-load_before=$(load_average)
+load=$(load_average)
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 
@@ -40,7 +40,6 @@ if ((status != 0)); then
 fi
 cargo test --workspace --doc || status=$?
 elapsed=$SECONDS
-load_after=$(load_average)
 
 printf 'Workspace wall time: %ss\nSlowest ten nextest tests:\n' "$elapsed"
 awk -F '[][]' '$1 ~ /^[[:space:]]*(PASS|FAIL|LEAK|TIMEOUT)[[:space:]]+$/ && $2 ~ /s$/ {
@@ -52,11 +51,10 @@ awk -F '[][]' '$1 ~ /^[[:space:]]*(PASS|FAIL|LEAK|TIMEOUT)[[:space:]]+$/ && $2 ~
 if ((status != 0)); then
     exit "$status"
 fi
-if [[ ! $load_before =~ ^[0-9]+(\.[0-9]+)?$ || ! $load_after =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+if [[ ! $load =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
     echo 'Suite budget enforcement skipped because the one-minute load was unavailable.'
-elif awk -v before="$load_before" -v after="$load_after" -v cpus="$cpus" \
-    'BEGIN { exit !(before >= 0.75 * cpus || after >= 0.75 * cpus) }'; then
-    echo "Suite budget enforcement skipped due to host load ($load_before before, $load_after after, $cpus CPUs)."
+elif awk -v load_avg="$load" -v cpus="$cpus" 'BEGIN { exit !(load_avg >= 0.75 * cpus) }'; then
+    echo "Suite budget enforcement skipped due to host load at launch ($load across $cpus CPUs)."
 elif awk -v elapsed="$elapsed" -v budget="$budget" 'BEGIN { exit !(elapsed > budget) }'; then
     echo "Suite exceeded its ${budget}s budget." >&2
     exit 1
