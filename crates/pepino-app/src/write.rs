@@ -75,6 +75,22 @@ impl App {
                 let current = self.resolve(view, "task", &task).await?;
                 set_fields(batch, current, changes)?;
             }
+            Request::AddTags { task, tags } => {
+                let current = self.resolve(view, "task", &task).await?;
+                set_tags(batch, current, tags, true)?;
+            }
+            Request::RemoveTags { task, tags } => {
+                let current = self.resolve(view, "task", &task).await?;
+                set_tags(batch, current, tags, false)?;
+            }
+            Request::Assign { task, assignees } => {
+                let current = self.resolve(view, "task", &task).await?;
+                set_assignees(batch, current, self.identities(assignees)?, true)?;
+            }
+            Request::Unassign { task, assignees } => {
+                let current = self.resolve(view, "task", &task).await?;
+                set_assignees(batch, current, self.identities(assignees)?, false)?;
+            }
             _ => return Err(invalid("op", "write operation is unavailable")),
         }
         Ok(())
@@ -133,6 +149,49 @@ fn current_value(task: &TaskRecord, field: &FieldName) -> FieldValue {
         _ => task.custom.get(field).cloned(),
     };
     value.unwrap_or(FieldValue::Unset)
+}
+
+fn set_tags(
+    batch: &mut Batch,
+    current: &TaskRecord,
+    tags: Vec<String>,
+    present: bool,
+) -> Result<(), AppError> {
+    let task = current.id;
+    batch.affected.insert(task);
+    for tag in tags.into_iter().collect::<BTreeSet<_>>() {
+        let changed = current.tags.contains(&tag) != present;
+        let event = if present {
+            Event::TagAdded { task, tag }
+        } else {
+            Event::TagRemoved { task, tag }
+        };
+        batch.stage(event, "tags", changed)?;
+    }
+    Ok(())
+}
+
+fn set_assignees(
+    batch: &mut Batch,
+    current: &TaskRecord,
+    assignees: BTreeSet<IdentityId>,
+    present: bool,
+) -> Result<(), AppError> {
+    let task = current.id;
+    batch.affected.insert(task);
+    for who in assignees {
+        let event = if present {
+            Event::AssigneeAdded { task, who }
+        } else {
+            Event::AssigneeRemoved { task, who }
+        };
+        batch.stage(
+            event,
+            "assignees",
+            current.assignees.contains(&who) != present,
+        )?;
+    }
+    Ok(())
 }
 
 fn custom_fields(

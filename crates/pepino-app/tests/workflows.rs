@@ -167,3 +167,52 @@ async fn edit_fields_completes_work_and_clears_optional_values() {
     assert!(task.fields.is_empty());
     assert!(!write(&mut app, clear).await.0);
 }
+
+#[tokio::test]
+async fn tags_and_assignees_deduplicate_and_validate_entire_batches() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let id = add(&mut app, "Sharpen the pruning shears").await;
+    let me = app.local_state().identity_id.to_string();
+    let other = "ab".repeat(32);
+    let add_tags =
+        json!({"op":"add_tags","task":&id,"tags":["garden/tools","garden/tools","maintenance"]});
+    let remove_tags = json!({"op":"remove_tags","task":&id,"tags":["garden/tools","absent"]});
+    let assign = json!({"op":"assign","task":&id,"assignees":["me",&me,other.to_uppercase()]});
+    let unassign = json!({"op":"unassign","task":&id,"assignees":["me"]});
+
+    for request in [add_tags, remove_tags, assign, unassign] {
+        let (changed, ids, new) = write(&mut app, request.clone()).await;
+        assert!(changed);
+        assert_eq!(ids, std::slice::from_ref(&id));
+        assert_eq!(new, [get(&mut app, &id).await]);
+        assert_eq!(write(&mut app, request).await, (false, ids, new));
+    }
+    let before = get(&mut app, &id).await;
+    assert_eq!(before.tags, ["maintenance".into()].into());
+    assert_eq!(before.assignees, [other].into());
+
+    for (request, expected) in [
+        (
+            json!({"op":"add_tags","task":&id,"tags":["garden", "z INVALID"]}),
+            "tags",
+        ),
+        (
+            json!({"op":"remove_tags","task":&id,"tags":["maintenance", "z INVALID"]}),
+            "tags",
+        ),
+        (
+            json!({"op":"assign","task":&id,"assignees":["me","Ada"]}),
+            "assignees",
+        ),
+        (
+            json!({"op":"unassign","task":&id,"assignees":["me","Ada"]}),
+            "assignees",
+        ),
+    ] {
+        assert!(
+            matches!(handle(&mut app, request).await, Err(AppError::InvalidInput { field, .. }) if field == expected)
+        );
+        assert_eq!(get(&mut app, &id).await, before);
+    }
+}
