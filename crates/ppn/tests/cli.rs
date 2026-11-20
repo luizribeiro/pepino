@@ -878,3 +878,25 @@ fn commands_load_configuration_only_when_needed() {
         .unwrap();
     assert_json_error(output, 1, "invalid_config");
 }
+
+#[test]
+fn config_show_reports_file_and_environment_errors_together() {
+    let sandbox = ConfigSandbox::new();
+    std::fs::write(&sandbox.config, "network = ?").unwrap();
+    let output = sandbox
+        .command()
+        .env("PPN_MDNS", "maybe")
+        .args(["config", "show", "--json"])
+        .output()
+        .unwrap();
+    let diagnostic = assert_json_error(output, 1, "invalid_config");
+    let message = diagnostic["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains(&format!("{}:1:11: network:", sandbox.config.display())),
+        "{message}"
+    );
+    assert!(
+        message.contains("PPN_MDNS: mdns: expected a boolean"),
+        "{message}"
+    );
+}

@@ -22,10 +22,17 @@ pub fn load(
     dirs: &PlatformDirs,
 ) -> Result<LoadedConfig, CliError> {
     let mut draft = Draft::new(dirs)?;
-    let files = visit_files(&select_files(flags, env, dirs), read, |file, text| {
-        draft.apply_file(&file.path, text, &file.source)
-    })?;
-    super::env::apply(&mut draft, env)?;
+    let mut problems = Vec::new();
+    let files = visit_files(
+        &select_files(flags, env, dirs),
+        read,
+        &mut problems,
+        |file, text| draft.apply_file(&file.path, text, &file.source),
+    );
+    if let Err(error) = super::env::apply(&mut draft, env) {
+        problems.push(error.to_string());
+    }
+    invalid_config(problems)?;
     if let Some(value) = flags.color {
         draft.config.ui.color = Setting {
             value,
@@ -43,17 +50,20 @@ pub fn check(
     read: impl FnMut(&Path) -> io::Result<String>,
     dirs: &PlatformDirs,
 ) -> Result<Vec<FileStatus>, CliError> {
-    visit_files(files, read, |file, text| {
+    let mut problems = Vec::new();
+    let statuses = visit_files(files, read, &mut problems, |file, text| {
         validate_file(&file.path, text, dirs).map(|_| ())
-    })
+    });
+    invalid_config(problems)?;
+    Ok(statuses)
 }
 
 fn visit_files(
     files: &[ConfigFile],
     mut read: impl FnMut(&Path) -> io::Result<String>,
+    problems: &mut Vec<String>,
     mut visit: impl FnMut(&ConfigFile, &str) -> Result<(), CliError>,
-) -> Result<Vec<FileStatus>, CliError> {
-    let mut problems = Vec::new();
+) -> Vec<FileStatus> {
     let mut statuses = Vec::new();
     for file in files {
         let read_result = match read(&file.path) {
@@ -66,10 +76,9 @@ fn visit_files(
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error),
         };
-        statuses.extend(file.record(read_result, &mut problems));
+        statuses.extend(file.record(read_result, problems));
     }
-    invalid_config(problems)?;
-    Ok(statuses)
+    statuses
 }
 
 #[cfg(test)]
