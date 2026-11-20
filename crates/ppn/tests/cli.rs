@@ -1475,3 +1475,27 @@ fn show_reports_ambiguous_ids_with_sorted_candidates() {
     let human = String::from_utf8(human.stderr).unwrap();
     assert!(expected.iter().all(|id| human.contains(id)));
 }
+
+#[test]
+fn status_honors_zero_timeout_on_the_data_directory_lock() {
+    let (sandbox, data) = task_sandbox();
+    sandbox.run(&["status"]);
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(data.join("local.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let output = sandbox
+        .command()
+        .args(["status", "--timeout", "0", "--json"])
+        .output()
+        .unwrap();
+    let error = task_error(output, 1, "busy");
+    assert!(error["hint"].as_str().unwrap().contains("--timeout"));
+    lock.unlock().unwrap();
+    assert_eq!(
+        as_json(&sandbox.run(&["status", "--json"]))["kind"],
+        "status"
+    );
+}
