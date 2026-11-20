@@ -144,7 +144,7 @@ fn calendar_dates_are_typed_and_validated() {
     let filter = parse("-due:<=2026-12-01,>fri created:>=2024-02-29 updated:<2027-01-01").unwrap();
     let comparison = |operator, date: &str| Comparison {
         operator,
-        value: date.parse().unwrap(),
+        value: DateOperand::Absolute(date.parse().unwrap()),
     };
     assert_eq!(
         filter.terms(),

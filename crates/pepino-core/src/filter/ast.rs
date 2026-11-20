@@ -1,6 +1,9 @@
 use crate::{FieldName, Status};
 
-use super::keywords::{Builtin, State};
+use super::{
+    DateOperand,
+    keywords::{Builtin, State},
+};
 pub use crate::Date;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -40,9 +43,9 @@ pub enum Clause {
     Blocks(Vec<String>),
     BlockedBy(Vec<String>),
     Priority(Vec<Comparison<i64>>),
-    Due(Vec<Comparison<Date>>),
-    Created(Vec<Comparison<Date>>),
-    Updated(Vec<Comparison<Date>>),
+    Due(Vec<Comparison<DateOperand>>),
+    Created(Vec<Comparison<DateOperand>>),
+    Updated(Vec<Comparison<DateOperand>>),
     Custom {
         field: FieldName,
         alternatives: Vec<Comparison<CustomValue>>,

@@ -4,8 +4,8 @@ use super::ast::ME;
 use super::keywords::{self, Builtin};
 
 use super::{
-    Assignee, Clause, Comparison, CustomValue, Date, ErrorKind, Filter, Operator, ParseError,
-    Position, PresenceField, State, Term, date, lex,
+    Assignee, Clause, Comparison, CustomValue, Date, DateOperand, ErrorKind, Filter, Operator,
+    ParseError, Position, PresenceField, State, Term, date, lex,
 };
 
 /// Parse whitespace-separated terms using the supplied calendar date.
@@ -141,7 +141,7 @@ fn parse_keyed(field: FieldName, raw: &str, today: Date) -> Located<Clause> {
     let equal_text = || alternatives(raw, key, false, |operand| Ok(operand.value));
     let dates = || {
         alternatives(raw, key, true, |operand| {
-            let value = date::resolve(&operand.value, today)?;
+            let value = DateOperand::Absolute(date::resolve(&operand.value, today)?);
             Ok(Comparison {
                 operator: operand.operator,
                 value,

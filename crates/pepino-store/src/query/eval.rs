@@ -340,12 +340,12 @@ impl<'a> Operands<'a> {
 
     fn dates(
         &mut self,
-        values: Vec<Comparison<Date>>,
+        values: Vec<Comparison<DateOperand>>,
     ) -> Result<Vec<Comparison<Date>>, QueryErrorKind> {
         values
             .into_iter()
             .map(|Comparison { operator, value }| {
-                let value = self.date(&DateOperand::Absolute(value))?;
+                let value = self.date(&value)?;
                 Ok(Comparison { operator, value })
             })
             .collect()

@@ -104,9 +104,9 @@ fn clause() -> impl Strategy<Value = Clause> {
             }
         }),
         comparisons(any::<i64>()).prop_map(Clause::Priority),
-        comparisons(dates()).prop_map(Clause::Due),
-        comparisons(dates()).prop_map(Clause::Created),
-        comparisons(dates()).prop_map(Clause::Updated),
+        comparisons(dates().prop_map(DateOperand::Absolute)).prop_map(Clause::Due),
+        comparisons(dates().prop_map(DateOperand::Absolute)).prop_map(Clause::Created),
+        comparisons(dates().prop_map(DateOperand::Absolute)).prop_map(Clause::Updated),
         vec("[a-z][a-z0-9_./-]{0,16}", 1..4).prop_map(Clause::Tag),
         vec(
             select(
