@@ -114,4 +114,4 @@ mod tests {
 
 mod membership;
 
-pub use membership::AddMembershipArgs;
+pub use membership::{AddMembershipArgs, MembershipArgs};
