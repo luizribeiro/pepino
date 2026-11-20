@@ -50,6 +50,7 @@ pub struct BoardHandle {
     runtime: Handle,
     joined: watch::Receiver<JoinState>,
     replaying: watch::Receiver<bool>,
+    status: Status,
     receipts: Receipts,
     confirmation_timeout: Duration,
     events: Option<mpsc::Receiver<Result<BoardEvent, Error>>>,
@@ -165,7 +166,7 @@ impl BoardHandle {
         let task = BoardTask {
             lease,
             acks,
-            status,
+            status: status.clone(),
             ready,
             replay_status,
             events: events_tx,
@@ -179,6 +180,7 @@ impl BoardHandle {
             runtime: Handle::current(),
             joined: state,
             replaying,
+            status,
             receipts,
             confirmation_timeout,
             events: Some(events),
@@ -193,7 +195,10 @@ impl BoardHandle {
 
     /// Take this board's single consumer stream. An event ID identifies every redelivery of that event.
     pub fn events(&mut self) -> Result<BoardEvents, Error> {
-        self.events.take().map(subscribe).ok_or(Error::EventsTaken)
+        let events = self.events.take().ok_or(Error::EventsTaken)?;
+        let board = self.id;
+        let status = self.status.clone();
+        Ok(subscribe(events, move || status.pending(board, false)))
     }
 
     pub async fn wait_until_joined(&self, limit: Duration) -> Result<(), Error> {

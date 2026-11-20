@@ -43,16 +43,24 @@ impl BoardEvent {
     }
 }
 
-pub(crate) fn subscribe(rx: mpsc::Receiver<Result<BoardEvent, Error>>) -> BoardEvents {
+pub(crate) fn subscribe(
+    rx: mpsc::Receiver<Result<BoardEvent, Error>>,
+    on_delivery: impl Fn() + Send + 'static,
+) -> BoardEvents {
     ReceiverStream::new(rx)
-        .filter_map(|event| async move {
-            match event {
-                Ok(event) => match event.ack.acknowledged().await {
-                    Ok(true) => None,
-                    Ok(false) => Some(Ok(event)),
+        .filter_map(move |event| {
+            if event.is_ok() {
+                on_delivery();
+            }
+            async move {
+                match event {
+                    Ok(event) => match event.ack.acknowledged().await {
+                        Ok(true) => None,
+                        Ok(false) => Some(Ok(event)),
+                        Err(error) => Some(Err(error)),
+                    },
                     Err(error) => Some(Err(error)),
-                },
-                Err(error) => Some(Err(error)),
+                }
             }
         })
         .boxed()
@@ -119,7 +127,11 @@ mod tests {
             .unwrap();
         tx.send(Ok(recent)).await.unwrap();
         drop(tx);
-        let mut events = subscribe(rx);
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count_delivered = count.clone();
+        let mut events = subscribe(rx, move || {
+            count_delivered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
         assert!(matches!(events.next().await, Some(Err(Error::Replay(_)))));
         let delivered = events.next().await.unwrap().unwrap();
         assert_eq!(
@@ -131,5 +143,6 @@ mod tests {
             )
         );
         assert!(events.next().await.is_none());
+        assert_eq!(count.load(std::sync::atomic::Ordering::Relaxed), 2);
     }
 }

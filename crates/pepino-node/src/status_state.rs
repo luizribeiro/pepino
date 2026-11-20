@@ -112,7 +112,6 @@ mod tracking {
             let _ = self.changes.send(event);
         }
 
-        #[cfg(test)]
         pub(crate) fn pending(&self, board: BoardId, increase: bool) {
             let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             if let Some(item) = state.boards.get_mut(&board) {

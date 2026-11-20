@@ -121,13 +121,19 @@ impl BoardTask {
                 .acknowledged()
                 .await?
             {
-                self.events
+                self.status.pending(self.lease.id, true);
+                let result = self
+                    .events
                     .send(Delivery::Event {
                         id,
                         position: Box::new(position),
                         bytes: operation.message().bytes.clone(),
                     })
-                    .await?;
+                    .await;
+                if result.is_err() {
+                    self.status.pending(self.lease.id, false);
+                }
+                result?;
             }
         } else if let Some(error) = pipeline_error(&event) {
             self.events.send(error).await?;

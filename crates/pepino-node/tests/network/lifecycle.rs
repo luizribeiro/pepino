@@ -83,3 +83,51 @@ async fn closed_board_can_be_reopened_on_a_restarted_node() {
         .unwrap();
     node.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn late_status_subscriber_sees_deliveries_waiting_for_the_consumer() {
+    use super::support::{WAIT, next};
+    use futures_util::StreamExt;
+    use pepino_node::NodeEvent;
+
+    let dir = tempfile::tempdir().unwrap();
+    let node = start(&settings(&network(dir.path()), dir.path().join("alice"))).await;
+    let mut board = node.create_board().await.unwrap();
+    let id = board.id();
+    let mut changes = node.events();
+    let expected = board
+        .publish(b"Prepare the release handoff".to_vec())
+        .await
+        .unwrap();
+    timeout(WAIT, async {
+        while changes.next().await.unwrap().unwrap()
+            != (NodeEvent::PendingDeliveries {
+                board: id,
+                count: 1,
+            })
+        {}
+    })
+    .await
+    .unwrap();
+
+    let mut late = node.events();
+    let NodeEvent::Snapshot(snapshot) = late.next().await.unwrap().unwrap() else {
+        panic!("expected current node state");
+    };
+    assert_eq!(snapshot.boards[&id].pending_deliveries, 1);
+    let event = next(&mut board.events().unwrap()).await;
+    assert_eq!(event.id, expected);
+    timeout(WAIT, async {
+        while late.next().await.unwrap().unwrap()
+            != (NodeEvent::PendingDeliveries {
+                board: id,
+                count: 0,
+            })
+        {}
+    })
+    .await
+    .unwrap();
+    event.ack().await.unwrap();
+    node.shutdown().await.unwrap();
+}
