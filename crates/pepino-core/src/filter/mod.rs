@@ -13,7 +13,9 @@ mod roundtrip;
 #[cfg(test)]
 mod tests;
 
-pub use ast::{Assignee, Clause, Comparison, Date, Filter, Operator, PresenceField, Term, Value};
+pub use ast::{
+    Assignee, Clause, Comparison, CustomValue, Date, Filter, Operator, PresenceField, Term,
+};
 pub use error::{ErrorKind, ParseError, Position};
 pub use keywords::State;
 pub use parse::{parse, parse_argv};

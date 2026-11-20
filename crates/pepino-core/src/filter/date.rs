@@ -1,6 +1,6 @@
 use chrono::{Datelike, TimeDelta, Weekday};
 
-use super::{Date, ErrorKind};
+use super::{Date, ErrorKind, lex::ascii_digits};
 
 pub(super) fn resolve(value: &str, today: Date) -> Result<Date, ErrorKind> {
     let invalid = || ErrorKind::InvalidDate {
@@ -36,9 +36,9 @@ fn calendar(value: &str) -> Option<Option<Date>> {
     if month.len() != 2
         || day.len() != 2
         || year_digits.len() < 4
-        || !digits(year_digits)
-        || !digits(month)
-        || !digits(day)
+        || !ascii_digits(year_digits)
+        || !ascii_digits(month)
+        || !ascii_digits(day)
     {
         return None;
     }
@@ -80,11 +80,7 @@ fn offset(value: &str) -> Option<Option<i64>> {
         _ => return None,
     };
     let magnitude = number.strip_prefix(['+', '-'])?;
-    digits(magnitude).then(|| number.parse::<i64>().ok()?.checked_mul(multiplier))
-}
-
-fn digits(value: &str) -> bool {
-    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+    ascii_digits(magnitude).then(|| number.parse::<i64>().ok()?.checked_mul(multiplier))
 }
 
 fn weekday(value: &str) -> Option<Weekday> {

@@ -35,9 +35,9 @@ pub enum Clause {
     Due(Vec<Comparison<Date>>),
     Created(Vec<Comparison<Date>>),
     Updated(Vec<Comparison<Date>>),
-    Match {
-        key: String,
-        alternatives: Vec<Comparison>,
+    Custom {
+        field: FieldName,
+        alternatives: Vec<Comparison<CustomValue>>,
     },
 }
 
@@ -86,13 +86,17 @@ impl PresenceField {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Comparison<T = Value> {
+pub struct Comparison<T> {
     pub operator: Operator,
     pub value: T,
 }
 
+/// The evaluator compares integers numerically, dates chronologically, and text
+/// lexically. A quoted custom operand is always text.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Value {
+pub enum CustomValue {
+    Integer(i64),
+    Date(Date),
     Text(String),
 }
 

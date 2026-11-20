@@ -4,8 +4,8 @@ use super::ast::ME;
 use super::keywords::{self, Builtin};
 
 use super::{
-    Assignee, Clause, Comparison, Date, ErrorKind, Filter, Operator, ParseError, Position,
-    PresenceField, State, Term, Value, date, lex,
+    Assignee, Clause, Comparison, CustomValue, Date, ErrorKind, Filter, Operator, ParseError,
+    Position, PresenceField, State, Term, date, lex,
 };
 
 /// Parse whitespace-separated terms using the supplied calendar date.
@@ -94,7 +94,7 @@ fn parse_clause(body: &str, today: Date) -> Located<Clause> {
     }
     if let Some((key, values)) = key_parts(body) {
         let key = key.map_err(|kind| (0, kind))?;
-        return parse_keyed(key.as_str().into(), values, today)
+        return parse_keyed(key, values, today)
             .map_err(|failure| shifted(failure, body.len() - values.len()));
     }
     decode_required(body, ErrorKind::EmptyTerm).map(Clause::Text)
@@ -133,11 +133,12 @@ fn parse_view(raw: &str) -> Located<Clause> {
     }
 }
 
-fn parse_keyed(key: String, raw: &str, today: Date) -> Located<Clause> {
+fn parse_keyed(field: FieldName, raw: &str, today: Date) -> Located<Clause> {
     use Builtin::*;
-    let equal_text = || alternatives(raw, &key, false, |operand| Ok(operand.value));
+    let key = field.as_str();
+    let equal_text = || alternatives(raw, key, false, |operand| Ok(operand.value));
     let dates = || {
-        alternatives(raw, &key, true, |operand| {
+        alternatives(raw, key, true, |operand| {
             let value = date::resolve(&operand.value, today)?;
             Ok(Comparison {
                 operator: operand.operator,
@@ -145,32 +146,32 @@ fn parse_keyed(key: String, raw: &str, today: Date) -> Located<Clause> {
             })
         })
     };
-    match Builtin::find(&key) {
+    match Builtin::find(key) {
         Some(Tag) => {
-            alternatives(raw, &key, false, |operand| parse_tag(operand.value)).map(Clause::Tag)
+            alternatives(raw, key, false, |operand| parse_tag(operand.value)).map(Clause::Tag)
         }
-        Some(Status) => alternatives(raw, &key, false, |operand| {
+        Some(Status) => alternatives(raw, key, false, |operand| {
             keywords::read(operand.value, keywords::STATUSES, |value| {
                 ErrorKind::UnknownStatus { value }
             })
         })
         .map(Clause::Status),
-        Some(Assignee) => alternatives(raw, &key, false, |operand| Ok(parse_assignee(operand)))
+        Some(Assignee) => alternatives(raw, key, false, |operand| Ok(parse_assignee(operand)))
             .map(Clause::Assignee),
         Some(Board) => equal_text().map(Clause::Board),
         Some(Parent) => equal_text().map(Clause::Parent),
         Some(Blocks) => equal_text().map(Clause::Blocks),
         Some(BlockedBy) => equal_text().map(Clause::BlockedBy),
-        Some(Is) => alternatives(raw, &key, false, |operand| {
+        Some(Is) => alternatives(raw, key, false, |operand| {
             keywords::read(operand.value, State::WORDS, |value| {
                 ErrorKind::UnknownState { value }
             })
         })
         .map(Clause::Is),
         Some(Has) => {
-            alternatives(raw, &key, false, |operand| parse_presence(operand.value)).map(Clause::Has)
+            alternatives(raw, key, false, |operand| parse_presence(operand.value)).map(Clause::Has)
         }
-        Some(Priority) => alternatives(raw, &key, true, |operand| {
+        Some(Priority) => alternatives(raw, key, true, |operand| {
             let value = parse_integer(operand.value)?;
             Ok(Comparison {
                 operator: operand.operator,
@@ -181,16 +182,36 @@ fn parse_keyed(key: String, raw: &str, today: Date) -> Located<Clause> {
         Some(Due) => dates().map(Clause::Due),
         Some(Created) => dates().map(Clause::Created),
         Some(Updated) => dates().map(Clause::Updated),
-        None => Ok(Clause::Match {
-            alternatives: alternatives(raw, &key, true, |operand| {
-                Ok(Comparison {
-                    operator: operand.operator,
-                    value: Value::Text(operand.value),
-                })
-            })?,
-            key,
-        }),
+        None => {
+            let alternatives =
+                alternatives(raw, key, true, |operand| parse_custom(operand, today))?;
+            Ok(Clause::Custom {
+                field,
+                alternatives,
+            })
+        }
     }
+}
+
+fn parse_custom(operand: Operand, today: Date) -> Result<Comparison<CustomValue>, ErrorKind> {
+    let Operand {
+        operator,
+        value,
+        quoted,
+    } = operand;
+    let digits = value.strip_prefix(['+', '-']).unwrap_or(&value);
+    let value = if quoted {
+        CustomValue::Text(value)
+    } else if lex::ascii_digits(digits) {
+        CustomValue::Integer(parse_integer(value)?)
+    } else {
+        match date::resolve(&value, today) {
+            Ok(date) => CustomValue::Date(date),
+            Err(error @ ErrorKind::DateOutOfRange { .. }) => return Err(error),
+            Err(_) => CustomValue::Text(value),
+        }
+    };
+    Ok(Comparison { operator, value })
 }
 
 fn parse_integer(value: String) -> Result<i64, ErrorKind> {

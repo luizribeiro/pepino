@@ -339,16 +339,16 @@ fn comparison_operators_apply_to_each_alternative() {
             },
             Term {
                 negated: false,
-                clause: Clause::Match {
-                    key: FieldName::new("effort").unwrap().as_str().into(),
+                clause: Clause::Custom {
+                    field: FieldName::new("effort").unwrap(),
                     alternatives: vec![
                         Comparison {
                             operator: Le,
-                            value: Value::Text("8".into())
+                            value: CustomValue::Integer(8)
                         },
                         Comparison {
                             operator: Gt,
-                            value: Value::Text("12".into())
+                            value: CustomValue::Integer(12)
                         },
                     ],
                 }
@@ -594,4 +594,49 @@ fn keys_use_field_tokens_and_suggest_builtins() {
         );
     }
     assert_eq!(parse("re: fence").unwrap_err().kind, ErrorKind::EmptyValue);
+}
+
+#[test]
+fn custom_operands_use_their_unquoted_form() {
+    use crate::FieldName;
+    use Operator::*;
+    let input = r#"reminder:today,>=+3d,"today","fri","+3d","-8",later,<=2028-02-29"#;
+    let comparison = |operator, value| Comparison { operator, value };
+    let filter = parse(input).unwrap();
+    assert_eq!(
+        filter.terms(),
+        [Term {
+            negated: false,
+            clause: Clause::Custom {
+                field: FieldName::new("reminder").unwrap(),
+                alternatives: vec![
+                    comparison(Eq, CustomValue::Date(today())),
+                    comparison(Ge, CustomValue::Date("2026-11-22".parse().unwrap())),
+                    comparison(Eq, CustomValue::Text("today".into())),
+                    comparison(Eq, CustomValue::Text("fri".into())),
+                    comparison(Eq, CustomValue::Text("+3d".into())),
+                    comparison(Eq, CustomValue::Text("-8".into())),
+                    comparison(Eq, CustomValue::Text("later".into())),
+                    comparison(Le, CustomValue::Date("2028-02-29".parse().unwrap())),
+                ],
+            },
+        }]
+    );
+    assert_eq!(super::parse(&filter.to_string(), Date::MAX), Ok(filter));
+    for (input, kind) in [
+        (
+            "effort:+9223372036854775808",
+            ErrorKind::InvalidInteger {
+                value: "+9223372036854775808".into(),
+            },
+        ),
+        (
+            "reminder:+9223372036854775808w",
+            ErrorKind::DateOutOfRange {
+                value: "+9223372036854775808w".into(),
+            },
+        ),
+    ] {
+        assert_eq!(parse(input).unwrap_err().kind, kind);
+    }
 }

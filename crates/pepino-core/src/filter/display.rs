@@ -2,7 +2,7 @@ use std::fmt::{self, Write as _};
 
 use super::ast::ME;
 use super::keywords::{Builtin, status_word};
-use super::{Assignee, Clause, Comparison, Filter, Term, Value};
+use super::{Assignee, Clause, Comparison, CustomValue, Filter, Term};
 
 impl fmt::Display for Filter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -65,9 +65,13 @@ impl fmt::Display for Term {
                     write!(f, "{value}")
                 })
             }
-            Clause::Match { key, alternatives } => comparisons(f, key, alternatives, |f, value| {
-                let Value::Text(value) = value;
-                atom(f, value)
+            Clause::Custom {
+                field,
+                alternatives,
+            } => comparisons(f, field.as_str(), alternatives, |f, value| match value {
+                CustomValue::Integer(value) => write!(f, "{value}"),
+                CustomValue::Date(value) => write!(f, "{value}"),
+                CustomValue::Text(value) => quoted(f, value),
             }),
         }
     }

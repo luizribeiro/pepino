@@ -78,3 +78,7 @@ pub(super) fn split(input: &str, delimiter: char) -> impl Iterator<Item = (usize
         Some((offset, remaining))
     })
 }
+
+pub(super) fn ascii_digits(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+}
