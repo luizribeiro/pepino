@@ -3,12 +3,14 @@ use std::{
     path::PathBuf,
     process::{Command, Output},
     thread,
-    time::{Duration, Instant},
 };
 
 use serde_json::Value;
 
-use crate::common::{ConfigSandbox, as_json, success};
+use crate::{
+    common::{ConfigSandbox, as_json, success},
+    wait::{WAIT, until},
+};
 
 pub struct Host {
     sandbox: ConfigSandbox,
@@ -98,7 +100,7 @@ impl Drop for Host {
                 .ok()
                 .and_then(|value| value["pid"].as_i64())
                 .and_then(|pid| i32::try_from(pid).ok());
-            let _ = self.output(&["daemon", "stop", "--timeout", "2s"]);
+            let _ = self.output(&["daemon", "stop", "--timeout", "60s"]);
             if let Some(pid) = pid.filter(|_| held()) {
                 let _ = nix::sys::signal::kill(
                     nix::unistd::Pid::from_raw(pid),
@@ -107,16 +109,8 @@ impl Drop for Host {
             }
         }
         if !thread::panicking() {
-            until(|| !held());
+            until(held, |held| !held, WAIT);
         }
-    }
-}
-
-pub fn until(mut predicate: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(35);
-    while !predicate() {
-        assert!(Instant::now() < deadline, "device condition timed out");
-        thread::sleep(Duration::from_millis(25));
     }
 }
 

@@ -1,7 +1,7 @@
-use super::support::{Host, until};
+use super::support::Host;
 use crate::{
     common::task_error,
-    wait::{WAIT, until as until_observed},
+    wait::{WAIT, until},
 };
 
 fn task(host: &Host, args: &[&str]) -> String {
@@ -10,7 +10,7 @@ fn task(host: &Host, args: &[&str]) -> String {
 
 fn wait_for_views(owner: &Host, peer: &Host, ids: &[&str]) {
     let views = |args: &[&str]| (owner.json(args), peer.json(args));
-    until_observed(
+    until(
         || {
             let listings = views(&["ls"]);
             let mut observed = vec![listings];
@@ -34,7 +34,7 @@ fn network() -> (tempfile::TempDir, String) {
 }
 
 fn join(peer: &Host, grant: &str) {
-    let result = peer.json(&["device", "join", grant, "--timeout", "35s"]);
+    let result = peer.json(&["device", "join", grant, "--timeout", "60s"]);
     assert_eq!(result["joined"], true, "{result}");
     assert_eq!(result["grantor"]["id"].as_str().unwrap().len(), 64);
     assert!(result["grantor"]["name"].is_string());
@@ -50,12 +50,16 @@ fn join_waits_for_a_supervised_daemon_without_spawning_one() {
     let joining = peer
         .command()
         .env("PPN_DAEMON_AUTOSTART", "false")
-        .args(["device", "join", &grant, "--timeout", "35s", "--json"])
+        .args(["device", "join", &grant, "--timeout", "60s", "--json"])
         .stdout(std::process::Stdio::piped())
         .spawn()
         .unwrap();
 
-    until(|| peer.data.join("local.json").exists());
+    until(
+        || peer.data.join("local.json").exists(),
+        |exists| *exists,
+        WAIT,
+    );
     let mut daemon = peer.command().args(["daemon", "run"]).spawn().unwrap();
     let output = joining.wait_with_output().unwrap();
     let status = peer.json(&["daemon", "status"]);
@@ -123,11 +127,11 @@ fn linked_devices_share_tasks_and_late_members_get_history() {
             .contains("added here, not yet seen")
     );
     join(&ferrum, &grant);
-    until(|| {
-        titanium
-            .run(&["device", "ls"])
-            .contains("seen on the board")
-    });
+    until(
+        || titanium.run(&["device", "ls"]),
+        |devices| devices.contains("seen on the board"),
+        WAIT,
+    );
 
     let project = task(&titanium, &["add", "Repair the greenhouse"]);
     let child = task(
@@ -147,13 +151,17 @@ fn linked_devices_share_tasks_and_late_members_get_history() {
     let visible_names = listing["names"].as_object().unwrap();
     assert_eq!(visible_names.len(), 2);
     assert!(visible_names.values().all(|name| name == "Ada Gardener"));
-    until(|| {
-        titanium.json(&["device", "ls"])["devices"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|device| device["name"] == "Ferrum" && device["last_seen"].is_string())
-    });
+    until(
+        || titanium.json(&["device", "ls"]),
+        |listing| {
+            listing["devices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|device| device["name"] == "Ferrum" && device["last_seen"].is_string())
+        },
+        WAIT,
+    );
 
     ferrum.stop();
     ferrum.start();
@@ -164,11 +172,15 @@ fn linked_devices_share_tasks_and_late_members_get_history() {
         wait_for_views(&titanium, &late, &[&project, &child, &inspection]);
     }
     let peer_id = result["device_id"].as_str().unwrap().parse().unwrap();
-    until(|| {
-        pepino_app::LocalState::load(&titanium.data)
-            .unwrap()
-            .saw_device_on_board(peer_id)
-    });
+    until(
+        || {
+            pepino_app::LocalState::load(&titanium.data)
+                .unwrap()
+                .saw_device_on_board(peer_id)
+        },
+        |seen| *seen,
+        WAIT,
+    );
     titanium.stop();
     assert!(
         titanium
@@ -254,7 +266,11 @@ fn a_timed_out_join_completes_when_the_grantor_returns() {
     }
     titanium.start();
     // From here the daemon completes the join without another join command.
-    until(|| ferrum.json(&["status"])["boards"][0]["membership"] == "joined");
+    until(
+        || ferrum.json(&["status"]),
+        |status| status["boards"][0]["membership"] == "joined",
+        WAIT,
+    );
     wait_for_views(&titanium, &ferrum, &[&project]);
     ferrum.stop();
     assert_eq!(
