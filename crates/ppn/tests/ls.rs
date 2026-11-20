@@ -1,6 +1,6 @@
 mod common;
 
-use common::{as_json, create_task, small_project, task_error, task_sandbox};
+use common::{SEED_NOW, as_json, create_task, seed_tasks, small_project, task_error, task_sandbox};
 
 #[test]
 fn ls_renders_filtered_rows_through_a_pipe() {
@@ -123,4 +123,76 @@ fn ls_reports_empty_results_and_routes_an_explicit_board() {
 
 fn listing(sandbox: &common::ConfigSandbox, args: &[&str]) -> serde_json::Value {
     as_json(&sandbox.run(&[&["ls", "--json"], args].concat()))
+}
+
+#[test]
+fn ls_searches_comments_and_resolves_relative_dates() {
+    use chrono::{Datelike, NaiveDate, Weekday};
+    use pepino_app::{Request, WriteRequest};
+
+    let (sandbox, data) = task_sandbox();
+    let project = small_project(&sandbox);
+    seed_tasks(&data, async |app| {
+        app.handle(
+            Request::Write(WriteRequest::Comment {
+                task: project.downstream.clone(),
+                text: "Check for a hairline crack before painting.".into(),
+            }),
+            SEED_NOW,
+        )
+        .await
+        .unwrap();
+    });
+
+    let text = listing(&sandbox, &["HAIRLINE CRACK"]);
+    assert_eq!(text["total"], 1);
+    assert_eq!(text["tasks"][0]["id"], project.downstream);
+    assert_eq!(text["tasks"][0]["comment_count"], 1);
+
+    let old = create_task(
+        &sandbox,
+        "Renew the garden permit",
+        &["--due", "2000-01-01"],
+    );
+    create_task(
+        &sandbox,
+        "Replace the greenhouse frame",
+        &["--due", "2099-01-01"],
+    );
+    let due = listing(&sandbox, &["due:<fri"]);
+    assert_eq!(due["total"], 1);
+    assert_eq!(due["tasks"][0]["id"], old);
+    assert_eq!(
+        due["resolved_dates"]["fri"]
+            .as_str()
+            .unwrap()
+            .parse::<NaiveDate>()
+            .unwrap()
+            .weekday(),
+        Weekday::Fri
+    );
+}
+
+#[test]
+fn ls_renders_the_app_display_name_for_assignees() {
+    let (sandbox, _) = task_sandbox();
+    small_project(&sandbox);
+    let assigned = create_task(
+        &sandbox,
+        "Inspect the greenhouse hinges",
+        &["--tag", "hardware", "--assign", "me"],
+    );
+    let status = as_json(&sandbox.run(&["status", "--json"]));
+    let me = status["identity"]["id"].as_str().unwrap();
+    let name = status["identity"]["display_name"].as_str().unwrap();
+    let human = sandbox.run(&["ls", "assignee:me"]);
+    assert_eq!(
+        human,
+        format!(
+            "{}  Inspect the greenhouse hinges  todo #hardware @{name}\n",
+            &assigned[..6]
+        )
+    );
+    let result = listing(&sandbox, &["assignee:me"]);
+    assert_eq!(result["names"][me], name);
 }
