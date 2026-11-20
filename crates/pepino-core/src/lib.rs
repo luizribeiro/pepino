@@ -11,6 +11,7 @@ pub use event::{Event, InitialFields, InvalidEvent};
 pub use field::{Date, EdgeKind, FieldName, FieldValue, InvalidFieldName, Status};
 pub use future_value::UnknownValue;
 pub use id::{
-    DeviceId, DeviceKind, EventId, EventKind, Id, IdentityId, IdentityKind, ParseIdError, TaskId,
+    BoardId, BoardKind, DeviceId, DeviceKind, EventId, EventKind, Id, IdentityId, IdentityKind,
+    ParseIdError, TaskId,
 };
 pub mod filter;

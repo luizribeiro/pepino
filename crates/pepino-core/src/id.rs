@@ -84,10 +84,13 @@ pub enum EventKind {}
 pub enum DeviceKind {}
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum IdentityKind {}
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum BoardKind {}
 
 pub type EventId = Id<EventKind>;
 pub type DeviceId = Id<DeviceKind>;
 pub type IdentityId = Id<IdentityKind>;
+pub type BoardId = Id<BoardKind>;
 
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -132,6 +135,7 @@ mod tests {
         let hex = "8a4b507fbdb6c258936a8ebd4f619ada491d4c5a97d38f496b368aca8a67af83";
         let device: DeviceId = hex.to_uppercase().parse().unwrap();
         let identity = IdentityId::from_bytes(*device.as_bytes());
+        let board: BoardId = hex.parse().unwrap();
         let task = TaskId::from_bytes(*device.as_bytes());
         assert_eq!(task.as_bytes(), device.as_bytes());
         assert_eq!(device.to_string(), hex);
@@ -145,12 +149,14 @@ mod tests {
         let json = format!(r#""{hex}""#);
         assert_json(&json, device);
         assert_json(&json, identity);
+        assert_json(&json, board);
         assert_json(&json, task);
         assert_json(&json, task.0);
 
         let expected = [&[0x58, 0x20][..], device.as_bytes()].concat();
         assert_cbor(&expected, device);
         assert_cbor(&expected, identity);
+        assert_cbor(&expected, board);
         assert_cbor(&expected, task);
         assert_cbor(&expected, task.0);
     }
