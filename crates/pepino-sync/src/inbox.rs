@@ -76,7 +76,7 @@ pub(crate) async fn run<A: Acknowledgement>(
                     state.boards.entry(id).or_default().ingest_pending = false
                 });
             }
-            Err(pepino_node::Error::Removed) => return Ok(()),
+            Err(pepino_node::Error::Removed) => return Err(pepino_node::Error::Removed.into()),
             Err(error) => {
                 let cause = error.to_string();
                 record_error(status, id, cause.clone());

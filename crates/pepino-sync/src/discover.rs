@@ -62,6 +62,26 @@ async fn reconcile<T: Transport>(
     let mut local = reconcile_roster(boards, boards.app.fresh_local_state().await?).await?;
     boards.open_missing(&local).await?;
     let node_status = boards.node.status();
+    let finished: Vec<_> = {
+        let status = boards.changes.borrow();
+        boards
+            .replaying
+            .iter()
+            .copied()
+            .filter(|id| {
+                node_status.boards.get(id).is_some_and(|node| {
+                    node.joined && !node.replaying && node.pending_deliveries == 0
+                }) && status
+                    .boards
+                    .get(id)
+                    .is_some_and(|board| !board.ingest_pending)
+            })
+            .collect()
+    };
+    for board in finished {
+        boards.app.record_readmission_replay(board, false).await?;
+        boards.replaying.remove(&board);
+    }
     let mut members = BTreeMap::new();
     let mut enrolled = BTreeMap::new();
     for board in local.boards() {

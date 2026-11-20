@@ -66,6 +66,13 @@ pub trait Transport: Send + Sync + 'static {
         self.open_board(board)
     }
 
+    fn open_board_for_readmission(
+        &self,
+        board: BoardId,
+    ) -> impl Future<Output = Result<Self::Board, Error>> + Send {
+        self.open_board(board)
+    }
+
     fn local_member_bundle(
         &self,
     ) -> impl Future<Output = Result<Option<MemberInfo>, Error>> + Send {
@@ -170,6 +177,11 @@ impl Transport for Node {
         store_instance: [u8; 16],
     ) -> Result<Self::Board, Error> {
         Node::open_board_for_store(self, board, store_instance).await
+    }
+
+    async fn open_board_for_readmission(&self, board: BoardId) -> Result<Self::Board, Error> {
+        self.open_board_with(board, pepino_node::OpenBoardOptions { from_start: true })
+            .await
     }
 
     async fn local_member_bundle(&self) -> Result<Option<MemberInfo>, Error> {

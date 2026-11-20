@@ -9,7 +9,7 @@ use pepino_core::BoardId;
 use pepino_node::DeviceCredentials;
 use tokio::{sync::watch, task::JoinSet};
 
-use crate::{BoardFailure, Error, Status, Transport, TransportBoard};
+use crate::{BoardFailure, DeliveryStream, Error, Status, Transport, TransportBoard};
 
 pub(crate) struct BoardWorkers<T: Transport> {
     pub node: Arc<T>,
@@ -23,6 +23,7 @@ pub(crate) struct BoardWorkers<T: Transport> {
     pub store_instance: [u8; 16],
     handles: BTreeMap<BoardId, Weak<T::Board>>,
     workers: JoinSet<Result<(), Error>>,
+    pub(crate) replaying: std::collections::BTreeSet<BoardId>,
 }
 
 impl<T: Transport> BoardWorkers<T> {
@@ -47,6 +48,7 @@ impl<T: Transport> BoardWorkers<T> {
             store_instance,
             handles: BTreeMap::new(),
             workers: JoinSet::new(),
+            replaying: Default::default(),
         }
     }
 
@@ -60,10 +62,15 @@ impl<T: Transport> BoardWorkers<T> {
                 return Ok(());
             }
             if !self.handles.contains_key(&board.id) {
-                let handle = self
-                    .node
-                    .open_board_for_store(board.id, self.store_instance)
-                    .await?;
+                let handle = if local.needs_readmission_replay(board.id) {
+                    let handle = self.node.open_board_for_readmission(board.id).await?;
+                    self.replaying.insert(board.id);
+                    handle
+                } else {
+                    self.node
+                        .open_board_for_store(board.id, self.store_instance)
+                        .await?
+                };
                 self.start_board(local, board.id, handle)?;
             }
         }
@@ -108,7 +115,7 @@ impl<T: Transport> BoardWorkers<T> {
         let node_instance = self.node.instance_id();
         self.workers.spawn(async move {
             let result = {
-                let inbox = crate::inbox::run(&app, id, stream, &status, stopping.clone());
+                let inbox = receive(&app, id, board.as_ref(), stream, &status, stopping.clone());
                 tokio::pin!(inbox);
                 tokio::select! {
                     biased;
@@ -151,5 +158,45 @@ impl<T: Transport> BoardWorkers<T> {
             result = result.and(outcome);
         }
         result
+    }
+}
+
+async fn receive<B: TransportBoard>(
+    app: &App,
+    id: BoardId,
+    board: &B,
+    stream: DeliveryStream<B::Ack>,
+    status: &watch::Sender<Status>,
+    mut stopping: watch::Receiver<()>,
+) -> Result<(), Error> {
+    use futures_util::StreamExt;
+    use pepino_node::{Error as NodeError, MemberState};
+    let mut membership = board.membership_events();
+    match crate::inbox::run(app, id, stream, status, stopping.clone()).await {
+        Err(Error::Node(NodeError::Removed)) => (),
+        result => return result,
+    }
+    let Some(changes) = &mut membership else {
+        return Ok(());
+    };
+    status.send_modify(|status| status.boards.entry(id).or_default().stream_retrying = false);
+    loop {
+        let local = app.local_state();
+        if board
+            .known_members(local, false)
+            .await?
+            .is_some_and(|members| members.contains(&local.device_id))
+        {
+            app.record_readmission_replay(id, true).await?;
+            return Err(Error::DeliveryStream("replay after readmission".into()));
+        }
+        tokio::select! {
+            _ = stopping.changed() => return Ok(()),
+            event = changes.next() => match event {
+                None => return Ok(()),
+                Some(Ok(event)) if matches!(event.members.get(&app.local_state().device_id), Some(MemberState::Member(_))) => (),
+                _ => continue,
+            },
+        }
     }
 }
