@@ -117,6 +117,7 @@ async fn cycle(
                 _ = interrupt.recv() => Ok(End::Stopped),
                 result = server::serve(listener, &engine, started) => result.map_err(socket_error),
             };
+            node.prepare_shutdown();
             if !matches!(timeout(STOP_LIMIT, engine.shutdown()).await, Ok(Ok(()))) {
                 log(level, LogLevel::Warn, "sync engine stopped with an error");
             }

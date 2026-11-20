@@ -28,12 +28,14 @@ pub(crate) enum JoinState {
     Pending,
     Joined(Weak<Space<Payload>>),
     Failed(String),
+    Closed,
 }
 
 impl JoinState {
     pub(crate) fn space(&self) -> Result<Arc<Space<Payload>>, Error> {
         match self {
             Self::Pending => Err(Error::NotJoined),
+            Self::Closed => Err(Error::Closed),
             Self::Joined(space) => space.upgrade().ok_or(Error::Closed),
             Self::Failed(error) => Err(Error::Node(error.clone())),
         }
@@ -57,10 +59,10 @@ pub(crate) struct BoardTask {
 impl BoardTask {
     pub(crate) async fn drive(
         mut self,
-        mut subscription: impl Stream<Item = StreamEvent<Payload>> + Unpin,
-        joined: impl Future<Output = Result<Space<Payload>, SpacesManagerError>>,
+        mut subscription: impl Stream<Item = StreamEvent<Payload>> + Unpin + Send + 'static,
+        joined: impl Future<Output = Result<Space<Payload>, SpacesManagerError>> + Send + 'static,
     ) -> Result<(), Error> {
-        let mut joined = std::pin::pin!(joined);
+        let mut joined = Box::pin(joined);
         let mut stopping = self.lease.stopping();
         let mut space = None;
         let mut initial_error = self.observe_removal().await.err();
@@ -102,10 +104,20 @@ impl BoardTask {
             board: self.lease.id,
         });
         self.receipts.close();
-        if let Some(space) = space.and_then(|space| Arc::try_unwrap(space).ok()) {
-            space.close().await.map_err(Error::node)?;
+        if space.is_some() {
+            self.ready.send_replace(JoinState::Closed);
         }
-        result
+        let closed = match space.map(Arc::try_unwrap) {
+            Some(Ok(space)) => space.close().await.map_err(Error::node),
+            Some(Err(space)) => {
+                self.lease.retain_upstream(space);
+                Ok(())
+            }
+            None => Ok(()),
+        };
+        // The upstream pipeline can cancel a writer when its last stream handle is dropped.
+        self.lease.retain_upstream((joined, subscription));
+        closed.and(result)
     }
 
     async fn observe_removal(&mut self) -> Result<(), Error> {

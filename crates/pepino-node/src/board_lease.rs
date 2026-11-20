@@ -1,6 +1,9 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
-    sync::{Arc, Mutex, PoisonError},
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -17,12 +20,14 @@ struct Registry {
     boards: Mutex<HashMap<BoardId, bool>>,
     stopping: watch::Sender<bool>,
     released: Notify,
+    preparing: AtomicBool,
+    retained: Mutex<Vec<Box<dyn Send>>>,
 }
 
 impl OpenBoards {
     pub(crate) fn reserve(&self, id: BoardId) -> Result<BoardLease, Error> {
         let mut boards = self.0.boards.lock().unwrap_or_else(PoisonError::into_inner);
-        if *self.0.stopping.borrow() {
+        if self.0.preparing.load(Ordering::Acquire) {
             return Err(Error::Closed);
         }
         match boards.entry(id) {
@@ -37,7 +42,23 @@ impl OpenBoards {
         })
     }
 
+    pub(crate) fn prepare_shutdown(&self) {
+        self.0.preparing.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn release_upstream(&self) {
+        let retained = std::mem::take(
+            &mut *self
+                .0
+                .retained
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        drop(retained);
+    }
+
     pub(crate) async fn stop(&self) -> Result<(), Error> {
+        self.prepare_shutdown();
         self.0.stopping.send_replace(true);
         tokio::time::timeout(Duration::from_secs(3), async {
             loop {
@@ -68,6 +89,17 @@ pub(crate) struct BoardLease {
 impl BoardLease {
     pub(crate) fn stopping(&self) -> watch::Receiver<bool> {
         self.boards.0.stopping.subscribe()
+    }
+
+    pub(crate) fn retain_upstream(&self, handles: impl Send + 'static) {
+        if self.boards.0.preparing.load(Ordering::Acquire) {
+            self.boards
+                .0
+                .retained
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(Box::new(handles));
+        }
     }
 
     pub(crate) fn attached(mut self) -> Self {
@@ -112,6 +144,20 @@ mod tests {
         };
         let (result, ()) = tokio::join!(open.stop(), closing);
         result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upstream_handles_outlive_the_board_lease_during_node_shutdown() {
+        let open = OpenBoards::default();
+        let lease = open.reserve(BoardId::from_bytes([34; 32])).unwrap();
+        let marker = Arc::new("greenhouse subscription");
+        open.prepare_shutdown();
+        lease.retain_upstream(marker.clone());
+        drop(lease);
+        open.stop().await.unwrap();
+        assert_eq!(Arc::strong_count(&marker), 2);
+        open.release_upstream();
+        assert_eq!(Arc::strong_count(&marker), 1);
     }
 
     #[test]

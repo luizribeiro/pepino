@@ -107,6 +107,12 @@ impl Node {
             .await
     }
 
+    /// Stop opening boards while the caller drains its sync engine.
+    /// Existing upstream subscriptions are retained through shutdown.
+    pub fn prepare_shutdown(&self) {
+        self.boards.prepare_shutdown();
+    }
+
     pub async fn shutdown(self) -> Result<(), Error> {
         let Self {
             inner,
@@ -115,7 +121,13 @@ impl Node {
             ..
         } = self;
         let closed = boards.stop().await;
-        worker.shutdown_with(move || drop(inner)).await.and(closed)
+        worker
+            .shutdown_with(move || {
+                boards.release_upstream();
+                drop(inner);
+            })
+            .await
+            .and(closed)
     }
 }
 
