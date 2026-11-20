@@ -14,6 +14,8 @@ pepino-sync = { path = "../pepino-sync" }
 pepino-node = { path = "../pepino-node" }
 pepino-core = { path = "../pepino-core" }
 blake3 = "1"
+ciborium = "0.2"
+data-encoding = "2"
 futures-util.workspace = true
 nix = { version = "0.29", features = ["term", "fs", "process", "signal"] }
 clap = { version = "4.5", features = ["derive", "env"] }

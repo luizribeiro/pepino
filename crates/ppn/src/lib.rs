@@ -2,6 +2,7 @@ pub mod app;
 pub mod config;
 pub mod daemon;
 pub mod date;
+pub mod device_code;
 pub mod error;
 pub mod flags;
 pub mod help_tree;
