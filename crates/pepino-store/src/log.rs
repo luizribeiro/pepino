@@ -3,7 +3,7 @@ use pepino_core::{
 };
 use sqlx::{Connection, SqliteConnection};
 
-use crate::{Store, StoreError, fold::fold, history};
+use crate::{Store, StoreError, fold, history};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IdSource {
@@ -21,13 +21,14 @@ pub enum SkipReason {
     },
     Invalid(InvalidEvent),
     EdgeViewPending,
+    UnknownOutcome,
 }
 
 impl SkipReason {
     fn classification(&self) -> &'static str {
         match self {
             Self::UnknownVersion(_) => "unknown_version",
-            Self::UnknownEvent(_) => "unknown_event",
+            Self::UnknownEvent(_) | Self::UnknownOutcome => "unknown_event",
             Self::UnknownValue { .. } => "unknown_value",
             Self::Invalid(_) => "invalid",
             Self::EdgeViewPending => "known",
@@ -42,11 +43,16 @@ pub enum AppendOutcome {
     Skipped { id: EventId, reason: SkipReason },
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RebuildReport {
+    pub skipped: usize,
+}
+
 struct Decoded {
     id: EventId,
     author: Option<DeviceId>,
     hlc: Option<Hlc>,
-    event: Result<Envelope, SkipReason>,
+    event: Result<(Envelope, TaskId), SkipReason>,
 }
 
 impl Decoded {
@@ -57,7 +63,10 @@ impl Decoded {
         }?;
         let (id, author, hlc) = (outcome.id(), outcome.author(), outcome.hlc());
         let event = match outcome {
-            DecodeOutcome::Known(envelope) => Ok(envelope),
+            DecodeOutcome::Known(envelope) => match fold::target(&envelope) {
+                Some(task) => Ok((envelope, task)),
+                None => Err(SkipReason::UnknownEvent(envelope.event().kind().into())),
+            },
             DecodeOutcome::UnknownVersion { version, .. } => {
                 Err(SkipReason::UnknownVersion(version))
             }
@@ -66,7 +75,7 @@ impl Decoded {
                 variant, values, ..
             } => Err(SkipReason::UnknownValue { variant, values }),
             DecodeOutcome::InvalidEvent { reason, .. } => Err(SkipReason::Invalid(reason)),
-            _ => return Err(StoreError::UnsupportedEvent),
+            _ => Err(SkipReason::UnknownOutcome),
         };
         Ok(Self {
             id,
@@ -111,9 +120,9 @@ impl Decoded {
     ) -> Result<AppendOutcome, StoreError> {
         let id = self.id;
         Ok(match self.event {
-            Ok(envelope) => {
+            Ok((envelope, task)) => {
                 history::index(connection, board, &envelope).await?;
-                match fold(connection, board, &envelope).await? {
+                match fold::fold(connection, board, task, &envelope).await? {
                     Some(task) => AppendOutcome::Applied { id, task },
                     None => AppendOutcome::Skipped {
                         id,
@@ -165,43 +174,58 @@ impl Store {
         Ok(outcome)
     }
 
-    pub async fn rebuild(&self, board: BoardId) -> Result<(), StoreError> {
+    /// Replays the board's log and reports the number of skipped events.
+    pub async fn rebuild(&self, board: BoardId) -> Result<RebuildReport, StoreError> {
         let mut connection = self.connection.lock().await;
         let mut tx = connection.begin().await?;
-        for delete in [
-            "DELETE FROM event_task WHERE board = ?",
-            "DELETE FROM task_state WHERE board = ?",
-        ] {
-            sqlx::query(delete)
-                .bind(board.as_bytes().as_slice())
-                .execute(&mut *tx)
-                .await?;
-        }
+        let report = rebuild(&mut tx, board).await?;
+        tx.commit().await?;
+        Ok(report)
+    }
+}
 
-        // Every ID is a 32-byte blob, so an empty blob precedes the first page.
-        let mut after = Vec::new();
-        loop {
-            let rows = sqlx::query_as::<_, ([u8; 32], Vec<u8>)>(
-                "SELECT id, bytes FROM event_log WHERE board = ? AND id > ?
-                 ORDER BY id LIMIT 128",
-            )
+pub(crate) async fn rebuild(
+    connection: &mut SqliteConnection,
+    board: BoardId,
+) -> Result<RebuildReport, StoreError> {
+    let mut report = RebuildReport::default();
+    for delete in [
+        "DELETE FROM event_task WHERE board = ?",
+        "DELETE FROM task_state WHERE board = ?",
+    ] {
+        sqlx::query(delete)
             .bind(board.as_bytes().as_slice())
-            .bind(&after)
-            .fetch_all(&mut *tx)
+            .execute(&mut *connection)
             .await?;
-            let Some((last, _)) = rows.last() else {
-                break;
-            };
-            after = last.to_vec();
-            for (id, bytes) in rows {
-                let decoded = Decoded::new(&bytes, IdSource::Trusted(EventId::from_bytes(id)))?;
-                decoded.refresh_metadata(&mut tx, board).await?;
-                decoded.project(&mut tx, board).await?;
+    }
+
+    // Every ID is a 32-byte blob, so an empty blob precedes the first page.
+    let mut after = Vec::new();
+    loop {
+        let rows = sqlx::query_as::<_, ([u8; 32], Vec<u8>)>(
+            "SELECT id, bytes FROM event_log WHERE board = ? AND id > ?
+                 ORDER BY id LIMIT 128",
+        )
+        .bind(board.as_bytes().as_slice())
+        .bind(&after)
+        .fetch_all(&mut *connection)
+        .await?;
+        let Some((last, _)) = rows.last() else {
+            break;
+        };
+        after = last.to_vec();
+        for (id, bytes) in rows {
+            let decoded = Decoded::new(&bytes, IdSource::Trusted(EventId::from_bytes(id)))?;
+            decoded.refresh_metadata(connection, board).await?;
+            if matches!(
+                decoded.project(connection, board).await?,
+                AppendOutcome::Skipped { .. }
+            ) {
+                report.skipped += 1;
             }
         }
-        tx.commit().await?;
-        Ok(())
     }
+    Ok(report)
 }
 
 #[cfg(test)]

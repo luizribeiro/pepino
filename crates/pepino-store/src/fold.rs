@@ -4,9 +4,26 @@ use sqlx::SqliteConnection;
 use crate::StoreError;
 use registers::Registers;
 
+pub(crate) fn target(envelope: &Envelope) -> Option<TaskId> {
+    match envelope.event() {
+        Event::TaskCreated { .. } => envelope.created_task(),
+        Event::TaskFieldSet { task, .. }
+        | Event::TagAdded { task, .. }
+        | Event::TagRemoved { task, .. }
+        | Event::AssigneeAdded { task, .. }
+        | Event::AssigneeRemoved { task, .. }
+        | Event::CommentAdded { task, .. }
+        | Event::TaskDeleted { task }
+        | Event::EdgeAdded { from: task, .. }
+        | Event::EdgeRemoved { from: task, .. } => Some(*task),
+        _ => None,
+    }
+}
+
 pub(crate) async fn fold(
     connection: &mut SqliteConnection,
     board: BoardId,
+    task: TaskId,
     envelope: &Envelope,
 ) -> Result<Option<TaskId>, StoreError> {
     if matches!(
@@ -16,9 +33,6 @@ pub(crate) async fn fold(
         return Ok(None);
     }
     let created = envelope.created_task();
-    let task = created
-        .or_else(|| envelope.event().task())
-        .ok_or(StoreError::UnsupportedEvent)?;
     let hlc = envelope.hlc().to_key();
     sqlx::query(
         "INSERT INTO task_state (board, task, created, author, updated, deleted)

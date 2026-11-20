@@ -8,8 +8,6 @@ pub enum StoreError {
     InvalidPrefix,
     #[error("invalid event bytes: {0}")]
     Decode(#[from] DecodeError),
-    #[error("the store does not support this decoded event")]
-    UnsupportedEvent,
     #[error("invalid task view value: {0}")]
     ViewValue(String),
     #[error("SQLite operation failed ({kind:?}): {source}")]

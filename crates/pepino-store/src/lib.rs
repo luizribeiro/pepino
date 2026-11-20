@@ -19,7 +19,7 @@ use tokio::sync::Mutex;
 pub use comment::CommentRecord;
 pub use error::{DatabaseErrorKind, StoreError};
 pub use history::EventRecord;
-pub use log::{AppendOutcome, IdSource, SkipReason};
+pub use log::{AppendOutcome, IdSource, RebuildReport, SkipReason};
 pub use prefix::PrefixResolution;
 pub use task::TaskRecord;
 

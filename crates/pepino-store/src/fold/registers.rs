@@ -64,8 +64,7 @@ impl Registers<'_> {
                 )
                 .await
             }
-            Event::TaskDeleted { .. } => Ok(()),
-            _ => Err(StoreError::UnsupportedEvent),
+            _ => Ok(()),
         }
     }
 

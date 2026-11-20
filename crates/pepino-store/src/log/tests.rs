@@ -178,7 +178,7 @@ async fn rebuild_redecodes_skips_and_retains_trusted_ids() {
         }
     ));
 
-    store.rebuild(board).await.unwrap();
+    assert_eq!(store.rebuild(board).await.unwrap().skipped, 1);
     let task = store.task(board, TaskId(id)).await.unwrap().unwrap();
     assert_eq!(store.tasks(other).await.unwrap(), [task]);
     let history = store.events(board, TaskId(id)).await.unwrap();
