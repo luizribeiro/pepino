@@ -34,6 +34,9 @@ pub enum ReadRequest {
         task: Option<String>,
         limit: Option<usize>,
     },
+    PreviewDelete {
+        tasks: Vec<String>,
+    },
     ListViews,
     ListOpenTasks {
         filter: FilterInput,
@@ -138,6 +141,11 @@ pub enum TaskChange {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Response {
+    DeletePreview {
+        tasks: Vec<TaskSummary>,
+        top_level: Vec<TaskSummary>,
+        unblocked: Vec<TaskSummary>,
+    },
     BatchWrite {
         outcome: Box<Response>,
         changed_targets: Vec<String>,

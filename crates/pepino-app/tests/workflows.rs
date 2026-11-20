@@ -428,6 +428,22 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
         .clone();
     assert!(get(&mut app, &child).await.blocked);
 
+    let preview = handle(&mut app, json!({"op":"preview_delete","tasks":[&blocker]}))
+        .await
+        .unwrap();
+    let Response::DeletePreview {
+        tasks,
+        top_level,
+        unblocked,
+    } = preview
+    else {
+        panic!("expected a preview")
+    };
+    assert_eq!(tasks[0].id, blocker);
+    assert_eq!(top_level[0].id, child);
+    assert_eq!(unblocked[0].id, child);
+    assert!(get(&mut app, &child).await.blocked);
+
     let response = handle(&mut app, json!({"op":"delete","task":&blocker[..12]}))
         .await
         .unwrap();

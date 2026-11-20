@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use pepino_store::{BoardView, Dependency};
 
-use crate::app::store_error;
+use crate::app::{invalid, store_error};
+use crate::batch::deletion_impact;
 use crate::projection::{edge_effect, project, project_at, project_summary, resolve};
 use crate::{App, AppError, DependencyRecord, ReadRequest, Response, TreeNode};
 
@@ -27,6 +28,7 @@ impl App {
                 self.list_tasks(&filter, sort.as_deref(), limit, today, true)
                     .await
             }
+            ReadRequest::PreviewDelete { tasks } => self.preview_delete(tasks).await,
             ReadRequest::ListViews => self.list_views().await,
             ReadRequest::Log { task, limit } => self.log(task.as_deref(), limit).await,
             ReadRequest::Status => self.status().await,
@@ -41,6 +43,32 @@ impl App {
             .board(self.local.board_id)
             .await
             .map_err(store_error)
+    }
+
+    async fn preview_delete(&self, references: Vec<String>) -> Result<Response, AppError> {
+        if references.is_empty() {
+            return Err(invalid("tasks", "expected at least one task"));
+        }
+        let view = self.board().await?;
+        let mut ids = BTreeSet::new();
+        let mut tasks = Vec::new();
+        for (index, reference) in references.iter().enumerate() {
+            let task = resolve(&view, &format!("tasks[{index}]"), reference)?;
+            if ids.insert(task.id) {
+                tasks.push(project_summary(task)?);
+            }
+        }
+        let (top_level, unblocked) = deletion_impact(&view, &view.edges_after_removing(&ids), &ids);
+        let summarize = |ids: Vec<_>| {
+            ids.into_iter()
+                .map(|id| project_at(&view, id))
+                .collect::<Result<Vec<_>, _>>()
+        };
+        Ok(Response::DeletePreview {
+            tasks,
+            top_level: summarize(top_level)?,
+            unblocked: summarize(unblocked)?,
+        })
     }
 
     async fn get_task(&self, reference: &str) -> Result<Response, AppError> {
