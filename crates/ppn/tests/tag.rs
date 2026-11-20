@@ -58,3 +58,22 @@ fn membership_commands_explain_the_single_task_argument() {
         );
     }
 }
+
+#[test]
+fn untag_and_unassign_are_visible_removal_commands() {
+    let (sandbox, _) = task_sandbox();
+    let id = create_task(
+        &sandbox,
+        "Paint the greenhouse door",
+        &["-t", "hardware", "--assign", "me"],
+    );
+    let human = sandbox.run(&["untag", &id, "hardware"]);
+    assert!(human.starts_with("Untagged "));
+    let json = as_json(&sandbox.run(&["unassign", &id, "me", "--json"]));
+    assert_write(&json, true);
+    assert_eq!(json["tasks"][0]["tags"], serde_json::json!([]));
+    assert_eq!(json["tasks"][0]["assignees"], serde_json::json!([]));
+    let help = run_ppn(&["--help"]);
+    assert!(help.contains("untag"));
+    assert!(help.contains("unassign"));
+}

@@ -66,7 +66,11 @@ enum Command {
     #[command(visible_alias = "delete")]
     Rm(commands::rm::Args),
     Tag(commands::tag::Args),
+    #[command(about = "Remove task tags (alias for tag --remove)", after_help = example_help(&["ppn untag 97ad97 hardware"]))]
+    Untag(commands::tag::Args),
     Assign(commands::assign::Args),
+    #[command(about = "Remove task assignees (alias for assign --remove)", after_help = example_help(&["ppn unassign 97ad97 me"]))]
+    Unassign(commands::assign::Args),
     Comment(commands::comment::Args),
     Link(commands::link::Args),
     Unlink(commands::unlink::Args),
@@ -215,8 +219,10 @@ fn dispatch(
         Some(Command::Done(args)) => commands::done::run(context, args),
         Some(Command::Cancel(args)) => commands::cancel::run(context, args),
         Some(Command::Rm(args)) => commands::rm::run(context, args),
-        Some(Command::Tag(args)) => commands::tag::run(context, args),
-        Some(Command::Assign(args)) => commands::assign::run(context, args),
+        Some(Command::Tag(args)) => commands::tag::run(context, args, false),
+        Some(Command::Untag(args)) => commands::tag::run(context, args, true),
+        Some(Command::Assign(args)) => commands::assign::run(context, args, false),
+        Some(Command::Unassign(args)) => commands::assign::run(context, args, true),
         Some(Command::Comment(args)) => commands::comment::run(context, args),
         Some(Command::Link(args)) => commands::link::run(context, args),
         Some(Command::Unlink(args)) => commands::unlink::run(context, args),

@@ -27,10 +27,11 @@ pub fn run(
         assignees,
         remove,
     }: Args,
+    force_remove: bool,
 ) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
     client.check_membership_order(&task, assignees.first(), "ppn assign <TASK> <WHO>...")?;
-    let (request, verb) = if remove {
+    let (request, verb) = if remove || force_remove {
         (WriteRequest::Unassign { task, assignees }, "Unassigned")
     } else {
         (WriteRequest::Assign { task, assignees }, "Assigned")

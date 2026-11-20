@@ -5,8 +5,8 @@ pub(super) fn for_command(command: &Command) -> Value {
     let name = command.get_bin_name().unwrap_or_else(|| command.get_name());
     let name = name.strip_prefix("ppn ").unwrap_or(name);
     let (kind, fields) = match name {
-        "add" | "edit" | "start" | "reopen" | "done" | "cancel" | "rm" | "tag" | "assign"
-        | "comment" | "link" | "unlink" => (
+        "add" | "edit" | "start" | "reopen" | "done" | "cancel" | "rm" | "tag" | "untag"
+        | "assign" | "unassign" | "comment" | "link" | "unlink" => (
             "write",
             "changed Whether any change was recorded\ncreated Full ID of the task created by add\ntasks Current records affected by the write\ntargets IDs directly addressed by the command\ndeleted Snapshots of deleted tasks\nedges Results for affected relationships\nactivated Previously excluded relationships that became effective\ntop_level Tasks that became top-level after deletion\nunblocked Tasks unblocked by deletion\nnames Display names keyed by identity or device ID",
         ),

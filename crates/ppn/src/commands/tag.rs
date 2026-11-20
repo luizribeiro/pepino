@@ -23,10 +23,11 @@ pub struct Args {
 pub fn run(
     context: &Context<'_>,
     Args { task, tags, remove }: Args,
+    force_remove: bool,
 ) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
     client.check_membership_order(&task, tags.first(), "ppn tag <TASK> <TAG>...")?;
-    let (request, verb) = if remove {
+    let (request, verb) = if remove || force_remove {
         (WriteRequest::RemoveTags { task, tags }, "Untagged")
     } else {
         (WriteRequest::AddTags { task, tags }, "Tagged")
