@@ -93,7 +93,7 @@ fn decode(frame: io::Result<serde_json::Value>) -> Result<Operation, Outcome> {
 #[test]
 fn rejects_an_unknown_version_before_reading_the_operation() {
     let request = serde_json::json!({"v": 2, "request": {"op": "future_operation"}});
-    let outcome = decode(Ok(request)).unwrap_err();
+    let outcome = decode(Ok(request)).err().unwrap();
     assert!(matches!(outcome, Outcome::Error { code, .. } if code == "unsupported_version"));
 }
 
@@ -101,6 +101,6 @@ fn rejects_an_unknown_version_before_reading_the_operation() {
 #[test]
 fn rejects_an_invalid_timeout_in_the_current_protocol() {
     let request = serde_json::json!({"v": 1, "request": {"op": "wait_idle", "timeout_ms": -1}});
-    let outcome = decode(Ok(request)).unwrap_err();
+    let outcome = decode(Ok(request)).err().unwrap();
     assert!(matches!(outcome, Outcome::Error { code, .. } if code == "invalid_request"));
 }

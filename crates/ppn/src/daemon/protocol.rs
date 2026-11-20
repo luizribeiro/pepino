@@ -1,21 +1,35 @@
 use std::collections::BTreeMap;
 
+use pepino_app::{BoardJoinState, DeviceRequest, PeerHint};
+use pepino_core::BoardId;
 use serde::{Deserialize, Serialize};
 
 pub const VERSION: u32 = 1;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Request {
     pub v: u32,
     pub request: Operation,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
     Nudge,
     Status,
-    WaitIdle { timeout_ms: u64 },
+    WaitIdle {
+        timeout_ms: u64,
+    },
+    AddMember {
+        device: DeviceRequest,
+        name: Option<String>,
+    },
+    RegisterPeerHint {
+        peer: PeerHint,
+    },
+    BoardJoinState {
+        timeout_ms: u64,
+    },
     Stop,
 }
 
@@ -29,10 +43,23 @@ pub struct Response {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Outcome {
     Nudged,
-    Status { status: DaemonStatus },
-    Synced { idle: bool, network: Network },
+    Status {
+        status: DaemonStatus,
+    },
+    Synced {
+        idle: bool,
+        network: Network,
+    },
+    MemberAdded,
+    PeerHintRegistered,
+    BoardJoinState {
+        boards: BTreeMap<BoardId, BoardJoinState>,
+    },
     Stopping,
-    Error { code: String, message: String },
+    Error {
+        code: String,
+        message: String,
+    },
 }
 
 impl Outcome {
@@ -91,4 +118,22 @@ mod tests {
             json!({"v": 1, "result": {"kind": "stopping"}})
         );
     }
+}
+
+#[cfg(test)]
+#[test]
+fn identifies_the_peer_hint_and_join_state_operations() {
+    use serde_json::json;
+
+    let id = pepino_core::DeviceId::from_bytes([28; 32]);
+    let hint = json!({"v": 1, "request": {"op": "register_peer_hint", "peer": {"id": id, "relay_url": null}}});
+    let request: Request = serde_json::from_value(hint.clone()).unwrap();
+    assert!(matches!(&request.request, Operation::RegisterPeerHint { peer } if peer.id == id));
+    assert_eq!(serde_json::to_value(request).unwrap(), hint);
+    let wait = json!({"v": 1, "request": {"op": "board_join_state", "timeout_ms": 250}});
+    let request: Request = serde_json::from_value(wait).unwrap();
+    assert!(matches!(
+        request.request,
+        Operation::BoardJoinState { timeout_ms: 250 }
+    ));
 }

@@ -1,5 +1,7 @@
 use std::time::{Duration, Instant};
 
+use futures_util::StreamExt;
+use pepino_app::BoardJoinState;
 use pepino_sync::SyncEngine;
 
 use super::{
@@ -32,6 +34,39 @@ pub(super) async fn operate(
                     network: snapshot(engine.status()),
                 },
                 Err(_) => Outcome::error("sync_unavailable", "Sync is restarting."),
+            }
+        }
+        Operation::AddMember { device, name } => match engine.add_member(device, name).await {
+            Ok(()) => Outcome::MemberAdded,
+            Err(_) => Outcome::error(
+                "add_member_failed",
+                "Could not grant board membership. Check that this device has joined every board.",
+            ),
+        },
+        Operation::RegisterPeerHint { peer } => match engine.register_peer_hint(peer).await {
+            Ok(()) => Outcome::PeerHintRegistered,
+            Err(_) => Outcome::error(
+                "peer_hint_failed",
+                "Could not register the granting device's connection hint.",
+            ),
+        },
+        Operation::BoardJoinState { timeout_ms } => {
+            let changes = engine.status_changes();
+            tokio::pin!(changes);
+            let complete = async {
+                while let Some(status) = changes.next().await {
+                    if status
+                        .board_join_states()
+                        .values()
+                        .all(|state| *state == BoardJoinState::Joined)
+                    {
+                        break;
+                    }
+                }
+            };
+            let _ = tokio::time::timeout(Duration::from_millis(timeout_ms), complete).await;
+            Outcome::BoardJoinState {
+                boards: engine.status().board_join_states(),
             }
         }
         Operation::Stop => Outcome::Stopping,
