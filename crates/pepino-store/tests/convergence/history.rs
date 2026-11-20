@@ -144,7 +144,7 @@ impl History {
 
     fn add(&mut self, author: usize, tick: u64, event: Event) -> Envelope {
         let hlc = Hlc {
-            wall_ms: (1 << 63) + tick / 2,
+            wall_ms: (1 << 63) - 1 + tick / 2,
             counter: (tick % 2) as u32,
         };
         let envelope =
