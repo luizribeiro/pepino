@@ -53,7 +53,7 @@ let
           fsType = "ext4";
         };
       }
-      fixtures.full
+      (lib.recursiveUpdate fixtures.full { programs.pepino.daemon.enable = true; })
     ];
   };
 in
@@ -73,6 +73,8 @@ assert rejects (darwin fixtures.missingDarwinGid) "services.pepino requires user
 assert (linux fixtures.empty).environment.systemPackages == [ package ];
 assert (linux fixtures.typical).services.pepino.package == package;
 assert (linux fixtures.empty).services.pepino.configFile == null;
+assert (linux fixtures.empty).systemd.user.services == { };
+assert system != "x86_64-linux" || nixos.config.systemd.user.services.pepino.serviceConfig.Restart == "on-failure";
 assert !((linux fixtures.empty).environment.etc ? "pepino/node.toml");
 assert !((linux fixtures.untrusted).environment.etc ? "pepino/config.toml");
 assert accepts fullLinux [ ];
@@ -95,6 +97,9 @@ pkgs.runCommand "pepino-config-check"
   empty = (linux fixtures.empty).environment.etc."pepino/config.toml".source;
   cleared = (linux fixtures.cleared).environment.etc."pepino/config.toml".source;
   client = fullLinux.environment.etc."pepino/config.toml".source;
+  supervisedClient = (linux (lib.recursiveUpdate fixtures.full {
+    programs.pepino.daemon.enable = true;
+  })).environment.etc."pepino/config.toml".source;
   node = fullDarwin.services.pepino.configFile;
   typicalClient = (darwinWithAccount fixtures.typical).environment.etc."pepino/config.toml".source;
   typicalNode = (linux fixtures.typical).services.pepino.configFile;
@@ -117,10 +122,11 @@ pkgs.runCommand "pepino-config-check"
       (name: { message, ... }: "check_error ${lib.escapeShellArgs [ name message ]}")
       fixtures.invalidTypes)}
 
-    for file in "$empty" "$cleared" "$client" "$node" "$typicalClient" "$typicalNode" "$untrustedNode"; do
+    for file in "$empty" "$cleared" "$client" "$supervisedClient" "$node" "$typicalClient" "$typicalNode" "$untrustedNode"; do
       ppn config check "$file"
     done
     test ! -s "$empty"
+    grep -qx 'autostart = false' "$supervisedClient"
     grep -qx 'bootstrap_nodes = \[\]' "$cleared"
     grep -qx 'relay_urls = \[\]' "$cleared"
     grep -qx 'trusted_devices = \[\]' "$cleared"

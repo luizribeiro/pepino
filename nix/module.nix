@@ -54,6 +54,7 @@ in
   options = { pkgs, ... }: {
     options.programs.pepino = nodeOptions // {
       enable = mkEnableOption "the Pepino client and system-wide configuration";
+      daemon.enable = mkEnableOption "the supervised Pepino user daemon";
       package = packageOption pkgs;
       ui.color = optional (types.enum [ "auto" "always" "never" ]) "Terminal color mode.";
       ui.dateFormat = optional types.str "Strftime format for displayed dates.";
@@ -104,7 +105,7 @@ in
       );
     };
 
-  render = pkgs: name: node:
+  render = pkgs: name: node: daemon:
     let
       ui = withoutNulls (lib.optionalAttrs (node ? ui) {
         inherit (node.ui) color;
@@ -122,5 +123,6 @@ in
           (node: { node_id = node.nodeId; relay_url = node.relayUrl; })
           node.bootstrapNodes;
         data_dir = node.dataDir;
-      } // lib.optionalAttrs (ui != { }) { inherit ui; });
+      } // lib.optionalAttrs (ui != { }) { inherit ui; }
+    // lib.optionalAttrs (daemon != { }) { inherit daemon; });
 }

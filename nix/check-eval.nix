@@ -22,6 +22,8 @@ in
           users.knownGroups = list;
           networking.firewall.allowedUDPPorts = list;
           systemd.tmpfiles.settings = attrs;
+          systemd.user.services = attrs;
+          systemd.user.timers = attrs;
           system.activationScripts.postActivation.text = mkOption { type = types.str; default = ""; };
         };
       }

@@ -8,13 +8,21 @@ in
 {
   imports = [ pepino.options pepino.validation platform ];
 
+  _module.args.pepinoClientReady = pkgs.writeShellScript "pepino-client-ready" ''
+    set -o pipefail
+    data_dir=$(${client.package}/bin/ppn --json config show data_dir |
+      ${pkgs.jq}/bin/jq -er '.values.data_dir.value') || exit 1
+    test -f "$data_dir/local.json"
+  '';
+
   environment.systemPackages = lib.mkIf client.enable [ client.package ];
   environment.etc."pepino/config.toml" = lib.mkIf client.enable {
-    source = pepino.render pkgs "pepino-config.toml" client;
+    source = pepino.render pkgs "pepino-config.toml" client
+      (lib.optionalAttrs client.daemon.enable { autostart = false; });
   };
   environment.etc."pepino/node.toml" = lib.mkIf node.enable {
     source = node.configFile;
   };
   services.pepino.configFile =
-    if node.enable then pepino.render pkgs "pepino-node.toml" node else null;
+    if node.enable then pepino.render pkgs "pepino-node.toml" node { } else null;
 }
