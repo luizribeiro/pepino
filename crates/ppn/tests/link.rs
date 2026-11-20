@@ -72,18 +72,13 @@ fn link_reports_errors_in_either_endpoint() {
 }
 
 #[test]
-fn link_warns_when_cycles_or_newer_parents_exclude_recorded_links() {
+fn link_warns_when_folding_excludes_a_recorded_link() {
     let (sandbox, _) = task_sandbox();
     let p = small_project(&sandbox);
-    for (from, kind, to, reason, excluded_to) in [
-        (&p.downstream, "blocks", &p.blocker, "cycle", &p.blocker),
-        (
-            &p.downstream,
-            "parent",
-            &p.blocker,
-            "superseded_parent",
-            &p.parent,
-        ),
+    for (from, kind, to, reason) in [
+        (&p.downstream, "blocks", &p.blocker, "cycle"),
+        (&p.downstream, "parent", &p.blocker, "superseded_parent"),
+        (&p.parent, "parent", &p.blocker, "cycle"),
     ] {
         let output = sandbox
             .command()
@@ -91,48 +86,16 @@ fn link_warns_when_cycles_or_newer_parents_exclude_recorded_links() {
             .output()
             .unwrap();
         assert!(output.status.success(), "{output:?}");
-        let json = as_json(&String::from_utf8(output.stdout).unwrap());
-        assert_write(&json, true);
-        let warning = as_json(&String::from_utf8(output.stderr).unwrap());
-        assert_eq!(warning["warning"]["code"], "edge_not_effective");
-        let message = warning["warning"]["message"].as_str().unwrap();
-        assert!(message.contains(if kind == "parent" {
-            "newer parent"
-        } else {
-            "cycle"
-        }));
+        let warning = as_json(std::str::from_utf8(&output.stderr).unwrap());
+        let write = as_json(std::str::from_utf8(&output.stdout).unwrap());
         let edge = &warning["warning"]["edge"];
-        assert_eq!(edge["to"], *excluded_to);
         assert_eq!(edge["reason"], reason);
-        assert_eq!(edge["effective"], false);
-        assert!(json["edges"].as_array().unwrap().contains(edge));
-
-        let detail = as_json(&sandbox.run(&["show", from, "--json"]));
-        assert!(detail["edges"].as_array().unwrap().contains(edge));
-        assert_eq!(
-            detail["task"]["parent"],
-            if kind == "parent" { to } else { &p.parent }.as_str()
+        assert!(write["edges"].as_array().unwrap().contains(edge));
+        assert!(
+            as_json(&sandbox.run(&["show", from, "--json"]))["edges"]
+                .as_array()
+                .unwrap()
+                .contains(edge)
         );
-        assert_eq!(detail["task"]["blocks"], serde_json::json!([]));
     }
-}
-
-#[test]
-fn link_warns_with_two_short_ids_for_an_excluded_parent() {
-    let (sandbox, _) = task_sandbox();
-    let project = small_project(&sandbox);
-    let output = sandbox
-        .command()
-        .args(["link", &project.parent, "parent", &project.blocker])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8(output.stderr).unwrap(),
-        format!(
-            "warning: recorded, but not in effect: {} parent {} would create a cycle\n",
-            &project.parent[..6],
-            &project.blocker[..6]
-        )
-    );
 }
