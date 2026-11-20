@@ -9,7 +9,7 @@ use pepino_store::{BoardView, TaskRecord};
 use crate::app::invalid;
 use crate::batch::{Batch, invalid_event};
 use crate::projection::{resolve, resolve_id, snapshot_task};
-use crate::{App, AppError, Response, TaskChange, WriteRequest};
+use crate::{App, AppError, ConflictReference, Response, TaskChange, WriteRequest};
 
 impl App {
     pub(super) async fn apply_to_tasks(
@@ -219,6 +219,17 @@ impl App {
         let kind = kind.into();
         let mut from = resolve_id(view, "from", from_ref, !present)?;
         let mut to = resolve_id(view, "to", to_ref, !present)?;
+        if present && from == to {
+            let reason = if kind == EdgeKind::Relates {
+                format!("task {from} cannot relate to itself")
+            } else {
+                format!("link would create a cycle through {from}")
+            };
+            return Err(AppError::Conflict {
+                field: "to".into(),
+                reference: ConflictReference::Relation { reason },
+            });
+        }
         if kind == EdgeKind::Relates && from > to {
             std::mem::swap(&mut from, &mut to);
         }

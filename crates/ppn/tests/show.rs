@@ -199,16 +199,22 @@ fn human_errors_shorten_full_ids_while_json_keeps_them() {
 fn write_diagnostics_keep_one_prefix_and_short_edge_endpoints() {
     let (sandbox, _) = task_sandbox();
     let id = create_task(&sandbox, "Paint the shed", &[]);
-    let self_edge = format!(
-        "error: invalid to: edge connects task {} to itself\n",
-        &id[..6]
+    let output = sandbox
+        .command()
+        .args(["link", &id, "blocks", &id])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!("error: link would create a cycle through {}\n", &id[..6])
     );
     for (args, message) in [
         (
             &["edit", &id, "--title", "   "][..],
             "error: invalid title \"   \": expected a non-empty title\n",
         ),
-        (&["link", &id, "blocks", &id], self_edge.as_str()),
         (
             &["tag", &id, "Hardware"],
             "error: invalid tag \"Hardware\": expected a lowercase tag of at most 64 bytes\nhint: Use a tag matching [a-z][a-z0-9_./-]* with at most 64 bytes.\n",

@@ -328,14 +328,14 @@ async fn link_and_unlink_reject_cycles_without_recording_them() {
     assert!(!write(&mut app, unlink(&second, "blocks", &first)).await.0);
     assert!(get(&mut app, &second).await.blocked);
 
-    for request in [
-        link(&first, "parent", &first),
-        unlink(&first, "parent", &first),
-    ] {
-        assert!(
-            matches!(handle(&mut app, request).await, Err(AppError::InvalidInput { field, .. }) if field == "to")
-        );
+    for kind in ["parent", "blocks", "relates"] {
+        assert!(matches!(handle(&mut app, link(&first, kind, &first)).await,
+            Err(AppError::Conflict { field, .. }) if field == "to"));
     }
+    assert!(
+        matches!(handle(&mut app, unlink(&first, "parent", &first)).await,
+        Err(AppError::InvalidInput { field, .. }) if field == "to")
+    );
 }
 
 #[tokio::test]

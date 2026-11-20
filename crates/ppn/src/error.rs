@@ -252,6 +252,12 @@ impl From<AppError> for CliError {
                 diagnostic.hint = Some("Use a longer task ID.".into());
             }
             AppError::Conflict {
+                reference: pepino_app::ConflictReference::Relation { reason },
+                ..
+            } => {
+                diagnostic.message = reason.clone();
+            }
+            AppError::Conflict {
                 reference: reference @ pepino_app::ConflictReference::View { .. },
                 ..
             } => {
