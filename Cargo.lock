@@ -3426,6 +3426,7 @@ dependencies = [
  "pepino-core",
  "pepino-node",
  "pepino-store",
+ "proptest",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",

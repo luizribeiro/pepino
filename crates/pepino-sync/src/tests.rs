@@ -1,5 +1,6 @@
 mod directory;
 mod ingest;
+mod property;
 mod publish;
 mod simulation;
 mod stub;
