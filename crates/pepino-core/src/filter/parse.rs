@@ -10,7 +10,9 @@ use super::{
 
 /// Parse whitespace-separated terms using the supplied calendar date.
 ///
-/// The displayed filter stores resolved dates in calendar form.
+/// The displayed filter stores resolved dates in calendar form and escapes
+/// whitespace inside quoted atoms as \u{...}. Each displayed term can also be
+/// passed as one argument to parse_argv.
 ///
 /// ```
 /// use pepino_core::filter::{Date, parse, parse_argv};
@@ -19,6 +21,8 @@ use super::{
 /// let filter = parse(r#"tag:garden due:<fri "fix the fence""#, today)?;
 /// let argv = ["tag:garden", "due:<fri", "fix the fence"];
 /// assert_eq!(parse_argv(&argv, today)?, filter);
+/// let canonical_argv = filter.terms().iter().map(ToString::to_string).collect::<Vec<_>>();
+/// assert_eq!(parse_argv(&canonical_argv, today)?, filter);
 /// assert_eq!(
 ///     filter.to_string(),
 ///     r#"tag:garden due:<2026-11-27 "fix\u{20}the\u{20}fence""#,
@@ -41,8 +45,9 @@ pub fn parse(input: &str, today: Date) -> Result<Filter, ParseError> {
 /// Parse arguments that the caller has already split into individual terms.
 ///
 /// A keyed argument keeps whitespace within its operands. Other arguments with
-/// internal whitespace are literal text. Keep filter-level quotes around
-/// keyed values to protect comma punctuation, as in `board:"Tools, Seeds"`.
+/// internal whitespace are literal text. An explicitly quoted saved view name
+/// containing whitespace is an error. Keep filter-level quotes around keyed
+/// values to protect comma punctuation, as in `board:"Tools, Seeds"`.
 pub fn parse_argv<S: AsRef<str>>(argv: &[S], today: Date) -> Result<Filter, ParseError> {
     argv.iter()
         .enumerate()
