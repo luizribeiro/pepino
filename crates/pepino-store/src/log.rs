@@ -125,6 +125,26 @@ impl Decoded {
             Err(reason) => AppendOutcome::Skipped { id, reason },
         })
     }
+
+    async fn refresh_metadata(
+        &self,
+        connection: &mut SqliteConnection,
+        board: BoardId,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            "UPDATE event_log SET hlc = ?3, author = ?4, classification = ?5
+             WHERE board = ?1 AND id = ?2 AND (hlc, author, classification) IS NOT (?3, ?4, ?5)",
+        )
+        .bind(board.as_bytes().as_slice())
+        .bind(self.id.as_bytes().as_slice())
+        .bind(self.hlc.map(Hlc::to_key))
+        .bind(self.author.map(|author| *author.as_bytes()))
+        .bind(self.classification())
+        .execute(connection)
+        .await
+        .map_err(StoreError::database)?;
+        Ok(())
+    }
 }
 
 impl Store {
@@ -145,6 +165,45 @@ impl Store {
         };
         tx.commit().await.map_err(StoreError::database)?;
         Ok(outcome)
+    }
+
+    pub async fn rebuild(&self, board: BoardId) -> Result<(), StoreError> {
+        let mut connection = self.connection.lock().await;
+        let mut tx = connection.begin().await.map_err(StoreError::database)?;
+        for delete in [
+            "DELETE FROM event_task WHERE board = ?",
+            "DELETE FROM task_state WHERE board = ?",
+        ] {
+            sqlx::query(delete)
+                .bind(board.as_bytes().as_slice())
+                .execute(&mut *tx)
+                .await
+                .map_err(StoreError::database)?;
+        }
+
+        // Every ID is a 32-byte blob, so an empty blob precedes the first page.
+        let mut after = Vec::new();
+        loop {
+            let rows = sqlx::query_as::<_, ([u8; 32], Vec<u8>)>(
+                "SELECT id, bytes FROM event_log WHERE board = ? AND id > ?
+                 ORDER BY id LIMIT 128",
+            )
+            .bind(board.as_bytes().as_slice())
+            .bind(&after)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(StoreError::database)?;
+            let Some((last, _)) = rows.last() else {
+                break;
+            };
+            after = last.to_vec();
+            for (id, bytes) in rows {
+                let decoded = Decoded::new(&bytes, IdSource::Trusted(EventId::from_bytes(id)))?;
+                decoded.refresh_metadata(&mut tx, board).await?;
+                decoded.project(&mut tx, board).await?;
+            }
+        }
+        tx.commit().await.map_err(StoreError::database)
     }
 }
 

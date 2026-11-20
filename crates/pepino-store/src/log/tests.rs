@@ -140,3 +140,88 @@ async fn duplicates_are_board_scoped_and_corrupt_bytes_are_rejected() {
         .unwrap();
     assert_eq!(count, 2);
 }
+
+#[tokio::test]
+async fn rebuild_redecodes_skips_and_retains_trusted_ids() {
+    let store = Store::open_in_memory().await.unwrap();
+    let board = BoardId::from_bytes([19; 32]);
+    let other = BoardId::from_bytes([52; 32]);
+    let original = creation();
+    let bytes = original.encode().unwrap();
+    let id = EventId::from_bytes([0; 32]);
+    for board in [board, other] {
+        store
+            .append(board, &bytes, IdSource::Trusted(id))
+            .await
+            .unwrap();
+    }
+
+    // Model an earlier decoder that stored this frame without recognizing the event.
+    sqlx::query(
+        "UPDATE event_log SET classification = 'unknown_event', hlc = NULL, author = NULL
+                 WHERE board = ?",
+    )
+    .bind(board.as_bytes().as_slice())
+    .execute(&mut *store.connection.lock().await)
+    .await
+    .unwrap();
+    let future = [0x82, 2, 0xf6];
+    let outcome = store
+        .append(board, &future, IdSource::Content)
+        .await
+        .unwrap();
+    assert!(matches!(
+        outcome,
+        AppendOutcome::Skipped {
+            reason: SkipReason::UnknownVersion(2),
+            ..
+        }
+    ));
+
+    store.rebuild(board).await.unwrap();
+    let task = store.task(board, TaskId(id)).await.unwrap().unwrap();
+    assert_eq!(store.tasks(other).await.unwrap(), [task]);
+    let history = store.events(board, TaskId(id)).await.unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].id, id);
+    assert_eq!(history[0].bytes, bytes);
+    assert_eq!(store.latest_hlc(board).await.unwrap(), Some(original.hlc()));
+    let classes: Vec<String> =
+        sqlx::query_scalar("SELECT classification FROM event_log WHERE board = ? ORDER BY id")
+            .bind(board.as_bytes().as_slice())
+            .fetch_all(&mut *store.connection.lock().await)
+            .await
+            .unwrap();
+    assert_eq!(classes, ["known", "unknown_version"]);
+}
+
+#[tokio::test]
+async fn rebuild_failure_leaves_the_current_view_intact() {
+    let store = Store::open_in_memory().await.unwrap();
+    let board = BoardId::from_bytes([19; 32]);
+    let original = creation();
+    let bytes = original.encode().unwrap();
+    store
+        .append(board, &bytes, IdSource::Content)
+        .await
+        .unwrap();
+    let task = original.created_task().unwrap();
+    let before = store.tasks(board).await.unwrap();
+    let history = store.events(board, task).await.unwrap();
+    sqlx::query(
+        "INSERT INTO event_log (board, id, classification, bytes)
+                 VALUES (?, ?, 'unknown_version', x'ff')",
+    )
+    .bind(board.as_bytes().as_slice())
+    .bind([255_u8; 32])
+    .execute(&mut *store.connection.lock().await)
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        store.rebuild(board).await,
+        Err(StoreError::Decode(_))
+    ));
+    assert_eq!(store.tasks(board).await.unwrap(), before);
+    assert_eq!(store.events(board, task).await.unwrap(), history);
+}
