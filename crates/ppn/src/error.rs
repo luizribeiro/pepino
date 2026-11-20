@@ -112,13 +112,6 @@ impl CliError {
         self
     }
 
-    pub(crate) fn with_task_argument(mut self, argument: &str) -> Self {
-        if self.kind == ErrorKind::Conflict && self.details.get("task") != Some(&argument.into()) {
-            self.message = format!("Task argument {argument:?}: {}", self.message);
-        }
-        self
-    }
-
     pub fn usage(error: clap::Error) -> Self {
         let rendered = error.to_string();
         let rendered = rendered.trim();
@@ -188,13 +181,27 @@ impl From<AppError> for CliError {
                 diagnostic.message = format!("No task matches {task}");
                 diagnostic.hint = Some("Run `ppn ls` to list tasks.".into());
             }
-            AppError::AmbiguousId { .. } => {
+            AppError::NotFound { reference, .. } => {
+                diagnostic.message = format!("{reference} was not found");
+            }
+            AppError::AmbiguousId { task, count, .. } => {
+                diagnostic.message = format!("Task reference {task} matches {count} tasks");
                 diagnostic.hint = Some("Use a longer task ID.".into());
             }
             AppError::Conflict {
-                reference: pepino_app::ConflictReference::View { .. },
+                reference: pepino_app::ConflictReference::Task { task, title },
                 ..
             } => {
+                let title = title
+                    .as_ref()
+                    .map_or_else(String::new, |title| format!(" {title:?}"));
+                diagnostic.message = format!("Task {task}{title} was deleted");
+            }
+            AppError::Conflict {
+                reference: reference @ pepino_app::ConflictReference::View { .. },
+                ..
+            } => {
+                diagnostic.message = reference.to_string();
                 diagnostic.hint = Some("Pass `--force` to remove the referenced view.".into());
             }
             AppError::InvalidInput {
@@ -202,10 +209,7 @@ impl From<AppError> for CliError {
                 reason,
                 diagnostic: filter,
             } => {
-                if reason.starts_with("invalid task reference ")
-                    || reason.starts_with("invalid tag ")
-                    || reason.starts_with("invalid assignee ")
-                {
+                if reason.starts_with("invalid ") {
                     diagnostic.message = reason.clone();
                 }
                 diagnostic.hint = if filter.is_some() {

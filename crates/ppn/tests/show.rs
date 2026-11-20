@@ -81,6 +81,12 @@ fn show_reports_deleted_tasks_as_conflicts() {
     let error = task_error(output, 1, "conflict");
     assert_eq!(error["field"], "task");
     assert_eq!(error["task"], id);
+    let output = sandbox.command().args(["show", &id[..6]]).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!("error: Task {id} \"Order the new mounting plate\" was deleted\n")
+    );
 }
 
 #[test]
@@ -127,4 +133,35 @@ fn show_uses_tty_dates_and_configured_color() {
     assert!(colored.contains("due tomorrow") || colored.contains("due today"));
     let suppressed = String::from_utf8(tty_output(&args, Some("1"))).unwrap();
     assert!(!suppressed.contains('\x1b'));
+}
+
+#[test]
+fn validation_and_lookup_errors_have_one_message() {
+    let (sandbox, _) = task_sandbox();
+    for (args, status, expected) in [
+        (
+            &["add", "   "][..],
+            2,
+            "error: invalid title \"   \": expected a non-empty title\n",
+        ),
+        (
+            &["ls", "--board", "Workshop"],
+            3,
+            "error: board Workshop was not found\n",
+        ),
+        (
+            &["view", "rm", "weekend"],
+            3,
+            "error: view weekend was not found\n",
+        ),
+        (
+            &["show", "latch"],
+            2,
+            "error: invalid task reference \"latch\": expected 4 to 64 hexadecimal digits\nhint: Use an id shown by `ppn ls`, at least 4 hex digits.\n",
+        ),
+    ] {
+        let output = sandbox.command().args(args).output().unwrap();
+        assert_eq!(output.status.code(), Some(status));
+        assert_eq!(output.stderr, expected.as_bytes());
+    }
 }

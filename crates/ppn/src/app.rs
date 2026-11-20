@@ -72,11 +72,9 @@ impl AppClient {
     }
 
     pub fn task(&mut self, reference: &str) -> Result<TaskSummary, CliError> {
-        let response = self
-            .call(Request::Read(ReadRequest::GetTask {
-                task: reference.into(),
-            }))
-            .map_err(|error| error.with_task_argument(reference))?;
+        let response = self.call(Request::Read(ReadRequest::GetTask {
+            task: reference.into(),
+        }))?;
         Ok(response.task()?.task.summary.clone())
     }
 
@@ -144,6 +142,9 @@ mod tests {
             .unwrap();
         let deleted = client.task(&prefix).unwrap_err();
         assert_eq!(deleted.kind(), ErrorKind::Conflict);
-        assert!(deleted.to_string().contains(&prefix));
+        assert_eq!(
+            deleted.to_string(),
+            format!("Task {id} \"Inspect greenhouse hinges\" was deleted")
+        );
     }
 }
