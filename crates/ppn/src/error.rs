@@ -139,7 +139,10 @@ impl CliError {
 
     fn write(&self, json: bool, stderr: &mut dyn Write) -> io::Result<()> {
         if json {
-            serde_json::to_writer(&mut *stderr, &serde_json::json!({ "error": self }))?;
+            serde_json::to_writer(
+                &mut *stderr,
+                &serde_json::json!({ "schema": crate::output::SCHEMA_VERSION, "kind": "error", "error": self }),
+            )?;
             return writeln!(stderr);
         }
 
@@ -409,7 +412,7 @@ mod tests {
         assert_eq!(error.report(true, &mut buffer), ExitCode::from(3));
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&buffer).unwrap(),
-            serde_json::json!({"error": {"code": "not_found", "message": "No task named Ship the release", "hint": "Check the release board"}})
+            serde_json::json!({"schema": 1, "kind": "error", "error": {"code": "not_found", "message": "No task named Ship the release", "hint": "Check the release board"}})
         );
     }
 }

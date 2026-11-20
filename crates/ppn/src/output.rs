@@ -153,7 +153,10 @@ fn finish_to(
         }
         for warning in warnings {
             if json {
-                let _ = serde_json::to_writer(&mut *stderr, &json!({"warning": warning}));
+                let _ = serde_json::to_writer(
+                    &mut *stderr,
+                    &json!({"schema": SCHEMA_VERSION, "kind": "warning", "warning": warning}),
+                );
                 let _ = writeln!(stderr);
             } else {
                 let _ = writeln!(stderr, "warning: {}", warning.message);
@@ -245,7 +248,7 @@ mod tests {
             assert_eq!(
                 stderr,
                 if json {
-                    b"{\"warning\":{\"message\":\"The dependency would create a cycle.\"}}\n"
+                    b"{\"kind\":\"warning\",\"schema\":1,\"warning\":{\"message\":\"The dependency would create a cycle.\"}}\n"
                         .as_slice()
                 } else {
                     b"warning: The dependency would create a cycle.\n"

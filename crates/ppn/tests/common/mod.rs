@@ -41,6 +41,8 @@ pub fn assert_json_error(
     assert_eq!(output.status.code(), Some(status), "{output:?}");
     assert!(output.stdout.is_empty(), "{output:?}");
     let diagnostic: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(diagnostic["kind"], "error");
+    assert_eq!(diagnostic["schema"], 1);
     let error = diagnostic["error"].as_object().unwrap();
     assert_eq!(error.len(), 3, "{diagnostic}");
     assert_eq!(error["code"], code);

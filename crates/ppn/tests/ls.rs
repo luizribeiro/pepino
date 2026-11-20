@@ -254,6 +254,8 @@ fn ls_warns_on_unknown_custom_fields_without_failing() {
     let output = sandbox.command().args(args).arg("--json").output().unwrap();
     assert!(output.status.success());
     let warning = as_json(std::str::from_utf8(&output.stderr).unwrap());
+    assert_eq!(warning["kind"], "warning");
+    assert_eq!(warning["schema"], 1);
     assert_eq!(warning["warning"]["code"], "unknown_filter_field");
     assert_eq!(
         as_json(std::str::from_utf8(&output.stdout).unwrap())["warnings"],
