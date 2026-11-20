@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use history::{History, histories};
 use pepino_core::{BoardId, TaskId};
-use pepino_store::{CommentRecord, IdSource, Store, TaskRecord};
+use pepino_store::{AppendOutcome, CommentRecord, IdSource, Store, TaskRecord};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 
@@ -22,10 +22,22 @@ impl History {
 
     async fn apply(&self, store: &Store, order: &[usize]) {
         for &index in order {
-            store
-                .append(BOARD, &self.events[index], IdSource::Content)
+            let event = &self.events[index];
+            let outcome = store
+                .append(BOARD, &event.bytes, IdSource::Content)
                 .await
                 .unwrap();
+            match outcome {
+                AppendOutcome::Applied { id, .. } => {
+                    assert_eq!(id, event.id);
+                    assert_eq!(event.classification, "known");
+                }
+                AppendOutcome::Skipped { id, .. } => {
+                    assert_eq!(id, event.id);
+                    assert_ne!(event.classification, "known");
+                }
+                AppendOutcome::Duplicate { id } => assert_eq!(id, event.id),
+            }
         }
     }
 

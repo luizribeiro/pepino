@@ -1,18 +1,25 @@
+use ciborium::Value;
 use pepino_core::{
-    Clock, Date, DeviceId, Envelope, Event, FieldName, FieldValue, IdentityId, InitialFields,
-    Status, TaskId,
+    Date, DeviceId, Envelope, Event, EventId, FieldName, FieldValue, Hlc, IdentityId,
+    InitialFields, Status, TaskId,
 };
 use proptest::prelude::*;
 
 pub(super) struct History {
     pub tasks: Vec<TaskId>,
-    pub events: Vec<Vec<u8>>,
+    pub events: Vec<LoggedEvent>,
+}
+
+pub(super) struct LoggedEvent {
+    pub id: EventId,
+    pub bytes: Vec<u8>,
+    pub classification: &'static str,
 }
 
 pub(super) fn histories() -> impl Strategy<Value = (usize, Vec<Change>)> {
     (
         3..=5usize,
-        prop::collection::vec((0..5usize, 0..3usize, 0..15usize, 0..3usize), 12..48),
+        prop::collection::vec((0..=5usize, 0..8usize, 0..15usize, 0..3usize), 12..48),
     )
 }
 
@@ -20,7 +27,6 @@ type Change = (usize, usize, usize, usize);
 
 impl History {
     pub(super) fn new((count, changes): (usize, Vec<Change>)) -> Self {
-        let mut clocks = [const { Clock::new() }; 3];
         let mut history = Self {
             tasks: Vec::new(),
             events: Vec::new(),
@@ -37,10 +43,9 @@ impl History {
         .take(count)
         .enumerate()
         {
-            let author = index % clocks.len();
+            let author = index;
             let id = history
                 .add(
-                    &mut clocks,
                     author,
                     0,
                     Event::TaskCreated {
@@ -65,8 +70,17 @@ impl History {
             history.tasks.push(id);
         }
         let last = history.tasks[count - 1];
+        let missing = TaskId::from_bytes([0x91; 32]);
+        history.tasks.push(missing);
         history.add(
-            &mut clocks,
+            7,
+            1,
+            Event::TagAdded {
+                task: missing,
+                tag: "urgent".into(),
+            },
+        );
+        history.add(
             0,
             1,
             Event::CommentAdded {
@@ -75,7 +89,7 @@ impl History {
             },
         );
         for (index, (task, author, action, variant)) in changes.into_iter().enumerate() {
-            let task = history.tasks[task % count];
+            let task = history.tasks[task % history.tasks.len()];
             let tag = ["home", "weekend", "needs-parts"][variant].into();
             let who = identity(variant);
             let event = match action {
@@ -122,24 +136,82 @@ impl History {
                         .into(),
                 },
             };
-            history.add(&mut clocks, author, 2 + (index / 3) as u64, event);
+            history.add(author, 2 + (index % 4) as u64, event);
         }
+        history.add_skipped();
         history
     }
 
-    fn add(
-        &mut self,
-        clocks: &mut [Clock; 3],
-        author: usize,
-        millis: u64,
-        event: Event,
-    ) -> Envelope {
-        let hlc = clocks[author].tick(1_795_144_800_000 + millis).unwrap();
+    fn add(&mut self, author: usize, tick: u64, event: Event) -> Envelope {
+        let hlc = Hlc {
+            wall_ms: (1 << 63) + tick / 2,
+            counter: (tick % 2) as u32,
+        };
         let envelope =
             Envelope::new(DeviceId::from_bytes([51 + author as u8; 32]), hlc, event).unwrap();
-        self.events.push(envelope.encode().unwrap());
+        self.events.push(LoggedEvent {
+            id: envelope.id(),
+            bytes: envelope.encode().unwrap(),
+            classification: "known",
+        });
         envelope
     }
+
+    fn add_skipped(&mut self) {
+        let template = Envelope::new(
+            DeviceId::from_bytes([59; 32]),
+            Hlc {
+                wall_ms: u64::MAX,
+                counter: 4,
+            },
+            Event::TaskCreated {
+                title: "Check the greenhouse heater".into(),
+                fields: InitialFields::default(),
+            },
+        )
+        .unwrap()
+        .encode()
+        .unwrap();
+
+        for (index, classification) in ["unknown_version", "unknown_event", "invalid"]
+            .into_iter()
+            .enumerate()
+        {
+            let mut value: Value = ciborium::from_reader(template.as_slice()).unwrap();
+            let frame = value.as_array_mut().unwrap();
+            match classification {
+                "unknown_version" => frame[0] = Value::from(2),
+                "unknown_event" => {
+                    find(&mut frame[1], "event").as_map_mut().unwrap()[0].0 =
+                        Value::from("reminder_added")
+                }
+                _ => {
+                    let event = find(&mut frame[1], "event");
+                    *find(find(event, "task_created"), "title") = Value::from("");
+                }
+            }
+            let mut bytes = Vec::new();
+            ciborium::into_writer(&value, &mut bytes).unwrap();
+            self.events.insert(
+                2 * index + 1,
+                LoggedEvent {
+                    id: Envelope::decode(&bytes).unwrap().id(),
+                    bytes,
+                    classification,
+                },
+            );
+        }
+    }
+}
+
+fn find<'a>(map: &'a mut Value, key: &str) -> &'a mut Value {
+    &mut map
+        .as_map_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|(name, _)| name.as_text() == Some(key))
+        .unwrap()
+        .1
 }
 
 fn identity(author: usize) -> IdentityId {
