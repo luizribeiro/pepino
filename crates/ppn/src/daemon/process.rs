@@ -157,7 +157,11 @@ pub fn stop(client: &Client, limit: Duration) -> io::Result<()> {
 #[cfg(test)]
 #[test]
 fn service_readiness_retries_a_bound_socket_with_no_reply() {
-    let dir = tempfile::tempdir().unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir()
+        .unwrap();
     let client = Client {
         path: dir.path().join("daemon.sock"),
     };
