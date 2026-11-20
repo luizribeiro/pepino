@@ -1,7 +1,11 @@
-use pepino_store::{BoardView, StoreError, TaskPrefixResolution, TaskRecord as StoredTask};
+use pepino_core::TaskId;
+use pepino_store::{
+    BoardView, EdgeExclusion, EdgeRecord, StoreError, TaskPrefixResolution,
+    TaskRecord as StoredTask,
+};
 
 use crate::app::{invalid, store_error};
-use crate::{App, AppError, CommentRecord, TaskRecord};
+use crate::{App, AppError, CommentRecord, EdgeEffect, EdgeExclusionReason, TaskRecord};
 
 pub(super) fn resolve<'a>(
     view: &'a BoardView,
@@ -74,4 +78,25 @@ impl App {
                 .collect(),
         })
     }
+}
+
+pub(super) fn edge_effect(
+    from: TaskId,
+    kind: pepino_core::EdgeKind,
+    to: TaskId,
+    edge: Option<EdgeRecord>,
+) -> Result<EdgeEffect, AppError> {
+    Ok(EdgeEffect {
+        from: from.to_string(),
+        kind: kind.try_into()?,
+        to: to.to_string(),
+        effective: edge.is_some_and(|edge| edge.is_effective()),
+        reason: edge
+            .and_then(|edge| edge.exclusion)
+            .map(|reason| match reason {
+                EdgeExclusion::MissingEndpoint => EdgeExclusionReason::MissingEndpoint,
+                EdgeExclusion::NewerParent => EdgeExclusionReason::SupersededParent,
+                EdgeExclusion::Cycle => EdgeExclusionReason::Cycle,
+            }),
+    })
 }

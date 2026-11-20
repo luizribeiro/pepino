@@ -3,11 +3,12 @@ use std::collections::BTreeSet;
 use pepino_core::{
     Clock, DeviceId, Envelope, Event, EventId, InvalidEvent, NewEnvelopeError, TaskId,
 };
-use pepino_store::{AppendOutcome, BoardView, EdgeExclusion, IdSource};
+use pepino_store::{AppendOutcome, BoardView, IdSource};
 
 use crate::app::{invalid, store_error};
+use crate::projection::edge_effect as project_edge;
 use crate::state::storage;
-use crate::{App, AppError, EdgeEffect, EdgeExclusionReason, Response};
+use crate::{App, AppError, EdgeEffect, Response};
 
 pub(super) struct Batch {
     pub(super) affected: BTreeSet<TaskId>,
@@ -201,19 +202,7 @@ fn edge_effect(view: &BoardView, event: &Event) -> Result<Option<EdgeEffect>, Ap
         .edges(from)
         .into_iter()
         .find(|edge| (edge.from, edge.kind, edge.to) == (from, kind, to));
-    Ok(Some(EdgeEffect {
-        from: from.to_string(),
-        kind: kind.try_into()?,
-        to: to.to_string(),
-        effective: edge.is_some_and(|edge| edge.is_effective()),
-        reason: edge
-            .and_then(|edge| edge.exclusion)
-            .map(|reason| match reason {
-                EdgeExclusion::MissingEndpoint => EdgeExclusionReason::MissingEndpoint,
-                EdgeExclusion::NewerParent => EdgeExclusionReason::SupersededParent,
-                EdgeExclusion::Cycle => EdgeExclusionReason::Cycle,
-            }),
-    }))
+    project_edge(from, kind, to, edge).map(Some)
 }
 
 #[cfg(test)]
