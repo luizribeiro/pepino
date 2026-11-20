@@ -1,16 +1,17 @@
 use std::sync::Arc;
 
 use crate::SyncEngine;
-use futures_util::StreamExt;
 use std::{net::Ipv4Addr, path::Path, time::Duration};
 
 use pepino_app::App;
 use pepino_core::BoardId;
 use pepino_node::{DeviceCredentials, Node, NodeSettings, Role};
 
-use crate::tests::directory::{NOW, prepare};
-
-pub(super) const WAIT: Duration = Duration::from_secs(20);
+use crate::tests::{
+    WAIT,
+    directory::{NOW, prepare},
+    until,
+};
 
 pub(super) struct Device {
     pub(super) app: App,
@@ -94,31 +95,6 @@ impl Device {
         .unwrap();
         Live { engine, node }
     }
-
-    pub(super) async fn await_events(&self, live: &Live, count: i64) {
-        let mut changes = live.engine.status_changes().boxed();
-        tokio::time::timeout(WAIT, async {
-            while self
-                .app
-                .store()
-                .statistics(self.board())
-                .await
-                .unwrap()
-                .total
-                < count
-            {
-                changes.next().await.expect("engine status stream closed");
-            }
-        })
-        .await
-        .unwrap_or_else(|error| {
-            panic!(
-                "expected {count} events: {error}, {:?}",
-                live.engine.status()
-            )
-        });
-        live.engine.wait_idle(WAIT).await.unwrap();
-    }
 }
 
 impl Live {
@@ -137,17 +113,18 @@ impl Live {
 }
 
 pub(super) async fn views_match(left: &Device, right: &Device) {
-    assert_eq!(
-        left.app
-            .store()
-            .board_with_comments(left.board())
-            .await
-            .unwrap(),
-        right
-            .app
-            .store()
-            .board_with_comments(right.board())
-            .await
-            .unwrap(),
-    );
+    let mut ticks = tokio::time::interval(Duration::from_millis(25));
+    until(
+        async || {
+            ticks.tick().await;
+            tokio::try_join!(
+                left.app.store().board_with_comments(left.board()),
+                right.app.store().board_with_comments(right.board()),
+            )
+            .unwrap()
+        },
+        |(left, right)| left == right,
+        WAIT,
+    )
+    .await;
 }

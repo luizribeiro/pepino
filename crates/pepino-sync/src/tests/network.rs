@@ -18,15 +18,15 @@ async fn enrolled_devices_share_a_board_and_keep_distinct_credentials() {
 async fn freshly_enrolled_engines_report_idle_and_shut_down() {
     let (_dir, a, b) = pair().await;
     let (left, right) = tokio::join!(a.start(), b.start());
-    tokio::join!(a.await_events(&left, 0), b.await_events(&right, 0));
+    tokio::try_join!(left.engine.wait_idle(WAIT), right.engine.wait_idle(WAIT)).unwrap();
     fixture::views_match(&a, &b).await;
     tokio::join!(left.stop(), right.stop());
 }
 
 use serde_json::json;
 
-use super::{directory::write, until};
-use fixture::{WAIT, views_match};
+use super::{WAIT, directory::write, until};
+use fixture::views_match;
 
 #[tokio::test]
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
@@ -55,9 +55,7 @@ async fn publishes_an_offline_project_and_syncs_edits_back() {
     .await;
 
     let (left, right) = tokio::join!(a.start(), b.start());
-    let original = a.app.store().statistics(a.board()).await.unwrap().total;
     left.engine.wait_idle(WAIT).await.unwrap();
-    b.await_events(&right, original).await;
     views_match(&a, &b).await;
 
     write(
@@ -66,7 +64,6 @@ async fn publishes_an_offline_project_and_syncs_edits_back() {
     )
     .await;
     right.engine.nudge();
-    a.await_events(&left, original + 1).await;
     views_match(&a, &b).await;
     tokio::join!(left.stop(), right.stop());
 }
@@ -87,7 +84,7 @@ async fn concurrent_edits_to_one_task_converge() {
         panic!("expected a task ID");
     };
     let (left, right) = tokio::join!(a.start(), b.start());
-    b.await_events(&right, 1).await;
+    views_match(&a, &b).await;
     tokio::join!(left.stop(), right.stop());
     for (app, state, comment) in [
         (&mut a.app, "doing", "Measured the frame"),
@@ -97,7 +94,6 @@ async fn concurrent_edits_to_one_task_converge() {
         write(app, json!({"op":"comment","task":task,"text":comment})).await;
     }
     let (left, right) = tokio::join!(a.start(), b.start());
-    tokio::join!(a.await_events(&left, 5), b.await_events(&right, 5));
     views_match(&a, &b).await;
     tokio::join!(left.stop(), right.stop());
 }
@@ -113,7 +109,7 @@ async fn a_returning_peer_and_a_late_member_both_catch_up() {
     )
     .await;
     left.engine.nudge();
-    b.await_events(&right, 1).await;
+    views_match(&a, &b).await;
     right.stop().await;
 
     for title in [
@@ -125,13 +121,11 @@ async fn a_returning_peer_and_a_late_member_both_catch_up() {
     }
     left.engine.wait_idle(WAIT).await.unwrap();
     let right = b.start().await;
-    b.await_events(&right, 4).await;
     views_match(&a, &b).await;
 
     left.stop().await;
     let c = fixture::enroll(dir.path(), &a, "chloe").await;
     let (left, third) = tokio::join!(a.start(), c.start());
-    c.await_events(&third, 4).await;
     views_match(&a, &c).await;
     tokio::join!(left.stop(), right.stop(), third.stop());
 }
@@ -156,7 +150,7 @@ async fn a_forged_transport_author_is_logged_without_changing_the_view() {
         panic!("expected a task ID");
     };
     let (left, right) = tokio::join!(a.start(), b.start());
-    b.await_events(&right, 1).await;
+    views_match(&a, &b).await;
     let before = b.app.store().board_with_comments(b.board()).await.unwrap();
     left.stop().await;
 
@@ -225,7 +219,6 @@ async fn restores_a_replaced_event_store_with_its_own_and_peer_events() {
         write(&mut device.app, json!({"op":"add_task","title":title})).await;
     }
     let (left, right) = tokio::join!(a.start(), b.start());
-    tokio::join!(a.await_events(&left, 2), b.await_events(&right, 2));
     views_match(&a, &b).await;
     tokio::join!(left.stop(), right.stop());
 
@@ -238,7 +231,6 @@ async fn restores_a_replaced_event_store_with_its_own_and_peer_events() {
     assert_eq!(b.app.store().statistics(board).await.unwrap().total, 0);
 
     let right = b.start().await;
-    b.await_events(&right, 2).await;
     views_match(&a, &b).await;
     right.stop().await;
 }
@@ -287,7 +279,7 @@ async fn the_running_engine_enrolls_a_device_on_every_board_idempotently() {
     let first = node.open_board(owner.board()).await.unwrap();
     let second = node.open_board(workshop_id).await.unwrap();
     for board in [&first, &second] {
-        board.wait_until_joined(fixture::WAIT).await.unwrap();
+        board.wait_until_joined(WAIT).await.unwrap();
         assert!(
             board
                 .members()
