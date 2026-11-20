@@ -167,6 +167,7 @@ mod tests {
             None,
             InvocationTime {
                 now_ms: 0,
+                offset: chrono::FixedOffset::east_opt(0).unwrap(),
                 today: "2026-11-20".parse().unwrap(),
             },
             || {

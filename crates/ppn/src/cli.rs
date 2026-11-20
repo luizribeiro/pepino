@@ -105,6 +105,7 @@ fn invocation_time(time: chrono::DateTime<impl chrono::TimeZone>) -> InvocationT
     InvocationTime {
         now_ms: time.timestamp_millis().try_into().unwrap_or(0),
         today: time.date_naive().into(),
+        offset: chrono::Offset::fix(time.offset()),
     }
 }
 
@@ -380,6 +381,7 @@ mod tests {
         assert_eq!(context.timeout, Some(std::time::Duration::from_secs(5)));
         assert_eq!(context.time.today.to_string(), "2026-11-19");
         assert_eq!(context.time.now_ms, 1_795_149_900_000);
+        assert_eq!(context.time.offset.local_minus_utc(), -18_000);
         assert!(context.yes);
         assert!(!context.terminal.color);
 

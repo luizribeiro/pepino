@@ -8,6 +8,7 @@ use crate::terminal::Context;
 pub struct InvocationTime {
     pub now_ms: u64,
     pub today: Date,
+    pub offset: chrono::FixedOffset,
 }
 
 pub struct AppClient {
@@ -68,6 +69,7 @@ mod tests {
             InvocationTime {
                 now_ms: 1_795_149_900_000,
                 today: "2026-11-19".parse().unwrap(),
+                offset: chrono::FixedOffset::east_opt(0).unwrap(),
             },
             || {
                 Ok(LoadedConfig {
