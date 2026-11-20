@@ -340,3 +340,104 @@ fn unsupported_grant() -> String {
         data_encoding::BASE32_NOPAD_NOCASE.encode(&value)
     )
 }
+
+#[test]
+fn transitively_linked_devices_share_the_roster_and_render_its_names() {
+    let (_dir, network) = network();
+    let titanium = Host::owner(&network);
+    let ferrum = Host::new(&network);
+    let cobalt = Host::new(&network);
+    let timeout = ["--timeout", "60s"];
+    join(&ferrum, &titanium.add(&ferrum.request("Ferrum"), &timeout));
+    join(&cobalt, &ferrum.add(&cobalt.request("Cobalt"), &timeout));
+    let hosts = [&titanium, &ferrum, &cobalt];
+    let json = |host: &Host, args: &[&str]| host.json(&[args, &timeout].concat());
+    let roster = |host: &Host| json(host, &["device", "ls"])["roster"].clone();
+    let idle = || {
+        for host in hosts {
+            assert_eq!(json(host, &["sync"])["idle"], true);
+        }
+    };
+    let expected = until(
+        || hosts.map(roster),
+        |rows| {
+            rows[0].as_array().is_some_and(|rows| rows.len() == 3)
+                && rows.windows(2).all(|pair| pair[0] == pair[1])
+        },
+        WAIT,
+    );
+    idle();
+    assert_eq!(hosts.map(roster), expected);
+    let ferrum_id = json(&ferrum, &["status"])["device"]["id"].clone();
+    let cobalt_id = json(&cobalt, &["status"])["device"]["id"].clone();
+    let entry = expected[0]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == cobalt_id)
+        .unwrap();
+    assert_eq!(entry["added_by"], ferrum_id);
+    assert_eq!(entry["state"], "active");
+    assert!(entry["added_at"]["utc"].is_string());
+
+    ferrum.run(&["identity", "rename", "Ada Workshop", "--timeout", "60s"]);
+    cobalt.run(&["device", "rename", "Cobalt tablet", "--timeout", "60s"]);
+    until(
+        || hosts.map(|host| json(host, &["identity", "show"])["identity"].clone()),
+        |views| {
+            views.iter().all(|view| {
+                view["display_name"] == "Ada Workshop"
+                    && view["roster"].as_array().is_some_and(|rows| {
+                        rows.iter()
+                            .any(|row| row["id"] == cobalt_id && row["name"] == "Cobalt tablet")
+                    })
+                    && view["roster"] == views[0]["roster"]
+            })
+        },
+        WAIT,
+    );
+    idle();
+    let renamed = roster(&titanium);
+    for host in hosts {
+        assert_eq!(roster(host), renamed);
+        assert_eq!(
+            json(host, &["status"])["identity"]["display_name"],
+            "Ada Workshop"
+        );
+    }
+
+    let id = task(
+        &cobalt,
+        &[
+            "add",
+            "Repair the cold frame",
+            "--assign",
+            "me",
+            "--timeout",
+            "60s",
+        ],
+    );
+    let author = cobalt_id.as_str().unwrap();
+    let person = "Ada Workshop";
+    until(
+        || titanium.output(&["show", &id, "--timeout", "60s", "--json"]),
+        |output| {
+            output.status.success()
+                && serde_json::from_slice::<serde_json::Value>(&output.stdout)
+                    .is_ok_and(|shown| shown["names"][author] == person)
+        },
+        WAIT,
+    );
+    idle();
+    assert!(
+        titanium
+            .run(&["show", &id, "--timeout", "60s"])
+            .contains(person)
+    );
+    assert_eq!(json(&titanium, &["show", &id])["names"][author], person);
+
+    titanium.stop();
+    let offline = json(&titanium, &["status"]);
+    assert_eq!(offline["identity"]["cache_stale"], true);
+    assert_eq!(offline["identity"]["roster"], renamed);
+}
