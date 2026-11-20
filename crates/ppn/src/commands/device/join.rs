@@ -35,7 +35,10 @@ pub(super) fn run(
     }
     let peer = local.peer_hint().ok_or_else(unexpected_reply)?;
     let id = peer.id;
-    let name = local.devices().remove(&id).ok_or_else(unexpected_reply)?;
+    let name = local
+        .devices()
+        .remove(&id)
+        .unwrap_or_else(|| format!("unknown device {}", ppn::render::short_id(&id.to_string())));
     let grantor = Grantor { id, name };
     let outcome = client
         .call(Operation::RegisterPeerHint { peer })
@@ -52,6 +55,10 @@ pub(super) fn run(
     let Outcome::BoardJoinState { boards } = outcome else {
         return Err(unexpected_reply());
     };
+    let grantor = pepino_app::LocalState::load(directory)
+        .ok()
+        .and_then(|local| local.devices().remove(&id))
+        .map_or(grantor, |name| Grantor { id, name });
     let result = JoinResult { boards, grantor };
     if !result.joined() {
         return Err(CliError::new(

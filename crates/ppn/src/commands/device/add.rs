@@ -24,12 +24,7 @@ pub(super) fn run(
 ) -> Result<CommandResult, CliError> {
     let device = ppn::device_code::decode_request(code)?;
     device.member_info()?;
-    if name.as_deref().is_some_and(|name| name.trim().is_empty()) {
-        return Err(CliError::new(
-            ErrorKind::InvalidInput,
-            "The device name must contain a non-whitespace character.",
-        ));
-    }
+    pepino_app::normalize_name(name.as_deref().unwrap_or(&device.name))?;
     let fingerprint = device.fingerprint();
     let notice = format!(
         "Adding {}, fingerprint {fingerprint}",
@@ -116,9 +111,13 @@ pub(super) fn run(
         recipient,
         request,
         identity: local.identity_id,
-        display_name: local.display_name.clone(),
+        display_name: local.display_name().to_owned(),
         boards: local.boards().to_vec(),
-        devices: local.devices(),
+        devices: local
+            .devices()
+            .into_iter()
+            .filter(|(id, _)| *id == local.device_id || *id == recipient)
+            .collect(),
         peer: PeerHint {
             id: local.device_id,
             relay_url: config

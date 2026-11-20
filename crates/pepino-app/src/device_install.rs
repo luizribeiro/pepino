@@ -53,11 +53,7 @@ impl App {
                     .link
                     .as_ref()
                     .is_none_or(|link| link.request != expected)
-                || !candidate
-                    .boards
-                    .iter()
-                    .map(|board| board.id)
-                    .eq(existing.boards.iter().map(|board| board.id))
+                || candidate.catalog_board() != existing.catalog_board()
             {
                 return Err(mismatch());
             }
