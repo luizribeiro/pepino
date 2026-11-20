@@ -13,7 +13,7 @@ impl SavedViews {
     fn referencing(&self, target: &str) -> Vec<String> {
         self.iter()
             .filter_map(|(name, text)| {
-                let filter = pepino_core::filter::parse_at(text, pepino_core::Date::MIN).ok()?;
+                let filter = pepino_core::filter::parse(text).ok()?;
                 filter
                     .terms()
                     .iter()
@@ -85,19 +85,19 @@ impl App {
         &mut self,
         name: String,
         filter: &FilterInput,
-        today: Date,
+        _today: Date,
         guard: File,
     ) -> Result<Response, AppError> {
         validate_name(&name)?;
-        let parsed_filter = filter.parse(today)?;
+        let parsed_filter = filter.parse()?;
         let canonical = parsed_filter.to_string();
         self.reload_state().await?;
         let mut views = self.local.saved_views.clone();
         let replaced = views.insert(name.clone(), canonical.clone());
         let entry = FilterInput::Text(format!("@{name}"));
-        let parsed = ViewFilters::new(&views, today);
+        let parsed = ViewFilters::new(&views);
         parsed.remember(&name, filter.clone(), parsed_filter);
-        query::validate_views(&entry.parse(today)?, &|name: &str| parsed.resolve(name))
+        query::validate_views(&entry.parse()?, &|name: &str| parsed.resolve(name))
             .map_err(|error| query_error(error, &entry, &parsed, &self.local.display_name))?;
         self.persist_views(views, guard).await?;
         Ok(Response::ViewSaved {

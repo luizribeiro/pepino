@@ -6,8 +6,8 @@ use std::{
 use pepino_core::filter::{self, Clause, Filter};
 use serde::{Deserialize, Serialize};
 
+use crate::AppError;
 use crate::views::SavedViews;
-use crate::{AppError, Date};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -18,10 +18,10 @@ pub enum FilterInput {
 }
 
 impl FilterInput {
-    pub(super) fn parse(&self, today: Date) -> Result<Filter, AppError> {
+    pub(super) fn parse(&self) -> Result<Filter, AppError> {
         match self {
-            Self::Text(text) => filter::parse_at(text, today.into()),
-            Self::Argv(argv) => filter::parse_argv_at(argv, today.into()),
+            Self::Text(text) => filter::parse(text),
+            Self::Argv(argv) => filter::parse_argv(argv),
         }
         .map_err(|error| AppError::InvalidInput {
             field: "filter".into(),
@@ -104,15 +104,13 @@ type ParsedViews = BTreeMap<String, (FilterInput, Result<Filter, AppError>)>;
 
 pub(super) struct ViewFilters<'a> {
     saved: &'a SavedViews,
-    today: Date,
     parsed: Mutex<ParsedViews>,
 }
 
 impl<'a> ViewFilters<'a> {
-    pub(super) fn new(saved: &'a SavedViews, today: Date) -> Self {
+    pub(super) fn new(saved: &'a SavedViews) -> Self {
         Self {
             saved,
-            today,
             parsed: Mutex::new(BTreeMap::new()),
         }
     }
@@ -131,7 +129,7 @@ impl<'a> ViewFilters<'a> {
             .entry(name.into())
             .or_insert_with(|| {
                 let input = FilterInput::Text(raw.into());
-                let result = input.parse(self.today);
+                let result = input.parse();
                 (input, result)
             })
             .1
@@ -162,11 +160,10 @@ mod tests {
 
     #[test]
     fn saved_filter_cache_only_parses_looked_up_views() {
-        let today = "2026-11-20".parse().unwrap();
         let mut saved = SavedViews::default();
         saved.insert("weekend".into(), "tag:hardware".into());
         saved.insert("broken".into(), "tags:paint".into());
-        let views = ViewFilters::new(&saved, today);
+        let views = ViewFilters::new(&saved);
         assert!(views.resolve("weekend").is_some());
         assert!(!views.parsed().contains_key("broken"));
         assert!(views.resolve("broken").is_none());

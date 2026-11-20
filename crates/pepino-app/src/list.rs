@@ -17,13 +17,13 @@ impl App {
         limit: Option<usize>,
         today: Date,
     ) -> Result<Response, AppError> {
-        let filter = source.parse(today)?;
+        let filter = source.parse()?;
         let sort: Sort = sort
             .unwrap_or("default")
             .parse()
             .map_err(|error| invalid("sort", error))?;
         self.reload_state().await?;
-        let views = ViewFilters::new(&self.local.saved_views, today);
+        let views = ViewFilters::new(&self.local.saved_views);
         let saved = |name: &str| views.resolve(name);
         let people = |name: &str| {
             (name == self.local.display_name)

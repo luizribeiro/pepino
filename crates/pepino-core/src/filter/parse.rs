@@ -4,8 +4,8 @@ use super::ast::ME;
 use super::keywords::{self, Builtin};
 
 use super::{
-    Assignee, Clause, Comparison, CustomValue, Date, ErrorKind, Filter, Operator, ParseError,
-    Position, PresenceField, State, Term, lex,
+    Assignee, Clause, Comparison, CustomValue, ErrorKind, Filter, Operator, ParseError, Position,
+    PresenceField, State, Term, lex,
 };
 
 /// Parse whitespace-separated terms.
@@ -50,14 +50,6 @@ pub fn parse_argv<S: AsRef<str>>(argv: &[S]) -> Result<Filter, ParseError> {
         .map(|(index, raw)| parse_argument(raw.as_ref(), index))
         .collect::<Result<Vec<_>, _>>()
         .map(Filter::from_terms)
-}
-
-pub fn parse_at(input: &str, _today: Date) -> Result<Filter, ParseError> {
-    parse(input)
-}
-
-pub fn parse_argv_at<S: AsRef<str>>(argv: &[S], _today: Date) -> Result<Filter, ParseError> {
-    parse_argv(argv)
 }
 
 fn parse_argument(input: &str, index: usize) -> Result<Term, ParseError> {
