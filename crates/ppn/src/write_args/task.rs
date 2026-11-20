@@ -6,7 +6,7 @@ use pepino_app::{Date, FieldValue, Status};
 
 use super::{AddMembershipArgs, CustomArgs};
 use crate::date::resolve_date;
-use crate::error::CliError;
+use crate::error::{CliError, ErrorKind};
 use crate::input::read_task_text;
 
 #[derive(Args, Default)]
@@ -24,12 +24,12 @@ pub struct AddFieldArgs {
     /// Set the task status.
     #[arg(long, value_enum)]
     pub status: Option<TaskStatus>,
-    /// Set the due date. Accepts YYYY-MM-DD or relative dates such as tomorrow and -2w.
+    /// Set the due date. Accepts calendar or relative dates. An empty value or none clears it.
     #[arg(long, allow_hyphen_values = true, value_name = "DATE")]
     pub due: Option<String>,
-    /// Set the task priority as a signed integer.
+    /// Set the task priority as a signed integer. An empty value clears it.
     #[arg(long, allow_negative_numbers = true)]
-    pub priority: Option<i64>,
+    pub priority: Option<String>,
     #[command(flatten)]
     pub custom: CustomArgs,
     #[command(flatten)]
@@ -40,13 +40,35 @@ impl AddFieldArgs {
     pub(super) fn changes(self, today: Date) -> Result<BTreeMap<String, FieldValue>, CliError> {
         let mut fields = BTreeMap::new();
         if let Some(due) = self.due {
-            fields.insert("due".into(), FieldValue::Date(resolve_date(&due, today)?));
+            let value = if due.is_empty() || due.eq_ignore_ascii_case("none") {
+                FieldValue::Unset
+            } else {
+                FieldValue::Date(resolve_date(&due, today)?)
+            };
+            fields.insert("due".into(), value);
         }
         if let Some(description) = self.description.read()? {
-            fields.insert("description".into(), FieldValue::Text(description));
+            let value = if description.is_empty() {
+                FieldValue::Unset
+            } else {
+                FieldValue::Text(description)
+            };
+            fields.insert("description".into(), value);
         }
         if let Some(priority) = self.priority {
-            fields.insert("priority".into(), FieldValue::Integer(priority));
+            let value = if priority.is_empty() {
+                FieldValue::Unset
+            } else {
+                FieldValue::Integer(priority.parse().map_err(|_| {
+                    CliError::new(
+                        ErrorKind::Usage,
+                        format!(
+                            "Invalid --priority {priority:?}: expected a signed 64-bit integer"
+                        ),
+                    )
+                })?)
+            };
+            fields.insert("priority".into(), value);
         }
         if let Some(status) = self.status {
             fields.insert("status".into(), FieldValue::Status(status.into()));
@@ -106,7 +128,7 @@ impl RelationArgs {
 
 #[derive(Args, Default)]
 pub struct DescriptionArgs {
-    /// Set the description. Use - to read it from stdin.
+    /// Set the description. Use - for stdin or an empty value to clear it.
     #[arg(long, value_name = "TEXT")]
     description: Option<String>,
     /// Read the description from a file.
@@ -159,7 +181,7 @@ mod tests {
         .args;
         assert_eq!(edit.membership.tags, ["release", "docs"]);
         assert_eq!(edit.fields.due.as_deref(), Some("-1w"));
-        assert_eq!(edit.fields.priority, Some(-2));
+        assert_eq!(edit.fields.priority.as_deref(), Some("-2"));
         assert_eq!(edit.membership.assignees, ["me"]);
         assert!(edit.fields.description.reads_stdin());
         let edit = Edit::try_parse_from(["edit", "--description", "Check release notes"]).unwrap();

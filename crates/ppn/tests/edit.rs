@@ -238,3 +238,38 @@ fi
     assert_eq!(task["title"], "Stain the shed");
     assert_eq!(task["description"], "Keep the door open.\n# Final coat\n");
 }
+
+#[test]
+fn empty_field_options_clear_values_like_unset() {
+    let (sandbox, _) = task_sandbox();
+    let id = create_task(
+        &sandbox,
+        "Paint the shed",
+        &[
+            "--description",
+            "Start at the door",
+            "--due",
+            "tomorrow",
+            "--priority",
+            "-2",
+        ],
+    );
+    let args = [
+        "edit",
+        &id,
+        "--description",
+        "",
+        "--due",
+        "none",
+        "--priority",
+        "",
+        "--json",
+    ];
+    let written = as_json(&sandbox.run(&args));
+    for name in ["description", "due", "priority"] {
+        assert!(written["tasks"][0][name].is_null(), "{written}");
+    }
+    sandbox.run(&["edit", &id, "--due", "tomorrow"]);
+    let cleared = as_json(&sandbox.run(&["edit", &id, "--due", "", "--json"]));
+    assert!(cleared["tasks"][0]["due"].is_null());
+}

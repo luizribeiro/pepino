@@ -89,7 +89,7 @@ mod tests {
             },
             fields: crate::write_args::AddFieldArgs {
                 due: Some("tomorrow".into()),
-                priority: Some(2),
+                priority: Some("2".into()),
                 status: Some(crate::write_args::TaskStatus::Doing),
                 ..Default::default()
             },
