@@ -61,7 +61,7 @@ fn operations(reference: &str, peer: &str) -> [(Value, &'static str); 15] {
 #[tokio::test]
 async fn every_operation_classifies_task_references_and_storage_contention() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::open_with_options(
+    let mut app = App::init_with_options(
         directory.path(),
         NOW,
         OpenOptions {
@@ -221,7 +221,7 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
 #[tokio::test]
 async fn creation_rejects_invalid_events_without_writing_history() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let mut app = App::init(directory.path(), NOW).await.unwrap();
     for (input, expected_field) in [
         (json!({"title":""}), "title"),
         (json!({"title":"x".repeat(1025)}), "title"),

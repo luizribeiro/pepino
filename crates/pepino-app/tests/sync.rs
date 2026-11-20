@@ -43,10 +43,10 @@ async fn receive(store: &Store, board: BoardId, events: &[EventRecord]) {
 async fn exchange(order: [u8; 8]) -> ([TaskRecord; 2], [TaskRecord; 2]) {
     let left_dir = tempfile::tempdir().unwrap();
     let right_dir = tempfile::tempdir().unwrap();
-    let mut left = App::open(left_dir.path(), NOW + 3 * 86_400_000)
+    let mut left = App::init(left_dir.path(), NOW + 3 * 86_400_000)
         .await
         .unwrap();
-    let mut right = App::open(right_dir.path(), NOW).await.unwrap();
+    let mut right = App::init(right_dir.path(), NOW).await.unwrap();
     let left_store = Store::open(left_dir.path().join("pepino.sqlite"))
         .await
         .unwrap();
@@ -141,7 +141,7 @@ proptest! {
 #[tokio::test]
 async fn unlink_reports_activation_of_a_dormant_remote_blocker() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let mut app = App::init(directory.path(), NOW).await.unwrap();
     let hinges = create(
         &mut app,
         json!({"op":"add_task","title":"Order hinges"}),

@@ -442,7 +442,7 @@ mod tests {
     #[tokio::test]
     async fn a_batch_with_a_later_invalid_target_leaves_the_first_task_live() {
         let directory = tempfile::tempdir().unwrap();
-        let mut app = App::open(directory.path(), 100).await.unwrap();
+        let mut app = App::init(directory.path(), 100).await.unwrap();
         let create =
             serde_json::from_value(json!({"op":"add_task","title":"Paint the shed"})).unwrap();
         let Response::Write {
