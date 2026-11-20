@@ -1,18 +1,47 @@
+use std::{fmt, str::FromStr};
+
 use chrono::{Datelike, TimeDelta, Weekday};
 
 use super::{Date, ErrorKind, lex::ascii_digits};
 
-pub(super) fn resolve(value: &str, today: Date) -> Result<Date, ErrorKind> {
-    let invalid = || ErrorKind::InvalidDate {
-        value: value.into(),
-    };
-    let overflow = || ErrorKind::DateOutOfRange {
-        value: value.into(),
-    };
-    if let Some(calendar) = calendar(value) {
-        return calendar.ok_or_else(overflow);
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DateOperand {
+    Absolute(Date),
+    Relative(RelativeDate),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelativeDate(String);
+
+impl DateOperand {
+    pub fn resolve(&self, today: Date) -> Result<Date, ErrorKind> {
+        match self {
+            Self::Absolute(date) => Ok(*date),
+            Self::Relative(RelativeDate(value)) => relative_days(value, today)
+                .flatten()
+                .and_then(TimeDelta::try_days)
+                .and_then(|delta| today.checked_add_signed(delta))
+                .ok_or_else(|| ErrorKind::DateOutOfRange {
+                    value: value.clone(),
+                }),
+        }
     }
-    let Some(relative) = relative(value) else {
+}
+
+impl FromStr for DateOperand {
+    type Err = ErrorKind;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if let Some(calendar) = calendar(value) {
+            return calendar
+                .map(Self::Absolute)
+                .ok_or_else(|| ErrorKind::DateOutOfRange {
+                    value: value.into(),
+                });
+        }
+        if let Some(relative) = relative(value) {
+            return Ok(Self::Relative(RelativeDate(relative)));
+        }
         let lowercase = value.to_ascii_lowercase();
         if lowercase != value && relative(&lowercase).is_some() {
             return Err(ErrorKind::LowercaseKeyword {
@@ -20,13 +49,28 @@ pub(super) fn resolve(value: &str, today: Date) -> Result<Date, ErrorKind> {
                 lowercase,
             });
         }
-        return Err(invalid());
-    };
-    relative_days(&relative, today)
-        .flatten()
-        .and_then(TimeDelta::try_days)
-        .and_then(|delta| today.checked_add_signed(delta))
-        .ok_or_else(overflow)
+        Err(ErrorKind::InvalidDate {
+            value: value.into(),
+        })
+    }
+}
+
+impl fmt::Display for DateOperand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Absolute(date) => date.fmt(f),
+            Self::Relative(RelativeDate(value)) => f.write_str(value),
+        }
+    }
+}
+
+pub(super) fn resolve(value: &str, today: Date) -> Result<Date, ErrorKind> {
+    value
+        .parse::<DateOperand>()?
+        .resolve(today)
+        .map_err(|_| ErrorKind::DateOutOfRange {
+            value: value.into(),
+        })
 }
 
 fn relative(value: &str) -> Option<String> {
@@ -126,9 +170,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn relative_dates_have_one_spelling() {
+    fn relative_operands_round_trip_in_canonical_form() {
         for (raw, canonical) in [("friday", "fri"), ("-01w", "-1w"), ("-00d", "+0d")] {
-            assert_eq!(relative(raw).as_deref(), Some(canonical));
+            let operand = raw.parse::<DateOperand>().unwrap();
+            assert_eq!(operand.to_string(), canonical);
+            assert_eq!(canonical.parse(), Ok(operand));
         }
     }
 }
