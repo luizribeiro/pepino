@@ -102,3 +102,37 @@ fn view_removing_a_referenced_filter_requires_force() {
     assert_eq!(error["term"], "@weekend");
     assert_eq!(error["view_chain"], json!(["maintenance"]));
 }
+
+#[test]
+fn view_requires_a_filter_and_preserves_argument_diagnostics() {
+    let (sandbox, _) = task_sandbox();
+    let output = sandbox
+        .command()
+        .args(["view", "save", "weekend", "--json"])
+        .output()
+        .unwrap();
+    task_error(output, 2, "usage");
+    let output = sandbox
+        .command()
+        .args([
+            "view",
+            "save",
+            "weekend",
+            "tag:garden",
+            "tags:hardware",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let error = task_error(output, 2, "invalid_input");
+    assert_eq!(error["term"], "tags:hardware");
+    assert_eq!(error["position"]["index"], 1);
+    assert_eq!(error["hint"], "Use \"tag\"");
+
+    let output = sandbox
+        .command()
+        .args(["view", "show", "Weekend Plan", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(task_error(output, 2, "invalid_input")["field"], "name");
+}
