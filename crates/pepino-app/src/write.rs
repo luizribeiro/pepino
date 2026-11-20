@@ -173,6 +173,12 @@ impl App {
             }
             WriteRequest::Comment { task, text } => {
                 let task = resolve(view, "task", &task)?.id;
+                if text.trim().is_empty() {
+                    return Err(invalid(
+                        "text",
+                        "comment text must contain a non-whitespace character",
+                    ));
+                }
                 batch.push(Event::CommentAdded { task, text }, "text")?;
             }
             WriteRequest::Delete { task } => {

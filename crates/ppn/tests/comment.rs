@@ -52,3 +52,20 @@ fn comment_reports_reference_and_input_errors() {
     task_error(output, 2, "usage");
     assert_eq!(show_task(&sandbox, &project.parent)["comment_count"], 0);
 }
+
+#[test]
+fn comment_rejects_blank_arguments_and_closed_stdin() {
+    let (sandbox, _) = task_sandbox();
+    let id = create_task(&sandbox, "Install the greenhouse latch", &[]);
+    for text in ["", " \t"] {
+        let output = sandbox
+            .command()
+            .args(["comment", &id, text, "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(task_error(output, 2, "invalid_input")["field"], "text");
+    }
+    let output = task_stdin(&sandbox, &["comment", &id, "-", "--json"], "");
+    assert_eq!(task_error(output, 2, "invalid_input")["field"], "text");
+    assert_eq!(show_task(&sandbox, &id)["comment_count"], 0);
+}

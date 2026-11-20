@@ -344,6 +344,11 @@ async fn comments_are_ordered_and_preserve_repeated_text() {
     let mut app = App::init(directory.path(), NOW).await.unwrap();
     let id = add(&mut app, "Install the latch").await;
     let author = app.local_state().device_id.to_string();
+    for text in ["", " \t\r\n", "\u{2003}"] {
+        let result = handle(&mut app, json!({"op":"comment","task":id,"text":text})).await;
+        assert!(matches!(result, Err(AppError::InvalidInput { field, .. }) if field == "text"));
+    }
+    assert!(get(&mut app, &id).await.comments.is_empty());
     let note = "The latch is in the tool cabinet.";
     for (index, text) in [note, note, "The door now closes flush."]
         .into_iter()
