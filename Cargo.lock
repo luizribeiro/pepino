@@ -1076,6 +1076,8 @@ dependencies = [
  "humantime",
  "nix",
  "pepino-app",
+ "pepino-core",
+ "pepino-store",
  "serde",
  "serde_json",
  "strsim",

@@ -7,7 +7,7 @@ use pepino_store::{BoardView, TaskRecord};
 
 use crate::app::invalid;
 use crate::batch::{Batch, invalid_event};
-use crate::projection::resolve;
+use crate::projection::{resolve, resolve_id};
 use crate::{App, AppError, Response, TaskChange, WriteRequest};
 
 impl App {
@@ -187,14 +187,14 @@ impl App {
     fn set_edge(
         view: &BoardView,
         batch: &mut Batch,
-        from: &str,
+        from_ref: &str,
         kind: crate::EdgeKind,
-        to: &str,
+        to_ref: &str,
         present: bool,
     ) -> Result<(), AppError> {
         let kind = kind.into();
-        let mut from = resolve(view, "from", from)?.id;
-        let mut to = resolve(view, "to", to)?.id;
+        let mut from = resolve_id(view, "from", from_ref, !present)?;
+        let mut to = resolve_id(view, "to", to_ref, !present)?;
         if kind == EdgeKind::Relates && from > to {
             std::mem::swap(&mut from, &mut to);
         }
@@ -202,6 +202,10 @@ impl App {
         let exists = edges.iter().any(|edge| {
             (edge.from, edge.kind, edge.to) == (from, kind, to) && (!present || edge.is_effective())
         });
+        if !present && !exists {
+            resolve(view, "from", from_ref)?;
+            resolve(view, "to", to_ref)?;
+        }
         let event = if present {
             Event::EdgeAdded { from, kind, to }
         } else {

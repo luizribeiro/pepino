@@ -84,6 +84,14 @@ pub fn relation_document(
             .tasks
             .iter()
             .find(|task| task.id.starts_with(&prefix))
+            .map(|task| (task.id.as_str(), task.title.as_str()))
+            .or_else(|| {
+                write
+                    .targets
+                    .iter()
+                    .find(|id| id.starts_with(&prefix))
+                    .map(|id| (id.as_str(), "(deleted task)"))
+            })
             .ok_or_else(|| {
                 CliError::new(
                     ErrorKind::Failure,
@@ -97,7 +105,7 @@ pub fn relation_document(
             .edges
             .iter()
             .flat_map(|edge| [edge.from.as_str(), edge.to.as_str()])
-            .chain([from.id.as_str(), to.id.as_str()]),
+            .chain([from.0, to.0]),
     );
     let relation = match kind {
         EdgeKind::Blocks => "blocks",
@@ -108,10 +116,10 @@ pub fn relation_document(
     let label = write_label(*write.changed, verb);
     let message = format!(
         "{label} {} {} {relation} {} {}",
-        ids.get(&from.id),
-        single_line(&from.title),
-        ids.get(&to.id),
-        single_line(&to.title)
+        ids.get(from.0),
+        single_line(from.1),
+        ids.get(to.0),
+        single_line(to.1)
     );
     let (_, warnings) = write_output_with_ids(&response, verb, Some(&ids))?;
     Ok(

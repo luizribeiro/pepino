@@ -441,10 +441,6 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
             json!({"op":"delete","task":blocker[..12].to_uppercase()}),
             "task",
         ),
-        (
-            json!({"op":"unlink","from":&blocker[..12],"kind":"blocks","to":&child}),
-            "from",
-        ),
     ] {
         assert_eq!(
             handle(&mut app, request).await.unwrap_err(),
@@ -465,6 +461,17 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
         .await
         .unwrap();
     assert_eq!(history.len(), 3);
+    let cleanup = json!({"op":"unlink","from":&blocker[..12],"kind":"blocks","to":&child});
+    let (changed, _, _, edges) = write(&mut app, cleanup).await;
+    assert!(changed);
+    assert!(!edges[0].effective);
+    assert!(
+        store
+            .edges(app.local_state().board_id, child.parse().unwrap())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]

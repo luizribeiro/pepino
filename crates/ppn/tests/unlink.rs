@@ -50,3 +50,43 @@ fn unlink_validates_both_endpoints() {
         serde_json::json!([])
     );
 }
+
+fn append_remote(data: &std::path::Path, event: pepino_core::Event) {
+    use pepino_core::{Clock, DeviceId, Envelope};
+    use pepino_store::{IdSource, Store};
+
+    seed_tasks(data, async |app| {
+        let board = app.local_state().board_id;
+        let store = Store::open(data.join("pepino.sqlite")).await.unwrap();
+        let mut clock = Clock::from_hlc(store.latest_hlc(board).await.unwrap().unwrap());
+        let event = Envelope::new(
+            DeviceId::from_bytes([23; 32]),
+            clock.tick(SEED_NOW).unwrap(),
+            event,
+        )
+        .unwrap();
+        store
+            .append(board, &event.encode().unwrap(), IdSource::Content)
+            .await
+            .unwrap();
+    });
+}
+
+#[test]
+fn unlink_cleans_up_a_link_to_a_deleted_task() {
+    let (sandbox, data) = task_sandbox();
+    let p = small_project(&sandbox);
+    append_remote(
+        &data,
+        pepino_core::Event::TaskDeleted {
+            task: p.blocker.parse().unwrap(),
+        },
+    );
+    let human = sandbox.run(&["unlink", &p.downstream, "blocked-by", &p.blocker[..8]]);
+    assert!(human.starts_with("Unlinked "));
+    assert!(human.contains("(deleted task)"));
+    assert_eq!(
+        as_json(&sandbox.run(&["show", &p.downstream, "--json"]))["edges"],
+        serde_json::json!([])
+    );
+}
