@@ -78,6 +78,9 @@ mod tracking {
                 }
                 NodeEvent::PeerDisconnected { peer } => {
                     state.connected_peers.remove(peer);
+                    for board in state.boards.values_mut() {
+                        board.caught_up.remove(peer);
+                    }
                 }
                 NodeEvent::BoardOpened { board, replaying } => {
                     state.boards.insert(
@@ -185,4 +188,24 @@ mod tracking {
             NodeEvent::ReplayEnded { board, error: None }
         );
     }
+}
+
+#[cfg(test)]
+#[test]
+fn reconnect_requires_a_fresh_catch_up() {
+    use crate::NodeEvent;
+
+    let status = Status::default();
+    let board = BoardId::from_bytes([11; 32]);
+    let peer = DeviceId::from_bytes([22; 32]);
+    status.send(NodeEvent::BoardOpened {
+        board,
+        replaying: false,
+    });
+    status.send(NodeEvent::PeerConnected { peer });
+    status.send(NodeEvent::CaughtUp { board, peer });
+    assert!(status.snapshot().boards[&board].caught_up.contains(&peer));
+    status.send(NodeEvent::PeerDisconnected { peer });
+    status.send(NodeEvent::PeerConnected { peer });
+    assert!(!status.snapshot().boards[&board].caught_up.contains(&peer));
 }
