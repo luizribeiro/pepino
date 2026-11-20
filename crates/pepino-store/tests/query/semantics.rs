@@ -189,3 +189,29 @@ fn prepared_queries_reuse_resolved_operands_across_tasks() {
     assert_eq!(matched, [id(1), id(0)]);
     assert_eq!(calls.get(), 1);
 }
+
+#[test]
+fn repeated_views_are_resolved_and_evaluated_once_at_depth_forty() {
+    use std::cell::Cell;
+
+    let calls = Cell::new(0);
+    let views = |name: &str| {
+        calls.set(calls.get() + 1);
+        let depth: usize = name.strip_prefix('v')?.parse().ok()?;
+        Some(if depth == 0 {
+            filter("tag:garden")
+        } else {
+            let previous = depth - 1;
+            filter(&format!("@v{previous} @v{previous}"))
+        })
+    };
+    let root = filter("@v40 @v40 -tag:hardware");
+    let mut query = query(&root);
+    query.context.views = &views;
+    let tasks = select(board(), &query).unwrap();
+    assert_eq!(calls.get(), 41);
+    assert_eq!(
+        tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
+        [id(2), id(7), id(11)]
+    );
+}

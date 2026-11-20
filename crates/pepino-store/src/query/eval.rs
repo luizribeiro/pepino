@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, collections::BTreeMap, fmt};
+use std::{borrow::Borrow, collections::BTreeMap, fmt, rc::Rc};
 
 use pepino_core::{
     IdentityId, TaskId,
@@ -63,6 +63,7 @@ pub struct Query<'a> {
 /// A query resolved against a particular board snapshot.
 pub struct Prepared<'view> {
     predicates: Vec<Check<'view>>,
+    view_count: usize,
 }
 
 impl fmt::Debug for Prepared<'_> {
@@ -76,20 +77,19 @@ impl fmt::Debug for Prepared<'_> {
 impl<'view> Prepared<'view> {
     /// Tests a task from the snapshot used to prepare the query.
     pub fn matches(&self, task: &TaskRecord) -> bool {
-        all_match(&self.predicates, task)
+        all_match(&self.predicates, task, &mut vec![None; self.view_count])
     }
 }
 
 impl Query<'_> {
     /// Resolves the filter before evaluating any task.
     pub fn prepare<'view>(&self, view: &'view BoardView) -> Result<Prepared<'view>, QueryError> {
-        let predicates = prepare(
-            view,
-            self.filter,
-            &self.context,
-            &mut SavedViews::new(self.context.views),
-        )?;
-        Ok(Prepared { predicates })
+        let mut saved = SavedViews::new(self.context.views);
+        let predicates = prepare(view, self.filter, &self.context, &mut saved)?;
+        Ok(Prepared {
+            predicates,
+            view_count: saved.len(),
+        })
     }
 }
 
@@ -110,21 +110,42 @@ pub fn select<'view>(
 type Predicate<'a> = Box<dyn Fn(&TaskRecord) -> bool + 'a>;
 
 struct Check<'view> {
-    predicate: Predicate<'view>,
+    predicate: CheckKind<'view>,
     negated: bool,
 }
 
-fn all_match(checks: &[Check<'_>], task: &TaskRecord) -> bool {
-    checks
-        .iter()
-        .all(|check| (check.predicate)(task) != check.negated)
+enum CheckKind<'view> {
+    Task(Predicate<'view>),
+    View(Rc<ViewChecks<'view>>),
+}
+
+struct ViewChecks<'view> {
+    id: usize,
+    checks: Vec<Check<'view>>,
+}
+
+fn all_match(checks: &[Check<'_>], task: &TaskRecord, results: &mut [Option<bool>]) -> bool {
+    checks.iter().all(|check| {
+        let matched = match &check.predicate {
+            CheckKind::Task(predicate) => predicate(task),
+            CheckKind::View(view) => match results[view.id] {
+                Some(matched) => matched,
+                None => {
+                    let matched = all_match(&view.checks, task, results);
+                    results[view.id] = Some(matched);
+                    matched
+                }
+            },
+        };
+        matched != check.negated
+    })
 }
 
 fn prepare<'a>(
     view: &'a BoardView,
     filter: &Filter,
     context: &Context<'_>,
-    saved: &mut SavedViews<'_>,
+    saved: &mut SavedViews<'_, Rc<ViewChecks<'a>>>,
 ) -> Result<Vec<Check<'a>>, QueryError> {
     let mut predicates = Vec::new();
     let mut terms: Vec<_> = filter.terms().iter().collect();
@@ -132,19 +153,20 @@ fn prepare<'a>(
     for term in terms {
         let predicate = match &term.clause {
             Clause::Board(_) => continue,
-            Clause::View(name) => {
-                let nested = saved.expand(term, name, |saved, nested| {
-                    prepare(view, nested, context, saved)
-                })?;
-                Box::new(move |task: &TaskRecord| all_match(&nested, task)) as Predicate<'a>
-            }
+            Clause::View(name) => CheckKind::View(saved.expand(term, name, |saved, nested| {
+                let checks = prepare(view, nested, context, saved)?;
+                Ok(Rc::new(ViewChecks {
+                    id: saved.len(),
+                    checks,
+                }))
+            })?),
             clause => {
                 let Some(predicate) = prepare_clause(view, clause, context)
                     .map_err(|kind| saved.error(term, kind))?
                 else {
                     continue;
                 };
-                predicate
+                CheckKind::Task(predicate)
             }
         };
         predicates.push(Check {
