@@ -35,6 +35,12 @@ pub enum ReadRequest {
         limit: Option<usize>,
     },
     ListViews,
+    ListTasks {
+        filter: FilterInput,
+        sort: Option<String>,
+        limit: Option<usize>,
+        today: Date,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -151,6 +157,12 @@ pub enum Response {
     },
     Views {
         views: Vec<SavedView>,
+    },
+    Tasks {
+        tasks: Vec<TaskRecord>,
+        total: usize,
+        filter: String,
+        sort: String,
     },
 }
 

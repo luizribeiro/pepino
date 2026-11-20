@@ -879,3 +879,15 @@ async fn saved_views_migrate_v1_state_and_survive_concurrent_opens() {
     }
     read_golden(&mut app, json!({"op":"save_view","name":"latch","filter":"tags:hardware","today":"2026-11-20"}), json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown filter key \"tags\"","hint":"Use \"tag\"","term":"tags:hardware","position":{"kind":"byte","byte":0}}})).await;
 }
+
+#[tokio::test]
+async fn task_lists_an_empty_board() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    read_golden(
+        &mut app,
+        json!({"op":"list_tasks","filter":"","sort":null,"limit":null,"today":"2026-11-20"}),
+        json!({"ok":{"kind":"tasks","tasks":[],"total":0,"filter":"","sort":"default"}}),
+    )
+    .await;
+}
