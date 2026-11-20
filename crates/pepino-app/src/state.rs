@@ -93,6 +93,9 @@ impl LocalState {
     }
 
     pub fn added_device_here(&self, id: DeviceId) -> bool {
+        if let Some(device) = self.catalog.identity.device(id) {
+            return device.added_by == Some(self.device_id);
+        }
         self.other_devices.contains_key(&id)
             && (self.link.is_none() || self.devices_added_here.contains(&id))
     }

@@ -24,6 +24,10 @@ pub(crate) struct IdentityCatalog {
 }
 
 impl IdentityCatalog {
+    pub(crate) fn device(&self, id: DeviceId) -> Option<&super::record::RosterDevice> {
+        self.record.as_ref()?.devices.get(&id)
+    }
+
     pub(crate) fn edits(&self) -> impl Iterator<Item = &SignedEdit> {
         self.edits.values()
     }

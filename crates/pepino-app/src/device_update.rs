@@ -5,7 +5,7 @@ use pepino_core::{BoardId, DeviceId};
 #[cfg(test)]
 use crate::LocalState;
 
-use crate::{App, AppError, BoardJoinState, app::invalid};
+use crate::{App, AppError, BoardJoinState};
 
 impl App {
     pub async fn remember_device(
@@ -14,21 +14,12 @@ impl App {
         fallback_name: String,
         override_name: Option<String>,
     ) -> Result<(), AppError> {
-        let name = override_name.as_deref().unwrap_or(&fallback_name);
-        if id == self.local.device_id || name.trim().is_empty() {
-            return Err(invalid(
-                "device",
-                "expected a different device with a non-blank name",
-            ));
-        }
-        self.update_local(move |local| {
-            local.devices_added_here.insert(id);
-            if let Some(name) = override_name {
-                local.other_devices.insert(id, name);
-            } else {
-                local.other_devices.entry(id).or_insert(fallback_name);
-            }
-        })
+        self.record_device_admission(
+            id,
+            &fallback_name,
+            override_name.as_deref(),
+            &self.identity_credentials()?,
+        )
         .await
     }
 
@@ -37,11 +28,11 @@ impl App {
         devices: BTreeSet<DeviceId>,
     ) -> Result<(), AppError> {
         self.update_local(move |local| {
-            local.devices_seen_on_boards.extend(
-                devices
-                    .into_iter()
-                    .filter(|id| local.other_devices.contains_key(id)),
-            );
+            for id in devices {
+                if local.knows_roster_device(id) {
+                    local.devices_seen_on_boards.insert(id);
+                }
+            }
         })
         .await
     }
@@ -78,7 +69,8 @@ async fn readding_a_device_keeps_its_existing_name_unless_overridden() {
         .unwrap();
     let local = LocalState::load(dir.path()).unwrap();
     assert_eq!(local.devices()[&peer], "Garden tablet");
-    assert!(local.added_device_here(peer));
+    assert_eq!(local.roster()[&peer].added_by, Some(local.device_id));
+    assert!(local.roster()[&peer].added_at.is_some());
     assert!(app.remember_device(peer, "".into(), None).await.is_err());
 }
 
