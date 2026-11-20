@@ -5,6 +5,8 @@ use pepino_app::LocalState;
 use pepino_core::{BoardId, DeviceId, EventId};
 use pepino_node::{Ack, BoardHandle, Error, MemberInfo, Node, NodeEvents, NodeStatus, Role};
 
+use crate::Removal;
+
 pub type DeliveryStream<A> = BoxStream<'static, Result<Delivery<A>, Error>>;
 
 pub struct Delivery<A> {
@@ -29,6 +31,13 @@ pub trait TransportBoard: Send + Sync + 'static {
         _enroll: bool,
     ) -> impl Future<Output = Result<Option<BTreeSet<DeviceId>>, Error>> + Send {
         async { Ok(None) }
+    }
+    fn remove_revoked(
+        &self,
+        _own: DeviceId,
+        _device: DeviceId,
+    ) -> impl Future<Output = Removal> + Send {
+        async { Removal::Unavailable }
     }
     fn close(self) -> impl Future<Output = Result<(), Error>> + Send;
 }
@@ -104,6 +113,10 @@ impl TransportBoard for BoardHandle {
             }
         }
         Ok(Some(ids))
+    }
+
+    async fn remove_revoked(&self, own: DeviceId, device: DeviceId) -> Removal {
+        crate::revoke::remove(self, own, device).await
     }
 
     async fn close(self) -> Result<(), Error> {
