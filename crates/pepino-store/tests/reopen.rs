@@ -59,7 +59,7 @@ async fn file_reopen_preserves_the_view_clock_and_log() {
         },
     )
     .unwrap();
-    let (tasks, comments, history, edges) = {
+    let (view, comments, history) = {
         let store = Store::open(&path).await.unwrap();
         store
             .append(board, &blocks.encode().unwrap(), IdSource::Content)
@@ -81,29 +81,28 @@ async fn file_reopen_preserves_the_view_clock_and_log() {
             .append(board, &sweeping.encode().unwrap(), IdSource::Content)
             .await
             .unwrap();
-        let edges = store.edges(board, follow_up).await.unwrap();
+        let view = store.board(board).await.unwrap();
+        let edges = view.edges(follow_up);
         assert_eq!(edges.len(), 1);
         assert!(edges[0].is_effective());
-        let blocked = store.task(board, follow_up).await.unwrap().unwrap();
+        let blocked = view.task(follow_up).unwrap();
         assert_eq!(blocked.blocked_by, [task].into());
         assert!(blocked.blocked);
         (
-            store.tasks(board).await.unwrap(),
+            view,
             store.comments(board, task).await.unwrap(),
             store.events(board, task).await.unwrap(),
-            edges,
         )
     };
     let reopened = Store::open(&path).await.unwrap();
-    assert_eq!(reopened.tasks(board).await.unwrap(), tasks);
+    let reopened_view = reopened.board(board).await.unwrap();
+    assert_eq!(reopened_view, view);
     assert_eq!(reopened.comments(board, task).await.unwrap(), comments);
     assert_eq!(reopened.events(board, task).await.unwrap(), history);
-    assert_eq!(reopened.edges(board, follow_up).await.unwrap(), edges);
     assert_eq!(reopened.latest_hlc(board).await.unwrap(), Some(newer));
     assert_eq!(
-        reopened
-            .resolve_prefix(board, &task.to_string()[..9])
-            .await
+        reopened_view
+            .resolve_prefix(&task.to_string()[..9])
             .unwrap(),
         PrefixResolution::One(task)
     );

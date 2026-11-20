@@ -18,33 +18,31 @@ async fn dependencies_use_shortest_distances_in_both_directions() {
         add(&store, id, u32::from(id), from, EdgeKind::Blocks, to).await;
     }
     add(&store, 15, 15, greenhouse, EdgeKind::Blocks, hinges).await;
+    let view = store.board(BOARD).await.unwrap();
     let at = |task, distance| Dependency { task, distance };
     assert_eq!(
-        store.dependencies(BOARD, frame).await.unwrap(),
+        view.dependencies(frame),
         Dependencies {
             blocked_by: vec![at(door, 1), at(hinges, 1)],
             blocks: vec![at(greenhouse, 1)],
         }
     );
     assert_eq!(
-        store.dependencies(BOARD, hinges).await.unwrap(),
+        view.dependencies(hinges),
         Dependencies {
             blocked_by: vec![],
             blocks: vec![at(door, 1), at(frame, 1), at(greenhouse, 2)],
         }
     );
     assert_eq!(
-        store.dependencies(BOARD, greenhouse).await.unwrap(),
+        view.dependencies(greenhouse),
         Dependencies {
             blocked_by: vec![at(frame, 1), at(door, 2), at(hinges, 2)],
             blocks: vec![],
         }
     );
     assert_eq!(
-        store
-            .dependencies(BOARD, TaskId::from_bytes([99; 32]))
-            .await
-            .unwrap(),
+        view.dependencies(TaskId::from_bytes([99; 32])),
         Dependencies::default()
     );
 }
@@ -60,8 +58,9 @@ async fn subtree_lists_effective_descendants_in_stable_preorder() {
     add(&store, 11, 1, hinges, EdgeKind::Parent, greenhouse).await;
     add(&store, 12, 2, door, EdgeKind::Parent, greenhouse).await;
     add(&store, 13, 3, frame, EdgeKind::Parent, door).await;
+    let view = store.board(BOARD).await.unwrap();
     assert_eq!(
-        store.subtree(BOARD, greenhouse).await.unwrap(),
+        view.subtree(greenhouse),
         [
             entry(greenhouse, 0),
             entry(door, 1),
@@ -69,13 +68,15 @@ async fn subtree_lists_effective_descendants_in_stable_preorder() {
             entry(hinges, 1),
         ]
     );
-    let records = store.tasks(BOARD).await.unwrap();
+    let records = view.tasks();
     assert_eq!(records[0].children, [door, hinges].into());
     assert_eq!(records[3].parent, Some(door));
     append(&store, 14, 4, Event::TaskDeleted { task: door }).await;
-    assert!(store.subtree(BOARD, door).await.unwrap().is_empty());
+    let updated = store.board(BOARD).await.unwrap();
+    assert!(updated.subtree(door).is_empty());
+    assert_eq!(view.subtree(door), [entry(door, 0), entry(frame, 1)]);
     assert_eq!(
-        store.subtree(BOARD, greenhouse).await.unwrap(),
+        updated.subtree(greenhouse),
         [entry(greenhouse, 0), entry(hinges, 1),]
     );
 }

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use pepino_core::{BoardId, EdgeKind, FieldValue, TaskId};
 use sqlx::{FromRow, SqliteConnection};
 
-use crate::{BoardKey, Store, StoreError, edge_key};
+use crate::{BoardKey, StoreError, edge_key};
 
 #[cfg(test)]
 mod tests;
@@ -125,17 +125,4 @@ fn add_if_acyclic(accepted: &mut Adjacency, edge: &mut EdgeRecord) {
         }
     }
     accepted.entry(edge.from).or_default().push(edge.to);
-}
-
-impl Store {
-    /// Lists present edges touching either endpoint in ascending register write order.
-    /// Symmetric edges list the smaller task ID first.
-    pub async fn edges(&self, board: BoardId, task: TaskId) -> Result<Vec<EdgeRecord>, StoreError> {
-        let rows = self
-            .read(async |connection| edge_rows(connection, board).await)
-            .await?;
-        let mut edges = project(&rows)?;
-        edges.retain(|edge| edge.from == task || edge.to == task);
-        Ok(edges)
-    }
 }

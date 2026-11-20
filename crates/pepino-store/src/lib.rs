@@ -1,3 +1,4 @@
+mod board;
 mod board_key;
 mod comment;
 #[cfg(test)]
@@ -23,6 +24,7 @@ use sqlx::{
 };
 use tokio::sync::Mutex;
 
+pub use board::BoardView;
 pub use comment::CommentRecord;
 pub use edges::{EdgeExclusion, EdgeRecord};
 pub use error::{DatabaseErrorKind, StoreError};

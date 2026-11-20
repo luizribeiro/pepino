@@ -3,9 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use pepino_core::{
     BoardId, Date, DeviceId, EdgeKind, FieldName, FieldValue, Hlc, IdentityId, Status, TaskId,
 };
-use sqlx::{Connection, FromRow};
+use sqlx::{FromRow, SqliteConnection};
 
-use crate::{BoardKey, Store, StoreError, edges};
+use crate::{BoardKey, StoreError, edges};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskRecord {
@@ -31,7 +31,7 @@ pub struct TaskRecord {
 }
 
 #[derive(FromRow)]
-struct TaskRow {
+pub(crate) struct TaskRow {
     task: [u8; 32],
     created: [u8; 12],
     updated: [u8; 12],
@@ -121,95 +121,69 @@ pub(crate) fn decode_field(bytes: &[u8]) -> Result<FieldValue, StoreError> {
     ciborium::from_reader(bytes).map_err(|error| StoreError::ViewValue(error.to_string()))
 }
 
-impl Store {
-    pub async fn task(&self, board: BoardId, id: TaskId) -> Result<Option<TaskRecord>, StoreError> {
-        Ok(self
-            .task_range(board, *id.as_bytes(), *id.as_bytes())
-            .await?
-            .pop())
-    }
+pub(crate) async fn task_rows(
+    connection: &mut SqliteConnection,
+    board: BoardId,
+) -> Result<Vec<TaskRow>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT s.task, s.created, s.updated, s.author, r.kind, r.member, r.value
+         FROM visible_tasks s JOIN task_register r USING (board, task)
+         WHERE s.board = ? AND r.kind IN ('field', 'tag', 'assignee') AND r.value IS NOT NULL",
+    )
+    .bind(BoardKey(board))
+    .fetch_all(connection)
+    .await
+}
 
-    /// Lists live tasks in ascending creation order by `(created Hlc, task ID)`.
-    pub async fn tasks(&self, board: BoardId) -> Result<Vec<TaskRecord>, StoreError> {
-        let mut tasks = self.task_range(board, [0; 32], [255; 32]).await?;
-        tasks.sort_unstable_by_key(|task| (task.created, task.id));
-        Ok(tasks)
+pub(crate) fn records(
+    rows: Vec<TaskRow>,
+    edges: &[edges::EdgeRecord],
+    edge_rows: Vec<edges::EdgeRow>,
+) -> Result<Vec<TaskRecord>, StoreError> {
+    let mut tasks = BTreeMap::new();
+    for row in rows {
+        tasks
+            .entry(row.task)
+            .or_insert_with(|| row.record())
+            .read_register(row)?;
     }
-
-    async fn task_range(
-        &self,
-        board: BoardId,
-        first: [u8; 32],
-        last: [u8; 32],
-    ) -> Result<Vec<TaskRecord>, StoreError> {
-        let (rows, edge_rows) = self
-            .read(async |connection| {
-                let mut tx = connection.begin().await?;
-                let tasks = sqlx::query_as::<_, TaskRow>(
-                    "SELECT s.task, s.created, s.updated, s.author, r.kind, r.member, r.value
-                     FROM visible_tasks s JOIN task_register r USING (board, task)
-                     WHERE s.board = ? AND s.task BETWEEN ? AND ?
-                     AND r.kind IN ('field', 'tag', 'assignee') AND r.value IS NOT NULL",
-                )
-                .bind(BoardKey(board))
-                .bind(first)
-                .bind(last)
-                .fetch_all(&mut *tx)
-                .await?;
-                let edges = if tasks.is_empty() {
-                    Vec::new()
-                } else {
-                    edges::edge_rows(&mut tx, board).await?
-                };
-                tx.commit().await?;
-                Ok((tasks, edges))
-            })
-            .await?;
-        let mut tasks = BTreeMap::new();
-        for row in rows {
-            tasks
-                .entry(row.task)
-                .or_insert_with(|| row.record())
-                .read_register(row)?;
+    for (edge, row) in edges.iter().zip(edge_rows) {
+        if !edge.is_effective() {
+            continue;
         }
-        for (edge, row) in edges::project(&edge_rows)?.into_iter().zip(edge_rows) {
-            if !edge.is_effective() {
-                continue;
-            }
-            if let Some(task) = tasks.get_mut(edge.from.as_bytes()) {
-                match edge.kind {
-                    EdgeKind::Parent => task.parent = Some(edge.to),
-                    EdgeKind::Blocks => {
-                        task.blocks.insert(edge.to);
-                    }
-                    EdgeKind::Relates => {
-                        task.relates.insert(edge.to);
-                    }
-                    _ => {}
+        if let Some(task) = tasks.get_mut(edge.from.as_bytes()) {
+            match edge.kind {
+                EdgeKind::Parent => task.parent = Some(edge.to),
+                EdgeKind::Blocks => {
+                    task.blocks.insert(edge.to);
                 }
-            }
-            if let Some(task) = tasks.get_mut(edge.to.as_bytes()) {
-                match edge.kind {
-                    EdgeKind::Parent => {
-                        task.children.insert(edge.from);
-                    }
-                    EdgeKind::Blocks => {
-                        task.blocked_by.insert(edge.from);
-                        task.blocked |= task.status.is_open() && row.source_is_open()?;
-                    }
-                    EdgeKind::Relates => {
-                        task.relates.insert(edge.from);
-                    }
-                    _ => {}
+                EdgeKind::Relates => {
+                    task.relates.insert(edge.to);
                 }
+                _ => {}
             }
         }
-        Ok(tasks
-            .into_values()
-            .map(|mut task| {
-                task.ready = task.status.is_open() && !task.blocked;
-                task
-            })
-            .collect())
+        if let Some(task) = tasks.get_mut(edge.to.as_bytes()) {
+            match edge.kind {
+                EdgeKind::Parent => {
+                    task.children.insert(edge.from);
+                }
+                EdgeKind::Blocks => {
+                    task.blocked_by.insert(edge.from);
+                    task.blocked |= task.status.is_open() && row.source_is_open()?;
+                }
+                EdgeKind::Relates => {
+                    task.relates.insert(edge.from);
+                }
+                _ => {}
+            }
+        }
     }
+    Ok(tasks
+        .into_values()
+        .map(|mut task| {
+            task.ready = task.status.is_open() && !task.blocked;
+            task
+        })
+        .collect())
 }

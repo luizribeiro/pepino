@@ -122,11 +122,12 @@ proptest! {
             history.apply(&store, &history.order(seed)).await;
 
             for board in [BOARD, OTHER] {
+                let view = store.board(board).await.unwrap();
                 let expected = reference(&history, board);
                 let mut parents = Vec::new();
                 let mut blocks = Vec::new();
                 for &task in &history.tasks {
-                    let actual = store.edges(board, task).await.unwrap();
+                    let actual = view.edges(task);
                     let incident: Vec<_> = expected.iter().copied()
                         .filter(|edge| edge.from == task || edge.to == task)
                         .collect();

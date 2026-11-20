@@ -74,15 +74,16 @@ impl History {
     }
 
     async fn board_snapshot(&self, store: &Store, board: BoardId) -> BoardSnapshot {
+        let view = store.board(board).await.unwrap();
         let mut by_id = BTreeMap::new();
         for &id in &self.tasks {
             by_id.insert(
                 id,
                 TaskSnapshot {
-                    task: store.task(board, id).await.unwrap(),
+                    task: view.task(id).cloned(),
                     comments: store.comments(board, id).await.unwrap(),
                     events: store.events(board, id).await.unwrap(),
-                    edges: store.edges(board, id).await.unwrap(),
+                    edges: view.edges(id),
                 },
             );
         }
@@ -105,7 +106,7 @@ impl History {
             .collect();
         assert_eq!(classifications, expected);
         BoardSnapshot {
-            tasks: store.tasks(board).await.unwrap(),
+            tasks: view.iter().cloned().collect(),
             by_id,
             latest_hlc: store.latest_hlc(board).await.unwrap(),
             classifications,

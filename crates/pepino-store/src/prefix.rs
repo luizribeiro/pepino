@@ -1,6 +1,6 @@
-use pepino_core::{BoardId, TaskId};
+use pepino_core::TaskId;
 
-use crate::{BoardKey, Store, StoreError};
+use crate::{BoardView, StoreError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PrefixResolution {
@@ -9,15 +9,11 @@ pub enum PrefixResolution {
     Ambiguous { count: u64, candidates: Vec<TaskId> },
 }
 
-impl Store {
+impl BoardView {
     /// Resolves 4 to 64 hexadecimal digits against live task IDs.
     ///
     /// Ambiguous matches include the total count and up to ten candidates in ID order.
-    pub async fn resolve_prefix(
-        &self,
-        board: BoardId,
-        hex_prefix: &str,
-    ) -> Result<PrefixResolution, StoreError> {
+    pub fn resolve_prefix(&self, hex_prefix: &str) -> Result<PrefixResolution, StoreError> {
         if !(4..=64).contains(&hex_prefix.len())
             || !hex_prefix.bytes().all(|byte| byte.is_ascii_hexdigit())
         {
@@ -29,28 +25,14 @@ impl Store {
         let last: TaskId = format!("{hex_prefix:f<64}")
             .parse()
             .map_err(|_| StoreError::InvalidPrefix)?;
-        let rows = self
-            .read(async |connection| {
-                sqlx::query_as::<_, ([u8; 32], i64)>(
-                    "SELECT task, count(*) OVER () FROM visible_tasks
-                     WHERE board = ? AND task BETWEEN ? AND ? ORDER BY task LIMIT 10",
-                )
-                .bind(BoardKey(board))
-                .bind(first.as_bytes().as_slice())
-                .bind(last.as_bytes().as_slice())
-                .fetch_all(connection)
-                .await
-            })
-            .await?;
-        Ok(match rows.as_slice() {
+        let mut matches = self.ids_in_range(first, last);
+        let candidates: Vec<_> = matches.by_ref().take(10).collect();
+        Ok(match candidates.as_slice() {
             [] => PrefixResolution::None,
-            [(task, _)] => PrefixResolution::One(TaskId::from_bytes(*task)),
-            [(_, count), ..] => PrefixResolution::Ambiguous {
-                count: *count as u64,
-                candidates: rows
-                    .into_iter()
-                    .map(|(task, _)| TaskId::from_bytes(task))
-                    .collect(),
+            [task] => PrefixResolution::One(*task),
+            _ => PrefixResolution::Ambiguous {
+                count: (candidates.len() + matches.count()) as u64,
+                candidates,
             },
         })
     }
