@@ -945,4 +945,49 @@ async fn task_lists_sort_limit_and_search_project_records_with_both_filter_forms
         list_golden(&mut app,filter,None,None,
             json!({"ok":{"kind":"tasks","tasks":[latch],"total":1,"filter":"tag:hardware \"STAINLESS screws\"","sort":"default"}})).await;
     }
+
+    for (name, filter) in [
+        (
+            "latch",
+            "board:Greenhouse,Workshop \"stainless screws\" due:tomorrow",
+        ),
+        ("weekend", "tag:hardware @latch"),
+    ] {
+        handle(
+            &mut app,
+            json!({"op":"save_view","name":name,"filter":filter,"today":"2026-11-20"}),
+        )
+        .await
+        .unwrap();
+    }
+    drop(app);
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    list_golden(&mut app, json!("@weekend"), None, None,
+        json!({"ok":{"kind":"tasks","tasks":[latch],"total":1,"filter":"@weekend","sort":"default"}})).await;
+    list_golden(&mut app, json!("-board:Greenhouse @weekend"), None, None,
+        json!({"ok":{"kind":"tasks","tasks":[],"total":0,"filter":"-board:Greenhouse @weekend","sort":"default"}})).await;
+    list_golden(
+        &mut app,
+        json!("board:Workshop"),
+        None,
+        None,
+        json!({"error":{"kind":"not_found","field":"filter","board":"Workshop"}}),
+    )
+    .await;
+    handle(
+        &mut app,
+        json!({"op":"save_view","name":"remote","filter":"board:Workshop","today":"2026-11-20"}),
+    )
+    .await
+    .unwrap();
+    list_golden(
+        &mut app,
+        json!("@remote"),
+        None,
+        None,
+        json!({"error":{"kind":"not_found","field":"filter","board":"Workshop"}}),
+    )
+    .await;
+    list_golden(&mut app, json!("-@weekend"), None, None,
+        json!({"error":{"kind":"invalid_input","field":"filter","reason":"negated saved view @weekend selects boards","term":"-@weekend","position":{"kind":"byte","byte":0}}})).await;
 }
