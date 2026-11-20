@@ -59,7 +59,21 @@ async fn two_devices_exchange_events_and_a_late_member_gets_history() {
         MemberInfo::from_base32("invalid!"),
         Err(Error::Member(_))
     ));
+    let mut changes = board_a.membership_events();
+    let snapshot = changes.next().await.unwrap().unwrap();
+    assert_eq!(snapshot[&a.device_id()], MemberState::Member(Role::Manage));
     let mut board_b = enroll(&board_a, &b, Role::Write).await;
+    let added = timeout(WAIT, async {
+        loop {
+            let event = changes.next().await.unwrap().unwrap();
+            if event.contains_key(&b.device_id()) {
+                break event;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(added[&b.device_id()], MemberState::Member(Role::Write));
     let mut events_b = board_b.events().unwrap();
     assert!(matches!(
         board_b.add_member(&member, Role::Write).await,

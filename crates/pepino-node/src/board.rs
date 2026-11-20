@@ -13,19 +13,21 @@ use p2panda_auth::validation::WriteError;
 use pepino_core::{BoardId, EventId};
 use tokio::{
     runtime::Handle,
-    sync::{Mutex, mpsc, oneshot, watch},
+    sync::{Mutex, broadcast, mpsc, oneshot, watch},
     task::JoinHandle,
     time::timeout,
 };
 
 use crate::{
-    BoardEvent, BoardEvents, Error, MemberState, Node, NodeEvent,
+    BoardEvent, BoardEvents, Error, MemberState, MemberStates, Node, NodeEvent,
     ack::AckStore,
     board_lease::BoardLease,
     board_task::{BoardTask, JoinState},
     cursor,
     delivery::DeliveryWriter,
     events::subscribe,
+    membership::read_members,
+    membership_watch::MembershipMonitor,
     receipt::{Payload, Receipts},
     status_state::{Status, WeakStatus},
 };
@@ -39,6 +41,7 @@ pub struct OpenBoardOptions {
 }
 
 struct BoardConfig {
+    membership: MemberStates,
     acks: AckStore,
     status: Status,
     confirmation_timeout: Duration,
@@ -48,6 +51,8 @@ struct BoardConfig {
 pub struct BoardHandle {
     id: BoardId,
     pub(crate) node: Weak<p2panda::Node>,
+    pub(crate) membership: Arc<std::sync::Mutex<MemberStates>>,
+    pub(crate) membership_changes: broadcast::WeakSender<MemberStates>,
     pub(crate) membership_pool: sqlx::SqlitePool,
     pub(crate) membership_lock: Arc<Mutex<()>>,
     runtime: Handle,
@@ -74,10 +79,12 @@ impl Node {
                     node.create_space::<Payload>().await.map_err(Error::node)?;
                 let id = BoardId::from_bytes(*space.id().as_bytes());
                 let lease = boards.reserve(id)?;
+                let membership = read_members(acks.pool.clone(), id).await?;
                 let board = BoardHandle::attach(
                     &node,
                     lease,
                     BoardConfig {
+                        membership,
                         acks,
                         status,
                         confirmation_timeout,
@@ -143,6 +150,7 @@ impl Node {
                     StreamFrom::Frontier
                 };
                 let replaying = cursor::needs_replay(&acks.pool, id, node.id()).await?;
+                let membership = read_members(acks.pool.clone(), id).await?;
                 let (pending, subscription) = node
                     .space_from::<Payload>(Hash::from_bytes(*id.as_bytes()), from)
                     .await
@@ -151,6 +159,7 @@ impl Node {
                     &node,
                     lease,
                     BoardConfig {
+                        membership,
                         acks,
                         status,
                         confirmation_timeout,
@@ -173,6 +182,7 @@ impl BoardHandle {
         joined: impl Future<Output = Result<Space<Payload>, SpacesManagerError>> + Send + 'static,
     ) -> Self {
         let BoardConfig {
+            membership,
             acks,
             status,
             confirmation_timeout,
@@ -191,7 +201,11 @@ impl BoardHandle {
         let (stop, stop_rx) = oneshot::channel();
         let receipts = Receipts::default();
         let delivery_status = status.downgrade();
+        let monitor = MembershipMonitor::new(membership);
+        let membership = monitor.members.clone();
+        let membership_changes = monitor.changes.downgrade();
         let task = BoardTask {
+            membership: monitor,
             lease,
             acks,
             status,
@@ -205,6 +219,8 @@ impl BoardHandle {
         Self {
             id,
             node: Arc::downgrade(node),
+            membership,
+            membership_changes,
             membership_pool,
             membership_lock: Arc::default(),
             runtime: Handle::current(),

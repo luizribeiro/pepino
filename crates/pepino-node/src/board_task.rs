@@ -18,6 +18,7 @@ use crate::{
     delivery::DeliveryWriter,
     delivery_item::Delivery,
     events::pipeline_error,
+    membership_watch::MembershipMonitor,
     receipt::{Payload, Receipts},
     status::board_status,
     status_state::Status,
@@ -40,6 +41,7 @@ impl JoinState {
 }
 
 pub(crate) struct BoardTask {
+    pub(crate) membership: MembershipMonitor,
     pub(crate) lease: BoardLease,
     pub(crate) acks: AckStore,
     pub(crate) status: Status,
@@ -101,6 +103,7 @@ impl BoardTask {
 
     async fn forward(&self, event: StreamEvent<Payload>) -> Result<(), Error> {
         match &event {
+            StreamEvent::Space { members, inner, .. } => self.membership.update(members, inner),
             StreamEvent::ReplayStarted { .. } => {
                 self.replay_status.send_replace(true);
             }
@@ -163,6 +166,7 @@ mod tests {
         let (_, pending) = receipts.track(b"Update runbook".to_vec());
         assert!(matches!(joined.borrow().space(), Err(Error::NotJoined)));
         let task = BoardTask {
+            membership: MembershipMonitor::new(Default::default()),
             lease,
             acks,
             status: Status::default(),

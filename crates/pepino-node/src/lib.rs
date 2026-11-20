@@ -8,6 +8,7 @@ mod delivery;
 mod delivery_item;
 mod events;
 mod membership;
+mod membership_watch;
 mod node;
 mod receipt;
 mod settings;
@@ -21,6 +22,7 @@ pub use board::{BoardHandle, OpenBoardOptions};
 pub use credentials::DeviceCredentials;
 pub use events::{BoardEvent, BoardEvents};
 pub use membership::{MemberInfo, MemberState, MemberStates, Role};
+pub use membership_watch::MembershipEvents;
 pub use node::Node;
 pub use settings::{BootstrapNode, MdnsMode, NodeSettings, peer_relay_url};
 pub use status::{NodeEvent, NodeEvents, SyncCounts};
@@ -31,6 +33,8 @@ pub use status_state::{BoardStatus, NodeStatus};
 pub enum Error {
     #[error("missed {0} node status events")]
     StatusLagged(u64),
+    #[error("missed {0} membership events")]
+    MembershipLagged(u64),
     #[error("invalid member info: {0}")]
     Member(String),
     #[error("this device lacks permission for the board operation")]
