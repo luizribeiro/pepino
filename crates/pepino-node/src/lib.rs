@@ -2,6 +2,8 @@
 mod ack;
 #[cfg(test)]
 mod board_lease;
+#[cfg(test)]
+mod board_task;
 mod credentials;
 #[cfg(test)]
 mod events;
@@ -18,6 +20,8 @@ pub use settings::{BootstrapNode, MdnsMode, NodeSettings};
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    #[error("this device has not joined the board")]
+    NotJoined,
     #[error("processing board operation {id}: {details}")]
     Processing {
         id: pepino_core::EventId,
