@@ -2,7 +2,7 @@ use std::{borrow::Borrow, collections::BTreeMap, fmt, rc::Rc};
 
 use pepino_core::{
     IdentityId, TaskId,
-    filter::{Assignee, Clause, Filter},
+    filter::{Assignee, Clause, Filter, Term},
 };
 
 use crate::{BoardView, PrefixResolution, TaskRecord};
@@ -10,7 +10,7 @@ use crate::{BoardView, PrefixResolution, TaskRecord};
 use super::{
     QueryError, QueryErrorKind,
     predicates::{compare, custom, fold, has, is, text_matches, utc_days},
-    saved::{Expanded, SavedViews},
+    saved::{self, Expanded, SavedViews, canonical_terms},
 };
 
 /// Resolves decoded person text to candidate identities.
@@ -82,6 +82,14 @@ impl<'view> Prepared<'view> {
 }
 
 impl Query<'_> {
+    /// Extracts board terms from this filter and its reachable saved views.
+    ///
+    /// Terms retain their alternatives and negation. Each saved definition contributes
+    /// its terms once. Negating a saved view that selects boards has no board-selection
+    /// meaning and returns an error, including when the board terms are in a nested view.
+    pub fn board_terms(&self) -> Result<Vec<Term>, QueryError> {
+        saved::board_terms(self.filter, self.context.views)
+    }
     /// Resolves the filter before evaluating any task.
     pub fn prepare<'view>(&self, view: &'view BoardView) -> Result<Prepared<'view>, QueryError> {
         let mut saved = SavedViews::new(self.context.views);
@@ -149,9 +157,7 @@ fn prepare<'a>(
 ) -> Result<Expanded<Vec<Check<'a>>>, QueryError> {
     let mut predicates = Vec::new();
     let mut has_boards = false;
-    let mut terms: Vec<_> = filter.terms().iter().collect();
-    terms.sort_by_cached_key(|term| term.to_string());
-    for term in terms {
+    for term in canonical_terms(filter) {
         let predicate = match &term.clause {
             Clause::Board(_) => {
                 has_boards = true;

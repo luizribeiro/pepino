@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use pepino_core::filter::{Filter, Term};
+use pepino_core::filter::{Clause, Filter, Term};
 
 #[derive(Clone)]
 pub(super) struct Expanded<T> {
@@ -84,4 +84,46 @@ impl<'a, T: Clone> SavedViews<'a, T> {
         self.chain.pop();
         expanded
     }
+}
+
+pub(super) fn canonical_terms(filter: &Filter) -> Vec<&Term> {
+    let mut terms: Vec<_> = filter.terms().iter().collect();
+    terms.sort_by_cached_key(|term| term.to_string());
+    terms
+}
+
+pub(super) fn board_terms(
+    filter: &Filter,
+    resolver: &dyn ViewResolver,
+) -> Result<Vec<Term>, QueryError> {
+    let mut boards = Vec::new();
+    collect_boards(filter, &mut SavedViews::new(resolver), &mut boards)?;
+    Ok(boards)
+}
+
+fn collect_boards(
+    filter: &Filter,
+    saved: &mut SavedViews<'_, ()>,
+    boards: &mut Vec<Term>,
+) -> Result<Expanded<()>, QueryError> {
+    let mut has_boards = false;
+    for term in canonical_terms(filter) {
+        match &term.clause {
+            Clause::Board(_) => {
+                boards.push(term.clone());
+                has_boards = true;
+            }
+            Clause::View(name) => {
+                let nested = saved.expand(term, name, |saved, filter| {
+                    collect_boards(filter, saved, boards)
+                })?;
+                has_boards |= nested.has_boards;
+            }
+            _ => {}
+        }
+    }
+    Ok(Expanded {
+        value: (),
+        has_boards,
+    })
 }

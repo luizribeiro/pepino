@@ -143,6 +143,10 @@ fn direct_and_indirect_view_cycles_report_the_chain_and_closing_term() {
         let kind = QueryErrorKind::ViewCycle {
             chain: chain.iter().map(|name| (*name).to_owned()).collect(),
         };
+        assert_eq!(
+            query(&filter(input)).board_terms().unwrap_err(),
+            select(board(), &query(&filter(input))).unwrap_err(),
+        );
         check_chain(
             &query(&filter(input)),
             term,
@@ -219,6 +223,8 @@ fn negated_view_with_transitive_board_terms_is_an_error() {
     ]);
     let mut query = query(&root);
     query.context.views = &saved;
+    let error = query.board_terms().unwrap_err();
+    assert_eq!(error, select(board(), &query).unwrap_err());
     check(
         &query,
         "-@outer",

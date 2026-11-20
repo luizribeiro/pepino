@@ -143,7 +143,13 @@ fn views_expand_recursively_and_negate_the_entire_saved_filter() {
 
 #[test]
 fn board_terms_are_ignored_at_each_level_even_when_negated() {
-    check("board:elsewhere -board:garden @local", &[0, 2, 7, 11]);
+    let input = "board:elsewhere -board:garden @local @local";
+    check(input, &[0, 2, 7, 11]);
+    let filter = filter(input);
+    assert_eq!(
+        query(&filter).board_terms().unwrap(),
+        super::filter("-board:garden -board:elsewhere board:elsewhere").terms(),
+    );
 }
 
 #[test]
@@ -210,6 +216,8 @@ fn repeated_views_are_resolved_and_evaluated_once_at_depth_forty() {
     query.context.views = &views;
     let tasks = select(board(), &query).unwrap();
     assert_eq!(calls.get(), 41);
+    assert!(query.board_terms().unwrap().is_empty());
+    assert_eq!(calls.get(), 82);
     assert_eq!(
         tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
         [id(2), id(7), id(11)]
