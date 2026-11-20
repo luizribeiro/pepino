@@ -30,7 +30,12 @@ impl App {
         let local = LocalState::load_or_create(&directory, options)?;
         let _lock = lock(&directory)?;
         let database = directory.join("pepino.sqlite");
-        let store = Store::open(&database).await.map_err(store_error)?;
+        let runtime = tokio::runtime::Handle::current();
+        // Store startup borrows its migration connection through a non-Send future.
+        let store = tokio::task::spawn_blocking(move || runtime.block_on(Store::open(database)))
+            .await
+            .map_err(|error| storage("open store worker", error, false))?
+            .map_err(store_error)?;
         let hlc = store
             .latest_hlc(local.board_id)
             .await
