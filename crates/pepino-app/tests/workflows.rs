@@ -21,10 +21,20 @@ async fn write(
         created,
         tasks,
         edges,
+        names,
     } = handle(app, request).await.unwrap()
     else {
         panic!("expected write response");
     };
+    if tasks
+        .iter()
+        .any(|task| task.author == app.local_state().device_id.to_string())
+    {
+        assert_eq!(
+            names[&app.local_state().device_id.to_string()],
+            app.local_state().device_name
+        );
+    }
     (changed, created, tasks, edges)
 }
 

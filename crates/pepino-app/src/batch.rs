@@ -159,7 +159,9 @@ impl App {
                 tasks.push(project_summary(task)?);
             }
         }
+        let names = self.local.task_names(&tasks);
         Ok(Response::Write {
+            names,
             changed,
             created: created.map(|id| id.to_string()),
             tasks,
