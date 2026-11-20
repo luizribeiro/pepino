@@ -1,7 +1,7 @@
 use std::fs::File;
 
-use pepino_app::{App, AppError, AppErrorKind, Hlc};
-use pepino_core::{DeviceId, Envelope, Event, EventId, InitialFields};
+use pepino_app::{App, AppError, AppErrorKind};
+use pepino_core::{DeviceId, Envelope, Event, EventId, Hlc, InitialFields};
 use pepino_store::{IdSource, Store};
 use serde_json::{Value, json};
 

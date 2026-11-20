@@ -49,8 +49,8 @@ impl App {
                 .collect::<Result<_, AppError>>()?,
             tags: task.tags.clone(),
             assignees: task.assignees.iter().map(ToString::to_string).collect(),
-            created: task.created,
-            updated: task.updated,
+            created: task.created.into(),
+            updated: task.updated.into(),
             author: task.author.to_string(),
             parent: task.parent.map(|id| id.to_string()),
             children: task.children.iter().map(ToString::to_string).collect(),
@@ -64,7 +64,7 @@ impl App {
                 .map(|comment| CommentRecord {
                     id: comment.id.to_string(),
                     author: comment.author.to_string(),
-                    hlc: comment.hlc,
+                    hlc: comment.hlc.into(),
                     text: comment.text,
                 })
                 .collect(),

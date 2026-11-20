@@ -8,6 +8,7 @@
 
 mod app;
 mod batch;
+mod hlc;
 mod projection;
 mod protocol;
 mod state;
@@ -16,10 +17,11 @@ mod wire;
 mod write;
 
 pub use app::App;
+pub use hlc::Hlc;
 pub use state::{LocalState, OpenOptions};
 
 pub use protocol::{
-    AppError, AppErrorKind, CommentRecord, EdgeEffect, EdgeExclusionReason, Hlc, Request, Response,
+    AppError, AppErrorKind, CommentRecord, EdgeEffect, EdgeExclusionReason, Request, Response,
     TaskRecord,
 };
 

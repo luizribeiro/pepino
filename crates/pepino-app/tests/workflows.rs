@@ -443,7 +443,7 @@ async fn reopening_preserves_local_state_tasks_and_clock_across_wall_regression(
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();
-    let latest = store.latest_hlc(local.board_id).await.unwrap().unwrap();
+    let latest = pepino_app::Hlc::from(store.latest_hlc(local.board_id).await.unwrap().unwrap());
     assert_eq!(latest, recorded.updated);
     assert_eq!(latest.wall_ms, later);
     drop(app);
@@ -464,7 +464,7 @@ async fn reopening_preserves_local_state_tasks_and_clock_across_wall_regression(
     assert_eq!(after.comments[0].hlc, after.updated);
     assert_eq!(
         store.latest_hlc(local.board_id).await.unwrap(),
-        Some(after.updated)
+        Some(after.updated.into())
     );
 }
 
@@ -497,7 +497,10 @@ async fn a_failed_edge_projection_does_not_leave_a_task_or_advance_the_log() {
     assert_eq!(get(&mut app, &parent).await, before);
     let store = Store::open(&database).await.unwrap();
     let board = app.local_state().board_id;
-    assert_eq!(store.latest_hlc(board).await.unwrap(), Some(before.updated));
+    assert_eq!(
+        store.latest_hlc(board).await.unwrap(),
+        Some(before.updated.into())
+    );
     assert_eq!(store.tasks(board).await.unwrap().len(), 1);
 
     sqlx::query("DROP TRIGGER reject_edge")

@@ -235,3 +235,27 @@ fn dates_and_field_values_have_fixed_wire_shapes() {
             .is_err()
     );
 }
+
+#[test]
+fn clocks_preserve_raw_values_alongside_rfc3339_utc() {
+    use pepino_app::Hlc;
+
+    for (wall_ms, utc) in [
+        (1_795_144_800_123, json!("2026-11-20T03:20:00.123Z")),
+        (253_402_300_799_999, json!("9999-12-31T23:59:59.999Z")),
+        (253_402_300_800_000, json!(null)),
+        (u64::MAX, json!(null)),
+    ] {
+        let core = pepino_core::Hlc {
+            wall_ms,
+            counter: 7,
+        };
+        let clock = Hlc::from(core);
+        assert_eq!(
+            serde_json::to_value(clock).unwrap(),
+            json!({"wall_ms":wall_ms,"counter":7,"utc":utc})
+        );
+        assert_eq!(pepino_core::Hlc::from(clock), core);
+        round_trip(&clock);
+    }
+}
