@@ -108,7 +108,17 @@ fn linked_devices_share_tasks_and_late_members_get_history() {
     let grant = titanium.add(&request, &[]);
     assert_eq!(String::from_utf8_lossy(&human.stdout).trim(), grant);
     assert_eq!(titanium.add(&request, &[]), grant);
+    assert!(
+        titanium
+            .run(&["device", "ls"])
+            .contains("added here, not yet seen")
+    );
     join(&ferrum, &grant);
+    until(|| {
+        titanium
+            .run(&["device", "ls"])
+            .contains("seen on the board")
+    });
 
     let project = task(&titanium, &["add", "Repair the greenhouse"]);
     let child = task(

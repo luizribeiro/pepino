@@ -35,17 +35,20 @@ pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
         .into_iter()
         .map(|(id, name)| {
             let this_device = id == local.device_id;
+            let label = id.to_string();
+            let seen_on_board =
+                network.is_some_and(|network| network.peers_synced.contains(&label));
             Device {
                 id,
                 name,
                 this_device,
-                state: if this_device && !complete {
-                    "pending"
-                } else {
-                    "joined"
+                state: match (this_device, complete, seen_on_board) {
+                    (true, false, _) => "pending",
+                    (true, true, _) => "joined",
+                    (false, _, true) => "seen_on_board",
+                    (false, _, false) => "added_not_seen",
                 },
-                last_seen: network
-                    .and_then(|network| network.last_seen.get(&id.to_string()).copied()),
+                last_seen: network.and_then(|network| network.last_seen.get(&label).copied()),
             }
         })
         .collect();
@@ -66,7 +69,11 @@ impl Render for Devices {
                     "{} ({}) · {}",
                     single_line(&device.name),
                     short_id(&device.id.to_string()),
-                    device.state
+                    match device.state {
+                        "seen_on_board" => "seen on the board",
+                        "added_not_seen" => "added here, not yet seen",
+                        state => state,
+                    }
                 );
                 if device.this_device {
                     text.push_str(" · this device");
