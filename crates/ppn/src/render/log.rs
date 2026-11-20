@@ -60,6 +60,7 @@ fn classification(classification: EventClassification) -> &'static str {
         EventClassification::UnknownEvent => "unknown_event",
         EventClassification::UnknownValue => "unknown_value",
         EventClassification::Invalid => "invalid",
+        EventClassification::ForgedAuthor => "forged author",
         _ => "unknown",
     }
 }

@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use pepino_core::{
     Clock, DeviceId, EdgeKind, Envelope, Event, EventId, InvalidEvent, NewEnvelopeError, TaskId,
 };
-use pepino_store::{AppendOutcome, BoardView, EdgeExclusion, IdSource, StoreError};
+use pepino_store::{AppendOutcome, BoardView, EdgeExclusion, StoreError};
 
 use crate::app::{invalid, store_error};
 use crate::projection::{edge_effect as project_edge, project_summary};
@@ -114,7 +114,7 @@ impl App {
             .map_err(|error| storage("encode event batch", error, false))?;
         let writes: Vec<_> = encoded
             .iter()
-            .map(|bytes| (bytes.as_slice(), IdSource::Content))
+            .map(|bytes| (bytes.as_slice(), Some(self.local.device_id)))
             .collect();
         let required: Vec<_> = batch.required.iter().map(|(edge, _)| *edge).collect();
         let outcomes = self
