@@ -12,10 +12,10 @@ use super::ls;
 ]))]
 pub struct Args {
     #[command(flatten)]
-    listing: ls::Args,
+    listing: ls::ListingArgs,
 }
 
 pub fn run(context: &Context<'_>, mut args: Args) -> Result<CommandResult, CliError> {
     args.listing.filter.push("is:ready".into());
-    ls::run(context, args.listing)
+    ls::list(context, args.listing, false)
 }

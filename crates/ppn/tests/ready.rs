@@ -20,6 +20,22 @@ fn ready_lists_unblocked_tasks_with_the_same_filters_as_ls() {
     assert_eq!(ready["tasks"][0]["id"], project.parent);
     assert_eq!(ready["tasks"][1]["id"], project.blocker);
     assert_eq!(ready, as_json(&sandbox.run(&["ls", "is:ready", "--json"])));
+    sandbox.run(&["start", &project.parent]);
+    let ready = as_json(&sandbox.run(&["ready", "--json"]));
+    assert_eq!(ready["total"], 1);
+    assert_eq!(ready["tasks"][0]["id"], project.blocker);
+    assert_eq!(ready, as_json(&sandbox.run(&["ls", "is:ready", "--json"])));
+    let output = sandbox
+        .command()
+        .args(["ready", "--all", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        task_error(output, 2, "usage")["message"]
+            .as_str()
+            .unwrap()
+            .contains("--all")
+    );
 
     let output = sandbox
         .command()

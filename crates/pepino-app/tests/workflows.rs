@@ -1632,3 +1632,29 @@ async fn open_listing_respects_status_inside_nested_views() {
         assert_eq!(constrains_status, explicit);
     }
 }
+
+#[tokio::test]
+async fn ready_filter_selects_only_unblocked_todo_tasks() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let ready = add(&mut app, "Order replacement hinges").await;
+    for input in [
+        json!({"op":"add_task","title":"Check the measurements","status":"doing"}),
+        json!({"op":"add_task","title":"Fit the hinges","blocked_by":[ready]}),
+        json!({"op":"add_task","title":"Confirm the delivery date","status":"done"}),
+    ] {
+        write(&mut app, input).await;
+    }
+    let response = handle(
+        &mut app,
+        json!({"op":"list_tasks","filter":"is:ready","today":"2026-11-20"}),
+    )
+    .await
+    .unwrap();
+    let Response::Tasks { tasks, total, .. } = response else {
+        panic!("expected a listing")
+    };
+    assert_eq!(total, 1);
+    assert_eq!(tasks[0].id, ready);
+    assert!(tasks[0].ready);
+}

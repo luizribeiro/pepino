@@ -16,6 +16,16 @@ use serde_json::{Map, json};
     "ppn ls @weekend --limit 20 --json",
 ]))]
 pub struct Args {
+    #[command(flatten)]
+    listing: ListingArgs,
+    /// Include closed tasks. By default only open tasks are listed unless the filter or a saved view selects a status.
+    #[arg(long)]
+    all: bool,
+}
+
+#[derive(clap::Args)]
+#[group(skip)]
+pub(super) struct ListingArgs {
     /// Filter terms used to select tasks.
     #[arg(value_name = "FILTER", value_parser = crate::cli::filter::unescape_term)]
     pub(super) filter: Vec<String>,
@@ -29,23 +39,27 @@ pub struct Args {
     #[arg(long, value_name = "N")]
     limit: Option<usize>,
 
-    /// Include closed tasks. By default only open tasks are listed unless the filter or a saved view selects a status.
-    #[arg(long)]
-    all: bool,
-
     /// Select a board by name or full ID.
     #[arg(long, value_name = "BOARD")]
     board: Option<String>,
 }
 
-pub fn run(context: &Context<'_>, mut args: Args) -> Result<CommandResult, CliError> {
+pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError> {
+    list(context, args.listing, args.all)
+}
+
+pub(super) fn list(
+    context: &Context<'_>,
+    mut args: ListingArgs,
+    all: bool,
+) -> Result<CommandResult, CliError> {
     if let Some(board) = args.board {
         let board = board.replace('\\', "\\\\").replace('"', "\\\"");
         args.filter.push(format!("board:\"{board}\""));
     }
     let filter = FilterInput::Argv(args.filter);
     let (sort, limit, today) = (args.sort, args.limit, context.time.today);
-    let request = if args.all {
+    let request = if all {
         ReadRequest::ListTasks {
             filter,
             sort,
