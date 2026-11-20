@@ -93,3 +93,26 @@ fn sort_keys_parse_and_display_with_cli_names() {
         "modified"
     );
 }
+
+#[test]
+fn sort_lists_round_trip_with_descending_markers() {
+    for (sort, spec) in [
+        (Sort::Default, "default"),
+        (Sort::By(vec![]), ""),
+        (Sort::By(vec![(Due, Descending)]), "-due"),
+        (
+            Sort::By(vec![
+                (Created, Ascending),
+                (Priority, Descending),
+                (Title, Ascending),
+            ]),
+            "created,-priority,title",
+        ),
+    ] {
+        assert_eq!(sort.to_string(), spec);
+        assert_eq!(spec.parse(), Ok(sort));
+    }
+    for invalid in ["--due", "due,", "-default", "title,made-up", "title, due"] {
+        assert!(invalid.parse::<Sort>().is_err(), "{invalid}");
+    }
+}

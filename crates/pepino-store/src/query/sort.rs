@@ -69,6 +69,49 @@ pub enum Sort {
     By(Vec<(SortKey, Direction)>),
 }
 
+impl fmt::Display for Sort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Default => f.write_str("default"),
+            Self::By(keys) => {
+                for (index, (key, direction)) in keys.iter().enumerate() {
+                    if index != 0 {
+                        f.write_str(",")?;
+                    }
+                    if *direction == Direction::Descending {
+                        f.write_str("-")?;
+                    }
+                    key.fmt(f)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl FromStr for Sort {
+    type Err = InvalidSortKey;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        match input {
+            "default" => Ok(Self::Default),
+            "" => Ok(Self::By(Vec::new())),
+            input => input
+                .split(',')
+                .map(|part| {
+                    let (key, direction) = part
+                        .strip_prefix('-')
+                        .map_or((part, Direction::Ascending), |key| {
+                            (key, Direction::Descending)
+                        });
+                    Ok((key.parse()?, direction))
+                })
+                .collect::<Result<_, _>>()
+                .map(Self::By),
+        }
+    }
+}
+
 impl Sort {
     /// Compares listing keys, then task ID in ascending order.
     pub fn compare(&self, left: &TaskRecord, right: &TaskRecord) -> Ordering {
