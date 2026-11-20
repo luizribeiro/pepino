@@ -1,8 +1,8 @@
 use std::sync::OnceLock;
 
 use pepino_core::{
-    BoardId, Date, DeviceId, Envelope, Event, EventId, Hlc, IdentityId, InitialFields, Status,
-    TaskId,
+    BoardId, Date, DeviceId, Envelope, Event, EventId, FieldName, FieldValue, Hlc, IdentityId,
+    InitialFields, Status, TaskId,
 };
 use pepino_store::{AppendOutcome, BoardView, IdSource, Store};
 
@@ -61,9 +61,62 @@ async fn load() -> BoardView {
             &[BOB],
         ),
         ("Retire bent latch", Status::Cancelled, None, None, &[], &[]),
+        (
+            "Weatherproof the shed",
+            Status::Todo,
+            Some(-2),
+            None,
+            &["hardware"],
+            &[],
+        ),
+        ("Clean gutters", Status::Done, None, None, &[], &[]),
+        (
+            "Paint mailbox",
+            Status::Todo,
+            None,
+            Some(20),
+            &["paint"],
+            &[],
+        ),
+        (
+            "Stake tomatoes",
+            Status::Doing,
+            Some(5),
+            Some(20),
+            &["garden"],
+            &[],
+        ),
+        (
+            "Buy screws",
+            Status::Todo,
+            Some(5),
+            None,
+            &["hardware"],
+            &[],
+        ),
+        ("Check porch light", Status::Todo, None, None, &[], &[]),
+        ("Wash windows", Status::Done, Some(3), Some(21), &[], &[]),
+        (
+            "Cover raised beds",
+            Status::Todo,
+            Some(5),
+            Some(20),
+            &["garden"],
+            &[],
+        ),
+        ("ΟΔΥΣΣΕΎΣ plaque", Status::Todo, None, None, &[], &[]),
+        ("Drain hose", Status::Todo, None, None, &[], &[]),
+        (
+            "Deleted greenhouse",
+            Status::Todo,
+            None,
+            None,
+            &["garden"],
+            &[],
+        ),
     ];
     for (index, (title, status, priority, due, tags, assignees)) in (0u8..).zip(rows) {
-        let fields = InitialFields {
+        let mut fields = InitialFields {
             status,
             priority,
             due: due.map(date),
@@ -71,6 +124,29 @@ async fn load() -> BoardView {
             assignees: assignees.iter().copied().collect(),
             ..InitialFields::default()
         };
+        if index == 0 {
+            fields.description = Some("Use CÈDRE posts".into());
+            fields.custom.extend([
+                (FieldName::new("estimate").unwrap(), FieldValue::Integer(12)),
+                (
+                    FieldName::new("inspection").unwrap(),
+                    FieldValue::Date(date(21)),
+                ),
+                (
+                    FieldName::new("supplier").unwrap(),
+                    FieldValue::Text("Acme".into()),
+                ),
+            ]);
+        }
+        if index == 1 {
+            fields.custom.insert(
+                FieldName::new("estimate").unwrap(),
+                FieldValue::Text("12".into()),
+            );
+        }
+        if index == 3 {
+            fields.description = Some(String::new());
+        }
         let wall_ms = match index {
             0 | 7 => midnight - 1,
             11 => midnight,
