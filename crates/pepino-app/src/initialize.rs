@@ -30,7 +30,7 @@ pub(super) async fn prepare(
     let root = directory.clone();
     let (prepared, credentials) = worker("prepare initialization", move || {
         let prepared = if exists(&path)? {
-            Prepared::Resume(LocalState::read(&path)?)
+            Prepared::Resume(Box::new(LocalState::read(&path)?))
         } else {
             let names = InitialNames::try_from(options)?;
             if exists(&root.join(NODE_DATABASE))? {
@@ -62,7 +62,7 @@ pub(super) async fn prepare(
     .await??;
 
     let local = match prepared {
-        Prepared::Resume(state) => state,
+        Prepared::Resume(state) => *state,
         Prepared::New(names) => {
             let device = credentials.device_id();
             let board = create_board(NodeSettings::offline(credentials, &staged_database)).await?;
@@ -95,7 +95,7 @@ pub(super) async fn prepare(
 
 enum Prepared {
     New(InitialNames),
-    Resume(LocalState),
+    Resume(Box<LocalState>),
 }
 
 pub(super) fn credentials(directory: &Path, path: &Path) -> Result<DeviceCredentials, AppError> {

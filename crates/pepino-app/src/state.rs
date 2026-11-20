@@ -11,7 +11,7 @@ use crate::AppError;
 use crate::app::invalid;
 use crate::views::SavedViews;
 
-pub(super) const VERSION: u32 = 4;
+pub(super) const VERSION: u32 = 5;
 pub(super) const FILE_NAME: &str = "local.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -51,6 +51,8 @@ pub struct LocalState {
     pub(super) devices_added_here: BTreeSet<DeviceId>,
     #[serde(deserialize_with = "read_boards")]
     pub(super) boards: Vec<LocalBoard>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) current: Option<BoardId>,
     pub(crate) saved_views: SavedViews,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) link: Option<Box<crate::device_grant::Link>>,
@@ -64,7 +66,13 @@ pub struct LocalBoard {
 
 impl LocalState {
     pub fn current_board(&self) -> &LocalBoard {
-        &self.boards[0]
+        self.current
+            .and_then(|id| self.boards.iter().find(|board| board.id == id))
+            .unwrap_or(&self.boards[0])
+    }
+
+    pub fn catalog_board(&self) -> BoardId {
+        self.boards[0].id
     }
 
     pub fn board_id(&self) -> BoardId {
@@ -139,6 +147,7 @@ impl LocalState {
                 id: board_id,
                 name: board_name,
             }],
+            current: None,
             other_devices: BTreeMap::new(),
             devices_seen_on_boards: BTreeSet::new(),
             devices_added_here: BTreeSet::new(),
@@ -154,7 +163,7 @@ impl LocalState {
     pub(super) fn load_for_open(directory: &Path, migrate: bool) -> Result<(Self, bool), AppError> {
         let path = directory.join(FILE_NAME);
         let (local, version) = Self::read_version(&path)?;
-        let legacy = version == 3;
+        let legacy = version < u64::from(VERSION);
         if legacy && migrate {
             local.write(&path)?;
         }
@@ -212,6 +221,7 @@ impl LocalState {
                 );
                 fields.insert("version".into(), VERSION.into());
             }
+            4 => value["version"] = VERSION.into(),
             version if version == u64::from(VERSION) => (),
             version => return Err(storage("unsupported local state version", version, false)),
         }
@@ -422,7 +432,7 @@ mod tests {
             .0;
         assert_eq!(state.board_name(), "Greenhouse");
         let saved = serde_json::to_value(state).unwrap();
-        assert_eq!(saved["version"], 4);
+        assert_eq!(saved["version"], VERSION);
         assert_eq!(saved["boards"][0]["id"], fields["board_id"]);
         assert_eq!(saved["saved_views"], fields["saved_views"]);
     }
@@ -456,6 +466,29 @@ mod tests {
         let migrated: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         assert_eq!(migrated["version"], VERSION);
         assert_eq!(migrated["boards"][0]["id"], legacy["board_id"]);
+    }
+
+    #[test]
+    fn preserves_the_first_board_as_current_when_migrating_v4() {
+        let workshop = BoardId::from_bytes([25; 32]);
+        let greenhouse = BoardId::from_bytes([50; 32]);
+        let data = serde_json::json!({
+            "version": 4,
+            "boards": [{"id": workshop, "name": "Workshop"}, {"id": greenhouse, "name": "Greenhouse"}],
+            "device_id": DeviceId::from_bytes([34; 32]),
+            "device_name": "Garden laptop",
+            "identity_id": IdentityId::from_bytes([56; 32]),
+            "display_name": "Ada",
+            "saved_views": {},
+        });
+        let (mut local, version) =
+            LocalState::decode(data.to_string().as_bytes(), Path::new(FILE_NAME)).unwrap();
+        assert_eq!(version, 4);
+        assert_eq!(local.version, VERSION);
+        assert_eq!(local.board_id(), workshop);
+        local.current = Some(greenhouse);
+        assert_eq!(local.board_id(), greenhouse);
+        assert_eq!(local.boards()[0].id, workshop);
     }
 
     #[test]

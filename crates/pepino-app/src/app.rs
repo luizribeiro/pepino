@@ -115,7 +115,7 @@ impl App {
         let database = directory.join(DATABASE);
         let store = open_store(database, fresh).await?;
         store
-            .bind_local(local.board_id(), local.identity_id, local.device_id)
+            .bind_local(local.catalog_board(), local.identity_id, local.device_id)
             .await
             .map_err(|error| store_error_at(&directory.join(DATABASE), error))?;
         let hlc = store
