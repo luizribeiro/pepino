@@ -110,9 +110,15 @@ async fn reconcile<T: Transport>(
         }
     }
     if local.roster_ready() {
+        let contacts = node_status
+            .last_seen
+            .iter()
+            .filter(|(peer, _)| node_status.synced_peers.contains(peer))
+            .map(|(&peer, &time)| (peer, time))
+            .collect();
         boards
             .app
-            .record_device_observations(members.clone(), node_status.last_seen.clone())
+            .record_device_observations(members.clone(), contacts)
             .await?;
     }
     boards.changes.send_if_modified(|status| {

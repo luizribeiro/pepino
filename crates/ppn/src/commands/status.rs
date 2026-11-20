@@ -58,8 +58,49 @@ fn document(
 ) -> Result<CommandResult, CliError> {
     let response = client.call(Request::Read(ReadRequest::Status))?;
     let local = client.local_state();
+    let revocation = local.device_revocation().cloned();
+    let leave_requested_at = local.device_leave_requested_at();
+    let notice = local
+        .check_device_write()
+        .err()
+        .map(|error| {
+            format!(
+                "\n{}",
+                shorten_message_ids(&single_line(&error.to_string()))
+            )
+        })
+        .unwrap_or_default();
+    let roster = local.roster();
+    let last_contact = roster
+        .keys()
+        .filter(|&&id| id != local.device_id)
+        .filter_map(|&id| {
+            let seen = network.as_ref().and_then(|network| {
+                let id = id.to_string();
+                network
+                    .peers_synced
+                    .contains(&id)
+                    .then(|| network.last_seen.get(&id).copied())
+                    .flatten()
+            });
+            seen.max(local.observed_last_seen(id))
+        })
+        .max();
+    let no_contact_days = last_contact.map(|time| {
+        let now =
+            chrono::DateTime::from_timestamp_millis(context.time.now_ms as i64).unwrap_or(time);
+        (now - time).num_days().max(0)
+    });
+    let contact = match no_contact_days {
+        Some(days @ 1..) => format!(
+            "\nNo contact with any other device for {days} {}",
+            if days == 1 { "day" } else { "days" }
+        ),
+        None if roster.len() > 1 => "\nNo contact with any other device yet".into(),
+        _ => String::new(),
+    };
     let roster_stale = !local.roster_ready()
-        || (local.roster().len() > 1
+        || (roster.len() > 1
             && network.as_ref().is_none_or(|net| {
                 net.peers_synced.is_empty()
                     || net
@@ -129,7 +170,7 @@ fn document(
                 .as_deref()
                 .unwrap_or("offline (daemon not running)");
             Ok(format!(
-                "Identity: {} ({}) · {} devices{roster_note}\nRejected roster entries: {}\nDevice: {} (node ID {})\nBoard: {} ({})\n{selected_line}\nMembership:\n  {membership_rows}\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}",
+                "Identity: {} ({}) · {} devices{roster_note}\nRejected roster entries: {}\nDevice: {} (node ID {}){notice}{contact}\nBoard: {} ({})\n{selected_line}\nMembership:\n  {membership_rows}\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}",
                 single_line(&identity.display_name),
                 short_id(&identity.id),
                 identity.roster.len(),
@@ -160,6 +201,18 @@ fn document(
             fields.insert("selected_board".into(), selected);
             if let Some(identity) = fields.get_mut("identity") {
                 identity["cache_stale"] = serde_json::json!(roster_stale);
+            }
+            if let Some(device) = fields.get_mut("device") {
+                if let Some(revocation) = revocation {
+                    device["revocation"] = serde_json::json!(revocation);
+                }
+                if let Some(at) = leave_requested_at {
+                    device["leave_requested_at"] = serde_json::json!(at);
+                }
+                if roster.len() > 1 {
+                    device["last_contact"] = serde_json::json!(last_contact);
+                    device["no_contact_days"] = serde_json::json!(no_contact_days);
+                }
             }
             if let Some(network) = network {
                 fields.insert("network".into(), serde_json::json!(network));

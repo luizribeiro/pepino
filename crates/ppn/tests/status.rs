@@ -128,3 +128,37 @@ fn permission_errors_report_the_path_without_internal_fields() {
         file.to_str().unwrap()
     );
 }
+
+#[test]
+fn status_reports_time_since_the_last_contact_with_a_roster_device() {
+    use std::time::{Duration, SystemTime};
+
+    let (sandbox, data) = task_sandbox();
+    let tablet = pepino_core::DeviceId::from_bytes([67; 32]);
+    seed_tasks(&data, async |app| {
+        app.remember_device(tablet, "Garden tablet".into(), None)
+            .await
+            .unwrap();
+        app.record_device_observations(
+            Default::default(),
+            [(
+                tablet,
+                SystemTime::now() - Duration::from_secs(3 * 86_400 + 60),
+            )]
+            .into(),
+        )
+        .await
+        .unwrap();
+    });
+    let status = as_json(&sandbox.run(&["status", "--json"]));
+    assert_eq!(status["device"]["no_contact_days"], 3);
+    assert!(
+        chrono::DateTime::parse_from_rfc3339(status["device"]["last_contact"].as_str().unwrap())
+            .is_ok()
+    );
+    assert!(
+        sandbox
+            .run(&["status"])
+            .contains("No contact with any other device for 3 days")
+    );
+}
