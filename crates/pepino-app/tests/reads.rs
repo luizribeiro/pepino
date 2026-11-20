@@ -42,6 +42,7 @@ async fn creates_private_data_directory_and_database_files() {
     assert_eq!(mode(&path), 0o700);
     for file in [
         "local.json",
+        "local.lock",
         "pepino.sqlite",
         "pepino.sqlite-wal",
         "pepino.sqlite-shm",

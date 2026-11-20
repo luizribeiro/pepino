@@ -143,7 +143,7 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
     }
     assert_eq!(store.latest_hlc(board).await.unwrap(), before);
 
-    let path = directory.path().join("local.json");
+    let path = directory.path().join("local.lock");
     let guard = File::options().read(true).write(true).open(path).unwrap();
     guard.try_lock().unwrap();
     for (request, _) in operations(left, peer) {

@@ -7,7 +7,7 @@ use pepino_core::{Clock, Hlc};
 use pepino_store::{DatabaseErrorKind, Store, StoreError};
 use tokio::time::{Instant, sleep};
 
-use crate::state::{FILE_NAME, io_error, storage};
+use crate::state::{io_error, storage};
 use crate::{AppError, LocalState, OpenOptions, Request, Response};
 
 pub struct App {
@@ -106,12 +106,19 @@ async fn worker<T: Send + 'static>(
 }
 
 async fn lock(directory: &Path, timeout: Duration) -> Result<File, AppError> {
-    let path = directory.join(FILE_NAME);
+    let path = directory.join("local.lock");
     let mut file = worker("open lock file", move || {
-        FileOptions::new().read(true).write(true).open(path)
+        let mut options = FileOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options.open(path)
     })
     .await?
-    .map_err(|error| io_error("open local state for locking", error))?;
+    .map_err(|error| io_error("open data directory lock", error))?;
 
     let started = Instant::now();
     let mut delay = Duration::from_millis(1);

@@ -107,7 +107,7 @@ async fn lock_wait_expires_with_a_retryable_busy_error() {
     let guard = File::options()
         .read(true)
         .write(true)
-        .open(path.join("local.json"))
+        .open(path.join("local.lock"))
         .unwrap();
     guard.try_lock().unwrap();
     let timeout = Duration::from_millis(20);
@@ -129,6 +129,40 @@ async fn lock_wait_expires_with_a_retryable_busy_error() {
         "another pepino process holds the data directory"
     );
 
+    drop(guard);
+    App::open(path, NOW).await.unwrap();
+}
+
+#[tokio::test]
+async fn local_state_replacement_preserves_the_directory_lock() {
+    use pepino_app::OpenOptions;
+    use std::{fs::File, time::Duration};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path();
+    App::open(path, NOW).await.unwrap();
+    let guard = File::options()
+        .read(true)
+        .write(true)
+        .open(path.join("local.lock"))
+        .unwrap();
+    guard.try_lock().unwrap();
+
+    let state = path.join("local.json");
+    let replacement = path.join("replacement.json");
+    std::fs::copy(&state, &replacement).unwrap();
+    std::fs::rename(replacement, state).unwrap();
+
+    let result = App::open_with_options(
+        path,
+        NOW,
+        OpenOptions {
+            lock_timeout: Duration::ZERO,
+            ..OpenOptions::default()
+        },
+    )
+    .await;
+    assert!(matches!(result, Err(AppError::Busy)));
     drop(guard);
     App::open(path, NOW).await.unwrap();
 }
