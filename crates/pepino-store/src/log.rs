@@ -6,13 +6,6 @@ use sqlx::{Connection, SqliteConnection};
 
 use crate::{BoardKey, Store, StoreError, edges, fold, history};
 
-pub struct IdSource;
-
-impl IdSource {
-    #[allow(non_upper_case_globals)]
-    pub const Content: Option<DeviceId> = None;
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SkipReason {
     UnknownVersion(u64),

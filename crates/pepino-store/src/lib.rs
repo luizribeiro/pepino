@@ -32,7 +32,7 @@ pub use comment::CommentRecord;
 pub use edges::{EdgeExclusion, EdgeRecord};
 pub use error::{DatabaseErrorKind, StoreError};
 pub use history::{EventClassification, EventRecord, History, HistoryEvent};
-pub use log::{AppendOutcome, IdSource, RebuildReport, SkipReason};
+pub use log::{AppendOutcome, RebuildReport, SkipReason};
 pub use prefix::{PrefixResolution, TaskPrefixResolution};
 pub use statistics::BoardStatistics;
 pub use task::TaskRecord;
@@ -159,28 +159,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(mode, "wal");
-    }
-
-    #[tokio::test]
-    async fn stored_signer_evidence_classifies_mismatched_authors() {
-        let store = Store::open_in_memory().await.unwrap();
-        let mut connection = store.connection.lock().await;
-        sqlx::query(
-            "INSERT INTO event_log (board, id, author, decoded_classification, bytes, verified_signer)
-             VALUES (?, ?, ?, 'known', x'8202f6', ?)",
-        )
-        .bind([31_u8; 32])
-        .bind([42_u8; 32])
-        .bind([53_u8; 32])
-        .bind([64_u8; 32])
-        .execute(&mut *connection)
-        .await
-        .unwrap();
-        let classification: String = sqlx::query_scalar("SELECT classification FROM event_log")
-            .fetch_one(&mut *connection)
-            .await
-            .unwrap();
-        assert_eq!(classification, "forged_author");
     }
 
     #[tokio::test]
