@@ -251,7 +251,9 @@ mod tests {
         let changed: Response = serde_json::from_value(changed).unwrap();
         let (message, _) = write_output(&changed, "Done").unwrap();
         assert_eq!(message, "Done 97ad97  Install the greenhouse latch");
-        let responses = [changed.clone(), changed];
+        response["targets"] = json!([id]);
+        let earlier = serde_json::from_value(response.clone()).unwrap();
+        let responses = [earlier, changed];
         let combined = merge_write_responses(&responses).unwrap();
         let write = combined.write().unwrap();
         assert_eq!(write.targets, [id]);
