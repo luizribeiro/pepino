@@ -1,5 +1,5 @@
 use pepino_core::{BoardId, DeviceId, EdgeKind, Envelope, Event, Hlc, InitialFields, TaskId};
-use pepino_store::{AppendOutcome, EventRecord, IdSource, Store};
+use pepino_store::{AppendOutcome, EventRecord, Store};
 
 #[tokio::test]
 async fn history_includes_creation_and_both_edge_endpoints_in_envelope_order() {
@@ -48,10 +48,7 @@ async fn history_includes_creation_and_both_edge_endpoints_in_envelope_order() {
             edge_ids.push(id);
         }
         let bytes = envelope.encode().unwrap();
-        let outcome = store
-            .append(board, &bytes, IdSource::Content)
-            .await
-            .unwrap();
+        let outcome = store.append(board, &bytes, None).await.unwrap();
         assert_eq!(outcome, AppendOutcome::Applied { id, task });
         expected.push(EventRecord {
             id,
@@ -115,7 +112,7 @@ async fn board_history_keeps_skips_and_limits_after_task_filtering() {
     let mut unknown_bytes = Vec::new();
     ciborium::into_writer(&unknown, &mut unknown_bytes).unwrap();
     for raw in [unknown_bytes.as_slice(), &[0x82, 2, 0xf6], &bytes] {
-        store.append(board, raw, IdSource::Content).await.unwrap();
+        store.append(board, raw, None).await.unwrap();
     }
     let history = store.history(board, None, None).await.unwrap();
     let events = &history.events;

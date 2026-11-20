@@ -1,5 +1,5 @@
 use pepino_core::{BoardId, DeviceId, Envelope, Event, Hlc, InitialFields, TaskId};
-use pepino_store::{IdSource, PrefixResolution, Store, StoreError, TaskPrefixResolution};
+use pepino_store::{PrefixResolution, Store, StoreError, TaskPrefixResolution};
 
 #[tokio::test]
 async fn prefix_matches_only_live_tasks_in_the_requested_board() {
@@ -15,7 +15,7 @@ async fn prefix_matches_only_live_tasks_in_the_requested_board() {
     let second = creation(51439, "Inspect the smoke alarm");
     for (target, envelope) in [(board, &second), (other, &first), (board, &first)] {
         store
-            .append(target, &envelope.encode().unwrap(), IdSource::Content)
+            .append(target, &envelope.encode().unwrap(), None)
             .await
             .unwrap();
     }
@@ -52,7 +52,7 @@ async fn prefix_matches_only_live_tasks_in_the_requested_board() {
     let snapshot = store.board(board).await.unwrap();
     let delete = Envelope::new(author, hlc, Event::TaskDeleted { task: first }).unwrap();
     store
-        .append(board, &delete.encode().unwrap(), IdSource::Content)
+        .append(board, &delete.encode().unwrap(), None)
         .await
         .unwrap();
     assert_eq!(
@@ -86,7 +86,7 @@ async fn prefix_matches_only_live_tasks_in_the_requested_board() {
 
     let delete = Envelope::new(author, hlc, Event::TaskDeleted { task: second }).unwrap();
     store
-        .append(board, &delete.encode().unwrap(), IdSource::Content)
+        .append(board, &delete.encode().unwrap(), None)
         .await
         .unwrap();
     assert_eq!(
@@ -137,7 +137,7 @@ async fn ambiguous_prefix_returns_only_the_first_ten_of_all_matches() {
         let envelope = creation(nonce, &format!("Inspect smoke alarm {}", index + 1));
         ids.push(envelope.created_task().unwrap());
         store
-            .append(board, &envelope.encode().unwrap(), IdSource::Content)
+            .append(board, &envelope.encode().unwrap(), None)
             .await
             .unwrap();
     }
@@ -167,7 +167,7 @@ async fn a_delete_that_arrives_before_creation_resolves_as_deleted() {
     )
     .unwrap();
     store
-        .append(board, &delete.encode().unwrap(), IdSource::Content)
+        .append(board, &delete.encode().unwrap(), None)
         .await
         .unwrap();
 

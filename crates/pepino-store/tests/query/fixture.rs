@@ -4,7 +4,7 @@ use pepino_core::{
     BoardId, Date, DeviceId, EdgeKind, Envelope, Event, FieldName, FieldValue, Hlc, IdentityId,
     InitialFields, Status, TaskId,
 };
-use pepino_store::{AppendOutcome, BoardView, IdSource, Store};
+use pepino_store::{AppendOutcome, BoardView, Store};
 
 const BOARD: BoardId = BoardId::from_bytes([91; 32]);
 pub const ANA: IdentityId = IdentityId::from_bytes([21; 32]);
@@ -230,10 +230,7 @@ async fn record(store: &Store, index: u8, wall_ms: u64, event: Event) -> Envelop
     let envelope = Envelope::new(author, hlc, event).unwrap();
     let bytes = envelope.encode().unwrap();
     assert!(matches!(
-        store
-            .append(BOARD, &bytes, IdSource::Content)
-            .await
-            .unwrap(),
+        store.append(BOARD, &bytes, None).await.unwrap(),
         AppendOutcome::Applied { .. }
     ));
     envelope

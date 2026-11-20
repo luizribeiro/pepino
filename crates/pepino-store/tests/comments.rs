@@ -1,5 +1,5 @@
 use pepino_core::{BoardId, DeviceId, Envelope, Event, Hlc, InitialFields};
-use pepino_store::{CommentRecord, IdSource, Store};
+use pepino_store::{CommentRecord, Store};
 
 #[tokio::test]
 async fn comments_are_visible_only_on_live_tasks_and_ordered_by_clock_then_id() {
@@ -37,7 +37,7 @@ async fn comments_are_visible_only_on_live_tasks_and_ordered_by_clock_then_id() 
         )
         .unwrap();
         store
-            .append(board, &envelope.encode().unwrap(), IdSource::Content)
+            .append(board, &envelope.encode().unwrap(), None)
             .await
             .unwrap();
         comments.push(CommentRecord {
@@ -57,7 +57,7 @@ async fn comments_are_visible_only_on_live_tasks_and_ordered_by_clock_then_id() 
             .is_empty()
     );
     store
-        .append(board, &creation.encode().unwrap(), IdSource::Content)
+        .append(board, &creation.encode().unwrap(), None)
         .await
         .unwrap();
     comments.sort_by_key(|comment| (comment.hlc, comment.id));
@@ -70,7 +70,7 @@ async fn comments_are_visible_only_on_live_tasks_and_ordered_by_clock_then_id() 
     assert_eq!(snapshot.task(task).unwrap().comment_count, 3);
     let deletion = Envelope::new(creation.author(), hlc, Event::TaskDeleted { task }).unwrap();
     store
-        .append(board, &deletion.encode().unwrap(), IdSource::Content)
+        .append(board, &deletion.encode().unwrap(), None)
         .await
         .unwrap();
     assert!(store.comments(board, task).await.unwrap().is_empty());
