@@ -40,20 +40,27 @@ pub enum DatabaseErrorKind {
     Busy,
     Constraint,
     Corruption,
+    PermissionDenied,
     Other,
 }
 
 impl DatabaseErrorKind {
     fn classify(error: &sqlx::Error) -> Self {
+        if matches!(error, sqlx::Error::Io(error) if matches!(
+            error.kind(), std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+        )) {
+            return Self::PermissionDenied;
+        }
         let code = error
             .as_database_error()
             .and_then(|error| error.code())
             .and_then(|code| code.parse::<u32>().ok());
         // SQLite stores the primary result code in the low byte of extended codes.
         match code.map(|code| code & 0xff) {
-            Some(5 | 6) => Self::Busy,         // SQLITE_BUSY, SQLITE_LOCKED
-            Some(19) => Self::Constraint,      // SQLITE_CONSTRAINT
-            Some(11 | 26) => Self::Corruption, // SQLITE_CORRUPT, SQLITE_NOTADB
+            Some(5 | 6) => Self::Busy,             // SQLITE_BUSY, SQLITE_LOCKED
+            Some(3 | 8) => Self::PermissionDenied, // SQLITE_PERM, SQLITE_READONLY
+            Some(19) => Self::Constraint,          // SQLITE_CONSTRAINT
+            Some(11 | 26) => Self::Corruption,     // SQLITE_CORRUPT, SQLITE_NOTADB
             _ => Self::Other,
         }
     }
@@ -109,5 +116,24 @@ mod tests {
             }
         ));
         assert!(error.source().unwrap().is::<sqlx::Error>());
+    }
+
+    #[tokio::test]
+    async fn classifies_a_read_only_database_write() {
+        use sqlx::sqlite::SqliteConnectOptions;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("greenhouse.sqlite");
+        drop(crate::Store::open(&path).await.unwrap());
+        let options = SqliteConnectOptions::new().filename(path).read_only(true);
+        let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+        let error = connection
+            .execute("CREATE TABLE greenhouses (name TEXT)")
+            .await
+            .unwrap_err();
+        assert_eq!(
+            DatabaseErrorKind::classify(&error),
+            DatabaseErrorKind::PermissionDenied
+        );
     }
 }
