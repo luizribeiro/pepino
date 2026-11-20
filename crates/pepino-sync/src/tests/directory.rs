@@ -55,3 +55,11 @@ async fn writes_a_task_through_a_bound_local_app() {
     );
     assert_eq!(app.local_state().device_id, author);
 }
+
+#[test]
+fn the_engine_defaults_to_the_app_lock_timeout() {
+    assert_eq!(
+        crate::Settings::default().lock_timeout,
+        pepino_app::OpenOptions::default().lock_timeout,
+    );
+}

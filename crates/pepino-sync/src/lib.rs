@@ -1,3 +1,4 @@
+mod engine;
 mod status;
 mod transport;
 
@@ -6,3 +7,5 @@ pub use transport::{Acknowledgement, Delivery, DeliveryStream, Transport, Transp
 
 #[cfg(test)]
 mod tests;
+
+pub use engine::{Error, Settings};
