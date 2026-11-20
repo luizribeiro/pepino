@@ -46,16 +46,6 @@
             cargoLock.lockFile = ./Cargo.lock;
             buildInputs = [ pkgs.sqlite ];
             nativeBuildInputs = [ pkgs.pkg-config ];
-            cargoBuildFlags = [ "-p" "ppn" ];
-
-            # SQLx Any from p2panda makes pepino-store's implicit Encode call ambiguous.
-            checkPhase = ''
-              unset PEPINO_NETWORK_TESTS
-              cargoTestFlags=(--workspace --exclude pepino-node)
-              cargoCheckHook
-              cargoTestFlags=(-p pepino-node)
-              cargoCheckHook
-            '';
           };
 
           mkCargoCheck = name: tool: command: pkgs.rustPlatform.buildRustPackage (packageArgs // {
@@ -77,10 +67,7 @@
             default = self.packages.${system}.default;
             config = import ./nix/check.nix { inherit self pkgs; };
             fmt = mkCargoCheck "fmt" pkgs.rustfmt "cargo fmt --check";
-            clippy = mkCargoCheck "clippy" pkgs.clippy ''
-              cargo clippy --workspace --exclude pepino-node --all-targets -- -D warnings
-              cargo clippy -p pepino-node --all-targets -- -D warnings
-            '';
+            clippy = mkCargoCheck "clippy" pkgs.clippy "cargo clippy --locked --workspace --all-targets -- -D warnings";
           };
 
           devShells.default = devenv.lib.mkShell {

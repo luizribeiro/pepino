@@ -20,4 +20,4 @@ jobs:
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - run: nix flake check
       - if: runner.os == 'Linux'
-        run: nix develop -c cargo test -p pepino-node
+        run: nix develop -c cargo test --locked --workspace
