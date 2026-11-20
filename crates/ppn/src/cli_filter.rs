@@ -6,7 +6,9 @@ use ppn::error::CliError;
 pub fn input(text: Option<String>, mut terms: Vec<String>) -> Result<FilterInput, CliError> {
     terms.retain(|term| !term.trim().is_empty());
     match text {
-        Some(text) => FilterInput::combine(text, terms).map_err(Into::into),
+        Some(text) => FilterInput::combine(text, terms)
+            .map(|(input, _)| input)
+            .map_err(Into::into),
         None => Ok(FilterInput::Argv(terms)),
     }
 }

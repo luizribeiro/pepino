@@ -18,17 +18,25 @@ pub enum FilterInput {
 }
 
 impl FilterInput {
-    /// Combines a filter string and already-split arguments using their respective grammars.
-    pub fn combine(text: String, argv: Vec<String>) -> Result<Self, AppError> {
-        let text = Self::Text(text);
+    /// Combines a filter string and split arguments, returning the byte offset of each argv term.
+    pub fn combine(mut text: String, argv: Vec<String>) -> Result<(Self, Vec<usize>), AppError> {
         if argv.is_empty() {
-            return Ok(text);
+            return Ok((Self::Text(text), vec![]));
         }
-        Ok(Self::Text(format!(
-            "{} {}",
-            text.parse()?,
-            Self::Argv(argv).parse()?
-        )))
+        Self::Text(text.clone()).parse()?;
+        let terms = Self::Argv(argv).parse()?;
+        let mut starts = Vec::with_capacity(terms.terms().len());
+        for term in terms.terms() {
+            text.push(' ');
+            starts.push(text.len());
+            text.push_str(&term.to_string());
+        }
+        Ok((Self::Text(text), starts))
+    }
+
+    /// Checks whether the input can be parsed without resolving references.
+    pub fn syntax_is_valid(&self) -> bool {
+        self.parse().is_ok()
     }
 
     /// Checks whether the supplied filter explicitly selects a status or state.
@@ -295,11 +303,19 @@ mod tests {
 
     #[test]
     fn combining_filters_preserves_negated_phrases_and_positional_values() {
-        let input = FilterInput::combine(
-            r#"tag:hardware -"bad hinge""#.into(),
+        let (input, starts) = FilterInput::combine(
+            r#" tag:hardware  -"bad hinge""#.into(),
             vec!["assignee:Ana Maria".into(), "fix the fence".into()],
         )
         .unwrap();
+        assert_eq!(
+            input.position_at(2),
+            Some(FilterPosition::Byte { byte: starts[0] })
+        );
+        assert_eq!(
+            input.position_at(3),
+            Some(FilterPosition::Byte { byte: starts[1] })
+        );
         assert_eq!(
             input.parse().unwrap().to_string(),
             r#"tag:hardware -"bad hinge" assignee:"Ana Maria" "fix the fence""#
