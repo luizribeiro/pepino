@@ -231,7 +231,7 @@ fn simultaneous_add_processes_share_one_board() {
 }
 
 #[test]
-fn add_warns_for_a_recorded_exclusion_and_succeeds() {
+fn add_rejects_cyclic_dependencies_in_human_output() {
     let (sandbox, _) = task_sandbox();
     let end = create_task(&sandbox, "Seal the frame", &[]);
     let start = create_task(&sandbox, "Sand the rough edges", &["--blocks", &end]);
@@ -249,20 +249,13 @@ fn add_warns_for_a_recorded_exclusion_and_succeeds() {
         ])
         .output()
         .unwrap();
-    assert!(output.status.success(), "{output:?}");
-    let human = String::from_utf8(output.stdout).unwrap();
-    assert!(human.starts_with("Created "));
-    assert!(!human.contains('\x1b'));
-    let warning = String::from_utf8(output.stderr).unwrap();
-    assert!(warning.starts_with("warning: recorded, but not in effect: "));
-    assert!(warning.contains("would create a cycle"));
-    assert_eq!(warning.lines().count(), 1);
-    assert!(!warning.contains('\x1b'));
-    let id = human.split_whitespace().nth(1).unwrap();
-    assert!(sandbox.run(&["show", id]).contains("would create a cycle"));
-    let detail = as_json(&sandbox.run(&["show", id, "--json"]));
-    assert_eq!(detail["edges"][0]["reason"], "cycle");
-    assert_eq!(detail["edges"][0]["effective"], false);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let error = String::from_utf8(output.stderr).unwrap();
+    assert!(error.starts_with("error: "));
+    assert!(error.contains("would create a cycle"));
+    assert!(!error.contains('\x1b'));
+    assert!(!sandbox.run(&["ls"]).contains("Paint the frame"));
 }
 
 #[test]
@@ -358,7 +351,7 @@ fn write_date_and_field_operands_match_the_app_filter() {
 }
 
 #[test]
-fn add_emits_json_edge_warnings_on_stderr() {
+fn add_reports_cyclic_dependencies_in_json() {
     let (sandbox, _) = task_sandbox();
     let end = create_task(&sandbox, "Seal the frame", &[]);
     let start = create_task(&sandbox, "Sand the rough edges", &["--blocks", &end]);
@@ -375,22 +368,14 @@ fn add_emits_json_edge_warnings_on_stderr() {
         ])
         .output()
         .unwrap();
-    assert!(output.status.success(), "{output:?}");
-    let write = as_json(std::str::from_utf8(&output.stdout).unwrap());
-    let warnings: Vec<_> = std::str::from_utf8(&output.stderr)
-        .unwrap()
-        .lines()
-        .map(as_json)
-        .collect();
-    assert_eq!(warnings.len(), 1);
-    assert_eq!(warnings[0]["warning"]["code"], "edge_not_effective");
-    let edge = write["edges"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|edge| edge["reason"] == "cycle")
-        .unwrap();
-    assert_eq!(&warnings[0]["warning"]["edge"], edge);
+    let error = task_error(output, 1, "conflict");
+    assert_eq!(error["field"], "blocked_by[0]");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("would create a cycle")
+    );
 }
 
 #[test]

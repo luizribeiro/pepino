@@ -393,6 +393,9 @@ pub enum ConflictReference {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         title: Option<String>,
     },
+    Relation {
+        reason: String,
+    },
     View {
         view: String,
         referenced_by: Vec<String>,
@@ -403,6 +406,7 @@ impl std::fmt::Display for ConflictReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Task { task, .. } => write!(f, "task {task} is deleted"),
+            Self::Relation { reason } => write!(f, "{reason}"),
             Self::View {
                 view,
                 referenced_by,

@@ -1,18 +1,21 @@
 use std::collections::BTreeSet;
 
 use pepino_core::{
-    Clock, DeviceId, Envelope, Event, EventId, InvalidEvent, NewEnvelopeError, TaskId,
+    Clock, DeviceId, EdgeKind, Envelope, Event, EventId, InvalidEvent, NewEnvelopeError, TaskId,
 };
-use pepino_store::{AppendOutcome, BoardView, IdSource};
+use pepino_store::{AppendOutcome, BoardView, EdgeExclusion, IdSource, StoreError};
 
 use crate::app::{invalid, store_error};
 use crate::projection::{edge_effect as project_edge, project_summary};
 use crate::state::storage;
-use crate::{App, AppError, EdgeEffect, Response};
+use crate::{App, AppError, ConflictReference, EdgeEffect, Response};
+
+type RequiredEdge = ((TaskId, EdgeKind, TaskId), String);
 
 pub(super) struct Batch {
     pub(super) targets: BTreeSet<TaskId>,
     events: Vec<Envelope>,
+    required: Vec<RequiredEdge>,
     clock: Clock,
     author: DeviceId,
     now: u64,
@@ -51,6 +54,9 @@ impl Batch {
         })?;
         self.targets.extend(envelope.created_task());
         self.targets.extend(envelope.event().referenced_tasks());
+        if let Event::EdgeAdded { from, kind, to } = *envelope.event() {
+            self.required.push(((from, kind, to), field.into()));
+        }
         let id = envelope.id();
         self.events.push(envelope);
         Ok(id)
@@ -85,6 +91,7 @@ impl App {
         Ok(Batch {
             targets: BTreeSet::new(),
             events: Vec::new(),
+            required: Vec::new(),
             clock,
             author: self.local.device_id,
             now,
@@ -109,11 +116,42 @@ impl App {
             .iter()
             .map(|bytes| (bytes.as_slice(), IdSource::Content))
             .collect();
+        let required = if batch
+            .events
+            .iter()
+            .any(|event| event.created_task().is_some())
+        {
+            batch.required.iter().map(|(edge, _)| *edge).collect()
+        } else {
+            Vec::new()
+        };
         let outcomes = self
             .store
-            .append_batch(self.local.board_id, &writes)
+            .append_batch_requiring_edges(self.local.board_id, &writes, &required)
             .await
-            .map_err(store_error)?;
+            .map_err(|error| match error {
+                StoreError::IneffectiveEdge { from, to, reason } => {
+                    let field = batch
+                        .required
+                        .iter()
+                        .find(|((src, _, dst), _)| (*src, *dst) == (from, to))
+                        .map_or("to", |(_, field)| field.as_str());
+                    let reason = match reason {
+                        Some(EdgeExclusion::Cycle) => {
+                            format!("link would create a cycle through {from} and {to}")
+                        }
+                        Some(EdgeExclusion::MissingEndpoint) => {
+                            format!("link requires live endpoints {from} and {to}")
+                        }
+                        _ => format!("link from {from} to {to} was superseded"),
+                    };
+                    AppError::Conflict {
+                        field: field.into(),
+                        reference: ConflictReference::Relation { reason },
+                    }
+                }
+                error => store_error(error),
+            })?;
         for event in &batch.events {
             let hlc = event.hlc();
             self.clock.observe(hlc, batch.now.max(hlc.wall_ms));
