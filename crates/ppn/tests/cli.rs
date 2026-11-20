@@ -385,6 +385,7 @@ fn every_command_result_is_a_versioned_object() {
     for (args, field) in [
         (&["help"][..], "commands"),
         (&["config", "show"][..], "values"),
+        (&["config", "path"][..], "files"),
         (&["version"][..], "version"),
         (&["debug", "confirm", "--yes"][..], "confirmed"),
         (&["debug", "input", "Release notes"][..], "text"),
@@ -703,5 +704,57 @@ fn config_show_applies_environment_then_global_flags() {
     assert_eq!(
         data["values"]["ui.color"],
         json!({"value": "auto", "source": "flag"})
+    );
+}
+
+#[test]
+fn config_path_reports_default_file_presence_without_parsing() {
+    let sandbox = ConfigSandbox::new();
+    std::fs::write(&sandbox.config, "not TOML\n").unwrap();
+    let run = |args: &[&str]| {
+        success(
+            sandbox
+                .command()
+                .env_remove("PPN_CONFIG")
+                .args(args)
+                .output()
+                .unwrap(),
+        )
+    };
+    let human = run(&["config", "path"]);
+    assert!(human.contains(&format!("present  {}", sandbox.config.display())));
+    let data = as_json(&run(&["config", "path", "--json"]));
+    let system = std::path::Path::new("/etc/pepino/config.toml");
+    assert_eq!(
+        data["files"],
+        json!([
+            {"path": system, "exists": system.try_exists().unwrap()},
+            {"path": sandbox.config, "exists": true},
+        ])
+    );
+    std::fs::remove_file(&sandbox.config).unwrap();
+    assert!(run(&["config", "path"]).contains(&format!("missing  {}", sandbox.config.display())));
+}
+
+#[test]
+fn config_path_checks_only_the_explicit_file() {
+    let sandbox = ConfigSandbox::new();
+    let data = as_json(&sandbox.run(&["config", "path", "--json"]));
+    assert_eq!(
+        data["files"],
+        json!([{"path": sandbox.config, "exists": true}])
+    );
+    std::fs::remove_file(&sandbox.config).unwrap();
+    let output = sandbox
+        .command()
+        .args(["config", "path", "--json"])
+        .output()
+        .unwrap();
+    let diagnostic = assert_json_error(output, 1, "invalid_config");
+    assert!(
+        diagnostic["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(sandbox.config.to_str().unwrap())
     );
 }

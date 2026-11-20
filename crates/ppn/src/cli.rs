@@ -112,6 +112,13 @@ fn dispatch(
         color: explicit_color.then_some(cli.globals.color),
     };
 
+    if let Some(Command::Config {
+        command: config_command::Command::Path,
+    }) = cli.command
+    {
+        return config_command::path(context, &config::select_files(&flags, &env, &dirs));
+    }
+
     let loaded = config::load(&flags, &env, |path| fs::read_to_string(path), &dirs)?;
     context.config = Some(loaded.config);
     match cli.command {
@@ -125,6 +132,11 @@ fn dispatch(
         Some(Command::Config {
             command: config_command::Command::Show { key },
         }) => config_command::show(context, key.as_deref(), loaded.files),
+        Some(Command::Config {
+            command: config_command::Command::Path,
+        }) => {
+            unreachable!("config path is dispatched before loading configuration")
+        }
         Some(Command::Debug { command }) => debug::run(context, command),
         None => Ok(help::run(context, Cli::command(), None)),
     }

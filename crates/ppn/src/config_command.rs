@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use clap::Subcommand;
-use ppn::config::{FileStatus, nearest_key};
+use ppn::config::{self, ConfigFile, FileStatus, nearest_key};
 use ppn::error::{CliError, ErrorKind};
 use ppn::help_tree::example_help;
 use ppn::output::{CommandResult, Render};
@@ -16,6 +17,9 @@ pub enum Command {
         /// Show just this key, such as network or ui.color.
         key: Option<String>,
     },
+    /// List configuration files and whether they exist.
+    #[command(after_help = example_help(&["ppn config path --json"]))]
+    Path,
 }
 
 pub fn show(
@@ -88,5 +92,27 @@ fn display_value(value: &Value) -> String {
     match value.as_str() {
         Some(text) if !text.chars().any(char::is_control) => text.to_owned(),
         _ => value.to_string(),
+    }
+}
+
+pub fn path(_context: &Context, files: &[ConfigFile]) -> Result<CommandResult, CliError> {
+    config::paths(files, Path::try_exists).map(|files| CommandResult::document(PathList(files)))
+}
+
+struct PathList(Vec<FileStatus>);
+
+impl Render for PathList {
+    fn human(&self, _: &Terminal) -> String {
+        self.0
+            .iter()
+            .map(|file| {
+                let status = if file.exists { "present" } else { "missing" };
+                format!("{status}  {}\n", file.path.display())
+            })
+            .collect()
+    }
+
+    fn json_fields(self) -> Map<String, Value> {
+        Map::from_iter([("files".into(), json!(self.0))])
     }
 }
