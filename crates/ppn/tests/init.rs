@@ -2,6 +2,7 @@ mod common;
 use common::*;
 
 #[test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 fn init_names_the_local_records_and_is_idempotent() {
     let (sandbox, data) = uninitialized_task_sandbox();
     let output = sandbox.run(&[
@@ -54,7 +55,7 @@ fn task_commands_require_init_and_do_not_create_local_state() {
         assert_eq!(error["hint"], "Run `ppn init`.");
         assert!(!data.exists());
     }
-    sandbox.run(&["init"]);
+    fixture::copy(&data);
     let state = data.join("local.json");
     std::fs::remove_file(&state).unwrap();
     for command in ["ls", "init"] {
@@ -85,18 +86,19 @@ fn init_reports_a_read_only_data_directory_as_permission_denied() {
     let (sandbox, data) = uninitialized_task_sandbox();
     fs::create_dir(&data).unwrap();
     fs::set_permissions(&data, fs::Permissions::from_mode(0o500)).unwrap();
-    let can_write = fs::write(data.join("probe"), "").is_ok();
+    if fs::write(data.join("probe"), "").is_ok() {
+        fs::set_permissions(&data, fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
     let output = sandbox.command().args(["init", "--json"]).output().unwrap();
     fs::set_permissions(&data, fs::Permissions::from_mode(0o700)).unwrap();
-    if !can_write {
-        let error = task_error(output, 5, "permission_denied");
-        assert!(
-            error["message"]
-                .as_str()
-                .unwrap()
-                .contains(data.to_str().unwrap())
-        );
-    }
+    let error = task_error(output, 5, "permission_denied");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains(data.to_str().unwrap())
+    );
 }
 
 #[cfg(unix)]

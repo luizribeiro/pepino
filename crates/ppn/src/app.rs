@@ -123,11 +123,17 @@ impl AppClient {
 }
 
 #[cfg(test)]
+#[path = "../../pepino-app/tests/support/template.rs"]
+mod fixture;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::{Config, LoadedConfig, Platform, PlatformDirs};
     use crate::terminal::{Color, Terminal};
     use pepino_app::WriteRequest;
+
+    use super::fixture;
 
     #[test]
     fn opens_the_configured_board_with_the_injected_clock() {
@@ -151,7 +157,7 @@ mod tests {
                 })
             },
         );
-        AppClient::init(&context, OpenOptions::default()).unwrap();
+        fixture::copy(&directory);
         let mut client = AppClient::open(&context).unwrap();
         assert_eq!(client.now_ms, context.time.now_ms);
         let Response::Status {
