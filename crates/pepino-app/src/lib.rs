@@ -11,6 +11,7 @@ mod batch;
 mod hlc;
 mod projection;
 mod protocol;
+mod read;
 mod state;
 mod values;
 mod wire;

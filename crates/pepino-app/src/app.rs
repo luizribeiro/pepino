@@ -7,9 +7,8 @@ use pepino_core::{Clock, Hlc};
 use pepino_store::{DatabaseErrorKind, Store, StoreError};
 use tokio::time::{Instant, sleep};
 
-use crate::projection::{edge_effect, resolve};
 use crate::state::{FILE_NAME, io_error, storage};
-use crate::{AppError, LocalState, OpenOptions, ReadRequest, Request, Response};
+use crate::{AppError, LocalState, OpenOptions, Request, Response};
 
 pub struct App {
     pub(super) store: Store,
@@ -70,27 +69,10 @@ impl App {
 
     pub async fn handle(&mut self, request: Request, now: u64) -> Result<Response, AppError> {
         let _lock = lock(&self.directory, self.lock_timeout).await?;
-        let board = self
-            .store
-            .board(self.local.board_id)
-            .await
-            .map_err(store_error)?;
         match request {
-            Request::Read(ReadRequest::GetTask { task }) => {
-                let task = resolve(&board, "task", &task)?;
-                let edges = board
-                    .edges(task.id)
-                    .into_iter()
-                    .filter(|edge| edge.exclusion.is_some())
-                    .map(|edge| edge_effect(edge.from, edge.kind, edge.to, Some(edge)))
-                    .collect::<Result<_, _>>()?;
-                let task = self.record(task).await?;
-                Ok(Response::Task {
-                    task: Box::new(task),
-                    edges,
-                })
-            }
+            Request::Read(request) => self.read(request).await,
             Request::Write(request) => {
+                let board = self.board().await?;
                 let mut batch = self.batch(now).await?;
                 self.plan_write(&board, &mut batch, request)?;
                 self.commit_batch(&board, batch).await
