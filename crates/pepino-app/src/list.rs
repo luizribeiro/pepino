@@ -34,6 +34,7 @@ impl App {
         let query = || Query {
             filter: &filter,
             context: Context {
+                today: today.into(),
                 me: Some(self.local.identity_id),
                 people: &people,
                 views: &saved,

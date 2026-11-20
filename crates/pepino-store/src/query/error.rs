@@ -24,6 +24,8 @@ fn view_location(chain: &[String]) -> String {
 pub enum QueryErrorKind {
     #[error("text search requires a board snapshot loaded with comments")]
     CommentsRequired,
+    #[error("date {expression:?} is outside the supported calendar range")]
+    DateOutOfRange { expression: String },
     #[error("no current identity for me")]
     MissingIdentity,
     #[error("unknown person {text:?}")]

@@ -27,6 +27,7 @@ fn query(filter: &Filter) -> Query<'_> {
     Query {
         filter,
         context: Context {
+            today: date(19),
             me: Some(ANA),
             people: &people,
             views: views(),
@@ -63,4 +64,11 @@ fn views() -> &'static BTreeMap<&'static str, Filter> {
         .map(|(name, input)| (name, filter(input)))
         .collect()
     })
+}
+
+#[test]
+fn resolved_dates_only_reports_relative_operands() {
+    let filter = filter("due:2026-11-20 created:2026-11-19 updated:<2026-11-21");
+    let prepared = query(&filter).prepare(fixture::board()).unwrap();
+    assert!(prepared.resolved_dates().is_empty());
 }

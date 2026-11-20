@@ -1,8 +1,8 @@
 use std::{borrow::Borrow, collections::BTreeMap, fmt, rc::Rc};
 
 use pepino_core::{
-    IdentityId, TaskId,
-    filter::{Assignee, Clause, Filter, Term},
+    Date, IdentityId, TaskId,
+    filter::{Assignee, Clause, Comparison, DateOperand, Filter, Term},
 };
 
 use crate::{BoardView, PrefixResolution, TaskRecord};
@@ -47,8 +47,9 @@ impl<K: Borrow<str> + Ord> ViewResolver for BTreeMap<K, Filter> {
     }
 }
 
-/// The current identity and in-memory resolvers supplied by the caller.
+/// The calendar date, current identity and in-memory resolvers supplied by the caller.
 pub struct Context<'a> {
+    pub today: Date,
     pub me: Option<IdentityId>,
     pub people: &'a dyn PersonResolver,
     pub views: &'a dyn ViewResolver,
@@ -65,6 +66,7 @@ pub struct Prepared<'view> {
     predicates: Vec<Check>,
     view_count: usize,
     view: &'view BoardView,
+    resolved_dates: BTreeMap<String, Date>,
 }
 
 impl fmt::Debug for Prepared<'_> {
@@ -76,6 +78,11 @@ impl fmt::Debug for Prepared<'_> {
 }
 
 impl<'view> Prepared<'view> {
+    /// Calendar dates used for relative operands, keyed by canonical spelling.
+    pub fn resolved_dates(&self) -> &BTreeMap<String, Date> {
+        &self.resolved_dates
+    }
+
     /// Tests a task from the snapshot used to prepare the query.
     pub fn matches(&self, task: &TaskRecord) -> bool {
         let mut evaluation = TaskEvaluation {
@@ -106,6 +113,7 @@ impl Query<'_> {
             predicates,
             view_count: saved.len(),
             view,
+            resolved_dates: operands.dates,
         })
     }
 }
@@ -252,9 +260,18 @@ fn prepare_clause(
             relation(operands, &values, |task, id| task.blocked_by.contains(&id))?
         }
         Clause::Priority(values) => Box::new(move |task| compare(task.priority, &values)),
-        Clause::Due(values) => Box::new(move |task| compare(task.due, &values)),
-        Clause::Created(values) => Box::new(move |task| utc_days(task.created, &values)),
-        Clause::Updated(values) => Box::new(move |task| utc_days(task.updated, &values)),
+        Clause::Due(values) => {
+            let values = operands.dates(values)?;
+            Box::new(move |task| compare(task.due, &values))
+        }
+        Clause::Created(values) => {
+            let values = operands.dates(values)?;
+            Box::new(move |task| utc_days(task.created, &values))
+        }
+        Clause::Updated(values) => {
+            let values = operands.dates(values)?;
+            Box::new(move |task| utc_days(task.updated, &values))
+        }
         Clause::Custom {
             field,
             alternatives,
@@ -307,6 +324,7 @@ struct Operands<'a> {
     context: &'a Context<'a>,
     people: BTreeMap<String, IdentityId>,
     prefixes: BTreeMap<String, TaskId>,
+    dates: BTreeMap<String, Date>,
 }
 
 impl<'a> Operands<'a> {
@@ -316,7 +334,39 @@ impl<'a> Operands<'a> {
             context,
             people: BTreeMap::new(),
             prefixes: BTreeMap::new(),
+            dates: BTreeMap::new(),
         }
+    }
+
+    fn dates(
+        &mut self,
+        values: Vec<Comparison<Date>>,
+    ) -> Result<Vec<Comparison<Date>>, QueryErrorKind> {
+        values
+            .into_iter()
+            .map(|Comparison { operator, value }| {
+                let value = self.date(&DateOperand::Absolute(value))?;
+                Ok(Comparison { operator, value })
+            })
+            .collect()
+    }
+
+    fn date(&mut self, operand: &DateOperand) -> Result<Date, QueryErrorKind> {
+        if let DateOperand::Absolute(date) = operand {
+            return Ok(*date);
+        }
+        let expression = operand.to_string();
+        if let Some(&date) = self.dates.get(&expression) {
+            return Ok(date);
+        }
+        let date =
+            operand
+                .resolve(self.context.today)
+                .map_err(|_| QueryErrorKind::DateOutOfRange {
+                    expression: expression.clone(),
+                })?;
+        self.dates.insert(expression, date);
+        Ok(date)
     }
 
     fn person(&mut self, assignee: &Assignee) -> Result<IdentityId, QueryErrorKind> {
