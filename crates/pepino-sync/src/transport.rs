@@ -40,6 +40,14 @@ pub trait TransportBoard: Send + Sync + 'static {
         async { false }
     }
 
+    fn admitted_by(
+        &self,
+        _device: DeviceId,
+        _manager: DeviceId,
+    ) -> impl Future<Output = Result<bool, Error>> + Send {
+        async { Ok(false) }
+    }
+
     fn remove_revoked(
         &self,
         _own: DeviceId,
@@ -145,6 +153,10 @@ impl TransportBoard for BoardHandle {
         self.members()
             .await
             .is_ok_and(|members| members.contains(&(device, Role::Manage)))
+    }
+
+    async fn admitted_by(&self, device: DeviceId, manager: DeviceId) -> Result<bool, Error> {
+        BoardHandle::admitted_by(self, device, manager).await
     }
 
     async fn remove_revoked(&self, own: DeviceId, device: DeviceId) -> Removal {

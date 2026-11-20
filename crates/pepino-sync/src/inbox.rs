@@ -217,8 +217,22 @@ async fn ingest_cards<B: TransportBoard>(
     }
     let mut retry = Retry::new();
     while let Some(cards) = BoardCards::decode(&delivery.bytes) {
-        let manager =
-            matches!(cards, BoardCards::Introduce(_)) && handle.manages(delivery.signer).await;
+        let manager = if let BoardCards::Introduce(admission) = &cards {
+            match handle.admitted_by(admission.device, delivery.signer).await {
+                Ok(allowed) => allowed,
+                Err(error) => {
+                    record_error(
+                        status,
+                        board,
+                        format!("read board invitation authority: {error}"),
+                    );
+                    retry.wait().await;
+                    continue;
+                }
+            }
+        } else {
+            false
+        };
         match app
             .receive_board_cards(board, delivery.signer, manager, cards)
             .await
