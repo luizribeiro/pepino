@@ -1,4 +1,4 @@
-use pepino_app::BoardJoinState;
+use pepino_app::{BoardJoinState, RosterDevice, RosterState};
 use pepino_core::DeviceId;
 use ppn::{
     app::AppClient,
@@ -15,6 +15,9 @@ struct Device {
     name: String,
     this_device: bool,
     state: &'static str,
+    roster_state: RosterState,
+    member_of: usize,
+    total_boards: usize,
     last_seen: Option<chrono::DateTime<chrono::Utc>>,
     boards: Vec<DeviceBoard>,
 }
@@ -38,74 +41,101 @@ pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
             .unwrap_or_else(|| local.board_join_state(board.id))
             == BoardJoinState::Joined
     });
-    let devices = local
-        .devices()
-        .into_iter()
-        .map(|(id, name)| {
-            let this_device = id == local.device_id;
-            let label = id.to_string();
-            let seen_on_board = local.saw_device_on_board(id)
-                || network.is_some_and(|network| network.peers_synced.contains(&label));
-            let boards = local
-                .boards()
-                .iter()
-                .map(|board| {
-                    let membership = if this_device {
-                        match network
-                            .and_then(|network| network.board_joins.get(&board.id).copied())
-                            .unwrap_or_else(|| local.board_join_state(board.id))
-                        {
-                            BoardJoinState::Joined => "joined",
-                            BoardJoinState::WaitingToBeAdded => "waiting_to_be_added",
-                            _ => "waiting_for_first_sync",
+    let roster: Vec<_> = local.roster().into_values().collect();
+    let devices = roster
+        .iter()
+        .map(
+            |RosterDevice {
+                 id,
+                 name,
+                 state: roster_state,
+                 ..
+             }| {
+                let id = *id;
+                let this_device = id == local.device_id;
+                let label = id.to_string();
+                let seen_on_board = local.saw_device_on_board(id)
+                    || network.is_some_and(|network| network.peers_synced.contains(&label));
+                let boards = local
+                    .boards()
+                    .iter()
+                    .map(|board| {
+                        let membership = if this_device {
+                            match network
+                                .and_then(|network| network.board_joins.get(&board.id).copied())
+                                .unwrap_or_else(|| local.board_join_state(board.id))
+                            {
+                                BoardJoinState::Joined => "joined",
+                                BoardJoinState::WaitingToBeAdded => "waiting_to_be_added",
+                                _ => "waiting_for_first_sync",
+                            }
+                        } else {
+                            match network.and_then(|network| network.board_members.get(&board.id)) {
+                                Some(members) if members.contains(&id) => "member",
+                                Some(_) => "pending",
+                                None => "unknown",
+                            }
+                        };
+                        DeviceBoard {
+                            id: board.id,
+                            name: board.name.clone(),
+                            membership,
                         }
-                    } else {
-                        match network.and_then(|network| network.board_members.get(&board.id)) {
-                            Some(members) if members.contains(&id) => "member",
-                            Some(_) => "pending",
-                            None => "unknown",
-                        }
-                    };
-                    DeviceBoard {
-                        id: board.id,
-                        name: board.name.clone(),
-                        membership,
-                    }
-                })
-                .collect();
-            Device {
-                id,
-                name,
-                this_device,
-                boards,
-                state: match (this_device, complete, seen_on_board) {
-                    (true, false, _) => "pending",
-                    (true, true, _) => "joined",
-                    (false, _, true) => "seen_on_board",
-                    (false, _, false) if local.added_device_here(id) => "added_not_seen",
-                    (false, _, false) => "known_not_seen",
-                },
-                last_seen: network.and_then(|network| network.last_seen.get(&label).copied()),
-            }
-        })
+                    })
+                    .collect::<Vec<_>>();
+                let member_of = boards
+                    .iter()
+                    .filter(|board| matches!(board.membership, "member" | "joined"))
+                    .count();
+                Device {
+                    id,
+                    name: name.clone(),
+                    roster_state: *roster_state,
+                    member_of,
+                    total_boards: boards.len(),
+                    this_device,
+                    boards,
+                    state: match (this_device, complete, seen_on_board) {
+                        (true, false, _) => "pending",
+                        (true, true, _) => "joined",
+                        (false, _, true) => "seen_on_board",
+                        (false, _, false) if local.added_device_here(id) => "added_not_seen",
+                        (false, _, false) => "known_not_seen",
+                    },
+                    last_seen: network.and_then(|network| network.last_seen.get(&label).copied()),
+                }
+            },
+        )
         .collect();
-    Ok(CommandResult::document(Devices(
+    Ok(CommandResult::document(Devices {
         devices,
-        context.render_settings()?,
-    )))
+        roster,
+        settings: context.render_settings()?,
+    }))
 }
 
-struct Devices(Vec<Device>, ppn::terminal::RenderSettings);
+struct Devices {
+    devices: Vec<Device>,
+    roster: Vec<RosterDevice>,
+    settings: ppn::terminal::RenderSettings,
+}
 
 impl Render for Devices {
     fn human(&self, terminal: &Terminal) -> String {
-        self.0
+        self.devices
             .iter()
-            .map(|device| {
+            .zip(&self.roster)
+            .map(|(device, record)| {
                 let mut text = format!(
-                    "{} ({}) · {}",
+                    "{} ({}) · {} · member of {} of {} boards · {}",
                     single_line(&device.name),
                     short_id(&device.id.to_string()),
+                    match device.roster_state {
+                        RosterState::Active => "active",
+                        RosterState::Revoked => "revoked",
+                    },
+                    device.member_of,
+                    device.total_boards,
                     match device.state {
                         "seen_on_board" => "seen on the board",
                         "added_not_seen" => "added here, not yet seen",
@@ -116,10 +146,21 @@ impl Render for Devices {
                 if device.this_device {
                     text.push_str(" · this device");
                 }
+                if let Some(added_by) = record.added_by {
+                    text.push_str(&format!(" · added by {}", short_id(&added_by.to_string())));
+                    if let Some(time) = record.added_at.and_then(|clock| {
+                        chrono::DateTime::from_timestamp_millis(clock.wall_ms.try_into().ok()?)
+                    }) {
+                        text.push_str(&format!(
+                            " on {}",
+                            self.settings.dates().timestamp(time, terminal)
+                        ));
+                    }
+                }
                 if let Some(time) = device.last_seen {
                     text.push_str(&format!(
                         " · last seen {}",
-                        self.1.dates().timestamp(time, terminal)
+                        self.settings.dates().timestamp(time, terminal)
                     ));
                 }
                 for board in &device.boards {
@@ -139,7 +180,8 @@ impl Render for Devices {
     fn json_fields(self) -> Map<String, Value> {
         Map::from_iter([
             ("kind".into(), json!("devices")),
-            ("devices".into(), json!(self.0)),
+            ("devices".into(), json!(self.devices)),
+            ("roster".into(), json!(self.roster)),
         ])
     }
 }

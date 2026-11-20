@@ -58,6 +58,26 @@ fn document(
 ) -> Result<CommandResult, CliError> {
     let response = client.call(Request::Read(ReadRequest::Status))?;
     let local = client.local_state();
+    let roster_stale = !local.roster_ready()
+        || (local.roster().len() > 1
+            && network.as_ref().is_none_or(|net| {
+                net.peers_synced.is_empty()
+                    || net
+                        .boards
+                        .get(&local.catalog_board().to_string())
+                        .is_none_or(|board| {
+                            board.starting_up || board.active || board.last_error.is_some()
+                        })
+            }));
+    let roster_note = if roster_stale {
+        if network.is_some() {
+            " · roster cache may be stale (catalog sync pending)"
+        } else {
+            " · roster cache may be stale (daemon offline)"
+        }
+    } else {
+        ""
+    };
     let boards = local
         .boards()
         .iter()
@@ -109,9 +129,11 @@ fn document(
                 .as_deref()
                 .unwrap_or("offline (daemon not running)");
             Ok(format!(
-                "Identity: {} ({})\nDevice: {} (node ID {})\nBoard: {} ({})\n{selected_line}\nMembership:\n  {membership_rows}\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}",
+                "Identity: {} ({}) · {} devices{roster_note}\nRejected roster entries: {}\nDevice: {} (node ID {})\nBoard: {} ({})\n{selected_line}\nMembership:\n  {membership_rows}\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}",
                 single_line(&identity.display_name),
                 short_id(&identity.id),
+                identity.roster.len(),
+                identity.rejected_roster_entries,
                 single_line(&device.name),
                 short_id(&device.id),
                 single_line(&board.name),
@@ -136,6 +158,9 @@ fn document(
             }).collect::<Vec<_>>();
             fields.insert("boards".into(), serde_json::json!(boards));
             fields.insert("selected_board".into(), selected);
+            if let Some(identity) = fields.get_mut("identity") {
+                identity["cache_stale"] = serde_json::json!(roster_stale);
+            }
             if let Some(network) = network {
                 fields.insert("network".into(), serde_json::json!(network));
             }

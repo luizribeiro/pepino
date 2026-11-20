@@ -81,11 +81,16 @@ fn device_ls_reports_the_current_device_in_human_and_json_output() {
     assert_eq!(devices.len(), 1);
     assert_eq!(devices[0]["this_device"], true);
     assert_eq!(devices[0]["state"], "joined");
+    assert_eq!(devices[0]["member_of"], 1);
+    assert_eq!(devices[0]["total_boards"], 1);
+    assert_eq!(devices[0]["roster_state"], "active");
+    assert_eq!(result["roster"][0]["state"], "active");
+    assert_eq!(result["roster"][0]["id"], devices[0]["id"]);
     assert!(devices[0]["last_seen"].is_null());
     assert!(
         sandbox
             .run(&["device", "ls"])
-            .contains("joined · this device")
+            .contains("active · member of 1 of 1 boards · joined · this device")
     );
 
     let (empty, _) = uninitialized_task_sandbox();

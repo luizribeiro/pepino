@@ -32,7 +32,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "init" | "status" => (
             "status",
-            "identity Local person\ndevice Local device\nboard Selected board\nselected_board Board selected for this invocation and its source\nboards Known boards with membership and sync activity\ndata_dir Local data directory\ncounts Task and event counts\nnetwork Daemon network snapshot or offline\nprotocol_version Application protocol version",
+            "identity Identity name, shared roster, cache status and rejected roster entries\ndevice Local device\nboard Selected board\nselected_board Board selected for this invocation and its source\nboards Known boards with membership and sync activity\ndata_dir Local data directory\ncounts Task and event counts\nnetwork Daemon network snapshot or offline\nprotocol_version Application protocol version",
         ),
         "board ls" => (
             "boards",
@@ -76,7 +76,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "device ls" => (
             "devices",
-            "devices Device IDs, names, current-device marker, state, last seen time and membership by board",
+            "devices Local device observations including board counts and last seen time\nroster Shared roster with device IDs, names, admission metadata and states",
         ),
         "view ls" => ("views", "views Saved filters ordered by name"),
         "view save" => (

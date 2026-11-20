@@ -9,6 +9,7 @@ fn status_renders_empty_local_state_through_the_binary() {
     let human = sandbox.run(&["status"]);
     for label in [
         "Identity:",
+        "Rejected roster entries: 0",
         "Device:",
         "Board: Personal",
         "Personal: joined",
@@ -20,6 +21,11 @@ fn status_renders_empty_local_state_through_the_binary() {
     }
     assert!(human.contains(&format!("Data directory: {}", data.display())));
     let status = as_json(&sandbox.run(&["status", "--json"]));
+    assert_eq!(
+        status["identity"]["roster"][0]["id"],
+        status["device"]["id"]
+    );
+    assert!(status["identity"]["cache_stale"].is_boolean());
     let id = status["device"]["id"].as_str().unwrap();
     assert!(human.contains(&format!("(node ID {})", &id[..6])));
     assert!(human.contains(&format!(
