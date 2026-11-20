@@ -45,6 +45,7 @@ pub struct LocalState {
     pub device_name: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(super) other_devices: BTreeMap<DeviceId, String>,
+    #[serde(deserialize_with = "read_boards")]
     pub(super) boards: Vec<LocalBoard>,
     pub(crate) saved_views: SavedViews,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -58,12 +59,16 @@ pub struct LocalBoard {
 }
 
 impl LocalState {
+    pub fn current_board(&self) -> &LocalBoard {
+        &self.boards[0]
+    }
+
     pub fn board_id(&self) -> BoardId {
-        self.boards[0].id
+        self.current_board().id
     }
 
     pub fn board_name(&self) -> &str {
-        &self.boards[0].name
+        &self.current_board().name
     }
 
     pub fn boards(&self) -> &[LocalBoard] {
@@ -194,16 +199,16 @@ impl LocalState {
             version if version == u64::from(VERSION) => (),
             version => return Err(storage("unsupported local state version", version, false)),
         }
-        let local: Self = serde_json::from_value(value).map_err(decode_error)?;
-        if local.boards.is_empty() {
-            return Err(storage(
-                "decode local state",
-                "missing current board",
-                false,
-            ));
-        }
-        Ok(local)
+        serde_json::from_value(value).map_err(decode_error)
     }
+}
+
+fn read_boards<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Vec<LocalBoard>, D::Error> {
+    let boards = Vec::deserialize(decoder)?;
+    if boards.is_empty() {
+        return Err(serde::de::Error::custom("missing current board"));
+    }
+    Ok(boards)
 }
 
 pub(super) struct InitialNames {
@@ -401,6 +406,18 @@ mod tests {
         assert_eq!(saved["version"], 4);
         assert_eq!(saved["boards"][0]["id"], fields["board_id"]);
         assert_eq!(saved["saved_views"], fields["saved_views"]);
+    }
+
+    #[test]
+    fn rejects_a_board_list_without_a_current_board() {
+        let names = OpenOptions::default().try_into().unwrap();
+        let device = DeviceId::from_bytes([18; 32]);
+        let board = BoardId::from_bytes([19; 32]);
+        let local = LocalState::new(names, device, board).unwrap();
+        let mut data = serde_json::to_value(local).unwrap();
+        data["boards"] = serde_json::json!([]);
+        let error = serde_json::from_value::<LocalState>(data).unwrap_err();
+        assert!(error.to_string().contains("missing current board"));
     }
 
     #[test]
