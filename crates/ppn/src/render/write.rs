@@ -72,6 +72,7 @@ fn combine_responses(
     if let Response::Write {
         changed,
         created,
+        targets,
         tasks,
         deleted,
         edges,
@@ -81,6 +82,10 @@ fn combine_responses(
     {
         *changed = writes.iter().any(|write| *write.changed);
         *created = None;
+        *targets = writes
+            .iter()
+            .flat_map(|write| write.targets.iter().cloned())
+            .collect();
         *tasks = writes
             .iter()
             .flat_map(|write| write.tasks.iter().cloned())
@@ -111,7 +116,14 @@ fn write_output_with_ids(
     batch_ids: Option<&ShortIds<'_>>,
 ) -> Result<(String, Vec<Warning>), CliError> {
     let write = response.write()?;
-    let targets: Vec<_> = if let Some(id) = write.created {
+    let targets: Vec<_> = if !write.targets.is_empty() {
+        write
+            .tasks
+            .iter()
+            .chain(write.deleted)
+            .filter(|task| write.targets.contains(&task.id))
+            .collect()
+    } else if let Some(id) = write.created {
         vec![
             write
                 .tasks
@@ -211,6 +223,12 @@ mod tests {
             write_output(&serde_json::from_value(unchanged).unwrap(), "Done").unwrap();
         assert!(message.starts_with("Already done 97ad97a  Replace the greenhouse latch"));
         assert_eq!(message.lines().count(), 2);
+        let mut changed = response.clone();
+        changed.as_object_mut().unwrap().remove("created");
+        changed["targets"] = json!([id]);
+        let (message, _) = write_output(&serde_json::from_value(changed).unwrap(), "Done").unwrap();
+        assert_eq!(message, "Done 97ad97  Replace the greenhouse latch");
+
         let ids = ShortIds::new([id, peer]);
         let created: Response = serde_json::from_value(response.clone()).unwrap();
         let (message, _) = write_output_with_ids(&created, "Created", Some(&ids)).unwrap();

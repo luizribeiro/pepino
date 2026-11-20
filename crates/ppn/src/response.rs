@@ -36,6 +36,7 @@ response_views! {
     write => Write {
         changed: &'a bool, created: &'a Option<String>, tasks: &'a [TaskSummary],
         edges: &'a [EdgeEffect], names: &'a Names, deleted: &'a [TaskSummary],
+        targets: &'a [String],
     },
     task => Task {
         task: &'a TaskRecord, edges: &'a [EdgeEffect], relation_titles: &'a Names,
