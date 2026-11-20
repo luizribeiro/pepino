@@ -142,6 +142,7 @@ pub enum TaskChange {
 #[non_exhaustive]
 pub enum Response {
     DeletePreview {
+        targets: Vec<String>,
         tasks: Vec<TaskSummary>,
         top_level: Vec<TaskSummary>,
         unblocked: Vec<TaskSummary>,

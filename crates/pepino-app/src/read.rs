@@ -4,7 +4,7 @@ use pepino_store::{BoardView, Dependency};
 
 use crate::app::{invalid, store_error};
 use crate::batch::deletion_impact;
-use crate::projection::{edge_effect, project, project_at, project_summary, resolve};
+use crate::projection::{edge_effect, project, project_at, project_summary, resolve, resolve_id};
 use crate::{App, AppError, DependencyRecord, ReadRequest, Response, TreeNode};
 
 impl App {
@@ -51,11 +51,15 @@ impl App {
         }
         let view = self.board().await?;
         let mut ids = BTreeSet::new();
+        let mut targets = Vec::new();
         let mut tasks = Vec::new();
         for (index, reference) in references.iter().enumerate() {
-            let task = resolve(&view, &format!("tasks[{index}]"), reference)?;
-            if ids.insert(task.id) {
-                tasks.push(project_summary(task)?);
+            let id = resolve_id(&view, &format!("tasks[{index}]"), reference, true)?;
+            if ids.insert(id) {
+                targets.push(id.to_string());
+                if let Some(task) = view.task(id) {
+                    tasks.push(project_summary(task)?);
+                }
             }
         }
         let (top_level, unblocked) = deletion_impact(&view, &view.edges_after_removing(&ids), &ids);
@@ -65,6 +69,7 @@ impl App {
                 .collect::<Result<Vec<_>, _>>()
         };
         Ok(Response::DeletePreview {
+            targets,
             tasks,
             top_level: summarize(top_level)?,
             unblocked: summarize(unblocked)?,

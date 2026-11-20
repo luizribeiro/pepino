@@ -19,6 +19,7 @@ pub struct Args {
 pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
     let Response::DeletePreview {
+        targets,
         tasks,
         top_level,
         unblocked,
@@ -42,7 +43,7 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
     let noun = if count == 1 { "task" } else { "tasks" };
     let refusal =
         format!("Refusing to delete {count} {noun} without confirmation\n  {titles}{impact}");
-    if !context.confirm_with_refusal(&prompt, &refusal)? {
+    if !tasks.is_empty() && !context.confirm_with_refusal(&prompt, &refusal)? {
         let response = Response::Write {
             changed: false,
             created: None,
@@ -61,7 +62,7 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
     }
 
     let response = client.call(Request::Write(WriteRequest::ApplyToTasks {
-        tasks: tasks.into_iter().map(|task| task.id).collect(),
+        tasks: targets,
         change: TaskChange::Delete,
     }))?;
     batch_write_document(context, response, "Deleted")

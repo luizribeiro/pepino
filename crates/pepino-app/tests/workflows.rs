@@ -435,6 +435,7 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
         tasks,
         top_level,
         unblocked,
+        ..
     } = preview
     else {
         panic!("expected a preview")
@@ -498,6 +499,12 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
     };
     assert!(matches!(*outcome, Response::Write { changed: false, .. }));
     assert!(changed_targets.is_empty());
+    let preview = handle(&mut app, json!({"op":"preview_delete","tasks":[&blocker]}))
+        .await
+        .unwrap();
+    assert!(
+        matches!(preview, Response::DeletePreview { tasks, targets, .. } if tasks.is_empty() && targets == [blocker.clone()])
+    );
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();

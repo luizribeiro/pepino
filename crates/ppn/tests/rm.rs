@@ -43,15 +43,10 @@ fn rm_requires_yes_through_a_pipe_and_reports_permanent_deletion() {
     assert_eq!(json["top_level"].as_array().unwrap().len(), 2);
     assert_eq!(json["deleted"].as_array().unwrap().len(), 1);
     assert_deleted(&sandbox, task);
-    task_error(
-        sandbox
-            .command()
-            .args(["rm", task, "--yes", "--json"])
-            .output()
-            .unwrap(),
-        1,
-        "conflict",
-    );
+    let repeated = as_json(&sandbox.run(&["rm", task, "--json"]));
+    assert_write(&repeated, false);
+    assert_eq!(repeated["targets"], serde_json::json!([project.parent]));
+    assert!(sandbox.run(&["rm", task]).starts_with("Already deleted "));
 }
 
 fn assert_deleted(sandbox: &ConfigSandbox, task: &str) {
