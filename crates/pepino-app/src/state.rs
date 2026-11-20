@@ -44,6 +44,27 @@ pub struct LocalState {
 }
 
 impl LocalState {
+    pub(super) fn names_for<'a>(
+        &self,
+        ids: impl IntoIterator<Item = &'a str>,
+    ) -> std::collections::BTreeMap<String, String> {
+        let identity = self.identity_id.to_string();
+        let device = self.device_id.to_string();
+        let mut names = std::collections::BTreeMap::new();
+        for id in ids {
+            if id == identity {
+                names
+                    .entry(identity.clone())
+                    .or_insert_with(|| self.display_name.clone());
+            } else if id == device {
+                names
+                    .entry(device.clone())
+                    .or_insert_with(|| self.device_name.clone());
+            }
+        }
+        names
+    }
+
     pub(crate) fn load_or_create(directory: &Path, options: OpenOptions) -> Result<Self, AppError> {
         let path = directory.join(FILE_NAME);
         match fs::read(&path) {

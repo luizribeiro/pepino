@@ -83,8 +83,17 @@ impl App {
             .filter(|edge| edge.exclusion.is_some())
             .map(|edge| edge_effect(edge.from, edge.kind, edge.to, Some(edge)))
             .collect::<Result<_, _>>()?;
+        let task = project(task, board.comments(task.id))?;
+        let names = self.local.names_for(
+            task.assignees
+                .iter()
+                .map(String::as_str)
+                .chain(std::iter::once(task.author.as_str()))
+                .chain(task.comments.iter().map(|comment| comment.author.as_str())),
+        );
         Ok(Response::Task {
-            task: Box::new(project(task, board.comments(task.id))?),
+            task: Box::new(task),
+            names,
             edges,
             relation_titles,
             assignee_names,

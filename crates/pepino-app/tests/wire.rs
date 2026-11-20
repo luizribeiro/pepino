@@ -306,6 +306,7 @@ fn task_comments_and_edge_effects_have_stable_shapes() {
         task: Box::new(task),
         relation_titles: Default::default(),
         assignee_names: Default::default(),
+        names: Default::default(),
     }));
     assert_eq!(serde_json::to_value(&wire).unwrap(), response);
     round_trip(&wire);

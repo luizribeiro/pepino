@@ -397,11 +397,22 @@ async fn comments_are_ordered_and_preserve_repeated_text() {
     );
     assert_eq!(get(&mut app, &id).await, task);
 
+    let Response::Task { names, .. } = handle(&mut app, json!({"op":"get_task","task":id}))
+        .await
+        .unwrap()
+    else {
+        panic!("expected task detail");
+    };
+    assert_eq!(
+        names,
+        [(author, app.local_state().device_name.clone())].into()
+    );
     let response = Response::Task {
         edges: vec![],
         task: Box::new(task),
         relation_titles: Default::default(),
         assignee_names: Default::default(),
+        names: Default::default(),
     };
     let json = serde_json::to_vec(&response).unwrap();
     assert_eq!(serde_json::from_slice::<Response>(&json).unwrap(), response);
