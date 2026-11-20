@@ -5,6 +5,7 @@ mod property;
 mod publish;
 mod simulation;
 mod stub;
+mod wire;
 
 #[tokio::test]
 async fn opens_only_the_local_board_and_joins_shutdown() {
