@@ -1,18 +1,25 @@
-use ppn::error::{CliError, ErrorKind};
+use pepino_app::{Request, WriteRequest};
+use ppn::app::AppClient;
+use ppn::error::CliError;
 use ppn::help_tree::example_help;
 use ppn::output::CommandResult;
+use ppn::render::write_document;
 use ppn::terminal::Context;
 
+use super::link::RelationArgs;
+
 #[derive(clap::Args)]
-#[command(hide = true, about = "Remove a link between two tasks.", after_help = example_help(&["ppn unlink 97ad97 blocks 33ea33", "ppn unlink 97ad97 blocks 33ea33 --json"]))]
+#[command(about = "Remove a link between two tasks.", after_help = example_help(&[
+    "ppn unlink 97ad97 blocks 33ea33", "ppn unlink 97ad97 blocked-by 33ea33 --json",
+]))]
 pub struct Args {
-    /// Source task, relation, and destination task.
-    _input: Vec<String>,
+    #[command(flatten)]
+    relation: RelationArgs,
 }
 
-pub fn run(_: &Context<'_>, _: Args) -> Result<CommandResult, CliError> {
-    Err(CliError::new(
-        ErrorKind::Failure,
-        "ppn unlink is not implemented.",
-    ))
+pub fn run(context: &Context<'_>, Args { relation }: Args) -> Result<CommandResult, CliError> {
+    let (from, kind, to) = relation.endpoints();
+    let response =
+        AppClient::open(context)?.call(Request::Write(WriteRequest::Unlink { from, kind, to }))?;
+    write_document(context, response, "Unlinked")
 }
