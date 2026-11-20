@@ -210,3 +210,29 @@ async fn a_forged_transport_author_is_logged_without_changing_the_view() {
     })
     .unwrap();
 }
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn restores_a_replaced_event_store_with_its_own_and_peer_events() {
+    let (dir, mut a, mut b) = pair().await;
+    for (device, title) in [(&mut a, "Label shelves"), (&mut b, "Sort seed packets")] {
+        write(&mut device.app, json!({"op":"add_task","title":title})).await;
+    }
+    let (left, right) = tokio::join!(a.start(), b.start());
+    tokio::join!(a.await_events(&left, 2), b.await_events(&right, 2));
+    views_match(&a, &b).await;
+    tokio::join!(left.stop(), right.stop());
+
+    let board = b.board();
+    let device = b.app.local_state().device_id;
+    drop(b.app);
+    let path = dir.path().join("ben");
+    std::fs::remove_file(path.join("pepino.sqlite")).unwrap();
+    b.app = super::directory::prepare(&path, board, device).await;
+    assert_eq!(b.app.store().statistics(board).await.unwrap().total, 0);
+
+    let right = b.start().await;
+    b.await_events(&right, 2).await;
+    views_match(&a, &b).await;
+    right.stop().await;
+}

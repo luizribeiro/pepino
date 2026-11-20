@@ -31,6 +31,15 @@ pub trait Transport: Send + Sync + 'static {
     fn device_id(&self) -> DeviceId;
     fn open_board(&self, board: BoardId)
     -> impl Future<Output = Result<Self::Board, Error>> + Send;
+    fn open_board_for_store(
+        &self,
+        board: BoardId,
+        store_instance: [u8; 16],
+    ) -> impl Future<Output = Result<Self::Board, Error>> + Send {
+        let _ = store_instance;
+        self.open_board(board)
+    }
+
     fn events(&self) -> NodeEvents;
 
     /// Include undelivered items through the poll that yields each delivery.
@@ -76,6 +85,14 @@ impl Transport for Node {
 
     async fn open_board(&self, board: BoardId) -> Result<Self::Board, Error> {
         Node::open_board(self, board).await
+    }
+
+    async fn open_board_for_store(
+        &self,
+        board: BoardId,
+        store_instance: [u8; 16],
+    ) -> Result<Self::Board, Error> {
+        Node::open_board_for_store(self, board, store_instance).await
     }
 
     fn events(&self) -> NodeEvents {

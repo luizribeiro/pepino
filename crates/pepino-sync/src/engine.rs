@@ -29,6 +29,8 @@ pub enum Error {
     #[error(transparent)]
     App(#[from] pepino_app::AppError),
     #[error(transparent)]
+    Store(#[from] pepino_store::StoreError),
+    #[error(transparent)]
     Node(#[from] pepino_node::Error),
     #[error(transparent)]
     Worker(#[from] tokio::task::JoinError),
@@ -71,6 +73,7 @@ impl<T: Transport> SyncEngine<T> {
                 node: node.device_id(),
             });
         }
+        let store_instance = app.store().instance_id().await?;
         let boards = [app.local_state().board_id];
         let (stop, stopping) = watch::channel(());
         let (nudges, nudged) = watch::channel(0);
@@ -84,7 +87,7 @@ impl<T: Transport> SyncEngine<T> {
         });
         let mut workers = JoinSet::new();
         for id in boards {
-            let mut board = node.open_board(id).await?;
+            let mut board = node.open_board_for_store(id, store_instance).await?;
             let stream = board.deliveries()?;
             let mut stopping = stopping.clone();
             let app = app.clone();
