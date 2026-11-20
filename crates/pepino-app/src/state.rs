@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -45,6 +45,8 @@ pub struct LocalState {
     pub device_name: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(super) other_devices: BTreeMap<DeviceId, String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) devices_seen_on_boards: BTreeSet<DeviceId>,
     #[serde(deserialize_with = "read_boards")]
     pub(super) boards: Vec<LocalBoard>,
     pub(crate) saved_views: SavedViews,
@@ -73,6 +75,10 @@ impl LocalState {
 
     pub fn boards(&self) -> &[LocalBoard] {
         &self.boards
+    }
+
+    pub fn saw_device_on_board(&self, id: DeviceId) -> bool {
+        self.devices_seen_on_boards.contains(&id)
     }
 
     pub fn devices(&self) -> BTreeMap<DeviceId, String> {
@@ -127,6 +133,7 @@ impl LocalState {
                 name: board_name,
             }],
             other_devices: BTreeMap::new(),
+            devices_seen_on_boards: BTreeSet::new(),
             saved_views: SavedViews::default(),
             link: None,
         })

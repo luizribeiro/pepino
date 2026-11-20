@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use pepino_core::{BoardId, DeviceId};
 
@@ -27,6 +27,20 @@ impl App {
             } else {
                 local.other_devices.entry(id).or_insert(fallback_name);
             }
+        })
+        .await
+    }
+
+    pub async fn record_devices_seen_on_boards(
+        &self,
+        devices: BTreeSet<DeviceId>,
+    ) -> Result<(), AppError> {
+        self.update_devices(move |local| {
+            local.devices_seen_on_boards.extend(
+                devices
+                    .into_iter()
+                    .filter(|id| local.other_devices.contains_key(id)),
+            );
         })
         .await
     }
@@ -99,4 +113,22 @@ async fn concurrent_enrollments_keep_both_device_names() {
     let local = LocalState::load(dir.path()).unwrap();
     assert_eq!(local.devices()[&ferrum], "Ferrum");
     assert_eq!(local.devices()[&cobalt], "Cobalt");
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn stores_board_observations_only_for_known_devices() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
+    let tablet = DeviceId::from_bytes([56; 32]);
+    let stranger = DeviceId::from_bytes([21; 32]);
+    app.remember_device(tablet, "Garden tablet".into(), None)
+        .await
+        .unwrap();
+    app.record_devices_seen_on_boards([tablet, stranger].into())
+        .await
+        .unwrap();
+    let state = LocalState::load(dir.path()).unwrap();
+    assert!(state.saw_device_on_board(tablet));
+    assert!(!state.saw_device_on_board(stranger));
 }

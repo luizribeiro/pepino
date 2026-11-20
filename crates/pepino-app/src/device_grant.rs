@@ -83,6 +83,7 @@ impl DeviceGrant {
             display_name,
             device_name,
             other_devices: devices,
+            devices_seen_on_boards: BTreeSet::new(),
             boards,
             saved_views: Default::default(),
             link: Some(Box::new(Link {
