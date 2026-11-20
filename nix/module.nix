@@ -37,6 +37,17 @@ let
     description = "Pepino package to use.";
   };
 
+  normalizedPath = path: "/" + lib.concatStringsSep "/" (lib.foldl'
+    (parts: part:
+      if part == ".." then lib.take (lib.length parts - 1) parts
+      else if part == "" || part == "." then parts
+      else parts ++ [ part ])
+    [ ]
+    (lib.splitString "/" path));
+
+  nullableList = value: if value == null then [ ] else value;
+  uniqueIds = ids: lib.length ids == lib.length (lib.unique (map lib.toLower ids));
+
 in
 {
   options = { pkgs, ... }: {
@@ -62,4 +73,36 @@ in
       };
     };
   };
+
+  validation = { config, ... }:
+    let
+      service = config.services.pepino;
+      validateNode = prefix: node: [
+        {
+          assertion =
+            let path = normalizedPath node.credentialsFile;
+            in node.credentialsFile == null
+              || (path != builtins.storeDir && !lib.hasPrefix "${builtins.storeDir}/" path);
+          message = "${prefix}.credentialsFile must be outside the Nix store.";
+        }
+        {
+          assertion = uniqueIds (nullableList node.trustedDevices);
+          message = "${prefix}.trustedDevices contains duplicate node IDs.";
+        }
+        {
+          assertion = uniqueIds (map (node: node.nodeId) (nullableList node.bootstrapNodes));
+          message = "${prefix}.bootstrapNodes contains duplicate node IDs.";
+        }
+      ];
+    in
+    {
+      assertions = validateNode "programs.pepino" config.programs.pepino
+        ++ validateNode "services.pepino" service
+        ++ [{
+        assertion = !service.openFirewall || service.port != null;
+        message = "services.pepino.openFirewall requires services.pepino.port.";
+      }];
+      warnings = lib.optional (service.enable && nullableList service.trustedDevices == [ ])
+        "services.pepino.enable is set with no trusted devices, so the node will accept boards from nobody.";
+    };
 }
