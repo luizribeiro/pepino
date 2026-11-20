@@ -26,7 +26,7 @@ use crate::{
     delivery::DeliveryWriter,
     events::subscribe,
     receipt::{Payload, Receipts},
-    status_state::Status,
+    status_state::{Status, WeakStatus},
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -50,7 +50,7 @@ pub struct BoardHandle {
     runtime: Handle,
     joined: watch::Receiver<JoinState>,
     replaying: watch::Receiver<bool>,
-    status: Status,
+    status: WeakStatus,
     receipts: Receipts,
     confirmation_timeout: Duration,
     events: Option<mpsc::Receiver<Result<BoardEvent, Error>>>,
@@ -163,10 +163,11 @@ impl BoardHandle {
         let (replay_status, replaying) = watch::channel(replaying);
         let (stop, stop_rx) = oneshot::channel();
         let receipts = Receipts::default();
+        let delivery_status = status.downgrade();
         let task = BoardTask {
             lease,
             acks,
-            status: status.clone(),
+            status,
             ready,
             replay_status,
             events: events_tx,
@@ -180,7 +181,7 @@ impl BoardHandle {
             runtime: Handle::current(),
             joined: state,
             replaying,
-            status,
+            status: delivery_status,
             receipts,
             confirmation_timeout,
             events: Some(events),
@@ -198,7 +199,7 @@ impl BoardHandle {
         let events = self.events.take().ok_or(Error::EventsTaken)?;
         let board = self.id;
         let status = self.status.clone();
-        Ok(subscribe(events, move || status.pending(board, false)))
+        Ok(subscribe(events, move || status.delivered(board)))
     }
 
     pub async fn wait_until_joined(&self, limit: Duration) -> Result<(), Error> {

@@ -130,4 +130,7 @@ async fn late_status_subscriber_sees_deliveries_waiting_for_the_consumer() {
     .unwrap();
     event.ack().await.unwrap();
     node.shutdown().await.unwrap();
+    timeout(WAIT, async { while late.next().await.is_some() {} })
+        .await
+        .unwrap();
 }

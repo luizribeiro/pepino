@@ -18,19 +18,33 @@ pub struct BoardStatus {
     pub active_syncs: BTreeMap<(DeviceId, u64), SyncCounts>,
 }
 
-pub(crate) use tracking::Status;
+pub(crate) use tracking::{Status, WeakStatus};
 
 mod tracking {
     use super::*;
     use crate::{NodeEvent, NodeEvents, status};
     use futures_util::{StreamExt, stream};
-    use std::sync::{Arc, Mutex, PoisonError};
+    use std::sync::{Arc, Mutex, PoisonError, Weak};
     use tokio::sync::broadcast;
 
     #[derive(Clone)]
     pub(crate) struct Status {
         state: Arc<Mutex<NodeStatus>>,
         changes: broadcast::Sender<NodeEvent>,
+    }
+
+    #[derive(Clone)]
+    pub(crate) struct WeakStatus {
+        state: Weak<Mutex<NodeStatus>>,
+        changes: broadcast::WeakSender<NodeEvent>,
+    }
+
+    impl WeakStatus {
+        pub(crate) fn delivered(&self, board: BoardId) {
+            if let (Some(state), Some(changes)) = (self.state.upgrade(), self.changes.upgrade()) {
+                Status { state, changes }.pending(board, false);
+            }
+        }
     }
 
     impl Default for Status {
@@ -110,6 +124,13 @@ mod tracking {
                 _ => (),
             }
             let _ = self.changes.send(event);
+        }
+
+        pub(crate) fn downgrade(&self) -> WeakStatus {
+            WeakStatus {
+                state: Arc::downgrade(&self.state),
+                changes: self.changes.downgrade(),
+            }
         }
 
         pub(crate) fn pending(&self, board: BoardId, increase: bool) {
