@@ -1,3 +1,7 @@
+mod task;
+
+pub use task::{DescriptionArgs, TaskWriteArgs};
+
 use std::collections::BTreeMap;
 
 use clap::Args;
