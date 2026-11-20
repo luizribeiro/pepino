@@ -29,6 +29,7 @@ pub enum EventClassification {
     UnknownEvent,
     UnknownValue,
     Invalid,
+    ForgedAuthor,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -214,6 +215,7 @@ impl From<StoredClassification> for EventClassification {
             StoredClassification::UnknownEvent => Self::UnknownEvent,
             StoredClassification::UnknownValue => Self::UnknownValue,
             StoredClassification::Invalid => Self::Invalid,
+            StoredClassification::ForgedAuthor => Self::ForgedAuthor,
         }
     }
 }
@@ -230,7 +232,12 @@ impl TryFrom<HistoryEvent> for EventRecord {
             DecodeOutcome::InvalidEvent { reason, .. } => {
                 ("unknown", None, Some(reason.to_string()))
             }
-            DecodeOutcome::Known(_) => ("unknown", None, None),
+            DecodeOutcome::Known(envelope) => (envelope.event().kind(), None, None),
+        };
+        let reason = if record.classification == StoredClassification::ForgedAuthor {
+            Some("envelope author does not match the verified signer".into())
+        } else {
+            reason
         };
         let action = record.event.as_ref().map(EventAction::from);
         let (kind, detail) = match record.event {

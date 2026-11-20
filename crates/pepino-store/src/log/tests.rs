@@ -292,7 +292,7 @@ async fn reopening_projects_legacy_edges_on_every_board() {
     )
     .unwrap();
     let edge_bytes = edge.encode().unwrap();
-    let decoded = Decoded::new(&edge_bytes).unwrap();
+    let decoded = Decoded::new(&edge_bytes, None).unwrap();
 
     let older = Store::open_file(&path, 1, true).await.unwrap();
     let fresh = Store::open_in_memory().await.unwrap();
@@ -654,4 +654,61 @@ async fn requiring_an_effective_edge_rolls_back_the_entire_batch() {
     assert!(store.board(board).await.unwrap().tasks().is_empty());
     store.append_batch(board, &events).await.unwrap();
     assert_eq!(store.statistics(board).await.unwrap().total, 2);
+}
+
+#[tokio::test]
+async fn verified_signers_gate_projection_and_survive_rebuild() {
+    use crate::EventClassification;
+
+    let store = Store::open_in_memory().await.unwrap();
+    let board = BoardId::from_bytes([19; 32]);
+    let forged = creation();
+    let real = Envelope::new(
+        forged.author(),
+        forged.hlc(),
+        Event::TaskCreated {
+            title: "Check the greenhouse vents".into(),
+            fields: InitialFields::default(),
+        },
+    )
+    .unwrap();
+    let wrong_signer = DeviceId::from_bytes([77; 32]);
+    let forged_bytes = forged.encode().unwrap();
+    let real_bytes = real.encode().unwrap();
+    let outcomes = store
+        .append_batch(
+            board,
+            &[
+                (&forged_bytes, Some(wrong_signer)),
+                (&real_bytes, Some(real.author())),
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        outcomes,
+        [
+            AppendOutcome::Skipped {
+                id: forged.id(),
+                reason: SkipReason::ForgedAuthor
+            },
+            AppendOutcome::Applied {
+                id: real.id(),
+                task: real.created_task().unwrap()
+            },
+        ]
+    );
+    assert_eq!(store.rebuild(board).await.unwrap().skipped, 1);
+    let projected = store.tasks(board).await.unwrap();
+    assert_eq!(projected.len(), 1);
+    assert_eq!(projected[0].id, real.created_task().unwrap());
+    let history = store.history(board, None, None).await.unwrap();
+    let entry = history
+        .events
+        .iter()
+        .find(|event| event.decoded.id() == forged.id())
+        .unwrap();
+    assert_eq!(entry.classification, EventClassification::ForgedAuthor);
+    assert!(entry.event.is_none());
+    assert!(entry.tasks.is_empty());
 }

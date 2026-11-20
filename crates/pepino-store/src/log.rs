@@ -6,9 +6,11 @@ use sqlx::{Connection, SqliteConnection};
 
 use crate::{BoardKey, Store, StoreError, edges, fold, history};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum IdSource {
-    Content,
+pub struct IdSource;
+
+impl IdSource {
+    #[allow(non_upper_case_globals)]
+    pub const Content: Option<DeviceId> = None;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -20,6 +22,7 @@ pub enum SkipReason {
         values: Vec<UnknownValue>,
     },
     Invalid(InvalidEvent),
+    ForgedAuthor,
 }
 
 impl SkipReason {
@@ -29,6 +32,7 @@ impl SkipReason {
             Self::UnknownEvent(_) => "unknown_event",
             Self::UnknownValue { .. } => "unknown_value",
             Self::Invalid(_) => "invalid",
+            Self::ForgedAuthor => "forged_author",
         }
     }
 }
@@ -50,10 +54,11 @@ struct Decoded {
     author: Option<DeviceId>,
     hlc: Option<Hlc>,
     event: Result<(Envelope, TaskId), SkipReason>,
+    verified_signer: Option<DeviceId>,
 }
 
 impl Decoded {
-    fn new(bytes: &[u8]) -> Result<Self, StoreError> {
+    fn new(bytes: &[u8], verified_signer: Option<DeviceId>) -> Result<Self, StoreError> {
         let outcome = Envelope::decode(bytes)?;
         let (id, author, hlc) = (outcome.id(), outcome.author(), outcome.hlc());
         let event = match outcome {
@@ -75,10 +80,11 @@ impl Decoded {
             author,
             hlc,
             event,
+            verified_signer,
         })
     }
 
-    fn classification(&self) -> &'static str {
+    fn decoded_classification(&self) -> &'static str {
         self.event
             .as_ref()
             .err()
@@ -92,15 +98,16 @@ impl Decoded {
         bytes: &[u8],
     ) -> Result<bool, StoreError> {
         let result = sqlx::query(
-            "INSERT INTO event_log (board, id, hlc, author, decoded_classification, bytes)
-             VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (board, id) DO NOTHING",
+            "INSERT INTO event_log (board, id, hlc, author, decoded_classification, bytes, verified_signer)
+             VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (board, id) DO NOTHING",
         )
         .bind(BoardKey(board))
         .bind(self.id.as_bytes().as_slice())
         .bind(self.hlc.map(Hlc::to_key))
         .bind(self.author.map(|author| *author.as_bytes()))
-        .bind(self.classification())
+        .bind(self.decoded_classification())
         .bind(bytes)
+        .bind(self.verified_signer.map(|signer| *signer.as_bytes()))
         .execute(connection)
         .await?;
         Ok(result.rows_affected() == 1)
@@ -113,7 +120,13 @@ impl Decoded {
         bytes: &[u8],
     ) -> Result<AppendOutcome, StoreError> {
         let id = self.id;
-        Ok(match self.event {
+        let forged = matches!((self.verified_signer, self.author), (Some(signer), Some(author)) if signer != author);
+        let event = if forged {
+            Err(SkipReason::ForgedAuthor)
+        } else {
+            self.event
+        };
+        Ok(match event {
             Ok((envelope, task)) => {
                 history::index(connection, board, &envelope).await?;
                 fold::fold(connection, board, task, &envelope).await?;
@@ -142,7 +155,7 @@ impl Decoded {
         .bind(self.id.as_bytes().as_slice())
         .bind(self.hlc.map(Hlc::to_key))
         .bind(self.author.map(|author| *author.as_bytes()))
-        .bind(self.classification())
+        .bind(self.decoded_classification())
         .execute(connection)
         .await?;
         Ok(())
@@ -154,9 +167,11 @@ impl Store {
         &self,
         board: BoardId,
         bytes: &[u8],
-        id_source: IdSource,
+        verified_signer: Option<DeviceId>,
     ) -> Result<AppendOutcome, StoreError> {
-        let mut outcomes = self.append_batch(board, &[(bytes, id_source)]).await?;
+        let mut outcomes = self
+            .append_batch(board, &[(bytes, verified_signer)])
+            .await?;
         Ok(outcomes.remove(0))
     }
 
@@ -168,7 +183,7 @@ impl Store {
     pub async fn append_batch(
         &self,
         board: BoardId,
-        events: &[(&[u8], IdSource)],
+        events: &[(&[u8], Option<DeviceId>)],
     ) -> Result<Vec<AppendOutcome>, StoreError> {
         self.append_batch_requiring_edges(board, events, &[]).await
     }
@@ -177,7 +192,7 @@ impl Store {
     pub async fn append_batch_requiring_edges(
         &self,
         board: BoardId,
-        events: &[(&[u8], IdSource)],
+        events: &[(&[u8], Option<DeviceId>)],
         required: &[(TaskId, EdgeKind, TaskId)],
     ) -> Result<Vec<AppendOutcome>, StoreError> {
         if events.is_empty() {
@@ -186,8 +201,8 @@ impl Store {
         let mut connection = self.connection.lock().await;
         let mut tx = connection.begin().await?;
         let mut outcomes = Vec::with_capacity(events.len());
-        for &(bytes, IdSource::Content) in events {
-            let decoded = Decoded::new(bytes)?;
+        for &(bytes, signer) in events {
+            let decoded = Decoded::new(bytes, signer)?;
             let outcome = if decoded.insert(&mut tx, board, bytes).await? {
                 decoded.project(&mut tx, board, bytes).await?
             } else {
@@ -244,20 +259,20 @@ pub(crate) async fn rebuild(
     // Every ID is a 32-byte blob, so an empty blob precedes the first page.
     let mut after = Vec::new();
     loop {
-        let rows = sqlx::query_as::<_, ([u8; 32], Vec<u8>)>(
-            "SELECT id, bytes FROM event_log WHERE board = ? AND id > ?
+        let rows = sqlx::query_as::<_, ([u8; 32], Vec<u8>, Option<[u8; 32]>)>(
+            "SELECT id, bytes, verified_signer FROM event_log WHERE board = ? AND id > ?
                  ORDER BY id LIMIT 128",
         )
         .bind(BoardKey(board))
         .bind(&after)
         .fetch_all(&mut *connection)
         .await?;
-        let Some((last, _)) = rows.last() else {
+        let Some((last, _, _)) = rows.last() else {
             break;
         };
         after = last.to_vec();
-        for (id, bytes) in rows {
-            let decoded = Decoded::new(&bytes)?;
+        for (id, bytes, signer) in rows {
+            let decoded = Decoded::new(&bytes, signer.map(DeviceId::from_bytes))?;
             history::check_id(id, decoded.id)?;
             decoded.refresh_metadata(connection, board).await?;
             if matches!(

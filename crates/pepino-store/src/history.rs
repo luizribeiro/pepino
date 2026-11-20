@@ -77,6 +77,7 @@ pub enum EventClassification {
     UnknownEvent,
     UnknownValue,
     Invalid,
+    ForgedAuthor,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -115,17 +116,28 @@ impl StoredEvent {
         let decoded = Envelope::decode(&self.bytes)?;
         check_id(self.id, decoded.id())?;
         let (event, tasks) = match &decoded {
-            DecodeOutcome::Known(envelope) => (
-                Some(envelope.event().clone()),
-                envelope
-                    .created_task()
-                    .into_iter()
-                    .chain(envelope.event().referenced_tasks())
-                    .collect(),
-            ),
-            DecodeOutcome::UnknownEvent { .. }
+            DecodeOutcome::Known(envelope)
+                if self.classification != EventClassification::ForgedAuthor =>
+            {
+                (
+                    Some(envelope.event().clone()),
+                    envelope
+                        .created_task()
+                        .into_iter()
+                        .chain(envelope.event().referenced_tasks())
+                        .collect(),
+                )
+            }
+            DecodeOutcome::Known(_)
+            | DecodeOutcome::UnknownEvent { .. }
             | DecodeOutcome::UnknownValue { .. }
-            | DecodeOutcome::InvalidEvent { .. } => metadata::skipped(&self.bytes),
+            | DecodeOutcome::InvalidEvent { .. } => {
+                let (event, tasks) = metadata::skipped(&self.bytes);
+                (
+                    event.filter(|_| self.classification != EventClassification::ForgedAuthor),
+                    tasks,
+                )
+            }
             DecodeOutcome::UnknownVersion { .. } => (None, Vec::new()),
         };
         Ok(HistoryEvent {
