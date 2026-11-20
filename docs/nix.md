@@ -22,6 +22,39 @@ use its built-in defaults. User config, `PPN_*` environment variables and CLI fl
 can override system-wide settings. Run `ppn config show` to see effective values
 and their sources.
 
+## Laptop with a user daemon
+
+This NixOS example uses mDNS on the local network. Use the same `network` value
+on every linked host.
+
+```nix
+{
+  programs.pepino = {
+    enable = true;
+    daemon.enable = true;
+    network = "release-team";
+    relayUrls = [ ];
+    mdns = true;
+    port = 44124;
+  };
+  networking.firewall.allowedUDPPorts = [ 44124 5353 ];
+}
+```
+
+Run `ppn init` for a new identity, or follow the request and grant workflow to
+join an existing one. The NixOS user manager starts `pepino.service` with the
+session. It skips startup until the effective data directory contains
+`local.json`. A user timer checks again every five seconds, so initialisation
+or joining takes effect in the current session. Check with
+`systemctl --user status pepino.service` or `ppn daemon status`.
+[Link a second device](devices.md)
+
+Use the same `programs.pepino` block on nix-darwin and configure the firewall
+separately. The launchd agent `org.nixos.pepino` runs at login and checks for
+initialisation every five seconds. Both platforms render
+`daemon.autostart = false` when the user daemon is enabled. Keep that value
+when overriding settings in user configuration.
+
 ## Always-on host
 
 ```nix
@@ -78,6 +111,7 @@ when running both on the same host.
 | Option | Type | Default | Purpose |
 | --- | --- | --- | --- |
 | `programs.pepino.enable` | Boolean | `false` | Install the client and its system-wide config. |
+| `programs.pepino.daemon.enable` | Boolean | `false` | Start the user sync daemon with the login session. Requires the client to be enabled. |
 | `services.pepino.enable` | Boolean | `false` | Provision the always-on node's account, state and config. |
 | Both: `package` | Package | Pepino's flake package for the host system | Package for the client or always-on node. |
 | Both: `network` | String | Unset | Network name. |
