@@ -56,7 +56,7 @@ fn append_remote(data: &std::path::Path, event: pepino_core::Event) {
     use pepino_store::Store;
 
     seed_tasks(data, async |app| {
-        let board = app.local_state().board_id;
+        let board = app.local_state().board_id();
         let store = Store::open(data.join("pepino.sqlite")).await.unwrap();
         let mut clock = Clock::from_hlc(store.latest_hlc(board).await.unwrap().unwrap());
         let event = Envelope::new(
