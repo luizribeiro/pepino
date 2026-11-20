@@ -1,3 +1,7 @@
+use crate::Status;
+
+use super::ErrorKind;
+
 macro_rules! keywords {
     ($visibility:vis enum $name:ident { $($variant:ident => $word:literal),+ $(,)? }) => {
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -35,6 +39,15 @@ keywords! {
     }
 }
 
+keywords! {
+    pub enum State {
+        Blocked => "blocked",
+        Ready => "ready",
+        Open => "open",
+        Closed => "closed",
+    }
+}
+
 impl Builtin {
     pub(super) fn find(key: &str) -> Option<Self> {
         Self::WORDS
@@ -55,10 +68,6 @@ impl Builtin {
             .map(|builtin| (builtin, key != lower))
     }
 }
-
-use crate::Status;
-
-use super::ErrorKind;
 
 pub(super) const STATUSES: &[(Status, &str)] = &[
     (Status::Todo, status_word(Status::Todo)),
@@ -81,18 +90,22 @@ pub(super) fn read<T: Clone>(
     words: &[(T, &str)],
     unknown: impl FnOnce(String) -> ErrorKind,
 ) -> Result<T, ErrorKind> {
-    for (item, word) in words {
+    lookup(&value, words).unwrap_or_else(|| Err(unknown(value)))
+}
+
+pub(super) fn lookup<T: Clone>(value: &str, words: &[(T, &str)]) -> Option<Result<T, ErrorKind>> {
+    words.iter().find_map(|(item, word)| {
         if value == *word {
-            return Ok(item.clone());
-        }
-        if value.eq_ignore_ascii_case(word) {
-            return Err(ErrorKind::LowercaseKeyword {
-                value,
+            Some(Ok(item.clone()))
+        } else if value.eq_ignore_ascii_case(word) {
+            Some(Err(ErrorKind::LowercaseKeyword {
+                value: value.into(),
                 lowercase: (*word).into(),
-            });
+            }))
+        } else {
+            None
         }
-    }
-    Err(unknown(value))
+    })
 }
 
 pub(super) fn accepted<T>(words: &[(T, &str)]) -> String {

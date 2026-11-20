@@ -1,6 +1,6 @@
-use crate::Status;
+use crate::{FieldName, Status};
 
-use super::ErrorKind;
+use super::keywords::{Builtin, State};
 pub use chrono::NaiveDate as Date;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -23,7 +23,7 @@ pub enum Clause {
     Text(String),
     View(String),
     Is(Vec<State>),
-    Has(Vec<String>),
+    Has(Vec<PresenceField>),
     Tag(Vec<String>),
     Status(Vec<Status>),
     Assignee(Vec<Assignee>),
@@ -45,29 +45,39 @@ pub enum Assignee {
 
 pub(super) const ME: &str = "me";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum State {
-    Blocked,
-    Ready,
-    Open,
-    Closed,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PresenceField {
+    Due,
+    Parent,
+    Assignee,
+    Priority,
+    Tag,
+    Description,
+    Custom(FieldName),
 }
 
-impl State {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Blocked => "blocked",
-            Self::Ready => "ready",
-            Self::Open => "open",
-            Self::Closed => "closed",
-        }
-    }
+impl PresenceField {
+    pub(super) const WORDS: &'static [(Self, &'static str)] = &[
+        (Self::Due, Builtin::Due.as_str()),
+        (Self::Parent, Builtin::Parent.as_str()),
+        (Self::Assignee, Builtin::Assignee.as_str()),
+        (Self::Priority, Builtin::Priority.as_str()),
+        (Self::Tag, Builtin::Tag.as_str()),
+        (Self::Description, Self::DESCRIPTION),
+    ];
 
-    pub(super) fn parse(value: String) -> Result<Self, ErrorKind> {
-        [Self::Blocked, Self::Ready, Self::Open, Self::Closed]
-            .into_iter()
-            .find(|state| state.as_str() == value)
-            .ok_or(ErrorKind::UnknownState { value })
+    const DESCRIPTION: &str = "description";
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Due => Builtin::Due.as_str(),
+            Self::Parent => Builtin::Parent.as_str(),
+            Self::Assignee => Builtin::Assignee.as_str(),
+            Self::Priority => Builtin::Priority.as_str(),
+            Self::Tag => Builtin::Tag.as_str(),
+            Self::Description => Self::DESCRIPTION,
+            Self::Custom(field) => field.as_str(),
+        }
     }
 }
 

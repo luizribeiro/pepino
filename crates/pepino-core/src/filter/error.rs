@@ -54,9 +54,15 @@ pub enum ErrorKind {
     UnknownStatus { value: String },
     #[error("invalid tag {value:?}. Tags must match [a-z][a-z0-9_./-]*")]
     InvalidTag { value: String },
-    #[error("unknown state {value:?}; use blocked, ready, open, or closed")]
+    #[error(
+        "unknown state {value:?}. Use {}",
+        super::keywords::accepted(super::State::WORDS)
+    )]
     UnknownState { value: String },
-    #[error("unsupported presence field {field:?}; use due, parent, assignee, or a custom field")]
+    #[error(
+        "unsupported presence field {field:?}. Use {} or a custom field",
+        super::keywords::accepted(super::PresenceField::WORDS)
+    )]
     UnsupportedPresence { field: String },
     #[error(
         "invalid date {value:?}; use YYYY-MM-DD, today, tomorrow, yesterday, a weekday, or an offset such as +3d"

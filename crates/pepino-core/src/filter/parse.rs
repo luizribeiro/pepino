@@ -4,8 +4,8 @@ use super::ast::ME;
 use super::keywords::{self, Builtin};
 
 use super::{
-    Assignee, Clause, Comparison, Date, ErrorKind, Filter, Operator, ParseError, Position, State,
-    Term, Value, date, lex,
+    Assignee, Clause, Comparison, Date, ErrorKind, Filter, Operator, ParseError, Position,
+    PresenceField, State, Term, Value, date, lex,
 };
 
 /// Parse whitespace-separated terms using the supplied calendar date.
@@ -152,9 +152,12 @@ fn parse_keyed(key: String, raw: &str, today: Date) -> Located<Clause> {
         Some(Parent) => equal_text().map(Clause::Parent),
         Some(Blocks) => equal_text().map(Clause::Blocks),
         Some(BlockedBy) => equal_text().map(Clause::BlockedBy),
-        Some(Is) => {
-            alternatives(raw, &key, false, |operand| State::parse(operand.value)).map(Clause::Is)
-        }
+        Some(Is) => alternatives(raw, &key, false, |operand| {
+            keywords::read(operand.value, State::WORDS, |value| {
+                ErrorKind::UnknownState { value }
+            })
+        })
+        .map(Clause::Is),
         Some(Has) => {
             alternatives(raw, &key, false, |operand| parse_presence(operand.value)).map(Clause::Has)
         }
@@ -191,12 +194,16 @@ fn parse_assignee(operand: Operand) -> Assignee {
     }
 }
 
-fn parse_presence(field: String) -> Result<String, ErrorKind> {
-    if matches!(
-        Builtin::find(&field),
-        None | Some(Builtin::Due | Builtin::Parent | Builtin::Assignee)
-    ) {
-        return Ok(field);
+fn parse_presence(field: String) -> Result<PresenceField, ErrorKind> {
+    if let Some(known) = keywords::lookup(&field, PresenceField::WORDS) {
+        return known;
+    }
+    if Builtin::find(&field).is_none()
+        && let Ok(name) = FieldName::new(field.as_str())
+        && name.is_custom()
+        && Builtin::correction(&field).is_none()
+    {
+        return Ok(PresenceField::Custom(name));
     }
     Err(ErrorKind::UnsupportedPresence { field })
 }

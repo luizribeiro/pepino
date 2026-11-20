@@ -1,5 +1,7 @@
 use proptest::{collection::vec, prelude::*, sample::select};
 
+use crate::FieldName;
+
 use super::keywords::STATUSES;
 use super::*;
 
@@ -34,15 +36,21 @@ fn named(names: Vec<&'static str>) -> impl Strategy<Value = String> {
 }
 
 fn clause() -> impl Strategy<Value = Clause> {
-    let states = select(vec![
-        State::Blocked,
-        State::Ready,
-        State::Open,
-        State::Closed,
-    ]);
+    let states = select(
+        State::WORDS
+            .iter()
+            .map(|(state, _)| *state)
+            .collect::<Vec<_>>(),
+    );
     let presence = prop_oneof![
-        named(vec!["due", "parent", "assignee"]),
-        atom().prop_map(|name| format!("field {name}")),
+        select(
+            PresenceField::WORDS
+                .iter()
+                .map(|(field, _)| field.clone())
+                .collect::<Vec<_>>()
+        ),
+        "custom_[a-z0-9_-]{0,56}"
+            .prop_map(|name| PresenceField::Custom(FieldName::new(name).unwrap())),
     ];
     let custom_key = prop_oneof![Just("priority".into()), "custom_[a-z0-9_-]{0,56}",];
     let dates = prop_oneof![

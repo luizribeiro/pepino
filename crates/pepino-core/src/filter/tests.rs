@@ -209,38 +209,55 @@ fn view_names_are_validated() {
 
 #[test]
 fn predicates_accept_negation_and_alternatives() {
-    let filter =
-        parse(r#"is:blocked,ready -is:open,closed has:due,parent -has:assignee,"plant variety""#)
-            .unwrap();
-    assert_eq!(
-        filter.terms()[0].clause,
-        Clause::Is(vec![State::Blocked, State::Ready])
-    );
-    assert_eq!(
-        filter.terms()[1].clause,
-        Clause::Is(vec![State::Open, State::Closed])
-    );
-    assert_eq!(
-        filter.terms()[2].clause,
-        Clause::Has(vec!["due".into(), "parent".into()])
-    );
-    assert_eq!(
-        filter.terms()[3].clause,
-        Clause::Has(vec!["assignee".into(), "plant variety".into()])
-    );
-    assert!(filter.terms()[1].negated && filter.terms()[3].negated);
+    use crate::FieldName;
+
+    let filter = parse("is:blocked,ready -is:open,closed has:due,parent,tag,description -has:assignee,priority,plant_variety").unwrap();
+    let expected = [
+        (false, Clause::Is(vec![State::Blocked, State::Ready])),
+        (true, Clause::Is(vec![State::Open, State::Closed])),
+        (
+            false,
+            Clause::Has(vec![
+                PresenceField::Due,
+                PresenceField::Parent,
+                PresenceField::Tag,
+                PresenceField::Description,
+            ]),
+        ),
+        (
+            true,
+            Clause::Has(vec![
+                PresenceField::Assignee,
+                PresenceField::Priority,
+                PresenceField::Custom(FieldName::new("plant_variety").unwrap()),
+            ]),
+        ),
+    ]
+    .map(|(negated, clause)| Term { negated, clause });
+    assert_eq!(filter.terms(), expected);
     assert_eq!(
         parse("is:stalled").unwrap_err().kind,
         ErrorKind::UnknownState {
             value: "stalled".into()
         }
     );
-    assert_eq!(
-        parse("has:priority").unwrap_err().kind,
-        ErrorKind::UnsupportedPresence {
-            field: "priority".into()
-        }
-    );
+    for (input, value, lowercase) in [("is:OPEN", "OPEN", "open"), ("has:Due", "Due", "due")] {
+        assert_eq!(
+            parse(input).unwrap_err().kind,
+            ErrorKind::LowercaseKeyword {
+                value: value.into(),
+                lowercase: lowercase.into(),
+            }
+        );
+    }
+    for field in ["status", "id", "title", "statuses", "plant variety"] {
+        assert_eq!(
+            parse_argv(&[format!("has:{field}")]).unwrap_err().kind,
+            ErrorKind::UnsupportedPresence {
+                field: field.into()
+            }
+        );
+    }
     assert_eq!(
         parse("is:>open").unwrap_err().kind,
         ErrorKind::UnsupportedComparison { key: "is".into() }

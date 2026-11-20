@@ -21,14 +21,12 @@ impl fmt::Display for Term {
                 f.write_char('@')?;
                 atom(f, name)
             }
-            Clause::Is(states) => {
-                f.write_str("is:")?;
-                joined(f, states, ",", |f, state| f.write_str(state.as_str()))
-            }
-            Clause::Has(fields) => {
-                f.write_str("has:")?;
-                joined(f, fields, ",", |f, field| atom(f, field))
-            }
+            Clause::Is(states) => keyed(f, Builtin::Is, states, |f, state| {
+                f.write_str(state.as_str())
+            }),
+            Clause::Has(fields) => keyed(f, Builtin::Has, fields, |f, field| {
+                f.write_str(field.as_str())
+            }),
             Clause::Tag(tags) => texts(f, Builtin::Tag, tags),
             Clause::Status(statuses) => keyed(f, Builtin::Status, statuses, |f, status| {
                 f.write_str(status_word(*status))
