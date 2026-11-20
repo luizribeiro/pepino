@@ -33,6 +33,8 @@ pub enum Error {
     StatusLagged(u64),
     #[error("invalid member info: {0}")]
     Member(String),
+    #[error("this device lacks permission for the board operation")]
+    NotPermitted,
     #[error("device member info has expired")]
     MemberExpired,
     #[error("the board's event stream has already been taken")]

@@ -61,6 +61,10 @@ async fn two_devices_exchange_events_and_a_late_member_gets_history() {
     ));
     let mut board_b = enroll(&board_a, &b, Role::Write).await;
     let mut events_b = board_b.events().unwrap();
+    assert!(matches!(
+        board_b.add_member(&member, Role::Write).await,
+        Err(Error::NotPermitted)
+    ));
     let second = board_b.publish(REVIEW.to_vec()).await.unwrap();
     let third = board_a.publish(DONE.to_vec()).await.unwrap();
     let history = [

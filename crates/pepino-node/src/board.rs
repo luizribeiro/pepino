@@ -12,7 +12,7 @@ use p2panda::{
 use pepino_core::{BoardId, EventId};
 use tokio::{
     runtime::Handle,
-    sync::{mpsc, oneshot, watch},
+    sync::{Mutex, mpsc, oneshot, watch},
     task::JoinHandle,
     time::timeout,
 };
@@ -47,6 +47,7 @@ struct BoardConfig {
 pub struct BoardHandle {
     id: BoardId,
     pub(crate) node: Weak<p2panda::Node>,
+    pub(crate) membership_lock: Arc<Mutex<()>>,
     runtime: Handle,
     joined: watch::Receiver<JoinState>,
     replaying: watch::Receiver<bool>,
@@ -201,6 +202,7 @@ impl BoardHandle {
         Self {
             id,
             node: Arc::downgrade(node),
+            membership_lock: Arc::default(),
             runtime: Handle::current(),
             joined: state,
             replaying,

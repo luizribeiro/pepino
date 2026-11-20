@@ -1,4 +1,4 @@
-use p2panda::AccessLevel;
+use p2panda::{AccessLevel, spaces::MemberId};
 use pepino_core::DeviceId;
 
 use crate::{BoardHandle, Error, Node};
@@ -51,16 +51,14 @@ impl BoardHandle {
     pub async fn add_member(&self, info: &MemberInfo, role: Role) -> Result<(), Error> {
         let member = info.member()?;
         let id = member.id();
-        let space = self.space()?;
+        let space = self.space_for_management()?;
         let node = self.node.upgrade().ok_or(Error::Closed)?;
+        let lock = self.membership_lock.clone();
         self.run(async move {
-            match space
-                .actors()
-                .await
-                .map_err(Error::node)?
-                .into_iter()
-                .find(|(actor, _)| actor.as_bytes() == id.as_bytes())
-            {
+            let _guard = lock.lock().await;
+            let actors = space.actors().await.map_err(Error::node)?;
+            require_manager(&actors, node.id())?;
+            match actors.into_iter().find(|(actor, _)| *actor == id) {
                 Some((_, level)) if level == role.level() => Ok(()),
                 Some(_) => Err(Error::Member(
                     "device already has a different direct role".into(),
@@ -72,6 +70,15 @@ impl BoardHandle {
             }
         })
         .await
+    }
+
+    fn space_for_management(
+        &self,
+    ) -> Result<std::sync::Arc<p2panda::spaces::Space<crate::receipt::Payload>>, Error> {
+        self.space().map_err(|error| match error {
+            Error::NotJoined => Error::NotPermitted,
+            other => other,
+        })
     }
 
     pub async fn members(&self) -> Result<Vec<(DeviceId, Role)>, Error> {
@@ -88,6 +95,14 @@ impl BoardHandle {
             Ok(members)
         })
         .await
+    }
+}
+
+fn require_manager(actors: &[(MemberId, AccessLevel)], device: MemberId) -> Result<(), Error> {
+    if actors.contains(&(device, AccessLevel::Manage)) {
+        Ok(())
+    } else {
+        Err(Error::NotPermitted)
     }
 }
 
