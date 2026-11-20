@@ -29,6 +29,14 @@ fn tree_shows_a_forest_and_omits_closed_tasks_by_default() {
     assert_eq!(json["nodes"].as_array().unwrap().len(), 3);
     assert_eq!(json["nodes"][0]["depth"], 0);
     assert_eq!(json["nodes"][0]["task"]["parent"], project.parent);
+    assert_eq!(
+        json["nodes"][0]["task"]["blocks"],
+        serde_json::json!([project.downstream])
+    );
+    assert_eq!(
+        json["nodes"][0]["task"]["tags"],
+        serde_json::json!(["hardware"])
+    );
     assert_eq!(json["nodes"][1]["task"]["id"], closed);
     assert_eq!(json["nodes"][2]["depth"], 2);
     assert_eq!(json["nodes"][2]["task"]["id"], leaf);

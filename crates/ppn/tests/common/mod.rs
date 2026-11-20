@@ -211,22 +211,73 @@ pub struct Project {
 }
 
 pub fn small_project(sandbox: &ConfigSandbox) -> Project {
-    let parent = create_task(sandbox, "Renovate the greenhouse", &["--tag", "garden"]);
-    let blocker = create_task(
-        sandbox,
-        "Order stainless fittings",
-        &["--tag", "hardware", "--parent", &parent],
-    );
-    let downstream = create_task(
-        sandbox,
-        "Test the new latch",
-        &["--parent", &parent, "--blocked-by", &blocker],
-    );
-    Project {
-        parent,
-        blocker,
-        downstream,
-    }
+    seed_tasks(&sandbox.home.path().join("board"), async |app| {
+        let parent = seed_task(
+            app,
+            "Renovate the greenhouse",
+            Some("garden"),
+            None,
+            None,
+            SEED_NOW,
+        )
+        .await;
+        let blocker = seed_task(
+            app,
+            "Order stainless fittings",
+            Some("hardware"),
+            Some(&parent),
+            None,
+            SEED_NOW + 1,
+        )
+        .await;
+        let downstream = seed_task(
+            app,
+            "Test the new latch",
+            None,
+            Some(&parent),
+            Some(&blocker),
+            SEED_NOW + 2,
+        )
+        .await;
+        Project {
+            parent,
+            blocker,
+            downstream,
+        }
+    })
+}
+
+async fn seed_task(
+    app: &mut pepino_app::App,
+    title: &str,
+    tag: Option<&str>,
+    parent: Option<&str>,
+    blocker: Option<&str>,
+    now: u64,
+) -> String {
+    use pepino_app::{Request, Response, WriteRequest};
+
+    let mut request = ppn::write_args::new_task(title.into());
+    let WriteRequest::AddTask {
+        tags,
+        parent: link,
+        blocked_by,
+        ..
+    } = &mut request
+    else {
+        panic!("new_task must build an add request");
+    };
+    tags.extend(tag.map(str::to_owned));
+    *link = parent.map(str::to_owned);
+    blocked_by.extend(blocker.map(str::to_owned));
+    let response = app.handle(Request::Write(request), now).await.unwrap();
+    let Response::Write {
+        created: Some(id), ..
+    } = response
+    else {
+        panic!("expected a created task, got {response:?}");
+    };
+    id
 }
 
 pub fn task_error(output: Output, status: i32, code: &str) -> Value {
