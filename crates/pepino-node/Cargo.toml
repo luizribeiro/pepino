@@ -11,6 +11,7 @@ workspace = true
 ciborium = "0.2"
 data-encoding = "2"
 p2panda.workspace = true
+p2panda-core.workspace = true
 pepino-core = { path = "../pepino-core" }
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
