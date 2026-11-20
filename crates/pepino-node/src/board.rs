@@ -9,6 +9,7 @@ use p2panda::{
     spaces::{PublishSpaceError, Space, SpaceSubscription, SpacesManagerError},
     streams::StreamFrom,
 };
+use p2panda_auth::validation::WriteError;
 use pepino_core::{BoardId, EventId};
 use tokio::{
     runtime::Handle,
@@ -18,7 +19,7 @@ use tokio::{
 };
 
 use crate::{
-    BoardEvent, BoardEvents, Error, Node, NodeEvent,
+    BoardEvent, BoardEvents, Error, MemberState, Node, NodeEvent,
     ack::AckStore,
     board_lease::BoardLease,
     board_task::{BoardTask, JoinState},
@@ -47,6 +48,7 @@ struct BoardConfig {
 pub struct BoardHandle {
     id: BoardId,
     pub(crate) node: Weak<p2panda::Node>,
+    pub(crate) membership_pool: sqlx::SqlitePool,
     pub(crate) membership_lock: Arc<Mutex<()>>,
     runtime: Handle,
     joined: watch::Receiver<JoinState>,
@@ -183,6 +185,7 @@ impl BoardHandle {
         });
         let lease = lease.attached();
         let (events_tx, events) = DeliveryWriter::start(id, acks.spool.clone(), acks.clone());
+        let membership_pool = acks.pool.clone();
         let (ready, state) = watch::channel(JoinState::Pending);
         let (replay_status, replaying) = watch::channel(replaying);
         let (stop, stop_rx) = oneshot::channel();
@@ -202,6 +205,7 @@ impl BoardHandle {
         Self {
             id,
             node: Arc::downgrade(node),
+            membership_pool,
             membership_lock: Arc::default(),
             runtime: Handle::current(),
             joined: state,
@@ -270,13 +274,22 @@ impl BoardHandle {
     /// Retrying may create a second operation. The application store deduplicates
     /// identical payloads by their content-derived event ID.
     ///
+    /// Read-only members receive [`Error::NotPermitted`]. Removed devices receive [`Error::Removed`].
+    ///
     /// A local replay in progress yields [`Error::ReplayInProgress`] immediately.
     /// Use [`Self::wait_until_replayed`] to wait for the board to become writable.
     pub async fn publish(&self, bytes: Vec<u8>) -> Result<EventId, Error> {
-        if *self.replaying.borrow() {
+        let replaying = *self.replaying.borrow();
+        let space = self.space();
+        if (replaying || matches!(space, Err(Error::NotJoined)))
+            && self.member_state().await? == MemberState::Removed
+        {
+            return Err(Error::Removed);
+        }
+        if replaying {
             return Err(Error::ReplayInProgress);
         }
-        let space = self.space().map_err(|error| match error {
+        let space = space.map_err(|error| match error {
             Error::NotJoined => error,
             other => Error::PublishNotSubmitted(other.to_string()),
         })?;
@@ -322,6 +335,14 @@ impl BoardHandle {
 
 fn publish_error(error: PublishSpaceError) -> Error {
     match error {
+        PublishSpaceError::Validation {
+            err: WriteError::UnrecognisedActor,
+            ..
+        } => Error::Removed,
+        PublishSpaceError::Validation {
+            err: WriteError::InsufficientAccess,
+            ..
+        } => Error::NotPermitted,
         PublishSpaceError::Space(_) | PublishSpaceError::Submit(_) => {
             Error::PublishUnconfirmed(error.to_string())
         }

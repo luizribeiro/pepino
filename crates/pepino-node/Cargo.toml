@@ -11,6 +11,7 @@ workspace = true
 ciborium = "0.2"
 data-encoding = "2"
 p2panda.workspace = true
+p2panda-auth.workspace = true
 p2panda-core.workspace = true
 pepino-core = { path = "../pepino-core" }
 serde = { version = "1", features = ["derive"] }
@@ -18,6 +19,7 @@ serde_bytes = "0.11"
 tempfile = "3"
 thiserror = "2"
 p2panda-store.workspace = true
+p2panda-spaces.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
 futures-util.workspace = true

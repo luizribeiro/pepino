@@ -10,7 +10,7 @@ mod scale;
 mod support;
 
 use futures_util::StreamExt;
-use pepino_node::{Error, MemberInfo, NodeEvent, OpenBoardOptions, Role};
+use pepino_node::{Error, MemberInfo, MemberState, NodeEvent, OpenBoardOptions, Role};
 use std::collections::BTreeSet;
 use support::*;
 use tokio::time::timeout;
@@ -132,7 +132,7 @@ async fn two_devices_exchange_events_and_a_late_member_gets_history() {
     expect(&mut events_c, &history).await;
     assert!(matches!(
         board_c.publish(DONE.to_vec()).await,
-        Err(Error::PublishNotSubmitted(_))
+        Err(Error::NotPermitted)
     ));
     board_a.set_role(c.device_id(), Role::Write).await.unwrap();
     assert!(
@@ -153,6 +153,15 @@ async fn two_devices_exchange_events_and_a_late_member_gets_history() {
         board_a.members().await.unwrap(),
         vec![(b.device_id(), Role::Manage)]
     );
+    let states = board_a.member_states().await.unwrap();
+    assert_eq!(states[&a.device_id()], MemberState::Removed);
+    assert_eq!(states[&c.device_id()], MemberState::Removed);
+    assert_eq!(states[&b.device_id()], MemberState::Member(Role::Manage));
+    assert_eq!(board_a.member_state().await.unwrap(), MemberState::Removed);
+    assert!(matches!(
+        board_a.publish(PLAN.to_vec()).await,
+        Err(Error::Removed)
+    ));
     c.shutdown().await.unwrap();
     b.shutdown().await.unwrap();
     a.shutdown().await.unwrap();

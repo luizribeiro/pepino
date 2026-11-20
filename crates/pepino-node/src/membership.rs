@@ -1,5 +1,13 @@
-use p2panda::{AccessLevel, spaces::MemberId};
-use pepino_core::DeviceId;
+use std::collections::BTreeMap;
+
+use p2panda::{AccessLevel, Hash, operation::Extensions, spaces::MemberId};
+use p2panda_spaces::SpacesStoreState;
+use p2panda_store::{
+    SqliteStore,
+    spaces::{SpacesStore, SqliteSpacesStore},
+};
+use pepino_core::{BoardId, DeviceId};
+use sqlx::SqlitePool;
 
 use crate::{BoardHandle, Error, Node};
 
@@ -16,6 +24,43 @@ pub enum Role {
     Manage,
 }
 
+/// The state of a device in the board's locally materialized membership.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum MemberState {
+    Member(Role),
+    Removed,
+    NotYetAdded,
+}
+
+/// Current members and devices recorded by p2panda as removed.
+pub type MemberStates = BTreeMap<DeviceId, MemberState>;
+
+pub(crate) async fn read_members(pool: SqlitePool, board: BoardId) -> Result<MemberStates, Error> {
+    let store = SqliteSpacesStore::<Extensions>::new(SqliteStore::from_pool(pool));
+    let state: Option<SpacesStoreState<()>> = store
+        .get_space_state(&Hash::from_bytes(*board.as_bytes()))
+        .await
+        .map_err(Error::storage)?;
+    let mut members = MemberStates::new();
+    if let Some(state) = state {
+        for device in state.removed {
+            members.insert(device_id(device), MemberState::Removed);
+        }
+        for (device, access) in state.groups_y.members(state.group_id) {
+            members.insert(
+                device_id(device),
+                MemberState::Member(Role::from_level(access.level)),
+            );
+        }
+    }
+    Ok(members)
+}
+
+fn device_id(member: MemberId) -> DeviceId {
+    DeviceId::from_bytes(*member.as_bytes())
+}
+
 impl Role {
     fn level(self) -> AccessLevel {
         match self {
@@ -26,7 +71,7 @@ impl Role {
         }
     }
 
-    fn from_level(level: AccessLevel) -> Self {
+    pub(crate) fn from_level(level: AccessLevel) -> Self {
         match level {
             AccessLevel::Pull => Self::Pull,
             AccessLevel::Read => Self::Read,
@@ -126,8 +171,7 @@ impl BoardHandle {
     /// Leave the board. p2panda 0.8.1 requires manager access for self-removal.
     pub async fn leave(&self) -> Result<(), Error> {
         let device = self.node.upgrade().ok_or(Error::Closed)?.id();
-        self.remove_member(DeviceId::from_bytes(*device.as_bytes()), false)
-            .await
+        self.remove_member(device_id(device), false).await
     }
 
     fn space_for_management(
@@ -139,6 +183,24 @@ impl BoardHandle {
         })
     }
 
+    /// Read the current membership, including removed devices.
+    pub async fn member_states(&self) -> Result<MemberStates, Error> {
+        self.run(read_members(self.membership_pool.clone(), self.id()))
+            .await
+    }
+
+    /// Read this device's state, including before it joins or after it is removed.
+    pub async fn member_state(&self) -> Result<MemberState, Error> {
+        let id = self.node.upgrade().ok_or(Error::Closed)?.id();
+        Ok(self
+            .member_states()
+            .await?
+            .get(&device_id(id))
+            .copied()
+            .unwrap_or(MemberState::NotYetAdded))
+    }
+
+    /// List the active members and their roles.
     pub async fn members(&self) -> Result<Vec<(DeviceId, Role)>, Error> {
         let space = self.space()?;
         self.run(async move {
@@ -147,7 +209,7 @@ impl BoardHandle {
                 .await
                 .map_err(Error::node)?
                 .into_iter()
-                .map(|(id, role)| (DeviceId::from_bytes(*id.as_bytes()), Role::from_level(role)))
+                .map(|(id, role)| (device_id(id), Role::from_level(role)))
                 .collect();
             members.sort_unstable_by_key(|(device, _)| *device);
             Ok(members)

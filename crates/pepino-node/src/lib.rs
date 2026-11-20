@@ -20,7 +20,7 @@ pub use ack::Ack;
 pub use board::{BoardHandle, OpenBoardOptions};
 pub use credentials::DeviceCredentials;
 pub use events::{BoardEvent, BoardEvents};
-pub use membership::{MemberInfo, Role};
+pub use membership::{MemberInfo, MemberState, MemberStates, Role};
 pub use node::Node;
 pub use settings::{BootstrapNode, MdnsMode, NodeSettings, peer_relay_url};
 pub use status::{NodeEvent, NodeEvents, SyncCounts};
@@ -55,6 +55,8 @@ pub enum Error {
     PublishUnconfirmed(String),
     #[error("this device has not joined the board")]
     NotJoined,
+    #[error("this device was removed from the board")]
+    Removed,
     #[error("processing board operation {id}: {details}")]
     Processing {
         id: pepino_core::EventId,
