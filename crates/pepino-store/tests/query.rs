@@ -53,6 +53,7 @@ impl ViewResolver for TestViews {
                     ("garden-open", "tag:garden is:open"),
                     ("weekend", "@garden-open due:2026-11-20"),
                     ("empty", ""),
+                    ("local", "-board:elsewhere tag:garden"),
                     ("self", "@self"),
                     ("entry", "@cycle-a"),
                     ("cycle-a", "@cycle-b"),

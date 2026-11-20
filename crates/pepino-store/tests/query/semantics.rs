@@ -138,3 +138,8 @@ fn views_expand_recursively_and_negate_the_entire_saved_filter() {
     let task = board().task(id(1)).unwrap();
     assert!(matches(board(), task, &query(&filter)).unwrap());
 }
+
+#[test]
+fn board_terms_are_ignored_at_each_level_even_when_negated() {
+    check("board:elsewhere -board:garden @local", &[0, 2, 7, 11]);
+}
