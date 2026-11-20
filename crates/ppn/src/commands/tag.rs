@@ -24,11 +24,13 @@ pub fn run(
     context: &Context<'_>,
     Args { task, tags, remove }: Args,
 ) -> Result<CommandResult, CliError> {
+    let mut client = AppClient::open(context)?;
+    client.check_membership_order(&task, tags.first(), "ppn tag <TASK> <TAG>...")?;
     let (request, verb) = if remove {
         (WriteRequest::RemoveTags { task, tags }, "Untagged")
     } else {
         (WriteRequest::AddTags { task, tags }, "Tagged")
     };
-    let response = AppClient::open(context)?.call(Request::Write(request))?;
+    let response = client.call(Request::Write(request))?;
     write_document(context, response, verb)
 }

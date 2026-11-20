@@ -37,3 +37,24 @@ fn tag_reports_reference_errors() {
             .unwrap()
     });
 }
+
+#[test]
+fn membership_commands_explain_the_single_task_argument() {
+    let (sandbox, _) = task_sandbox();
+    let first = create_task(&sandbox, "Fit the hinges", &[]);
+    let second = create_task(&sandbox, "Replace the latch", &[]);
+    for (name, input) in [("tag", "hardware"), ("assign", "me")] {
+        let args = [name, &first, &second, input];
+        let output = sandbox.command().args(args).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains(&format!("ppn {name} <TASK>")), "{stderr}");
+        let output = sandbox.command().args(args).arg("--json").output().unwrap();
+        assert!(
+            task_error(output, 2, "usage")["hint"]
+                .as_str()
+                .unwrap()
+                .contains("one task first")
+        );
+    }
+}

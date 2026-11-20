@@ -95,6 +95,28 @@ impl AppClient {
         Ok(response.task()?.task.summary.clone())
     }
 
+    pub fn check_membership_order(
+        &mut self,
+        task: &str,
+        value: Option<&String>,
+        usage: &str,
+    ) -> Result<(), CliError> {
+        let Some(reference) = value.filter(|value| {
+            (4..=64).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        }) else {
+            return Ok(());
+        };
+        self.task(task)?;
+        if self.task(reference).is_ok() {
+            return Err(
+                CliError::new(ErrorKind::Usage, format!("{reference} matches a task.")).with_hint(
+                    format!("Use {usage} with one task first, followed by values."),
+                ),
+            );
+        }
+        Ok(())
+    }
+
     pub fn resolve_tasks(&mut self, references: Vec<String>) -> Result<Vec<TaskSummary>, CliError> {
         references.iter().map(|task| self.task(task)).collect()
     }
