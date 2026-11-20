@@ -121,7 +121,7 @@ fn ambiguous_task_prefix_lists_candidates_and_total() {
 #[test]
 fn unknown_saved_view_names_the_failing_reference() {
     check_chain(
-        &query(&filter("@unknown")),
+        &query(&filter("-@unknown")),
         "@missing",
         QueryErrorKind::UnknownView {
             name: "missing".into(),

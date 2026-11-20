@@ -10,6 +10,7 @@ use crate::{BoardView, PrefixResolution, TaskRecord};
 use super::{
     QueryError, QueryErrorKind,
     predicates::{compare, custom, fold, has, is, text_matches, utc_days},
+    saved::SavedViews,
 };
 
 /// Resolves decoded person text to candidate identities.
@@ -82,7 +83,12 @@ impl<'view> Prepared<'view> {
 impl Query<'_> {
     /// Resolves the filter before evaluating any task.
     pub fn prepare<'view>(&self, view: &'view BoardView) -> Result<Prepared<'view>, QueryError> {
-        let predicates = prepare(view, self.filter, &self.context, &mut Vec::new())?;
+        let predicates = prepare(
+            view,
+            self.filter,
+            &self.context,
+            &mut SavedViews::new(self.context.views),
+        )?;
         Ok(Prepared { predicates })
     }
 }
@@ -118,28 +124,23 @@ fn prepare<'a>(
     view: &'a BoardView,
     filter: &Filter,
     context: &Context<'_>,
-    chain: &mut Vec<String>,
+    saved: &mut SavedViews<'_>,
 ) -> Result<Vec<Check<'a>>, QueryError> {
     let mut predicates = Vec::new();
     let mut terms: Vec<_> = filter.terms().iter().collect();
     terms.sort_by_cached_key(|term| term.to_string());
     for term in terms {
-        let at_term = |kind| QueryError {
-            term: term.to_string(),
-            kind,
-            view_chain: chain.clone(),
-        };
         let predicate = match &term.clause {
             Clause::Board(_) => continue,
             Clause::View(name) => {
-                let nested = resolve_view(context, chain, name).map_err(at_term)?;
-                chain.push(name.clone());
-                let nested = prepare(view, &nested, context, chain)?;
-                chain.pop();
+                let nested = saved.expand(term, name, |saved, nested| {
+                    prepare(view, nested, context, saved)
+                })?;
                 Box::new(move |task: &TaskRecord| all_match(&nested, task)) as Predicate<'a>
             }
             clause => {
-                let Some(predicate) = prepare_clause(view, clause, context).map_err(at_term)?
+                let Some(predicate) = prepare_clause(view, clause, context)
+                    .map_err(|kind| saved.error(term, kind))?
                 else {
                     continue;
                 };
@@ -152,22 +153,6 @@ fn prepare<'a>(
         });
     }
     Ok(predicates)
-}
-
-fn resolve_view(
-    context: &Context<'_>,
-    chain: &[String],
-    name: &str,
-) -> Result<Filter, QueryErrorKind> {
-    if chain.iter().any(|active| active == name) {
-        return Err(QueryErrorKind::ViewCycle {
-            chain: chain.iter().cloned().chain([name.to_owned()]).collect(),
-        });
-    }
-    context
-        .views
-        .resolve(name)
-        .ok_or_else(|| QueryErrorKind::UnknownView { name: name.into() })
 }
 
 fn prepare_clause<'a>(

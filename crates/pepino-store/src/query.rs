@@ -3,6 +3,7 @@
 mod error;
 mod eval;
 mod predicates;
+mod saved;
 mod sort;
 
 pub use error::{QueryError, QueryErrorKind};
