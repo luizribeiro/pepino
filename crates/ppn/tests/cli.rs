@@ -1297,3 +1297,32 @@ fn task_flags_round_trip_through_add_show_and_status() {
         4
     );
 }
+
+#[test]
+fn simultaneous_add_processes_share_one_board() {
+    use std::process::Stdio;
+    let (sandbox, _) = task_sandbox();
+    let spawn = |title| {
+        sandbox
+            .command()
+            .args(["add", title, "--json"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
+    let first = spawn("Inspect the greenhouse roof");
+    let second = spawn("Replace the broken panel");
+    let first = as_json(&success(first.wait_with_output().unwrap()));
+    let second = as_json(&success(second.wait_with_output().unwrap()));
+    assert_ne!(first["created"], second["created"]);
+    for write in [first, second] {
+        let id = write["created"].as_str().unwrap();
+        let detail = as_json(&sandbox.run(&["show", id, "--json"]));
+        assert_eq!(detail["task"]["id"], id);
+    }
+    assert_eq!(
+        as_json(&sandbox.run(&["status", "--json"]))["counts"]["open"],
+        2
+    );
+}
