@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 ciborium = "0.2"
 getrandom = "0.4"
 pepino-core = { path = "../pepino-core" }

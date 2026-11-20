@@ -78,7 +78,7 @@ async fn exchange(order: [u8; 8]) -> ([TaskRecord; 2], [TaskRecord; 2]) {
         let result = dispatch(
             app,
             json!({
-                "op":"set_fields","task":id,"changes":{"status":{"status":status}}
+                "op":"set_fields","task":id,"changes":{"status":{"type":"status","value":status}}
             }),
         )
         .await;

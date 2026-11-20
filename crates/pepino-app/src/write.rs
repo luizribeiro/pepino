@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use pepino_core::{EdgeKind, Event, FieldName, IdentityId, InitialFields, TaskId};
+use pepino_core::{EdgeKind, Event, FieldName, FieldValue, IdentityId, InitialFields, TaskId};
 use pepino_store::{BoardView, TaskRecord};
 
 use crate::app::invalid;
 use crate::batch::Batch;
 use crate::projection::resolve;
-use crate::{App, AppError, FieldValue, Request};
+use crate::{App, AppError, Request};
 
 impl App {
     pub(super) fn plan_write(
@@ -32,7 +32,7 @@ impl App {
                 let fields = InitialFields {
                     description,
                     status: status.into(),
-                    due,
+                    due: due.map(Into::into),
                     priority,
                     tags: tags.into_iter().collect(),
                     assignees: self.identities(assignees)?,
@@ -172,10 +172,11 @@ impl App {
 fn set_fields(
     batch: &mut Batch,
     current: &TaskRecord,
-    changes: BTreeMap<String, FieldValue>,
+    changes: BTreeMap<String, crate::FieldValue>,
 ) -> Result<(), AppError> {
     batch.affected.insert(current.id);
     for (name, value) in changes {
+        let value = value.into();
         let field = FieldName::new(&name).map_err(|error| invalid(&name, error))?;
         let changed = current_value(current, &field) != value;
         batch.stage(
@@ -247,7 +248,7 @@ fn set_assignees(
 }
 
 fn custom_fields(
-    fields: BTreeMap<String, FieldValue>,
+    fields: BTreeMap<String, crate::FieldValue>,
 ) -> Result<BTreeMap<FieldName, FieldValue>, AppError> {
     fields
         .into_iter()
@@ -260,7 +261,7 @@ fn custom_fields(
                     "expected a custom field name",
                 ));
             }
-            Ok((field, value))
+            Ok((field, value.into()))
         })
         .collect()
 }

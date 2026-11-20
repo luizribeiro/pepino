@@ -10,7 +10,7 @@ const NOW: u64 = 1_795_144_800_000;
 fn operations(reference: &str, peer: &str) -> [Value; 11] {
     [
         json!({"op":"add_task","title":"Install the replacement latch","parent":reference}),
-        json!({"op":"set_fields","task":reference,"changes":{"status":{"status":"done"}}}),
+        json!({"op":"set_fields","task":reference,"changes":{"status":{"type":"status","value":"done"}}}),
         json!({"op":"add_tags","task":reference,"tags":["greenhouse"]}),
         json!({"op":"remove_tags","task":reference,"tags":["greenhouse"]}),
         json!({"op":"assign","task":reference,"assignees":["me"]}),
@@ -143,11 +143,11 @@ async fn creation_rejects_invalid_events_without_writing_history() {
         (json!({"tags":["bad TAG"]}), "tags"),
         (json!({"assignees":["Ada"]}), "assignees"),
         (
-            json!({"fields":{"status":{"status":"done"}}}),
+            json!({"fields":{"status":{"type":"status","value":"done"}}}),
             "fields.status",
         ),
         (
-            json!({"fields":{"malformed/name":{"integer":3}}}),
+            json!({"fields":{"malformed/name":{"type":"integer","value":3}}}),
             "fields.malformed/name",
         ),
     ] {

@@ -59,7 +59,7 @@ async fn add_plans_a_project_and_returns_each_affected_record() {
     let (changed, created, tasks, edges) = write(&mut app, json!({
         "op":"add_task", "title":"Replace the greenhouse latch", "description":"Use stainless hardware.",
         "priority":2, "due":"2026-12-01", "tags":["greenhouse","garden/tools"], "assignees":["me",&assignee],
-        "fields":{"estimate":{"integer":3}}, "parent":&parent[..12],
+        "fields":{"estimate":{"type":"integer","value":3}}, "parent":&parent[..12],
         "blocked_by":[&blocker[..12]], "blocks":[&following,&following[..12]]
     })).await;
     assert!(changed);
@@ -175,9 +175,9 @@ async fn edit_fields_completes_work_and_clears_optional_values() {
 
     let edit = json!({
         "op":"set_fields", "task":&id[..12], "changes":{
-            "title":{"text":"Order a stainless latch"}, "description":{"text":"Use the local supplier."},
-            "due":{"date":"2026-12-01"}, "priority":{"integer":2},
-            "status":{"status":"done"}, "estimate":{"integer":1}
+            "title":{"type":"text","value":"Order a stainless latch"}, "description":{"type":"text","value":"Use the local supplier."},
+            "due":{"type":"date","value":"2026-12-01"}, "priority":{"type":"integer","value":2},
+            "status":{"type":"status","value":"done"}, "estimate":{"type":"integer","value":1}
         }
     });
     let (changed, created, tasks, _) = write(&mut app, edit.clone()).await;
@@ -198,7 +198,7 @@ async fn edit_fields_completes_work_and_clears_optional_values() {
 
     let invalid = json!({
         "op":"set_fields", "task":&id,
-        "changes":{"description":"unset","title":{"integer":3}}
+        "changes":{"description":{"type":"unset"},"title":{"type":"integer","value":3}}
     });
     assert!(
         matches!(handle(&mut app, invalid).await, Err(AppError::InvalidInput { field, .. }) if field == "title")
@@ -207,7 +207,7 @@ async fn edit_fields_completes_work_and_clears_optional_values() {
 
     let clear = json!({
         "op":"set_fields", "task":&id,
-        "changes":{"description":"unset","due":"unset","estimate":"unset","priority":"unset"}
+        "changes":{"description":{"type":"unset"},"due":{"type":"unset"},"estimate":{"type":"unset"},"priority":{"type":"unset"}}
     });
     assert!(write(&mut app, clear.clone()).await.0);
     let task = get(&mut app, &id).await;

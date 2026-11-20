@@ -40,13 +40,13 @@ impl App {
             title: task.title.clone(),
             description: task.description.clone(),
             status: task.status.try_into()?,
-            due: task.due,
+            due: task.due.map(Into::into),
             priority: task.priority,
             fields: task
                 .custom
                 .iter()
-                .map(|(name, value)| (name.as_str().into(), value.clone()))
-                .collect(),
+                .map(|(name, value)| Ok((name.as_str().into(), value.clone().try_into()?)))
+                .collect::<Result<_, AppError>>()?,
             tags: task.tags.clone(),
             assignees: task.assignees.iter().map(ToString::to_string).collect(),
             created: task.created,

@@ -22,8 +22,8 @@ fn round_trip<T: Debug + Eq + DeserializeOwned + Serialize>(value: &T) {
 fn every_request_has_a_stable_operation_tag() {
     let fixtures = [
         json!({"op":"add_task","title":"Replace the greenhouse latch","due":"2026-12-01",
-            "tags":["greenhouse"],"fields":{"estimate":{"integer":3}},"assignees":["me"]}),
-        json!({"op":"set_fields","task":"97ad","changes":{"due":"unset","status":{"status":"done"}}}),
+            "tags":["greenhouse"],"fields":{"estimate":{"type":"integer","value":3}},"assignees":["me"]}),
+        json!({"op":"set_fields","task":"97ad","changes":{"due":{"type":"unset"},"status":{"type":"status","value":"done"}}}),
         json!({"op":"add_tags","task":"97ad","tags":["garden"]}),
         json!({"op":"remove_tags","task":"97ad","tags":["garden"]}),
         json!({"op":"assign","task":"97ad","assignees":["me"]}),
@@ -197,4 +197,41 @@ fn status_and_edge_kinds_are_protocol_strings() {
         );
         round_trip(&kind);
     }
+}
+
+#[test]
+fn dates_and_field_values_have_fixed_wire_shapes() {
+    use pepino_app::{Date, FieldValue, Status};
+
+    let date: Date = "2026-12-01".parse().unwrap();
+    assert_eq!(serde_json::to_value(date).unwrap(), "2026-12-01");
+    round_trip(&date);
+    for (value, expected) in [
+        (
+            FieldValue::Text("Use stainless hardware.".into()),
+            json!({"type":"text","value":"Use stainless hardware."}),
+        ),
+        (FieldValue::Integer(3), json!({"type":"integer","value":3})),
+        (
+            FieldValue::Date(date),
+            json!({"type":"date","value":"2026-12-01"}),
+        ),
+        (
+            FieldValue::Status(Status::Done),
+            json!({"type":"status","value":"done"}),
+        ),
+        (FieldValue::Unset, json!({"type":"unset"})),
+    ] {
+        assert_eq!(serde_json::to_value(&value).unwrap(), expected);
+        assert_eq!(
+            FieldValue::try_from(pepino_core::FieldValue::from(value.clone())).unwrap(),
+            value
+        );
+        round_trip(&value);
+    }
+    assert!("2026-02-29".parse::<Date>().is_err());
+    assert!(
+        serde_json::from_value::<FieldValue>(json!({"type":"integer","value":3,"unit":"hours"}))
+            .is_err()
+    );
 }

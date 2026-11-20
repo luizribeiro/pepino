@@ -19,9 +19,9 @@ pub use app::App;
 pub use state::{LocalState, OpenOptions};
 
 pub use protocol::{
-    AppError, AppErrorKind, CommentRecord, Date, EdgeEffect, EdgeExclusionReason, FieldValue, Hlc,
-    Request, Response, TaskRecord,
+    AppError, AppErrorKind, CommentRecord, EdgeEffect, EdgeExclusionReason, Hlc, Request, Response,
+    TaskRecord,
 };
 
-pub use values::{EdgeKind, Status};
+pub use values::{Date, EdgeKind, FieldValue, InvalidDate, Status};
 pub use wire::{PROTOCOL_VERSION, WireFormat, WireRequest, WireResponse, WireResult};
