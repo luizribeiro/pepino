@@ -111,17 +111,19 @@ impl BoardTask {
         board_status(&self.status, self.lease.id, &event);
         if let StreamEvent::Processed { operation, source } = event {
             let id = EventId::from_bytes(*operation.id().as_bytes());
-            if matches!(source, Source::Egress) && operation.author() == self.author {
-                self.receipts.resolve(operation.message().nonce, id);
-            }
             let position = operation.processed().header().into();
-            if !self
+            let pending = !self
                 .acks
                 .receipt(self.lease.id, id, position)
                 .acknowledged()
-                .await?
-            {
+                .await?;
+            if pending {
                 self.status.pending(self.lease.id, true);
+            }
+            if matches!(source, Source::Egress) && operation.author() == self.author {
+                self.receipts.resolve(operation.message().nonce, id);
+            }
+            if pending {
                 let result = self
                     .events
                     .send(Delivery::Event {

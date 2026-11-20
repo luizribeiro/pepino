@@ -45,20 +45,23 @@ impl BoardEvent {
 
 pub(crate) fn subscribe(
     rx: mpsc::Receiver<Result<BoardEvent, Error>>,
-    on_delivery: impl Fn() + Send + 'static,
+    on_delivery: impl Fn() + Send + Sync + 'static,
 ) -> BoardEvents {
+    let on_delivery = std::sync::Arc::new(on_delivery);
     ReceiverStream::new(rx)
         .filter_map(move |event| {
-            if event.is_ok() {
-                on_delivery();
-            }
+            let on_delivery = on_delivery.clone();
             async move {
                 match event {
-                    Ok(event) => match event.ack.acknowledged().await {
-                        Ok(true) => None,
-                        Ok(false) => Some(Ok(event)),
-                        Err(error) => Some(Err(error)),
-                    },
+                    Ok(event) => {
+                        let acknowledged = event.ack.acknowledged().await;
+                        on_delivery();
+                        match acknowledged {
+                            Ok(true) => None,
+                            Ok(false) => Some(Ok(event)),
+                            Err(error) => Some(Err(error)),
+                        }
+                    }
                     Err(error) => Some(Err(error)),
                 }
             }
@@ -142,7 +145,7 @@ mod tests {
                 b"Confirm maintenance window".as_slice()
             )
         );
-        assert!(events.next().await.is_none());
         assert_eq!(count.load(std::sync::atomic::Ordering::Relaxed), 2);
+        assert!(events.next().await.is_none());
     }
 }

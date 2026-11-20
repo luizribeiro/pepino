@@ -95,21 +95,11 @@ async fn late_status_subscriber_sees_deliveries_waiting_for_the_consumer() {
     let node = start(&settings(&network(dir.path()), dir.path().join("alice"))).await;
     let mut board = node.create_board().await.unwrap();
     let id = board.id();
-    let mut changes = node.events();
     let expected = board
         .publish(b"Prepare the release handoff".to_vec())
         .await
         .unwrap();
-    timeout(WAIT, async {
-        while changes.next().await.unwrap().unwrap()
-            != (NodeEvent::PendingDeliveries {
-                board: id,
-                count: 1,
-            })
-        {}
-    })
-    .await
-    .unwrap();
+    assert_eq!(node.status().boards[&id].pending_deliveries, 1);
 
     let mut late = node.events();
     let NodeEvent::Snapshot(snapshot) = late.next().await.unwrap().unwrap() else {
