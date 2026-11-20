@@ -33,7 +33,7 @@ pub(super) fn validate_path(path: &Path) -> io::Result<()> {
 }
 
 pub fn prepare_parent(config: &Config, path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    use std::os::unix::fs::DirBuilderExt;
 
     let parent = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
     if config.daemon.socket_path.value.is_none() {
@@ -43,6 +43,13 @@ pub fn prepare_parent(config: &Config, path: &Path) -> io::Result<()> {
             Err(error) => return Err(error),
         }
     }
+    check_parent(path)
+}
+
+pub(super) fn check_parent(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let parent = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
     let metadata = fs::symlink_metadata(parent)?;
     if metadata.is_dir()
         && metadata.mode() & 0o777 == 0o700

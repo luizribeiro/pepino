@@ -24,6 +24,7 @@ impl Client {
 
     pub fn call_with(&self, operation: Operation, limit: Duration) -> io::Result<Outcome> {
         super::address::validate_path(&self.path)?;
+        super::address::check_parent(&self.path)?;
         Builder::new_current_thread()
             .enable_all()
             .build()?
@@ -97,11 +98,20 @@ mod tests {
 
     #[test]
     fn a_missing_control_socket_reports_offline() {
-        let dir = tempfile::tempdir().unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .unwrap();
         let client = Client {
             path: dir.path().join("release.sock"),
         };
         assert!(client.status().unwrap().is_none());
         assert!(unavailable(&client.nudge().unwrap_err()));
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            client.status().unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
     }
 }
