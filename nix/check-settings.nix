@@ -31,8 +31,19 @@ in
 {
   empty.programs.pepino.enable = true;
   outsideStore = {
-    programs.pepino.credentialsFile = "/../run/secrets/pepino-client";
-    services.pepino.credentialsFile = "${builtins.storeDir}-secrets/pepino-node";
+    programs.pepino = { enable = true; credentialsFile = "/../run/secrets/pepino-client"; };
+    services.pepino = {
+      enable = true;
+      credentialsFile = "${builtins.storeDir}-secrets/pepino-node";
+      trustedDevices = [ laptop ];
+    };
+  };
+  disabled = {
+    programs.pepino = invalidNode.storeCredentials // invalidNode.trustedDuplicates;
+    services.pepino = invalidNode.storeCredentials // invalidNode.bootstrapDuplicates // {
+      openFirewall = true;
+      port = 44123;
+    };
   };
   untrusted.services.pepino.enable = true;
   cleared.programs.pepino = { enable = true; relayUrls = [ ]; trustedDevices = [ ]; bootstrapNodes = [ ]; };
@@ -77,8 +88,8 @@ in
     users.users.pepino.uid = 451;
   };
   invalid =
-    map (node: { programs.pepino = node; }) (lib.attrValues invalidNode)
-    ++ map (node: { services.pepino = node; }) (lib.attrValues invalidNode)
+    map (node: { programs.pepino = node // { enable = true; }; }) (lib.attrValues invalidNode)
+    ++ map (node: { services.pepino = node // { enable = true; }; }) (lib.attrValues invalidNode)
     ++ [
       { programs.pepino.ui.color = "sometimes"; }
       { services.pepino.port = 0; }

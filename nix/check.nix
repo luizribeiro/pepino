@@ -63,6 +63,12 @@ let
   fullDarwin = darwinWithAccount fullDarwinSettings;
 in
 assert verify linux fixtures.full && verify darwinWithAccount fullDarwinSettings;
+assert lib.all
+  (evaluate:
+  let config = evaluate fixtures.disabled;
+  in config.assertions == [ ] && config.warnings == [ ]
+    && config.environment.etc == { } && config.environment.systemPackages == [ ])
+  [ linux darwin ];
 assert rejects linux fixtures.invalidLinux;
 assert rejects darwinWithAccount fixtures.invalidDarwinFirewall;
 assert rejects darwin fixtures.missingDarwinUid;

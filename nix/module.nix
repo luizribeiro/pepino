@@ -77,7 +77,7 @@ in
   validation = { config, ... }:
     let
       service = config.services.pepino;
-      validateNode = prefix: node: [
+      validateNode = prefix: node: lib.optionals node.enable [
         {
           assertion =
             let path = normalizedPath node.credentialsFile;
@@ -98,10 +98,12 @@ in
     {
       assertions = validateNode "programs.pepino" config.programs.pepino
         ++ validateNode "services.pepino" service;
-      warnings = lib.optional (service.enable && nullableList service.trustedDevices == [ ])
-        "services.pepino.enable is set with no trusted devices, so the node will accept boards from nobody."
-      ++ lib.optional (service.port != null)
-        "services.pepino.port only drives the NixOS firewall rule. The node does not bind this port.";
+      warnings = lib.optionals service.enable (
+        lib.optional (nullableList service.trustedDevices == [ ])
+          "services.pepino.enable is set with no trusted devices, so the node will accept boards from nobody."
+        ++ lib.optional (service.port != null)
+          "services.pepino.port only drives the NixOS firewall rule. The node does not bind this port."
+      );
     };
 
   render = pkgs: name: node:
