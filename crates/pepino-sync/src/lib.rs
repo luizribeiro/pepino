@@ -1,4 +1,6 @@
 mod board_workers;
+#[cfg(test)]
+mod catalog_authority;
 mod discover;
 mod engine;
 mod inbox;
