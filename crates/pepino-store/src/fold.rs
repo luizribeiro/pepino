@@ -26,12 +26,26 @@ pub(crate) async fn fold(
     task: TaskId,
     envelope: &Envelope,
 ) -> Result<(), StoreError> {
-    if matches!(
-        envelope.event(),
-        Event::EdgeAdded { .. } | Event::EdgeRemoved { .. }
-    ) {
-        return Ok(());
+    touch(connection, board, task, envelope).await?;
+    if let Event::EdgeAdded { to, .. } | Event::EdgeRemoved { to, .. } = envelope.event() {
+        touch(connection, board, *to, envelope).await?;
     }
+    Registers {
+        connection,
+        board,
+        task,
+        envelope,
+    }
+    .apply()
+    .await
+}
+
+async fn touch(
+    connection: &mut SqliteConnection,
+    board: BoardId,
+    task: TaskId,
+    envelope: &Envelope,
+) -> Result<(), StoreError> {
     let created = envelope.created_task();
     let hlc = envelope.hlc().to_key();
     sqlx::query(
@@ -49,16 +63,9 @@ pub(crate) async fn fold(
     .bind(created.map(|_| *envelope.author().as_bytes()))
     .bind(hlc)
     .bind(matches!(envelope.event(), Event::TaskDeleted { .. }))
-    .execute(&mut *connection)
+    .execute(connection)
     .await?;
-    Registers {
-        connection,
-        board,
-        task,
-        envelope,
-    }
-    .apply()
-    .await
+    Ok(())
 }
 
 pub(crate) async fn upgrade(

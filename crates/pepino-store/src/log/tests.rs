@@ -227,41 +227,78 @@ async fn rebuild_failure_leaves_the_current_view_intact() {
 }
 
 #[tokio::test]
-async fn reopening_upgrades_every_boards_projection() {
+async fn reopening_projects_legacy_edges_on_every_board() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("pepino.sqlite");
     let envelope = creation();
     let task = envelope.created_task().unwrap();
     let bytes = envelope.encode().unwrap();
     let boards = [BoardId::from_bytes([19; 32]), BoardId::from_bytes([52; 32])];
+    let parent = TaskId::from_bytes([73; 32]);
+    let hlc = Hlc {
+        counter: 4,
+        ..envelope.hlc()
+    };
+    let edge = Envelope::new(
+        DeviceId::from_bytes([60; 32]),
+        hlc,
+        Event::EdgeAdded {
+            from: task,
+            kind: pepino_core::EdgeKind::Parent,
+            to: parent,
+        },
+    )
+    .unwrap();
+    let edge_bytes = edge.encode().unwrap();
+    let decoded = Decoded::new(&edge_bytes, IdSource::Content).unwrap();
 
-    let older = Store::open_file(&path, crate::FOLD_VERSION).await.unwrap();
+    let older = Store::open_file(&path, 1).await.unwrap();
     for board in boards {
         older
             .append(board, &bytes, IdSource::Content)
             .await
             .unwrap();
+        let mut connection = older.connection.lock().await;
+        assert!(
+            decoded
+                .insert(&mut connection, board, &edge_bytes)
+                .await
+                .unwrap()
+        );
+        history::index(&mut connection, board, &edge).await.unwrap();
     }
-    sqlx::query("DELETE FROM task_state")
-        .execute(&mut *older.connection.lock().await)
-        .await
-        .unwrap();
     drop(older);
-    let same_version = Store::open(&path).await.unwrap();
-    assert_eq!(same_version.task(boards[0], task).await.unwrap(), None);
-    drop(same_version);
 
-    let version = crate::FOLD_VERSION + 1;
-    let upgraded = Store::open_file(&path, version).await.unwrap();
+    let upgraded = Store::open(&path).await.unwrap();
     for board in boards {
         let record = upgraded.task(board, task).await.unwrap().unwrap();
-        assert_eq!(record.title, "Replace the greenhouse latch");
+        assert_eq!(record.updated, hlc);
+        let mut connection = upgraded.connection.lock().await;
+        let register: (Vec<u8>, Vec<u8>) = sqlx::query_as(
+            "SELECT member, value FROM task_register WHERE board = ? AND kind = 'edge'",
+        )
+        .bind(BoardKey(board))
+        .fetch_one(&mut *connection)
+        .await
+        .unwrap();
+        assert_eq!(
+            register,
+            ([&[0], parent.as_bytes().as_slice()].concat(), vec![])
+        );
+        let updated: [u8; 12] =
+            sqlx::query_scalar("SELECT updated FROM task_state WHERE board = ? AND task = ?")
+                .bind(BoardKey(board))
+                .bind(*parent.as_bytes())
+                .fetch_one(&mut *connection)
+                .await
+                .unwrap();
+        assert_eq!(updated, hlc.to_key());
     }
     let current: i64 = sqlx::query_scalar("SELECT version FROM fold_version")
         .fetch_one(&mut *upgraded.connection.lock().await)
         .await
         .unwrap();
-    assert_eq!(current, version);
+    assert_eq!(current, 2);
 }
 
 #[tokio::test]

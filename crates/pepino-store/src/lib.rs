@@ -2,6 +2,7 @@ mod board_key;
 mod comment;
 #[cfg(test)]
 mod convergence;
+mod edge_key;
 mod error;
 mod fold;
 mod history;
@@ -27,7 +28,7 @@ pub use log::{AppendOutcome, IdSource, RebuildReport, SkipReason};
 pub use prefix::PrefixResolution;
 pub use task::TaskRecord;
 
-const FOLD_VERSION: i64 = 1;
+const FOLD_VERSION: i64 = 2;
 
 static MIGRATOR: Migrator = sqlx::migrate!();
 

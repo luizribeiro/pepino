@@ -1,7 +1,7 @@
-use pepino_core::{BoardId, Envelope, Event, FieldValue, IdentityId, TaskId};
+use pepino_core::{BoardId, EdgeKind, Envelope, Event, FieldValue, IdentityId, TaskId};
 use sqlx::SqliteConnection;
 
-use crate::{BoardKey, StoreError};
+use crate::{BoardKey, StoreError, edge_key};
 
 pub(super) struct Registers<'a> {
     pub(super) connection: &'a mut SqliteConnection,
@@ -51,6 +51,8 @@ impl Registers<'_> {
             Event::TagRemoved { tag, .. } => (PresenceMember::Tag(tag), false),
             Event::AssigneeAdded { who, .. } => (PresenceMember::Assignee(who), true),
             Event::AssigneeRemoved { who, .. } => (PresenceMember::Assignee(who), false),
+            Event::EdgeAdded { kind, to, .. } => return self.edge(*kind, *to, true).await,
+            Event::EdgeRemoved { kind, to, .. } => return self.edge(*kind, *to, false).await,
             Event::CommentAdded { text, .. } => {
                 return self
                     .write(
@@ -63,6 +65,19 @@ impl Registers<'_> {
             _ => return Ok(()),
         };
         self.presence(member, present).await
+    }
+
+    async fn edge(
+        &mut self,
+        kind: EdgeKind,
+        mut to: TaskId,
+        present: bool,
+    ) -> Result<(), StoreError> {
+        if kind == EdgeKind::Relates && self.task > to {
+            std::mem::swap(&mut self.task, &mut to);
+        }
+        let member = edge_key::member(kind, to)?;
+        self.write("edge", &member, present.then_some(&[])).await
     }
 
     async fn presence(
