@@ -327,3 +327,21 @@ fn json_topic_describes_the_explicit_add_input() {
     let help = as_json(&run_ppn(&["help", "--json"]));
     assert_eq!(help["topics"]["json"], human.trim_end());
 }
+
+#[test]
+fn summaries_and_option_headings_follow_the_cli_help_conventions() {
+    for command in [&["ls"][..], &["view", "save"], &["edit"]] {
+        let human = run_ppn(&[command, &["--help"]].concat());
+        let local = human.find("Options:").unwrap();
+        let global = human.find("Global options:").unwrap();
+        assert!(local < global, "{human}");
+        assert!(human[global..].contains("--config"));
+    }
+    fn check(node: &serde_json::Value) {
+        assert!(!node["summary"].as_str().unwrap().ends_with('.'), "{node}");
+        for child in node["commands"].as_array().unwrap() {
+            check(child);
+        }
+    }
+    check(&as_json(&run_ppn(&["help", "--json"])));
+}

@@ -35,7 +35,7 @@ use crate::commands::status;
     after_help = example_help(&["ppn version", "ppn help --json"])
 )]
 struct Cli {
-    #[command(flatten)]
+    #[command(flatten, next_help_heading = "Global options")]
     globals: Globals,
     #[command(subcommand)]
     command: Option<Command>,
@@ -75,6 +75,18 @@ enum Command {
     Link(commands::link::Args),
     Unlink(commands::unlink::Args),
     Debug(debug::Args),
+}
+
+fn definition() -> clap::Command {
+    fn trim_summary(mut command: clap::Command) -> clap::Command {
+        if let Some(summary) = command.get_about().map(ToString::to_string)
+            && summary.ends_with('.')
+        {
+            command = command.about(summary.trim_end_matches('.').to_owned());
+        }
+        command.mut_subcommands(trim_summary)
+    }
+    trim_summary(Cli::command())
 }
 
 pub fn run() -> ExitCode {
@@ -123,7 +135,7 @@ fn execute(inputs: &ProcessInputs) -> (Result<CommandResult, CliError>, bool, Te
             return (Err(error), json_flag, context.terminal);
         }
     };
-    let parsed = Cli::command()
+    let parsed = definition()
         .try_get_matches_from(filter::escape_terms(args))
         .and_then(|mut matches| {
             let explicit_color = matches.value_source("color") == Some(ValueSource::CommandLine);
@@ -140,7 +152,7 @@ fn execute(inputs: &ProcessInputs) -> (Result<CommandResult, CliError>, bool, Te
             )
         }
         Err(error) => {
-            let mut definition = Cli::command();
+            let mut definition = definition();
             let json = json_flag || json_env;
             let context = inputs.context(&Globals::on_early_exit(args, json), false);
             let result = match error.kind() {
@@ -203,7 +215,7 @@ fn dispatch(
         Some(Command::Status(args)) => status::run(context, args),
         Some(Command::Init(args)) => status::init(context, args),
         Some(Command::Version(args)) => Ok(version::run(context, args)),
-        Some(Command::Help(args)) => help::for_path(context, Cli::command(), args),
+        Some(Command::Help(args)) => help::for_path(context, definition(), args),
         Some(Command::Config(args)) => {
             config_command::run(context, inputs, cli.globals.config, args)
         }
@@ -227,7 +239,7 @@ fn dispatch(
         Some(Command::Link(args)) => commands::link::run(context, args),
         Some(Command::Unlink(args)) => commands::unlink::run(context, args),
         Some(Command::Debug(args)) => debug::run(context, args),
-        None => Ok(help::run(context, Cli::command(), None)),
+        None => Ok(help::run(context, definition(), None)),
     }
 }
 
@@ -342,7 +354,7 @@ mod tests {
 
     #[test]
     fn every_command_and_argument_is_documented() {
-        let mut command = Cli::command();
+        let mut command = definition();
         command.build();
         assert_documented(&command);
     }

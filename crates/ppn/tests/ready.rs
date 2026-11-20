@@ -50,6 +50,6 @@ fn ready_lists_unblocked_tasks_with_the_same_filters_as_ls() {
 #[test]
 fn ready_help_explains_the_ready_predicate() {
     let help = as_json(&common::run_ppn(&["help", "ready", "--json"]));
-    assert_eq!(help["summary"], "List tasks that are ready to start.");
+    assert_eq!(help["summary"], "List tasks that are ready to start");
     assert_eq!(help["examples"][1], "ppn ready assignee:me --json");
 }
