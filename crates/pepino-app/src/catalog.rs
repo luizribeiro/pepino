@@ -70,6 +70,8 @@ struct Announcement {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     roster: Vec<SignedEdit>,
     member: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    shared: BTreeMap<BoardId, crate::SharedAccess>,
 }
 
 impl LocalState {
@@ -92,6 +94,7 @@ impl LocalState {
             devices: BTreeMap::new(),
             roster: self.catalog.identity.edits().cloned().collect(),
             member: member.to_hex(),
+            shared: self.catalog.shared.clone(),
         };
         let mut bytes = PREFIX.to_vec();
         bytes.extend(WireFormat::Cbor.encode(&announcement)?);
@@ -171,6 +174,11 @@ impl LocalState {
         }
         for (id, revision) in announcement.revisions {
             self.merge_board(id, revision);
+        }
+        for (id, access) in announcement.shared {
+            if id != self.catalog_board() && self.catalog.revisions.contains_key(&id) {
+                self.catalog.shared.entry(id).or_insert(access);
+            }
         }
         Ok(())
     }
@@ -339,8 +347,55 @@ fn ignores_legacy_device_claims_even_from_a_bootstrap_sender() {
         devices: [(stranger, "Cobalt".into())].into(),
         roster: Vec::new(),
         member: String::new(),
+        shared: BTreeMap::new(),
     };
     local.merge_catalog(board, peer, announcement).unwrap();
     assert_eq!(local.devices()[&peer], "Ferrum");
     assert!(!local.devices().contains_key(&stranger));
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn trusted_catalog_discovery_leaves_shared_access_with_the_joining_device() {
+    use crate::{BoardRole, SharedAccess};
+    let dir = tempfile::tempdir().unwrap();
+    let app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
+    let keys = app.identity_credentials().unwrap();
+    app.reconcile_identity(keys.device_id(), &keys)
+        .await
+        .unwrap();
+    let source = DeviceId::from_bytes([73; 32]);
+    app.remember_device(source, "Ferrum".into(), None)
+        .await
+        .unwrap();
+    let mut local = app.fresh_local_state().await.unwrap();
+    let house = BoardId::from_bytes([74; 32]);
+    let access = SharedAccess {
+        owner: IdentityId::from_bytes([75; 32]),
+        role: BoardRole::Write,
+        admitted: source,
+    };
+    let announcement = || Announcement {
+        v: crate::PROTOCOL_VERSION,
+        identity: local.identity_id,
+        revisions: [(
+            house,
+            Revision {
+                sequence: 1,
+                writer: source,
+                name: "House".into(),
+            },
+        )]
+        .into(),
+        devices: Default::default(),
+        roster: Vec::new(),
+        member: String::new(),
+        shared: [(house, access)].into(),
+    };
+    let private = local.catalog_board();
+    let incoming = announcement();
+    local.merge_catalog(private, source, incoming).unwrap();
+    assert_eq!(local.resolve_board("House", "board").unwrap().id, house);
+    assert!(local.waiting_for_access(house));
+    assert!(local.shared_peers().next().is_none());
 }
