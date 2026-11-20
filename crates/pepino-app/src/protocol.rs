@@ -102,6 +102,9 @@ pub enum WriteRequest {
         filter: FilterInput,
         today: Date,
     },
+    DeleteView {
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -142,6 +145,9 @@ pub enum Response {
     ViewSaved {
         view: SavedView,
         replaced: bool,
+    },
+    ViewDeleted {
+        view: SavedView,
     },
     Views {
         views: Vec<SavedView>,

@@ -81,6 +81,9 @@ impl App {
                 filter,
                 today,
             }) => self.save_view(name, &filter, today, guard).await,
+            Request::Write(WriteRequest::DeleteView { name }) => {
+                self.delete_view(name, guard).await
+            }
             Request::Write(request) => {
                 let board = self.board().await?;
                 let mut batch = self.batch(now).await?;

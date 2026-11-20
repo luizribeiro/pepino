@@ -853,4 +853,29 @@ async fn saved_views_migrate_v1_state_and_survive_concurrent_opens() {
         json!({"ok":{"kind":"views","views":[latch,weekend]}}),
     )
     .await;
+    read_golden(
+        &mut app,
+        json!({"op":"delete_view","name":"latch"}),
+        json!({"ok":{"kind":"view_deleted","view":latch}}),
+    )
+    .await;
+    read_golden(
+        &mut peer,
+        json!({"op":"delete_view","name":"latch"}),
+        json!({"error":{"kind":"not_found","field":"name","view":"latch"}}),
+    )
+    .await;
+    read_golden(
+        &mut peer,
+        json!({"op":"list_views"}),
+        json!({"ok":{"kind":"views","views":[weekend]}}),
+    )
+    .await;
+    for request in [
+        json!({"op":"save_view","name":"Weekend Plan","filter":"","today":"2026-11-20"}),
+        json!({"op":"delete_view","name":"weekend.plan"}),
+    ] {
+        read_golden(&mut app, request, json!({"error":{"kind":"invalid_input","field":"name","reason":"expected [a-z][a-z0-9_-]* within 64 bytes"}})).await;
+    }
+    read_golden(&mut app, json!({"op":"save_view","name":"latch","filter":"tags:hardware","today":"2026-11-20"}), json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown filter key \"tags\"","hint":"Use \"tag\"","term":"tags:hardware","position":{"kind":"byte","byte":0}}})).await;
 }

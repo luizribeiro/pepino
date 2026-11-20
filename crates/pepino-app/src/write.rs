@@ -18,7 +18,7 @@ impl App {
         request: WriteRequest,
     ) -> Result<(), AppError> {
         match request {
-            WriteRequest::SaveView { .. } => {
+            WriteRequest::SaveView { .. } | WriteRequest::DeleteView { .. } => {
                 unreachable!("saved views are handled before event planning")
             }
 

@@ -13,13 +13,18 @@ impl SavedViews {
             .iter()
             .map(|(name, filter)| (name.as_str(), filter.as_str()))
     }
+
     pub(crate) fn insert(&mut self, name: String, filter: String) -> bool {
         self.0.insert(name, filter).is_some()
+    }
+
+    pub(crate) fn remove(&mut self, name: &str) -> Option<String> {
+        self.0.remove(name)
     }
 }
 
 use crate::app::{invalid, worker};
-use crate::{App, AppError, Date, FilterInput, Response};
+use crate::{App, AppError, Date, FilterInput, MissingReference, Response};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SavedView {
@@ -74,6 +79,26 @@ impl App {
         })
     }
 
+    pub(super) async fn delete_view(
+        &mut self,
+        name: String,
+        guard: File,
+    ) -> Result<Response, AppError> {
+        validate_name(&name)?;
+        self.reload_state().await?;
+        let mut views = self.local.saved_views.clone();
+        let Some(filter) = views.remove(&name) else {
+            return Err(AppError::NotFound {
+                field: "name".into(),
+                reference: MissingReference::View(name),
+            });
+        };
+        self.persist_views(views, guard).await?;
+        Ok(Response::ViewDeleted {
+            view: SavedView { name, filter },
+        })
+    }
+
     pub(super) async fn list_views(&mut self) -> Result<Response, AppError> {
         self.reload_state().await?;
         Ok(Response::Views {
@@ -89,6 +114,7 @@ impl App {
         })
     }
 }
+
 fn validate_name(name: &str) -> Result<(), AppError> {
     let mut bytes = name.bytes();
     if name.len() <= 64
