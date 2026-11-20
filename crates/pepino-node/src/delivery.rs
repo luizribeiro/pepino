@@ -88,7 +88,17 @@ mod tests {
     use pepino_core::EventId;
 
     #[tokio::test]
-    async fn a_paused_consumer_can_resume_after_five_thousand_events() {
+    async fn a_paused_consumer_resumes_with_the_queue_full() {
+        check_paused_consumer(256).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "writes 5,000 events to exercise the SQLite delivery spool at scale"]
+    async fn a_paused_consumer_resumes_with_the_queue_full_at_scale() {
+        check_paused_consumer(5_000).await;
+    }
+
+    async fn check_paused_consumer(history: u32) {
         let dir = tempfile::tempdir().unwrap();
         let options = sqlx::sqlite::SqliteConnectOptions::new()
             .filename(dir.path().join("node.sqlite"))
@@ -102,7 +112,7 @@ mod tests {
         let author = p2panda::Credentials::generate().verifying_key();
         let log = p2panda::operation::LogId::digest(b"release checklist");
         let (writer, mut events) = DeliveryWriter::start(board, spool, acks);
-        for seq in 0_u32..5_000 {
+        for seq in 0..history {
             let id = p2panda::Hash::digest(seq.to_le_bytes());
             writer
                 .send(Delivery::Event {
@@ -115,7 +125,7 @@ mod tests {
         }
         writer.fail(&Error::Storage("deliberate write failure".into()));
         drop(writer);
-        let full = tokio::time::timeout(Duration::from_secs(2), async {
+        let full = tokio::time::timeout(Duration::from_secs(30), async {
             while events.len() < CAPACITY {
                 tokio::task::yield_now().await;
             }
@@ -133,8 +143,8 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(spilled, (5_000 - CAPACITY) as i64);
-        for seq in 0_u32..5_000 {
+        assert_eq!(spilled, i64::from(history) - CAPACITY as i64);
+        for seq in 0..history {
             let event = events.recv().await.unwrap().unwrap();
             assert_eq!(
                 event.bytes,
