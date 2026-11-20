@@ -2,7 +2,7 @@ use std::fmt::{self, Write as _};
 
 use super::ast::ME;
 use super::keywords::{Builtin, status_word};
-use super::{Assignee, Clause, Filter, Term, Value};
+use super::{Assignee, Clause, Comparison, Filter, Term, Value};
 
 impl fmt::Display for Filter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -21,58 +21,81 @@ impl fmt::Display for Term {
                 f.write_char('@')?;
                 atom(f, name)
             }
-            Clause::Is(states) => keyed(f, Builtin::Is, states, |f, state| {
+            Clause::Is(states) => keyed(f, Builtin::Is.as_str(), states, |f, state| {
                 f.write_str(state.as_str())
             }),
-            Clause::Has(fields) => keyed(f, Builtin::Has, fields, |f, field| {
+            Clause::Has(fields) => keyed(f, Builtin::Has.as_str(), fields, |f, field| {
                 f.write_str(field.as_str())
             }),
             Clause::Tag(tags) => texts(f, Builtin::Tag, tags),
-            Clause::Status(statuses) => keyed(f, Builtin::Status, statuses, |f, status| {
-                f.write_str(status_word(*status))
-            }),
-            Clause::Assignee(assignees) => {
-                keyed(
-                    f,
-                    Builtin::Assignee,
-                    assignees,
-                    |f, assignee| match assignee {
-                        Assignee::Me => f.write_str(ME),
-                        Assignee::Person(name) if name == ME => quoted(f, name),
-                        Assignee::Person(name) => atom(f, name),
-                    },
-                )
+            Clause::Status(statuses) => {
+                keyed(f, Builtin::Status.as_str(), statuses, |f, status| {
+                    f.write_str(status_word(*status))
+                })
             }
+            Clause::Assignee(assignees) => keyed(
+                f,
+                Builtin::Assignee.as_str(),
+                assignees,
+                |f, assignee| match assignee {
+                    Assignee::Me => f.write_str(ME),
+                    Assignee::Person(name) if name == ME => quoted(f, name),
+                    Assignee::Person(name) => atom(f, name),
+                },
+            ),
             Clause::Board(boards) => texts(f, Builtin::Board, boards),
             Clause::Parent(parents) => texts(f, Builtin::Parent, parents),
             Clause::Blocks(tasks) => texts(f, Builtin::Blocks, tasks),
             Clause::BlockedBy(tasks) => texts(f, Builtin::BlockedBy, tasks),
-            Clause::Match { key, alternatives } => {
-                atom(f, key)?;
-                f.write_char(':')?;
-                joined(f, alternatives, ",", |f, comparison| {
-                    f.write_str(comparison.operator.symbol())?;
-                    match &comparison.value {
-                        Value::Text(value) => atom(f, value),
-                        Value::Date(date) => write!(f, "{date}"),
-                    }
+            Clause::Priority(values) => {
+                comparisons(f, Builtin::Priority.as_str(), values, |f, value| {
+                    write!(f, "{value}")
                 })
             }
+            Clause::Due(values) => comparisons(f, Builtin::Due.as_str(), values, |f, value| {
+                write!(f, "{value}")
+            }),
+            Clause::Created(values) => {
+                comparisons(f, Builtin::Created.as_str(), values, |f, value| {
+                    write!(f, "{value}")
+                })
+            }
+            Clause::Updated(values) => {
+                comparisons(f, Builtin::Updated.as_str(), values, |f, value| {
+                    write!(f, "{value}")
+                })
+            }
+            Clause::Match { key, alternatives } => comparisons(f, key, alternatives, |f, value| {
+                let Value::Text(value) = value;
+                atom(f, value)
+            }),
         }
     }
 }
 
+fn comparisons<T>(
+    f: &mut fmt::Formatter<'_>,
+    key: &str,
+    values: &[Comparison<T>],
+    write_value: impl Fn(&mut fmt::Formatter<'_>, &T) -> fmt::Result,
+) -> fmt::Result {
+    keyed(f, key, values, |f, comparison| {
+        f.write_str(comparison.operator.symbol())?;
+        write_value(f, &comparison.value)
+    })
+}
+
 fn texts(f: &mut fmt::Formatter<'_>, key: Builtin, values: &[String]) -> fmt::Result {
-    keyed(f, key, values, |f, value| atom(f, value))
+    keyed(f, key.as_str(), values, |f, value| atom(f, value))
 }
 
 fn keyed<T>(
     f: &mut fmt::Formatter<'_>,
-    key: Builtin,
+    key: &str,
     values: &[T],
     write_item: impl Fn(&mut fmt::Formatter<'_>, &T) -> fmt::Result,
 ) -> fmt::Result {
-    f.write_str(key.as_str())?;
+    f.write_str(key)?;
     f.write_char(':')?;
     joined(f, values, ",", write_item)
 }

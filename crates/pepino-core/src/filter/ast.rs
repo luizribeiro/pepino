@@ -1,7 +1,7 @@
 use crate::{FieldName, Status};
 
 use super::keywords::{Builtin, State};
-pub use chrono::NaiveDate as Date;
+pub use crate::Date;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Filter(pub(super) Vec<Term>);
@@ -31,6 +31,10 @@ pub enum Clause {
     Parent(Vec<String>),
     Blocks(Vec<String>),
     BlockedBy(Vec<String>),
+    Priority(Vec<Comparison<i64>>),
+    Due(Vec<Comparison<Date>>),
+    Created(Vec<Comparison<Date>>),
+    Updated(Vec<Comparison<Date>>),
     Match {
         key: String,
         alternatives: Vec<Comparison>,
@@ -82,15 +86,14 @@ impl PresenceField {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Comparison {
+pub struct Comparison<T = Value> {
     pub operator: Operator,
-    pub value: Value,
+    pub value: T,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Value {
     Text(String),
-    Date(Date),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

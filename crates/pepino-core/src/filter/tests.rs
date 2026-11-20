@@ -140,24 +140,32 @@ fn tags_use_event_name_rules() {
 
 #[test]
 fn calendar_dates_are_typed_and_validated() {
-    let filter = parse("due:2026-12-01 created:>=2024-02-29 updated:<2027-01-01").unwrap();
-    let expected = [
-        ("due", Operator::Eq, "2026-12-01"),
-        ("created", Operator::Ge, "2024-02-29"),
-        ("updated", Operator::Lt, "2027-01-01"),
-    ];
-    for (term, (key, operator, date)) in filter.terms().iter().zip(expected) {
-        assert_eq!(
-            term.clause,
-            Clause::Match {
-                key: key.into(),
-                alternatives: vec![Comparison {
-                    operator,
-                    value: Value::Date(date.parse().unwrap())
-                }],
-            }
-        );
-    }
+    use Operator::*;
+    let filter = parse("-due:<=2026-12-01,>fri created:>=2024-02-29 updated:<2027-01-01").unwrap();
+    let comparison = |operator, date: &str| Comparison {
+        operator,
+        value: date.parse().unwrap(),
+    };
+    assert_eq!(
+        filter.terms(),
+        [
+            Term {
+                negated: true,
+                clause: Clause::Due(vec![
+                    comparison(Le, "2026-12-01"),
+                    comparison(Gt, "2026-11-20"),
+                ])
+            },
+            Term {
+                negated: false,
+                clause: Clause::Created(vec![comparison(Ge, "2024-02-29")])
+            },
+            Term {
+                negated: false,
+                clause: Clause::Updated(vec![comparison(Lt, "2027-01-01")])
+            },
+        ]
+    );
     let error = parse("tag:garden due:2026-02-29").unwrap_err();
     assert_eq!(error.term, "due:2026-02-29");
     assert_eq!(
@@ -310,22 +318,49 @@ fn built_in_field_matches_preserve_symbolic_values() {
 
 #[test]
 fn comparison_operators_apply_to_each_alternative() {
+    use crate::FieldName;
     use Operator::*;
-    let filter = parse(r#"priority:>=2,<4 effort:<=8,>12"#).unwrap();
-    let expected = [[(Ge, "2"), (Lt, "4")].as_slice(), &[(Le, "8"), (Gt, "12")]];
-    for (term, pairs) in filter.terms().iter().zip(expected) {
-        let Clause::Match { alternatives, .. } = &term.clause else {
-            panic!("expected match");
-        };
+    let filter = parse("priority:>=2,<4 effort:<=8,>12").unwrap();
+    assert_eq!(
+        filter.terms(),
+        [
+            Term {
+                negated: false,
+                clause: Clause::Priority(vec![
+                    Comparison {
+                        operator: Ge,
+                        value: 2
+                    },
+                    Comparison {
+                        operator: Lt,
+                        value: 4
+                    },
+                ])
+            },
+            Term {
+                negated: false,
+                clause: Clause::Match {
+                    key: FieldName::new("effort").unwrap().as_str().into(),
+                    alternatives: vec![
+                        Comparison {
+                            operator: Le,
+                            value: Value::Text("8".into())
+                        },
+                        Comparison {
+                            operator: Gt,
+                            value: Value::Text("12".into())
+                        },
+                    ],
+                }
+            },
+        ]
+    );
+    for value in ["high", "9223372036854775808"] {
         assert_eq!(
-            alternatives,
-            &pairs
-                .iter()
-                .map(|&(operator, value)| Comparison {
-                    operator,
-                    value: Value::Text(value.into()),
-                })
-                .collect::<Vec<_>>()
+            parse(&format!("priority:{value}")).unwrap_err().kind,
+            ErrorKind::InvalidInteger {
+                value: value.into()
+            }
         );
     }
     let error = parse("garden -tag:>=seeds").unwrap_err();

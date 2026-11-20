@@ -31,8 +31,13 @@ fn matching(
     })
 }
 
-fn named(names: Vec<&'static str>) -> impl Strategy<Value = String> {
-    select(names).prop_map(str::to_owned)
+fn comparisons<T: std::fmt::Debug>(
+    value: impl Strategy<Value = T>,
+) -> impl Strategy<Value = Vec<Comparison<T>>> {
+    vec(
+        (operator(), value).prop_map(|(operator, value)| Comparison { operator, value }),
+        1..4,
+    )
 }
 
 fn clause() -> impl Strategy<Value = Clause> {
@@ -52,7 +57,7 @@ fn clause() -> impl Strategy<Value = Clause> {
         "custom_[a-z0-9_-]{0,56}"
             .prop_map(|name| PresenceField::Custom(FieldName::new(name).unwrap())),
     ];
-    let custom_key = prop_oneof![Just("priority".into()), "custom_[a-z0-9_-]{0,56}",];
+    let custom_key = "custom_[a-z0-9_-]{0,56}";
     let dates = prop_oneof![
         select(vec![Date::MIN, Date::MAX]),
         (-200_000..=200_000, 1_u32..=12, 1_u32..=28)
@@ -64,10 +69,10 @@ fn clause() -> impl Strategy<Value = Clause> {
         vec(states, 1..4).prop_map(Clause::Is),
         vec(presence, 1..4).prop_map(Clause::Has),
         matching(custom_key, (operator(), atom().prop_map(Value::Text))),
-        matching(
-            named(vec!["due", "created", "updated"]),
-            (operator(), dates.prop_map(Value::Date))
-        ),
+        comparisons(any::<i64>()).prop_map(Clause::Priority),
+        comparisons(dates.clone()).prop_map(Clause::Due),
+        comparisons(dates.clone()).prop_map(Clause::Created),
+        comparisons(dates).prop_map(Clause::Updated),
         vec("[a-z][a-z0-9_./-]{0,16}", 1..4).prop_map(Clause::Tag),
         vec(
             select(

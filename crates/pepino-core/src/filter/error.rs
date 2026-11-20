@@ -68,6 +68,8 @@ pub enum ErrorKind {
         "invalid date {value:?}; use YYYY-MM-DD, today, tomorrow, yesterday, a weekday, or an offset such as +3d"
     )]
     InvalidDate { value: String },
+    #[error("invalid integer {value:?}. Enter a signed 64-bit integer")]
+    InvalidInteger { value: String },
     #[error("date {value:?} is outside the supported calendar range")]
     DateOutOfRange { value: String },
     #[error("keywords are lowercase; use {lowercase:?} for {value:?}")]

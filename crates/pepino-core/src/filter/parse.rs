@@ -136,6 +136,15 @@ fn parse_view(raw: &str) -> Located<Clause> {
 fn parse_keyed(key: String, raw: &str, today: Date) -> Located<Clause> {
     use Builtin::*;
     let equal_text = || alternatives(raw, &key, false, |operand| Ok(operand.value));
+    let dates = || {
+        alternatives(raw, &key, true, |operand| {
+            let value = date::resolve(&operand.value, today)?;
+            Ok(Comparison {
+                operator: operand.operator,
+                value,
+            })
+        })
+    };
     match Builtin::find(&key) {
         Some(Tag) => {
             alternatives(raw, &key, false, |operand| parse_tag(operand.value)).map(Clause::Tag)
@@ -161,21 +170,33 @@ fn parse_keyed(key: String, raw: &str, today: Date) -> Located<Clause> {
         Some(Has) => {
             alternatives(raw, &key, false, |operand| parse_presence(operand.value)).map(Clause::Has)
         }
-        builtin => {
-            let alternatives = alternatives(raw, &key, true, |operand| {
-                let value = if matches!(builtin, Some(Due | Created | Updated)) {
-                    Value::Date(date::resolve(&operand.value, today)?)
-                } else {
-                    Value::Text(operand.value)
-                };
+        Some(Priority) => alternatives(raw, &key, true, |operand| {
+            let value = parse_integer(operand.value)?;
+            Ok(Comparison {
+                operator: operand.operator,
+                value,
+            })
+        })
+        .map(Clause::Priority),
+        Some(Due) => dates().map(Clause::Due),
+        Some(Created) => dates().map(Clause::Created),
+        Some(Updated) => dates().map(Clause::Updated),
+        None => Ok(Clause::Match {
+            alternatives: alternatives(raw, &key, true, |operand| {
                 Ok(Comparison {
                     operator: operand.operator,
-                    value,
+                    value: Value::Text(operand.value),
                 })
-            })?;
-            Ok(Clause::Match { key, alternatives })
-        }
+            })?,
+            key,
+        }),
     }
+}
+
+fn parse_integer(value: String) -> Result<i64, ErrorKind> {
+    value
+        .parse()
+        .map_err(|_| ErrorKind::InvalidInteger { value })
 }
 
 fn parse_tag(value: String) -> Result<String, ErrorKind> {
