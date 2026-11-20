@@ -16,6 +16,7 @@ mod read;
 mod state;
 mod status;
 mod values;
+mod views;
 mod wire;
 mod write;
 

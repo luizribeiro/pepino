@@ -7,9 +7,10 @@ use pepino_core::{BoardId, DeviceId, IdentityId};
 use serde::{Deserialize, Serialize};
 
 use crate::AppError;
+use crate::views::SavedViews;
 
-const VERSION: u32 = 1;
-pub(crate) const FILE_NAME: &str = "local.json";
+const VERSION: u32 = 2;
+const FILE_NAME: &str = "local.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenOptions {
@@ -38,6 +39,7 @@ pub struct LocalState {
     pub device_name: String,
     pub board_id: BoardId,
     pub board_name: String,
+    pub(crate) saved_views: SavedViews,
 }
 
 impl LocalState {
@@ -73,8 +75,34 @@ impl LocalState {
             device_name,
             board_id: BoardId::from_bytes(random_id()?),
             board_name,
+            saved_views: SavedViews::default(),
         };
         save(directory, &path, state).map_err(|error| io_error("save local state", error))
+    }
+
+    pub(crate) fn load(directory: &Path) -> Result<Self, AppError> {
+        let bytes = fs::read(directory.join(FILE_NAME))
+            .map_err(|error| io_error("read local state", error))?;
+        Self::decode(&bytes)
+    }
+
+    pub(crate) fn migrate(directory: &Path) -> Result<Self, AppError> {
+        let mut state = Self::load(directory)?;
+        if state.version != VERSION {
+            state.version = VERSION;
+            state.replace(directory)?;
+        }
+        Ok(state)
+    }
+
+    pub(crate) fn replace(&self, directory: &Path) -> Result<(), AppError> {
+        let replace = || {
+            stage(directory, self)?
+                .persist(directory.join(FILE_NAME))
+                .map_err(|error| error.error)?;
+            sync_directory(directory)
+        };
+        replace().map_err(|error| io_error("save local state", error))
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, AppError> {
@@ -85,10 +113,18 @@ impl LocalState {
 
         let Version { version } = serde_json::from_slice(bytes)
             .map_err(|error| storage("decode local state", error, false))?;
-        if version != u64::from(VERSION) {
-            return Err(storage("unsupported local state version", version, false));
+        match version {
+            1 => {
+                let mut state: serde_json::Value = serde_json::from_slice(bytes)
+                    .map_err(|error| storage("decode local state", error, false))?;
+                state["saved_views"] = serde_json::json!({});
+                serde_json::from_value(state)
+                    .map_err(|error| storage("decode local state", error, false))
+            }
+            version if version == u64::from(VERSION) => serde_json::from_slice(bytes)
+                .map_err(|error| storage("decode local state", error, false)),
+            version => Err(storage("unsupported local state version", version, false)),
         }
-        serde_json::from_slice(bytes).map_err(|error| storage("decode local state", error, false))
     }
 }
 

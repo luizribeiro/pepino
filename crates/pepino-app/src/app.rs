@@ -30,14 +30,19 @@ impl App {
     ) -> Result<Self, AppError> {
         let directory = data_dir.as_ref().to_owned();
         let lock_timeout = options.lock_timeout;
-        let (directory, local) = worker("initialize local state", move || {
+        let directory = worker("initialize local state", move || {
             let directory = std::path::absolute(directory)
                 .map_err(|error| io_error("resolve data directory", error))?;
-            let local = LocalState::load_or_create(&directory, options)?;
-            Ok::<_, AppError>((directory, local))
+            LocalState::load_or_create(&directory, options)?;
+            Ok::<_, AppError>(directory)
         })
         .await??;
-        let _lock = lock(&directory, lock_timeout).await?;
+        let guard = lock(&directory, lock_timeout).await?;
+        let state_dir = directory.clone();
+        let (_guard, local) = worker("migrate local state", move || {
+            LocalState::migrate(&state_dir).map(|local| (guard, local))
+        })
+        .await??;
         let database = directory.join("pepino.sqlite");
         let runtime = tokio::runtime::Handle::current();
         // Store startup borrows its migration connection through a non-Send future.
