@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use pepino_app::{BoardJoinState, DeviceRequest, PeerHint};
-use pepino_core::BoardId;
+use pepino_core::{BoardId, DeviceId};
 use serde::{Deserialize, Serialize};
 
 pub const VERSION: u32 = 1;
@@ -28,6 +28,10 @@ pub enum Operation {
         device: DeviceRequest,
         name: Option<String>,
     },
+    DeviceRemoval {
+        device: DeviceId,
+        timeout_ms: u64,
+    },
     RegisterPeerHint {
         peer: PeerHint,
     },
@@ -40,7 +44,9 @@ pub enum Operation {
 impl Operation {
     pub(super) fn wait_ms(&self) -> Option<u64> {
         match *self {
-            Self::WaitIdle { timeout_ms } | Self::BoardJoinState { timeout_ms } => Some(timeout_ms),
+            Self::WaitIdle { timeout_ms }
+            | Self::BoardJoinState { timeout_ms }
+            | Self::DeviceRemoval { timeout_ms, .. } => Some(timeout_ms),
             _ => None,
         }
     }
@@ -85,6 +91,9 @@ pub enum Outcome {
     },
     MemberAccessDenied {
         board: String,
+    },
+    DeviceRemoval {
+        boards: Option<Vec<pepino_sync::BoardRemoval>>,
     },
     PeerHintRegistered,
     BoardJoinState {
@@ -185,4 +194,16 @@ fn identifies_the_peer_hint_and_join_state_operations() {
         request.request,
         Operation::BoardJoinState { timeout_ms: 250 }
     ));
+}
+
+#[cfg(test)]
+#[test]
+fn a_device_removal_wait_round_trips_the_full_device_id() {
+    use serde_json::json;
+    let device = DeviceId::from_bytes([67; 32]);
+    let wire =
+        json!({"v": 1, "request": {"op": "device_removal", "device": device, "timeout_ms": 6000}});
+    let request: Request = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(request.request.wait_ms(), Some(6000));
+    assert_eq!(serde_json::to_value(request).unwrap(), wire);
 }

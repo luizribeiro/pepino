@@ -217,6 +217,31 @@ impl<T: Transport> SyncEngine<T> {
             .map_err(|_| Error::Timeout)?
     }
 
+    pub async fn wait_device_removal(
+        &self,
+        device: DeviceId,
+        wait: Duration,
+    ) -> Option<Vec<crate::BoardRemoval>> {
+        let mut status = self.status.clone();
+        let generation = self.request_scan();
+        tokio::time::timeout(wait, async {
+            loop {
+                {
+                    let status = status.borrow_and_update();
+                    if status.catalog_generation >= generation
+                        && let Some(boards) = status.device_removals.get(&device)
+                    {
+                        return Some(boards.clone());
+                    }
+                }
+                status.changed().await.ok()?;
+            }
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
     pub fn status(&self) -> Status {
         let status = self.status.borrow();
         Status {

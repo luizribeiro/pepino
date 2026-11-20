@@ -53,6 +53,11 @@ pub(super) async fn operate(
                 "Could not grant board membership. Check that this device has joined every board.",
             ),
         },
+        Operation::DeviceRemoval { device, timeout_ms } => Outcome::DeviceRemoval {
+            boards: engine
+                .wait_device_removal(device, Duration::from_millis(timeout_ms))
+                .await,
+        },
         Operation::RegisterPeerHint { peer } => match engine.register_peer_hint(peer).await {
             Ok(()) => Outcome::PeerHintRegistered,
             Err(_) => Outcome::error(
