@@ -112,7 +112,7 @@ pub(crate) fn project(rows: &[EdgeRow]) -> Result<Vec<ProjectedEdge>, StoreError
             }
             EdgeKind::Parent => parents.accept(edge),
             EdgeKind::Blocks => blocks.accept(edge),
-            _ => {}
+            EdgeKind::Relates => {}
         }
     }
     Ok(edges)

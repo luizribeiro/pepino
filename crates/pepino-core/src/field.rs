@@ -21,7 +21,6 @@ impl Status {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[non_exhaustive]
 #[serde(rename_all = "snake_case")]
 pub enum EdgeKind {
     Parent,

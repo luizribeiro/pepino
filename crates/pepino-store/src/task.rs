@@ -163,7 +163,6 @@ pub(crate) fn records(
                 EdgeKind::Relates => {
                     task.relates.insert(edge.to);
                 }
-                _ => {}
             }
         }
         if let Some(task) = tasks.get_mut(edge.to.as_bytes()) {
@@ -178,7 +177,6 @@ pub(crate) fn records(
                 EdgeKind::Relates => {
                     task.relates.insert(edge.from);
                 }
-                _ => {}
             }
         }
     }

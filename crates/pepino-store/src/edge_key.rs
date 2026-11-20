@@ -12,7 +12,6 @@ pub(crate) fn member(kind: EdgeKind, to: TaskId) -> Result<[u8; 33], StoreError>
         EdgeKind::Parent => PARENT,
         EdgeKind::Blocks => BLOCKS,
         EdgeKind::Relates => RELATES,
-        _ => return Err(StoreError::ViewValue("unsupported edge kind".into())),
     };
     member[1..].copy_from_slice(to.as_bytes());
     Ok(member)

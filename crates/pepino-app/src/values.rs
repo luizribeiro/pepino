@@ -71,7 +71,6 @@ impl TryFrom<pepino_core::EdgeKind> for EdgeKind {
             Core::Parent => Self::Parent,
             Core::Blocks => Self::Blocks,
             Core::Relates => Self::Relates,
-            _ => return Err(unsupported_value("edge kind")),
         })
     }
 }
