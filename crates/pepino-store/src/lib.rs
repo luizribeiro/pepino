@@ -3,6 +3,7 @@ mod comment;
 #[cfg(test)]
 mod convergence;
 mod edge_key;
+mod edges;
 mod error;
 mod fold;
 mod history;
@@ -22,6 +23,7 @@ use sqlx::{
 use tokio::sync::Mutex;
 
 pub use comment::CommentRecord;
+pub use edges::{EdgeExclusion, EdgeRecord};
 pub use error::{DatabaseErrorKind, StoreError};
 pub use history::EventRecord;
 pub use log::{AppendOutcome, IdSource, RebuildReport, SkipReason};
