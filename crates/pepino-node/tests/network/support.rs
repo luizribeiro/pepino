@@ -5,7 +5,8 @@ use std::{
     time::Duration,
 };
 
-use pepino_node::{DeviceCredentials, Node, NodeSettings};
+use futures_util::StreamExt;
+use pepino_node::{BoardEvent, BoardEvents, DeviceCredentials, Node, NodeSettings};
 use tokio::time::timeout;
 
 pub const WAIT: Duration = Duration::from_secs(8);
@@ -41,6 +42,14 @@ pub fn settings(network: &str, dir: PathBuf) -> NodeSettings {
 pub async fn start(settings: &NodeSettings) -> Node {
     timeout(WAIT, Node::spawn(settings.clone()))
         .await
+        .unwrap()
+        .unwrap()
+}
+
+pub async fn next(events: &mut BoardEvents) -> BoardEvent {
+    timeout(WAIT, events.next())
+        .await
+        .unwrap()
         .unwrap()
         .unwrap()
 }
