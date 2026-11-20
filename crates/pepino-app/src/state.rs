@@ -101,20 +101,10 @@ fn save(directory: &Path, path: &Path, state: LocalState) -> io::Result<LocalSta
         builder.mode(0o700);
     }
     builder.create(directory)?;
-    let mut file = tempfile::NamedTempFile::new_in(directory)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.as_file()
-            .set_permissions(fs::Permissions::from_mode(0o600))?;
-    }
-    serde_json::to_writer(file.as_file_mut(), &state)?;
-    file.write_all(b"\n")?;
-    file.as_file().sync_all()?;
+    let file = stage(directory, &state)?;
     match file.persist_noclobber(path) {
         Ok(_) => {
-            #[cfg(unix)]
-            fs::File::open(directory)?.sync_all()?;
+            sync_directory(directory)?;
             Ok(state)
         }
         Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
@@ -123,6 +113,26 @@ fn save(directory: &Path, path: &Path, state: LocalState) -> io::Result<LocalSta
         }
         Err(error) => Err(error.error),
     }
+}
+
+fn stage(directory: &Path, state: &LocalState) -> io::Result<tempfile::NamedTempFile> {
+    let mut file = tempfile::NamedTempFile::new_in(directory)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    serde_json::to_writer(file.as_file_mut(), state)?;
+    file.write_all(b"\n")?;
+    file.as_file().sync_all()?;
+    Ok(file)
+}
+
+fn sync_directory(_directory: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    fs::File::open(_directory)?.sync_all()?;
+    Ok(())
 }
 
 fn random_id() -> Result<[u8; 32], AppError> {
