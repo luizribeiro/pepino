@@ -1,0 +1,78 @@
+use pepino_app::OpenOptions;
+use pepino_core::DeviceId;
+use pepino_node::{BootstrapNode, DeviceCredentials, MdnsMode, NodeSettings};
+
+use crate::{
+    config::Config,
+    error::{CliError, ErrorKind},
+};
+
+pub async fn settings(config: &Config) -> Result<NodeSettings, CliError> {
+    let data = config.data_dir.value.as_path();
+    let path = config.credentials_file.value.as_path();
+    let options = OpenOptions {
+        credentials_file: Some(path.to_owned()),
+        ..OpenOptions::default()
+    };
+    let app = pepino_app::App::open_with_options(data, 0, options).await?;
+    let credentials = DeviceCredentials::load(path).map_err(|_| {
+        CliError::new(
+            ErrorKind::Failure,
+            "Could not load the configured device credentials.",
+        )
+    })?;
+    if credentials.device_id() != app.local_state().device_id {
+        return Err(CliError::new(
+            ErrorKind::Failure,
+            "The configured credentials do not match the local device.",
+        ));
+    }
+    let mut settings = NodeSettings::new(credentials, data.join("node.sqlite"));
+    settings.network_name = config.network.value.as_str().to_owned();
+    settings.relay_urls = config
+        .relay_urls
+        .value
+        .iter()
+        .map(|relay| relay.as_url().as_str().to_owned())
+        .collect();
+    settings.bootstrap_nodes = config
+        .bootstrap_nodes
+        .value
+        .iter()
+        .map(|entry| BootstrapNode {
+            device_id: DeviceId::from_bytes(*entry.node_id.as_bytes()),
+            relay_url: entry.relay_url.as_url().as_str().to_owned(),
+        })
+        .collect();
+    settings.mdns = if config.mdns.value {
+        MdnsMode::Active
+    } else {
+        MdnsMode::Disabled
+    };
+    settings.bind_port = config.port.value;
+    Ok(settings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Platform, PlatformDirs};
+    use std::path::Path;
+
+    #[tokio::test]
+    async fn an_uninitialized_directory_does_not_create_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let platform = PlatformDirs::new(Platform::Linux, dir.path(), None, None);
+        let config = crate::config::validate_file(
+            Path::new("/etc/release.toml"),
+            "data_dir = '~/release'",
+            &platform,
+        )
+        .unwrap();
+        assert_eq!(
+            settings(&config).await.err().unwrap().kind(),
+            ErrorKind::NotInitialized
+        );
+        assert!(!config.data_dir.value.as_path().exists());
+    }
+}

@@ -10,6 +10,8 @@ workspace = true
 
 [dependencies]
 pepino-app = { path = "../pepino-app" }
+pepino-node = { path = "../pepino-node" }
+pepino-core = { path = "../pepino-core" }
 blake3 = "1"
 nix = { version = "0.29", features = ["term", "fs", "process", "signal"] }
 clap = { version = "4.5", features = ["derive", "env"] }
@@ -30,8 +32,6 @@ unicode-width = "0.2"
 tempfile = "3"
 
 [dev-dependencies]
-pepino-node = { path = "../pepino-node" }
 sqlx.workspace = true
-pepino-core = { path = "../pepino-core" }
 pepino-store = { path = "../pepino-store" }
 
