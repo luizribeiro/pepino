@@ -39,3 +39,15 @@ pub(super) fn set_status(
         .collect::<Result<Vec<_>, _>>()?;
     write_documents(context, &responses, verb)
 }
+
+#[derive(clap::Args)]
+#[command(about = "Reopen tasks as todo.", after_help = example_help(&["ppn reopen 97ad97 33ea33", "ppn reopen 97ad97 --json"]))]
+pub struct ReopenArgs {
+    /// Task IDs or unambiguous prefixes.
+    #[arg(required = true, value_name = "TASK")]
+    tasks: Vec<String>,
+}
+
+pub fn reopen(context: &Context<'_>, args: ReopenArgs) -> Result<CommandResult, CliError> {
+    set_status(context, args.tasks, Status::Todo, "Reopened")
+}
