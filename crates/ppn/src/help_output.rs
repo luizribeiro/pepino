@@ -70,6 +70,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "device_join",
             "joined Whether every board finished its first sync\nboards Per-board join states\ngrantor Signing device ID and name\nmessage Null on success",
         ),
+        "device revoke" => (
+            "device_revoke",
+            "device_id Full revoked device ID\nname Device name\nconfirmed Whether revocation was confirmed\nboards Per-board removal outcomes",
+        ),
         "device rename" => (
             "roster_device",
             "device Renamed device with its ID, name, state and admission metadata",

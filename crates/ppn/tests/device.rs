@@ -229,3 +229,25 @@ fn device_rename_accepts_this_device_or_an_explicit_id_in_a_pipe() {
         "invalid_input",
     );
 }
+
+#[test]
+fn revocation_refuses_the_current_device() {
+    let (sandbox, _) = uninitialized_task_sandbox();
+    sandbox.run(&["init", "--name", "Ada Gardener"]);
+    let own = as_json(&sandbox.run(&["status", "--json"]))["device"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let self_error = sandbox
+        .command()
+        .args(["device", "revoke", &own, "--yes", "--json"])
+        .output()
+        .unwrap();
+    let self_error = task_error(self_error, 2, "invalid_input");
+    assert!(
+        self_error["message"]
+            .as_str()
+            .unwrap()
+            .contains("another device")
+    );
+}

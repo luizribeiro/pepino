@@ -3,6 +3,7 @@ mod code_input;
 mod join;
 mod ls;
 mod rename;
+mod revoke;
 
 use std::path::Path;
 
@@ -22,7 +23,7 @@ use serde_json::{Map, Value, json};
 #[derive(clap::Args)]
 #[command(
     about = "Link your devices using a manual request and grant.",
-    long_about = "Link your devices using a manual request and grant. Device removal and revocation, one-code linking, merging existing identities, and board relay management are outside this version.",
+    long_about = "Link your devices using a manual request and grant. One-code linking, merging existing identities, and board relay management are outside this version.",
     after_help = example_help(&["ppn device request --name ferrum"])
 )]
 pub struct Args {
@@ -35,6 +36,14 @@ enum Action {
     /// List this identity's devices and their membership status.
     #[command(after_help = example_help(&["ppn device ls", "ppn device ls --json"]))]
     Ls,
+
+    /// Revoke another device from this identity and remove its board access.
+    #[command(after_help = example_help(&["ppn device revoke 'Garden tablet'", "ppn device revoke 97ad97 --yes --json"]))]
+    Revoke {
+        /// Device name, full ID, or unambiguous ID prefix.
+        #[arg(value_name = "DEVICE")]
+        device: String,
+    },
 
     /// Rename this device or another device in the identity.
     #[command(override_usage = "ppn device rename [OPTIONS] [DEVICE] <NAME>", after_help = example_help(&["ppn device rename Titanium", "ppn device rename Ferrum 'Garden tablet'"]))]
@@ -81,7 +90,7 @@ impl Args {
     pub(crate) fn requires_identity(&self) -> bool {
         matches!(
             self.action,
-            Action::Ls | Action::Add { .. } | Action::Rename { .. }
+            Action::Ls | Action::Add { .. } | Action::Rename { .. } | Action::Revoke { .. }
         )
     }
 }
@@ -94,6 +103,7 @@ pub fn run(
 ) -> Result<CommandResult, CliError> {
     match args.action {
         Action::Ls => ls::run(context),
+        Action::Revoke { device } => revoke::run(context, &device),
         Action::Rename {
             device_or_name,
             name,
