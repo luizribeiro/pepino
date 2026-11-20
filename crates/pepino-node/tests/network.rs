@@ -6,7 +6,7 @@ mod lifecycle;
 mod support;
 
 use futures_util::StreamExt;
-use pepino_node::{Error, NodeEvent, OpenBoardOptions, Role};
+use pepino_node::{Error, MemberInfo, NodeEvent, OpenBoardOptions, Role};
 use std::{collections::BTreeSet, time::Duration};
 use support::*;
 use tokio::time::timeout;
@@ -35,10 +35,17 @@ async fn two_devices_exchange_events_and_a_late_member_gets_history() {
         vec![(a.device_id(), Role::Manage)]
     );
 
-    let mut invalid = b.member_info().await.unwrap();
+    let member = b.member_info().await.unwrap();
+    assert_eq!(member.to_string().parse::<MemberInfo>().unwrap(), member);
+    assert_eq!(MemberInfo::from_hex(&member.to_hex()).unwrap(), member);
+    let mut invalid = *member.as_bytes();
     invalid[304] ^= 1;
     assert!(matches!(
-        board_a.add_member(&invalid, Role::Write).await,
+        MemberInfo::from_bytes(&invalid),
+        Err(Error::Member(_))
+    ));
+    assert!(matches!(
+        MemberInfo::from_base32("invalid!"),
         Err(Error::Member(_))
     ));
     let mut board_b = enroll(&board_a, &b, Role::Write).await;

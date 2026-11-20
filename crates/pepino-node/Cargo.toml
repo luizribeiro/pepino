@@ -9,6 +9,7 @@ license.workspace = true
 workspace = true
 [dependencies]
 ciborium = "0.2"
+data-encoding = "2"
 p2panda.workspace = true
 pepino-core = { path = "../pepino-core" }
 serde = { version = "1", features = ["derive"] }

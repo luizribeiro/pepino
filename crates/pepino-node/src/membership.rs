@@ -1,9 +1,11 @@
-use p2panda::{AccessLevel, spaces::Member};
+use p2panda::AccessLevel;
 use pepino_core::DeviceId;
 
 use crate::{BoardHandle, Error, Node};
 
-pub type MemberInfo = [u8; 305];
+#[path = "member_info.rs"]
+mod member_info;
+pub use member_info::MemberInfo;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -38,17 +40,16 @@ impl Node {
     pub async fn member_info(&self) -> Result<MemberInfo, Error> {
         let node = self.inner.clone();
         self.worker
-            .run(async move { Ok(node.me().await.map_err(Error::node)?.to_bytes()) })
+            .run(async move {
+                MemberInfo::from_bytes(&node.me().await.map_err(Error::node)?.to_bytes())
+            })
             .await
     }
 }
 
 impl BoardHandle {
     pub async fn add_member(&self, info: &MemberInfo, role: Role) -> Result<(), Error> {
-        let member = Member::from_bytes(info).map_err(|error| Error::Member(error.to_string()))?;
-        member
-            .verify()
-            .map_err(|error| Error::Member(error.to_string()))?;
+        let member = info.member()?;
         let id = member.id();
         let space = self.space()?;
         let node = self.node.upgrade().ok_or(Error::Closed)?;

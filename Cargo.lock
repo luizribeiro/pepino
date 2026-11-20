@@ -3384,6 +3384,7 @@ name = "pepino-node"
 version = "0.1.0"
 dependencies = [
  "ciborium",
+ "data-encoding",
  "futures-util",
  "p2panda",
  "p2panda-net",

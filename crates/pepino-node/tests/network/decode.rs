@@ -27,7 +27,7 @@ async fn a_decode_error_leaves_the_board_stream_open() {
         .open_board(BoardId::from_bytes(*space.id().as_bytes()))
         .await
         .unwrap();
-    let member = Member::from_bytes(&node.member_info().await.unwrap()).unwrap();
+    let member = Member::from_bytes(node.member_info().await.unwrap().as_bytes()).unwrap();
     let id = member.id();
     raw.register_member(member).await.unwrap();
     space.add(id, AccessLevel::Write).await.unwrap();
