@@ -4,7 +4,13 @@ use common::*;
 #[test]
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 fn init_names_the_local_records_and_is_idempotent() {
+    use pepino_node::DeviceCredentials;
+    use std::fs;
     let (sandbox, data) = uninitialized_task_sandbox();
+    let credential_path = sandbox.home.path().join("keys/device.cbor");
+    let mut config = fs::read_to_string(&sandbox.config).unwrap();
+    config.insert_str(0, "credentials_file = '~/keys/device.cbor'\n");
+    fs::write(&sandbox.config, config).unwrap();
     let output = sandbox.run(&[
         "init",
         "--name",
@@ -18,6 +24,30 @@ fn init_names_the_local_records_and_is_idempotent() {
     assert!(output.contains("Device: Garden laptop"));
     assert!(output.contains("Board: Greenhouse"));
     let before = std::fs::read(data.join("local.json")).unwrap();
+    let status = sandbox.run(&["status", "--json"]);
+    let document = as_json(&status);
+    assert_eq!(
+        document["credentials_file"],
+        credential_path.to_str().unwrap()
+    );
+    let device = DeviceCredentials::load_or_create(&credential_path)
+        .unwrap()
+        .device_id()
+        .to_string();
+    assert_eq!(document["device"]["id"], device);
+    assert!(data.join("node.sqlite").is_file());
+    assert!(!data.join("credentials.cbor").exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&credential_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    let task = create_task(&sandbox, "Replace the greenhouse latch", &[]);
+    let task = show_task(&sandbox, &task);
+    assert_eq!(task["author"], device);
     let status = sandbox.run(&["status", "--json"]);
     let repeated = sandbox.run(&[
         "init",

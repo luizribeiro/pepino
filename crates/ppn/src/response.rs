@@ -57,7 +57,8 @@ response_views! {
     },
     status => Status {
         identity: &'a IdentityRecord, device: &'a NamedRecord, board: &'a NamedRecord,
-        data_dir: &'a str, counts: &'a StatusCounts, protocol_version: &'a u32,
+        data_dir: &'a str, credentials_file: &'a str, network: &'a pepino_app::NetworkStatus,
+        counts: &'a StatusCounts, protocol_version: &'a u32,
     },
     view_saved => ViewSaved { view: &'a SavedView, replaced: &'a bool },
     view_deleted => ViewDeleted { view: &'a SavedView },

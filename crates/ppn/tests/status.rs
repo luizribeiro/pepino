@@ -13,11 +13,18 @@ fn status_renders_empty_local_state_through_the_binary() {
         "Board: Personal",
         "Tasks: 0 open, 0 closed",
         "Events: 0 total, 0 applied",
+        "network: offline (daemon not running)",
     ] {
         assert!(human.contains(label), "{human}");
     }
     assert!(human.contains(&format!("Data directory: {}", data.display())));
     let status = as_json(&sandbox.run(&["status", "--json"]));
+    let id = status["device"]["id"].as_str().unwrap();
+    assert!(human.contains(&format!("(node ID {})", &id[..6])));
+    assert!(human.contains(&format!(
+        "Credentials: {}",
+        data.join("credentials.cbor").display()
+    )));
     assert_eq!(
         status,
         json!({

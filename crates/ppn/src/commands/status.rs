@@ -51,12 +51,17 @@ fn document(context: &Context<'_>, mut client: AppClient) -> Result<CommandResul
             device,
             board,
             data_dir,
+            credentials_file,
+            network,
             counts,
             protocol_version,
         } = response.status()?;
         let skipped = &counts.skipped;
+        let network = match network {
+            pepino_app::NetworkStatus::Offline => "offline (daemon not running)",
+        };
         Ok(format!(
-            "Identity: {} ({})\nDevice: {} ({})\nBoard: {} ({})\nData directory: {}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid\nProtocol: v{}",
+            "Identity: {} ({})\nDevice: {} (node ID {})\nBoard: {} ({})\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}",
             single_line(&identity.display_name),
             short_id(&identity.id),
             single_line(&device.name),
@@ -64,6 +69,7 @@ fn document(context: &Context<'_>, mut client: AppClient) -> Result<CommandResul
             single_line(&board.name),
             short_id(&board.id),
             single_line(data_dir),
+            single_line(credentials_file),
             counts.open,
             counts.closed,
             counts.events,
@@ -72,6 +78,7 @@ fn document(context: &Context<'_>, mut client: AppClient) -> Result<CommandResul
             skipped.unknown_event,
             skipped.unknown_value,
             skipped.invalid,
+            skipped.forged_author,
             protocol_version,
         ))
     })
