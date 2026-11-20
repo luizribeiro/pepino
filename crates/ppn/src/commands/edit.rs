@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use pepino_app::{Date, FieldValue, ReadRequest, Request, Status, TaskSummary, WriteRequest};
+
+#[path = "edit_relations.rs"]
+mod relations;
 use ppn::app::AppClient;
 use ppn::error::{CliError, ErrorKind};
 use ppn::help_tree::example_help;
@@ -27,32 +30,47 @@ pub struct Args {
     fields: Box<FieldArgs>,
     #[command(flatten)]
     membership: MembershipArgs,
+    #[command(flatten)]
+    relations: relations::Args,
 }
 
 pub fn run(context: &Context<'_>, args: Args, json: bool) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
     let changes = args.fields.changes(context.time.today)?;
-    if changes.is_empty() && args.membership.is_empty() {
+    if changes.is_empty() && args.membership.is_empty() && args.relations.is_empty() {
         return edit_interactively(context, &mut client, &args.task, json);
     }
 
-    let task = client.task(&args.task)?.id;
-    let mut requests = args.membership.requests(&task);
-    if !changes.is_empty() {
-        requests.insert(0, WriteRequest::SetFields { task, changes });
+    let response = client.call(Request::Read(ReadRequest::GetTask { task: args.task }))?;
+    let detail = response.task()?;
+    let task = &detail.task.summary;
+    let relations = args.relations.changes(task);
+    let mut requests = args.membership.requests(&task.id);
+    if !changes.is_empty() || (requests.is_empty() && relations.is_empty()) {
+        requests.insert(
+            0,
+            WriteRequest::SetFields {
+                task: task.id.clone(),
+                changes,
+            },
+        );
     }
-    apply(context, &mut client, requests)
+    apply(context, &mut client, requests, relations)
 }
 
 fn apply(
     context: &Context<'_>,
     client: &mut AppClient,
     requests: Vec<WriteRequest>,
+    relations: Vec<relations::Change>,
 ) -> Result<CommandResult, CliError> {
-    let responses = requests
+    let mut responses = requests
         .into_iter()
         .map(|request| client.call(Request::Write(request)))
         .collect::<Result<Vec<_>, _>>()?;
+    for relation in relations {
+        responses.push(relation.apply(client)?);
+    }
     write_document(context, merge_write_responses(&responses)?, "Edited")
 }
 
@@ -79,7 +97,7 @@ fn edit_interactively(
             changes: after.changes_from(before)?,
         },
     );
-    apply(context, client, requests)
+    apply(context, client, requests, vec![])
 }
 
 #[cfg_attr(test, derive(Deserialize))]

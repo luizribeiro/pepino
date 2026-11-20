@@ -294,3 +294,13 @@ fn conflicting_custom_field_flags_are_usage_errors() {
             .is_none()
     );
 }
+
+#[test]
+fn edit_can_set_remove_and_leave_the_parent_unchanged() {
+    let (sandbox, _) = task_sandbox();
+    let parent = create_task(&sandbox, "Repair the greenhouse", &[]);
+    let child = create_task(&sandbox, "Measure the frame", &[]);
+    let human = sandbox.run(&["edit", &child, "--parent", &parent[..8]]);
+    assert!(human.starts_with("Edited "));
+    assert_eq!(show_task(&sandbox, &child)["parent"], parent);
+}
