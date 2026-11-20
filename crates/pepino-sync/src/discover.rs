@@ -111,6 +111,7 @@ async fn reconcile<T: Transport>(
     boards.changes.send_if_modified(|status| {
         let advanced = status.catalog_generation != generation;
         status.catalog_generation = generation;
+        let roster_synced = local.roster_ready() && status.roster_pending.take().is_some();
         let mut cleared = false;
         if let Some(board) = status.boards.get_mut(&catalog)
             && board
@@ -121,12 +122,12 @@ async fn reconcile<T: Transport>(
             board.last_error = None;
             cleared = true;
         }
-        advanced || cleared
+        advanced || cleared || roster_synced
     });
     Ok(())
 }
 
-async fn reconcile_roster<T: Transport>(
+pub(crate) async fn reconcile_roster<T: Transport>(
     boards: &BoardWorkers<T>,
     local: pepino_app::LocalState,
 ) -> Result<pepino_app::LocalState, Error> {

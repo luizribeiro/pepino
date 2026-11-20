@@ -113,8 +113,12 @@ impl<T: Transport> SyncEngine<T> {
         let (stop, stopping) = watch::channel(());
         let (board_stop, boards_stopping) = watch::channel(());
         let (nudges, nudged) = watch::channel(0);
+        let local = app.local_state();
+        let roster_pending =
+            (local.peer_hint().is_some() && !local.roster_ready()).then(|| local.catalog_board());
         let (changes, status) = watch::channel(Status {
             node: node.status(),
+            roster_pending,
             ..Default::default()
         });
         let mut workers = JoinSet::new();
@@ -264,9 +268,8 @@ impl SyncEngine {
         name: Option<String>,
     ) -> Result<(), Error> {
         let member = device.member_info()?;
-        if device.id == self.node.device_id()
-            || name.as_deref().is_some_and(|name| name.trim().is_empty())
-        {
+        pepino_app::normalize_name(name.as_deref().unwrap_or(&device.name))?;
+        if device.id == self.node.device_id() {
             return Err(Error::App(pepino_app::AppError::InvalidInput {
                 field: "device".into(),
                 reason: "expected a different device and a non-blank name".into(),
@@ -274,7 +277,8 @@ impl SyncEngine {
             }));
         }
         let mut boards = self.boards.lock().await;
-        let local = self.app.fresh_local_state().await?;
+        let local =
+            crate::discover::reconcile_roster(&boards, self.app.fresh_local_state().await?).await?;
         boards.open_missing(&local).await?;
         let owner = self.node.device_id();
         let allowed = futures_util::future::try_join_all(local.boards().iter().map(|board| {
@@ -299,6 +303,23 @@ impl SyncEngine {
             }
         }))
         .await?;
+        let keys = boards
+            .authority
+            .as_ref()
+            .map(|(_, keys)| keys)
+            .ok_or_else(|| pepino_app::AppError::InvalidInput {
+                field: "identity".into(),
+                reason: "missing credentials for the roster writer".into(),
+                diagnostic: None,
+            })?;
+        if !local.roster_ready() {
+            return Err(pepino_app::AppError::InvalidInput {
+                field: "identity".into(),
+                reason: "wait for this device's identity roster to sync".into(),
+                diagnostic: None,
+            }
+            .into());
+        }
         let results =
             futures_util::future::join_all(allowed.into_iter().map(|(name, handle, role)| {
                 let member = &member;
@@ -307,7 +328,7 @@ impl SyncEngine {
             .await;
         check_enrollment(results)?;
         self.app
-            .remember_device(device.id, device.name, name)
+            .record_device_admission(device.id, &device.name, name.as_deref(), keys)
             .await?;
         self.app.remember_member_bundle(&member).await?;
         self.nudge();

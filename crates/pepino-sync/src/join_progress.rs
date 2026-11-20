@@ -16,7 +16,8 @@ impl Status {
                 if !node.joined || previous == BoardJoinState::Joined {
                     return None;
                 }
-                let ready = node.synced_with_peer
+                let ready = self.roster_pending != Some(id)
+                    && node.synced_with_peer
                     && !node.replaying
                     && node.pending_deliveries == 0
                     && node.active_syncs.is_empty()
@@ -108,5 +109,8 @@ fn join_progress_requires_a_peer_and_drained_delivery() {
     state.boards.get_mut(&id).unwrap().ingest_pending = true;
     assert_eq!(state.new_join_progress()[&id], WaitingForFirstSync);
     state.boards.get_mut(&id).unwrap().ingest_pending = false;
+    state.roster_pending = Some(id);
+    assert_eq!(state.new_join_progress()[&id], WaitingForFirstSync);
+    state.roster_pending = None;
     assert_eq!(state.new_join_progress()[&id], Joined);
 }

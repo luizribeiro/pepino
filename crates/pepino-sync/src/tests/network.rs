@@ -271,6 +271,9 @@ async fn the_running_engine_enrolls_a_device_on_every_board_idempotently() {
         .await
         .unwrap();
     assert_eq!(local.local_state().devices()[&peer.id], "Ferrum");
+    let admitted = &local.local_state().roster()[&peer.id];
+    assert_eq!(admitted.added_by, Some(owner.app.local_state().device_id));
+    assert!(admitted.added_at.is_some());
     let mut settings = owner.settings.clone();
     settings.credentials =
         pepino_node::DeviceCredentials::load(peer_dir.join("credentials.cbor")).unwrap();
