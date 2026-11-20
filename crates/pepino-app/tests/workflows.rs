@@ -843,9 +843,9 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
         {"id":future_id.to_string(),"author":null,"hlc":null,"kind":"unknown","classification":"unknown_version","change":{"type":"skipped","summary":"Skipped event","version":2,"tasks":[]}},
     ]);
     let events = json!([
-        {"id":task,"author":author,"hlc":task_record.created,"kind":"task_created","classification":"applied","change":{"type":"creation","action":"created","summary":"Created Replace the greenhouse latch","task":task,"title":"Replace the greenhouse latch","fields":{"description":null,"status":"todo","due":null,"priority":null,"tags":[],"assignees":[],"fields":{}}}},
-        {"id":comment.id,"author":author,"hlc":comment.hlc,"kind":"comment_added","classification":"applied","change":{"type":"comment","action":"commented","summary":"Commented “Bring stainless screws”","task":task,"text":"Bring\n stainless screws"}},
-        {"id":skip_id.to_string(),"author":author,"hlc":comment.hlc,"kind":"reminder_added","classification":"unknown_event","change":{"type":"skipped","summary":"Skipped event","tasks":[task]}}
+        {"id":task,"author":author,"hlc":task_record.created,"kind":"task_created","classification":"applied","change":{"type":"creation","action":"created","summary":"Replace the greenhouse latch: created","task":task,"title":"Replace the greenhouse latch","fields":{"description":null,"status":"todo","due":null,"priority":null,"tags":[],"assignees":[],"fields":{}}}},
+        {"id":comment.id,"author":author,"hlc":comment.hlc,"kind":"comment_added","classification":"applied","change":{"type":"comment","action":"commented","summary":"Replace the greenhouse latch: commented “Bring stainless screws”","task":task,"text":"Bring\n stainless screws"}},
+        {"id":skip_id.to_string(),"author":author,"hlc":comment.hlc,"kind":"reminder_added","classification":"unknown_event","change":{"type":"skipped","summary":"Replace the greenhouse latch: skipped event","tasks":[task]}}
     ]);
     read_golden(
         &mut app,
@@ -1281,8 +1281,8 @@ async fn history_describes_invalid_events_and_preserves_unknown_value_targets() 
     }
     let wire_clock = pepino_app::Hlc::from(hlc);
     read_golden(&mut app, json!({"op":"log","task":app_task,"limit":2}), json!({"ok":{"kind":"log","titles":{(app_task.as_str()):"Refit the greenhouse door"},"unordered":[],"events":[
-        {"id":invalid.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"invalid","kind":"tag_added","reason":"invalid tag \"Hardware\"","change":{"type":"tag","action":"added","summary":"Added tag Hardware","task":app_task,"tag":"Hardware"}},
-        {"id":unknown.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"unknown_value","kind":"task_field_set","change":{"type":"skipped","summary":"Skipped event","tasks":[app_task]}}
+        {"id":invalid.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"invalid","kind":"tag_added","reason":"invalid tag \"Hardware\"","change":{"type":"tag","action":"added","summary":"Refit the greenhouse door: tag #Hardware added","task":app_task,"tag":"Hardware"}},
+        {"id":unknown.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"unknown_value","kind":"task_field_set","change":{"type":"skipped","summary":"Refit the greenhouse door: skipped event","tasks":[app_task]}}
     ]}})).await;
 }
 

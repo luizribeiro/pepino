@@ -53,20 +53,6 @@ pub enum EventAction {
     Commented,
 }
 
-impl EventAction {
-    fn verb(self) -> &'static str {
-        match self {
-            Self::Added => "Added",
-            Self::Removed => "Removed",
-            Self::Set => "Set",
-            Self::Unset => "Unset",
-            Self::Created => "Created",
-            Self::Deleted => "Deleted",
-            Self::Commented => "Commented",
-        }
-    }
-}
-
 impl From<&Event> for EventAction {
     fn from(event: &Event) -> Self {
         match event {
@@ -178,12 +164,12 @@ impl App {
             .into_iter()
             .map(|id| (id.to_string(), titles.remove(&id)))
             .collect();
-        let events = history
+        let mut events = history
             .events
             .into_iter()
             .map(EventRecord::try_from)
             .collect::<Result<Vec<_>, _>>()?;
-        let unordered = history
+        let mut unordered = history
             .unordered
             .into_iter()
             .map(EventRecord::try_from)
@@ -206,6 +192,11 @@ impl App {
                     .chain(assignee)
                     .chain(people.into_iter().flatten().map(String::as_str))
             }));
+        for event in events.iter_mut().chain(&mut unordered) {
+            event.change.summary = event
+                .change
+                .summary_with(&titles, &names, |id| id.to_owned());
+        }
         Ok(Response::Log {
             names,
             titles,
@@ -252,46 +243,22 @@ impl TryFrom<HistoryEvent> for EventRecord {
                 },
             ),
         };
-        let summary = one_line(&detail.summary(action));
+        let mut change = EventChange {
+            detail,
+            action,
+            summary: String::new(),
+        };
+        change.summary =
+            change.summary_with(&BTreeMap::new(), &BTreeMap::new(), |id| id.to_owned());
         Ok(Self {
             id: decoded.id().to_string(),
             author: decoded.author().map(|id| id.to_string()),
             hlc: decoded.hlc().map(Into::into),
             classification: record.classification.into(),
             kind: kind.into(),
-            change: EventChange {
-                detail,
-                action,
-                summary,
-            },
+            change,
             reason,
         })
-    }
-}
-
-impl EventDetail {
-    fn summary(&self, action: Option<EventAction>) -> String {
-        let Some(action) = action else {
-            return "Skipped event".into();
-        };
-        let verb = action.verb();
-        match self {
-            Self::Creation { title, .. } => format!("{verb} {title}"),
-            Self::Field { field, .. } => format!("{verb} {field}"),
-            Self::Tag { tag, .. } => format!("{verb} tag {tag}"),
-            Self::Assignee { who, .. } => format!("{verb} assignee {who}"),
-            Self::Edge { kind, to, .. } => format!(
-                "{verb} {} edge to {to}",
-                match kind {
-                    EdgeKind::Parent => "parent",
-                    EdgeKind::Blocks => "blocks",
-                    EdgeKind::Relates => "relates",
-                }
-            ),
-            Self::Comment { text, .. } => format!("{verb} “{text}”"),
-            Self::Deletion { .. } => format!("{verb} task"),
-            Self::Skipped { .. } => "Skipped event".into(),
-        }
     }
 }
 
