@@ -329,6 +329,38 @@ fn wait_for_views(rt: &tokio::runtime::Runtime, pair: &Pair, count: usize) {
     }
 }
 
+fn wait_for_locked_writer(client: &Client, board: pepino_core::BoardId, stage: &str) {
+    until(|| {
+        client.status().is_ok_and(|status| {
+            status.is_some_and(|status| {
+                status.network.boards[&board.to_string()]
+                    .last_error
+                    .as_deref()
+                    .is_some_and(|error| {
+                        error.starts_with(stage) && error.contains("holds the data directory")
+                    })
+            })
+        })
+    });
+}
+
+async fn verify_databases(pair: &Pair) {
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+
+    for home in [pair.owner.path(), pair.peer.path()] {
+        for database in ["node.sqlite", "pepino.sqlite"] {
+            let path = home.join("board").join(database);
+            let options = SqliteConnectOptions::new().filename(&path).read_only(true);
+            let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+            let result: String = sqlx::query_scalar("PRAGMA quick_check")
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+            assert_eq!(result, "ok", "{}", path.display());
+        }
+    }
+}
+
 fn recover_active_sync(signal: Signal) {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -361,16 +393,30 @@ fn recover_active_sync(signal: Signal) {
     drop(lock_until_exit);
     let owner = Daemon::start(pair.owner.path(), &pair.network);
     wait_for_views(&rt, &pair, 25);
+
+    let lock = std::fs::File::open(pair.peer.path().join("board/local.lock")).unwrap();
+    lock.lock().unwrap();
+    write_tasks(&rt, pair.owner.path(), 25..33);
+    sender.nudge().unwrap();
+    wait_for_locked_writer(&receiver, pair.board, "store operation");
+    random_delay(2);
+    peer.interrupt(signal);
+    let lock_until_exit = (signal == Signal::SIGKILL).then_some(lock);
+    peer.wait_stopped(signal);
+    drop(lock_until_exit);
+    let peer = Daemon::start(pair.peer.path(), &pair.network);
+    wait_for_views(&rt, &pair, 33);
     peer.stop(Signal::SIGTERM);
     owner.stop(Signal::SIGTERM);
+    rt.block_on(verify_databases(&pair));
 }
 
 #[test]
-fn sigterm_recovers_events_during_publishing() {
+fn sigterm_recovers_events_during_publishing_and_ingesting() {
     recover_active_sync(Signal::SIGTERM);
 }
 
 #[test]
-fn sigkill_recovers_events_during_publishing() {
+fn sigkill_recovers_events_during_publishing_and_ingesting() {
     recover_active_sync(Signal::SIGKILL);
 }
