@@ -36,7 +36,10 @@ SECONDS=0
 for ((run = 1; run <= runs; run++)); do
     started=$SECONDS
     log="$logs/run-$run.log"
-    if cargo test --workspace --no-fail-fast >"$log" 2>&1; then
+    status=0
+    cargo nextest run --workspace --profile default --no-fail-fast >"$log" 2>&1 || status=$?
+    cargo test --workspace --doc >>"$log" 2>&1 || status=$?
+    if ((status == 0)); then
         echo "Run $run/$runs passed in $((SECONDS - started))s"
     else
         echo "Run $run/$runs failed in $((SECONDS - started))s"
