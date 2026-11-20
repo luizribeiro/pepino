@@ -107,3 +107,19 @@ fn link_reports_parent_cycles_with_two_short_ids() {
     assert!(error.contains(&p.parent[..6]));
     assert!(error.contains(&p.blocker[..6]));
 }
+
+#[test]
+fn changing_parent_removes_the_previous_link() {
+    let (sandbox, _) = task_sandbox();
+    let p = small_project(&sandbox);
+    let reply = as_json(&sandbox.run(&["link", &p.downstream, "parent", &p.blocker, "--json"]));
+    assert_eq!(reply["edges"][0]["effective"], true);
+    assert_eq!(reply["edges"][1]["to"], p.parent);
+    assert_eq!(reply["edges"][1]["effective"], false);
+    assert!(reply["edges"][1].get("reason").is_none());
+    sandbox.run(&["unlink", &p.downstream, "parent", &p.blocker]);
+    assert_eq!(
+        show_task(&sandbox, &p.downstream)["parent"],
+        serde_json::Value::Null
+    );
+}

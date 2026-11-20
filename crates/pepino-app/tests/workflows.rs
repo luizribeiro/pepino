@@ -1,6 +1,6 @@
 use pepino_app::{
-    App, AppError, EdgeEffect, EdgeExclusionReason, EdgeKind, FieldValue, ReadRequest, Request,
-    Response, TaskRecord, TaskSummary,
+    App, AppError, EdgeEffect, EdgeKind, FieldValue, ReadRequest, Request, Response, TaskRecord,
+    TaskSummary,
 };
 use pepino_store::Store;
 use serde_json::{Value, json};
@@ -1501,7 +1501,7 @@ async fn task_validation_reports_the_offending_values() {
 }
 
 #[tokio::test]
-async fn replacing_a_parent_reports_the_newly_excluded_edge() {
+async fn replacing_a_parent_removes_the_previous_edge() {
     let directory = tempfile::tempdir().unwrap();
     let mut app = App::open(directory.path(), NOW).await.unwrap();
     let latch = add(&mut app, "Install a new latch").await;
@@ -1516,9 +1516,13 @@ async fn replacing_a_parent_reports_the_newly_excluded_edge() {
     assert_eq!(edges[0].to, door);
     assert!(edges[0].effective);
     assert_eq!(edges[1].to, greenhouse);
-    assert_eq!(edges[1].reason, Some(EdgeExclusionReason::SupersededParent));
+    assert!(!edges[1].effective);
+    assert_eq!(edges[1].reason, None);
     assert_eq!(get(&mut app, &latch).await.parent, Some(door.clone()));
     assert!(write(&mut app, link(&door)).await.3.is_empty());
+    let unlink = json!({"op":"unlink","from":latch,"kind":"parent","to":door});
+    assert!(write(&mut app, unlink).await.0);
+    assert_eq!(get(&mut app, &latch).await.parent, None);
 }
 
 #[tokio::test]

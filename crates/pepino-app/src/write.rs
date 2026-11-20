@@ -198,16 +198,32 @@ impl App {
         if kind == EdgeKind::Relates && from > to {
             std::mem::swap(&mut from, &mut to);
         }
-        let exists = view
-            .edges(from)
-            .iter()
-            .any(|edge| (edge.from, edge.kind, edge.to) == (from, kind, to));
+        let edges = view.edges(from);
+        let exists = edges.iter().any(|edge| {
+            (edge.from, edge.kind, edge.to) == (from, kind, to) && (!present || edge.is_effective())
+        });
         let event = if present {
             Event::EdgeAdded { from, kind, to }
         } else {
             Event::EdgeRemoved { from, kind, to }
         };
-        batch.stage(event, "to", exists != present)
+        batch.stage(event, "to", exists != present)?;
+        if present && !exists && kind == EdgeKind::Parent {
+            for edge in edges
+                .iter()
+                .filter(|edge| edge.from == from && edge.kind == EdgeKind::Parent && edge.to != to)
+            {
+                batch.push(
+                    Event::EdgeRemoved {
+                        from,
+                        kind,
+                        to: edge.to,
+                    },
+                    "to",
+                )?;
+            }
+        }
+        Ok(())
     }
 
     fn identities(&self, references: Vec<String>) -> Result<BTreeSet<IdentityId>, AppError> {

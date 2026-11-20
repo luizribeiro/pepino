@@ -167,18 +167,11 @@ impl App {
             .await
             .map_err(|error| committed_error(store_error(error)))?;
         let created = applied.iter().find_map(|event| event.created_task());
-        let mut edges = applied
+        let edges = applied
             .iter()
             .filter_map(|event| edge_effect(&after, event.event()).transpose())
             .collect::<Result<Vec<_>, _>>()
             .map_err(committed_error)?;
-        edges.extend(
-            applied
-                .iter()
-                .filter_map(|event| superseded_parent(before, &after, event.event()).transpose())
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(committed_error)?,
-        );
         self.write_response(before, &after, true, created, batch.targets, edges)
             .map_err(committed_error)
     }
@@ -256,35 +249,6 @@ fn edge_effect(view: &BoardView, event: &Event) -> Result<Option<EdgeEffect>, Ap
         .into_iter()
         .find(|edge| (edge.from, edge.kind, edge.to) == (from, kind, to));
     project_edge(from, kind, to, edge).map(Some)
-}
-
-fn superseded_parent(
-    before: &BoardView,
-    after: &BoardView,
-    event: &Event,
-) -> Result<Option<EdgeEffect>, AppError> {
-    let Event::EdgeAdded {
-        from,
-        kind: pepino_core::EdgeKind::Parent,
-        ..
-    } = *event
-    else {
-        return Ok(None);
-    };
-    let Some(old_parent) = before.task(from).and_then(|task| task.parent) else {
-        return Ok(None);
-    };
-    after
-        .edges(from)
-        .into_iter()
-        .find(|edge| {
-            edge.from == from
-                && edge.kind == pepino_core::EdgeKind::Parent
-                && edge.to == old_parent
-                && edge.exclusion == Some(pepino_store::EdgeExclusion::NewerParent)
-        })
-        .map(|edge| project_edge(edge.from, edge.kind, edge.to, Some(edge)))
-        .transpose()
 }
 
 #[cfg(test)]
