@@ -13,7 +13,7 @@ use crate::{
     WriteRequest,
 };
 
-const DATABASE: &str = "pepino.sqlite";
+pub(super) const DATABASE: &str = "pepino.sqlite";
 
 pub struct App {
     pub(super) store: Store,
@@ -176,7 +176,7 @@ impl App {
     }
 }
 
-fn exists(path: &Path) -> Result<bool, AppError> {
+pub(super) fn exists(path: &Path) -> Result<bool, AppError> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
