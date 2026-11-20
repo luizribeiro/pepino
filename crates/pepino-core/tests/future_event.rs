@@ -179,7 +179,7 @@ fn event_superset_preserves_known_encodings() {
         let expected = Envelope::new(author, hlc, known).unwrap();
         assert_eq!(
             expected.created_task(),
-            target.is_none().then_some(TaskId(expected.id))
+            target.is_none().then_some(TaskId(expected.id()))
         );
         assert_eq!(
             Envelope::decode(&bytes).unwrap(),

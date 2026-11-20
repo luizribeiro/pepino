@@ -1,4 +1,18 @@
 use pepino_core::*;
+use serde::Serialize;
+
+fn invalid_wire_event(author: DeviceId, hlc: Hlc, event: &Event) -> (Vec<u8>, EventId) {
+    #[derive(Serialize)]
+    struct Content<'a> {
+        author: DeviceId,
+        hlc: Hlc,
+        event: &'a Event,
+    }
+    let mut bytes = Vec::new();
+    ciborium::into_writer(&(1, Content { author, hlc, event }), &mut bytes).unwrap();
+    let id = EventId::from_bytes(*blake3::hash(&bytes).as_bytes());
+    (bytes, id)
+}
 
 #[test]
 fn field_updates_enforce_types_and_required_values() {
@@ -119,18 +133,19 @@ fn rejects_local_invalid_events_and_preserves_invalid_wire_metadata() {
         Envelope::new(author, hlc, event.clone()),
         Err(NewEnvelopeError::InvalidEvent(InvalidEvent::EmptyTitle))
     ));
-    let bytes = encode_content(author, hlc, &event).unwrap();
+    let external = EventId::from_bytes([81; 32]);
+    let (bytes, id) = invalid_wire_event(author, hlc, &event);
+    assert_eq!(
+        Envelope::with_id(external, author, hlc, event),
+        Err(InvalidEvent::EmptyTitle)
+    );
     let invalid = |id| DecodeOutcome::InvalidEvent {
         id,
         author,
         hlc,
         reason: InvalidEvent::EmptyTitle,
     };
-    assert_eq!(
-        Envelope::decode(&bytes).unwrap(),
-        invalid(EventId::for_content(author, hlc, &event).unwrap())
-    );
-    let external = EventId::from_bytes([81; 32]);
+    assert_eq!(Envelope::decode(&bytes).unwrap(), invalid(id));
     assert_eq!(
         Envelope::decode_with_id(external, &bytes).unwrap(),
         invalid(external)
@@ -167,11 +182,11 @@ fn classifies_invalid_names_in_both_wire_field_positions() {
                 reason,
             };
             assert_eq!(event.validate(), Err(reason.clone()));
-            let bytes = encode_content(author, hlc, &event).unwrap();
+            let (bytes, id) = invalid_wire_event(author, hlc, &event);
             assert_eq!(
                 Envelope::decode(&bytes).unwrap(),
                 DecodeOutcome::InvalidEvent {
-                    id: EventId::for_content(author, hlc, &event).unwrap(),
+                    id,
                     author,
                     hlc,
                     reason,

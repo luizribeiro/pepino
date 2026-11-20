@@ -17,15 +17,19 @@ fn round_trips_task_creation_with_local_or_external_id() {
         },
     };
     let local = Envelope::new(author, hlc, event.clone()).unwrap();
-    let external = Envelope::with_id(EventId::from_bytes([19; 32]), author, hlc, event);
-    assert_eq!(external.created_task(), Some(TaskId(external.id)));
+    let external =
+        Envelope::with_id(EventId::from_bytes([19; 32]), author, hlc, event.clone()).unwrap();
+    assert_eq!(external.created_task(), Some(TaskId(external.id())));
+    assert_eq!(external.author(), author);
+    assert_eq!(external.hlc(), hlc);
+    assert_eq!(external.event(), &event);
     let encoded = local.encode().unwrap();
     assert_eq!(
         Envelope::decode(&encoded).unwrap(),
         DecodeOutcome::Known(local)
     );
     assert_eq!(
-        Envelope::decode_with_id(external.id, &encoded).unwrap(),
+        Envelope::decode_with_id(external.id(), &encoded).unwrap(),
         DecodeOutcome::Known(external)
     );
 }
@@ -118,7 +122,7 @@ proptest! {
             let keys = raw_keys.map(|(wall_ms, counter, id)| {
                 Envelope::with_id(
                     EventId::from_bytes(id), author, Hlc { wall_ms, counter }, Event::TaskDeleted { task }
-                ).order_key()
+                ).unwrap().order_key()
             });
 
             for (i, j, k) in [(0, 1, 2), (1, 2, 0), (2, 0, 1)] {

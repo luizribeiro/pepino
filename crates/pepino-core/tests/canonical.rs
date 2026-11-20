@@ -25,7 +25,7 @@ fn rejects_equivalent_cbor_encodings() {
             Err(DecodeError::NonCanonical)
         ));
         assert!(matches!(
-            Envelope::decode_with_id(envelope.id, &alternate),
+            Envelope::decode_with_id(envelope.id(), &alternate),
             Err(DecodeError::NonCanonical)
         ));
     }

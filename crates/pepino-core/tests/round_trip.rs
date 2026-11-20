@@ -143,7 +143,7 @@ proptest! {
             prop_assert_eq!(&reencoded, &bytes);
             prop_assert_eq!(
                 Envelope::decode_with_id(id, &bytes).unwrap(),
-                DecodeOutcome::Known(Envelope::with_id(id, author, hlc, event)),
+                DecodeOutcome::Known(Envelope::with_id(id, author, hlc, event).unwrap()),
             );
         }
     }
@@ -184,7 +184,7 @@ proptest! {
             let index = index.index(bytes.len());
             bytes[index] ^= 1 << bit;
             if let Ok(DecodeOutcome::Known(changed)) = Envelope::decode(&bytes) {
-                prop_assert_ne!(changed.id, envelope.id);
+                prop_assert_ne!(changed.id(), envelope.id());
                 prop_assert_eq!(changed.encode().unwrap(), bytes);
             }
         }

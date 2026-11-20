@@ -60,7 +60,7 @@ fn version_one_event_encodings_are_stable() {
         let envelope = Envelope::new(author, hlc, event).unwrap();
         let expected = hex::decode([frame_prefix, payload].concat()).unwrap();
         assert_eq!(envelope.encode().unwrap(), expected);
-        assert_eq!(envelope.id, id.parse().unwrap());
+        assert_eq!(envelope.id(), id.parse().unwrap());
         assert_eq!(
             Envelope::decode(&expected).unwrap(),
             DecodeOutcome::Known(envelope)

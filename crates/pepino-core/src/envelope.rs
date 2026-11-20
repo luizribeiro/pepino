@@ -14,10 +14,10 @@ const VERSION: u64 = 1;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Envelope {
-    pub id: EventId,
-    pub author: DeviceId,
-    pub hlc: Hlc,
-    pub event: Event,
+    id: EventId,
+    author: DeviceId,
+    hlc: Hlc,
+    event: Event,
 }
 
 #[derive(Debug, Error)]
@@ -88,7 +88,7 @@ struct Content<E> {
     event: E,
 }
 
-pub fn encode_content(author: DeviceId, hlc: Hlc, event: &Event) -> Result<Vec<u8>, EncodeError> {
+fn encode_content(author: DeviceId, hlc: Hlc, event: &Event) -> Result<Vec<u8>, EncodeError> {
     let mut bytes = Vec::new();
     ciborium::into_writer(&(VERSION, Content { author, hlc, event }), &mut bytes)
         .map_err(EncodeError)?;
@@ -96,7 +96,7 @@ pub fn encode_content(author: DeviceId, hlc: Hlc, event: &Event) -> Result<Vec<u
 }
 
 impl EventId {
-    pub fn for_content(author: DeviceId, hlc: Hlc, event: &Event) -> Result<Self, EncodeError> {
+    fn for_content(author: DeviceId, hlc: Hlc, event: &Event) -> Result<Self, EncodeError> {
         Ok(Self::hash_content_bytes(&encode_content(
             author, hlc, event,
         )?))
@@ -111,16 +111,44 @@ impl Envelope {
     pub fn new(author: DeviceId, hlc: Hlc, event: Event) -> Result<Self, NewEnvelopeError> {
         event.validate()?;
         let id = EventId::for_content(author, hlc, &event)?;
-        Ok(Self::with_id(id, author, hlc, event))
-    }
-
-    pub const fn with_id(id: EventId, author: DeviceId, hlc: Hlc, event: Event) -> Self {
-        Self {
+        Ok(Self {
             id,
             author,
             hlc,
             event,
-        }
+        })
+    }
+
+    /// Validates an event and attaches a trusted ID, such as a stored operation hash.
+    pub fn with_id(
+        id: EventId,
+        author: DeviceId,
+        hlc: Hlc,
+        event: Event,
+    ) -> Result<Self, InvalidEvent> {
+        event.validate()?;
+        Ok(Self {
+            id,
+            author,
+            hlc,
+            event,
+        })
+    }
+
+    pub const fn id(&self) -> EventId {
+        self.id
+    }
+
+    pub const fn author(&self) -> DeviceId {
+        self.author
+    }
+
+    pub const fn hlc(&self) -> Hlc {
+        self.hlc
+    }
+
+    pub const fn event(&self) -> &Event {
+        &self.event
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
@@ -231,14 +259,17 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
     if !is_canonical {
         return Err(DecodeError::NonCanonical);
     }
-    if let Err(reason) = event.validate() {
-        return Ok(DecodeOutcome::InvalidEvent {
-            id,
-            author,
-            hlc,
-            reason,
-        });
-    }
+    let envelope = match Envelope::with_id(id, author, hlc, event) {
+        Ok(envelope) => envelope,
+        Err(reason) => {
+            return Ok(DecodeOutcome::InvalidEvent {
+                id,
+                author,
+                hlc,
+                reason,
+            });
+        }
+    };
     if let Some((variant, values, _)) = unknown {
         return Ok(DecodeOutcome::UnknownValue {
             id,
@@ -249,9 +280,7 @@ fn decode_content(bytes: &[u8], id: Option<EventId>) -> Result<DecodeOutcome, De
             bytes: bytes.to_vec(),
         });
     }
-    Ok(DecodeOutcome::Known(Envelope::with_id(
-        id, author, hlc, event,
-    )))
+    Ok(DecodeOutcome::Known(envelope))
 }
 
 fn cbor_bytes(value: &Value) -> Vec<u8> {
@@ -350,7 +379,8 @@ mod tests {
             tag: "garden".into(),
         };
         let envelope = Envelope::new(author, hlc, event.clone()).unwrap();
-        let external = Envelope::with_id(EventId::from_bytes([99; 32]), author, hlc, event.clone());
+        let external =
+            Envelope::with_id(EventId::from_bytes([99; 32]), author, hlc, event.clone()).unwrap();
         let bytes = envelope.encode().unwrap();
         assert_eq!(bytes, external.encode().unwrap());
         assert_eq!(envelope.id.as_bytes(), blake3::hash(&bytes).as_bytes());
@@ -413,6 +443,7 @@ mod tests {
                 hlc,
                 Event::TaskDeleted { task },
             )
+            .unwrap()
         };
         let mut events = [make(1, late), make(9, early), make(3, early)];
         events.sort_by_key(Envelope::order_key);
