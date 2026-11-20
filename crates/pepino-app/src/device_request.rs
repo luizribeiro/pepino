@@ -19,6 +19,8 @@ pub struct DeviceRequest {
     pub id: DeviceId,
     pub name: String,
     pub member_info: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<[u8; 32]>,
 }
 
 impl DeviceRequest {
@@ -46,11 +48,14 @@ impl DeviceRequest {
     }
 
     pub fn binding(&self) -> String {
-        let mut digest = blake3::Hasher::new_derive_key("Pepino device request binding v1");
+        let mut digest = blake3::Hasher::new_derive_key("Pepino device request fingerprint v2");
         digest.update(self.id.as_bytes());
         digest.update(&(self.name.len() as u64).to_be_bytes());
         digest.update(self.name.as_bytes());
         digest.update(self.member_info.to_ascii_uppercase().as_bytes());
+        if let Some(secret) = self.secret {
+            digest.update(&secret);
+        }
         digest.finalize().to_hex().to_string()
     }
 }
@@ -62,10 +67,14 @@ fn request_binding_canonicalizes_member_info_and_covers_the_device_name() {
         id: DeviceId::from_bytes([36; 32]),
         name: "Ferrum tablet".into(),
         member_info: "EBPG2ZMIDH".into(),
+        secret: Some([72; 32]),
     };
     let mut equivalent = first.clone();
     equivalent.member_info.make_ascii_lowercase();
     assert_eq!(first.binding(), equivalent.binding());
+    equivalent.secret = Some([73; 32]);
+    assert_ne!(first.binding(), equivalent.binding());
+    equivalent.secret = first.secret;
     equivalent.name = "Ferrum desktop".into();
     assert_ne!(first.binding(), equivalent.binding());
     assert!(first.member_info().is_err());
@@ -86,7 +95,10 @@ impl App {
         }
         let path = directory.join(REQUEST);
         if exists(&path)? {
-            return DeviceRequest::read(&path);
+            let saved = DeviceRequest::read(&path)?;
+            if saved.secret.is_some() {
+                return Ok(saved);
+            }
         }
         if exists(&directory.join(DATABASE))? {
             return Err(invalid(
@@ -119,10 +131,14 @@ impl App {
         let member_info = info
             .map_err(|_| storage("prepare device", "could not create member info", false))?
             .to_base32();
+        let mut secret = [0; 32];
+        getrandom::fill(&mut secret)
+            .map_err(|error| storage("generate device request secret", error, false))?;
         let request = DeviceRequest {
             id,
             name,
             member_info,
+            secret: Some(secret),
         };
         write_json(&path, &request)?;
         Ok(request)
