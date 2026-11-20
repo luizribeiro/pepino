@@ -64,6 +64,26 @@ impl DeviceRequest {
     }
 
     pub fn binding(&self) -> String {
+        self.fingerprint_hash().to_hex().to_string()
+    }
+
+    pub fn fingerprint(&self) -> String {
+        const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+        let mut bytes = [0; 16];
+        bytes[..10].copy_from_slice(&self.fingerprint_hash().as_bytes()[..10]);
+        let bits = u128::from_be_bytes(bytes) >> 48;
+        let mut text = String::with_capacity(19);
+        for index in 0..16 {
+            if index != 0 && index % 4 == 0 {
+                text.push('-');
+            }
+            let digit = (bits >> ((15 - index) * 5)) & 31;
+            text.push(char::from(ALPHABET[digit as usize]));
+        }
+        text
+    }
+
+    fn fingerprint_hash(&self) -> blake3::Hash {
         let mut digest = blake3::Hasher::new_derive_key("Pepino device request fingerprint v2");
         digest.update(self.id.as_bytes());
         digest.update(&(self.name.len() as u64).to_be_bytes());
@@ -72,7 +92,7 @@ impl DeviceRequest {
         if let Some(secret) = self.secret {
             digest.update(&secret);
         }
-        digest.finalize().to_hex().to_string()
+        digest.finalize()
     }
 }
 
@@ -98,7 +118,17 @@ fn request_binding_canonicalizes_member_info_and_covers_the_device_name() {
     let mut equivalent = first.clone();
     equivalent.member_info.make_ascii_lowercase();
     assert_eq!(first.binding(), equivalent.binding());
+    assert_eq!(first.fingerprint(), equivalent.fingerprint());
+    let fingerprint = first.fingerprint();
+    let groups: Vec<_> = fingerprint.split('-').collect();
+    assert_eq!(groups.len(), 4);
+    assert!(
+        groups
+            .iter()
+            .all(|group| group.len() == 4 && !group.contains(['I', 'L', 'O', 'U']))
+    );
     equivalent.secret = Some([73; 32]);
+    assert_ne!(first.fingerprint(), equivalent.fingerprint());
     assert_ne!(first.binding(), equivalent.binding());
     equivalent.secret = first.secret;
     equivalent.name = "Ferrum desktop".into();
