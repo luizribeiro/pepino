@@ -13,11 +13,16 @@ use ppn::terminal::Context;
 pub struct Args {
     /// Task ID or unambiguous prefix.
     task: String,
+    /// Show each author's device.
+    #[arg(long)]
+    verbose: bool,
 }
 
-pub fn run(context: &Context<'_>, Args { task }: Args) -> Result<CommandResult, CliError> {
-    let response = AppClient::open(context)?.call(Request::Read(ReadRequest::GetTask { task }))?;
-    CommandResult::app_document(context, response, |response, settings| {
+pub fn run(context: &Context<'_>, Args { task, verbose }: Args) -> Result<CommandResult, CliError> {
+    let mut client = AppClient::open(context)?;
+    let authors = client.author_labels(verbose);
+    let response = client.call(Request::Read(ReadRequest::GetTask { task }))?;
+    CommandResult::app_document(context, response, move |response, settings| {
         let Task {
             task,
             edges,
@@ -32,6 +37,7 @@ pub fn run(context: &Context<'_>, Args { task }: Args) -> Result<CommandResult, 
             names,
             settings.dates(),
             &settings.terminal,
+            &authors,
         ))
     })
 }

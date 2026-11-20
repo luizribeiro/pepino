@@ -5,7 +5,7 @@ use pepino_app::{EdgeEffect, TaskRecord};
 
 use super::detail_fields::{indented, task_timestamps};
 use super::row::task_line;
-use super::{Dates, ShortIds, assignee_label, task_fields, task_relations};
+use super::{Dates, ShortIds, task_fields, task_relations};
 use crate::terminal::Terminal;
 
 pub fn task_detail(
@@ -15,6 +15,7 @@ pub fn task_detail(
     names: &BTreeMap<String, String>,
     dates: Dates<'_>,
     terminal: &Terminal,
+    author: &impl Fn(Option<&str>) -> String,
 ) -> String {
     let ids = ShortIds::new(
         std::iter::once(&task.id)
@@ -30,7 +31,12 @@ pub fn task_detail(
     text.push('\n');
     text.push_str(&task_fields(task, names, dates, terminal));
     text.push_str(&task_relations(task, edges, &ids, titles));
-    text.push_str(&task_timestamps(task, names, dates, terminal));
+    text.push_str(&task_timestamps(
+        task,
+        &author(Some(&task.author)),
+        dates,
+        terminal,
+    ));
     if !task.comments.is_empty() {
         let _ = writeln!(text, "\nComments ({})", task.comment_count);
     }
@@ -38,7 +44,7 @@ pub fn task_detail(
         let _ = writeln!(
             text,
             "  {} · {}",
-            assignee_label(&comment.author, names),
+            author(Some(&comment.author)),
             dates.relative_time(comment.hlc, terminal)
         );
         text.push_str(&indented(&comment.text, "    "));
@@ -84,6 +90,7 @@ mod tests {
                 &names,
                 dates(),
                 &Terminal::fixed(Some(75), color),
+                &|id| super::super::assignee_label(id.unwrap(), &names),
             )
         };
         let expected = include_str!("detail.txt");

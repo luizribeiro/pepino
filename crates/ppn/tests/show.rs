@@ -22,6 +22,16 @@ fn show_renders_the_protocol_task_and_configured_due_date() {
     assert!(human.contains("due 01 Dec 2026\n"));
     assert!(!human.contains("Comments"));
     assert!(!human.contains(" UTC #"));
+    let status = as_json(&sandbox.run(&["status", "--json"]));
+    let person = status["identity"]["display_name"].as_str().unwrap();
+    let device = status["device"]["name"].as_str().unwrap();
+    assert!(human.contains(&format!(" by {person} ·")));
+    assert!(
+        sandbox
+            .run(&["show", id, "--verbose"])
+            .contains(&format!(" by {person} ({device}) ·"))
+    );
+
     let mut detail = as_json(&sandbox.run(&["show", id, "--json"]));
     let names = detail.as_object_mut().unwrap().remove("names").unwrap();
     assert_eq!(names, write["names"]);

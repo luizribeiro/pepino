@@ -4,7 +4,7 @@ use std::fmt::Write;
 use pepino_app::{FieldValue, Status, TaskSummary};
 
 use super::row::task_metadata;
-use super::{Dates, assignee_label, single_line};
+use super::{Dates, single_line};
 use crate::terminal::Terminal;
 
 fn status_text(status: Status) -> &'static str {
@@ -54,14 +54,14 @@ pub fn task_fields(
 
 pub(super) fn task_timestamps(
     task: &TaskSummary,
-    names: &BTreeMap<String, String>,
+    author: &str,
     dates: Dates<'_>,
     terminal: &Terminal,
 ) -> String {
     format!(
         "created {} by {} · updated {}\n",
         dates.local_date(task.created),
-        assignee_label(&task.author, names),
+        author,
         dates.relative_time(task.updated, terminal)
     )
 }
