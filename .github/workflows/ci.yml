@@ -22,6 +22,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
-      - run: nix flake check
-      - if: runner.os == 'Linux'
-        run: nix develop -c cargo test --locked --workspace
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'nix/rust.nix') }}
+          restore-prefixes-first-match: nix-v1-${{ runner.os }}-${{ runner.arch }}-
+          save: ${{ github.event_name == 'push' }}
+          gc-max-store-size: 5G
+      - name: Retain compiled Rust dependencies for the store cache
+        run: nix build .#default.cargoArtifacts --out-link .ci-cargo-artifacts
+      - run: nix flake check --print-build-logs
