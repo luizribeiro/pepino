@@ -66,7 +66,21 @@ fn apply(
 ) -> Result<CommandResult, CliError> {
     let mut responses = requests
         .into_iter()
-        .map(|request| client.call(Request::Write(request)))
+        .map(|request| {
+            let membership = match &request {
+                WriteRequest::AddTags { .. } => Some(("tags", "--tag")),
+                WriteRequest::RemoveTags { .. } => Some(("tags", "--untag")),
+                WriteRequest::Assign { .. } => Some(("assignees", "--assign")),
+                WriteRequest::Unassign { .. } => Some(("assignees", "--unassign")),
+                _ => None,
+            };
+            client
+                .call(Request::Write(request))
+                .map_err(|error| match membership {
+                    Some((field, input)) => error.map_input(field, input),
+                    None => error,
+                })
+        })
         .collect::<Result<Vec<_>, _>>()?;
     for relation in relations {
         responses.push(relation.apply(client)?);

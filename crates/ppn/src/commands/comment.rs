@@ -35,7 +35,14 @@ pub fn run(
 ) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
     let text = (!text.is_empty()).then(|| text.join(" "));
+    let input = if from_file.is_some() {
+        "--from-file"
+    } else {
+        "<TEXT>"
+    };
     let text = read_task_text(text, from_file.as_deref())?;
-    let response = client.call(Request::Write(WriteRequest::Comment { task, text }))?;
+    let response = client
+        .call(Request::Write(WriteRequest::Comment { task, text }))
+        .map_err(|error| error.map_input("text", input))?;
     write_document(context, response, "Commented on")
 }

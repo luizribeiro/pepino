@@ -349,3 +349,17 @@ fn edit_can_add_and_remove_dependencies_in_either_direction() {
         .unwrap();
     assert_eq!(task_error(bad, 2, "invalid_input")["input"], "--blocked-by");
 }
+
+#[test]
+fn membership_errors_use_the_option_names_when_editing() {
+    let (sandbox, _) = task_sandbox();
+    let id = create_task(&sandbox, "Inspect the greenhouse hinges", &[]);
+    for (flag, value) in [("--tag", "Hardware"), ("--assign", "Unknown Person")] {
+        let output = sandbox
+            .command()
+            .args(["edit", &id, flag, value, "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(task_error(output, 2, "invalid_input")["input"], flag);
+    }
+}
