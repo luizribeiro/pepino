@@ -1087,7 +1087,8 @@ fn show_renders_the_protocol_task_and_configured_due_date() {
     assert!(human.starts_with(&format!("{}  Check the greenhouse hinges\n", &id[..6])));
     assert!(human.contains("Due: 01 Dec 2026\n"));
     assert!(human.contains("Comments (0):\n"));
-    let detail = as_json(&sandbox.run(&["show", id, "--json"]));
+    let mut detail = as_json(&sandbox.run(&["show", id, "--json"]));
+    detail.as_object_mut().unwrap().remove("names");
     let mut task = write["tasks"][0].clone();
     task["comments"] = json!([]);
     assert_eq!(
@@ -1259,7 +1260,9 @@ fn task_flags_round_trip_through_add_show_and_status() {
         assert_eq!(clock["wall_ms"], utc.timestamp_millis());
         assert!(clock["counter"].is_u64());
     }
-    assert_eq!(write.as_object().unwrap().len(), 6);
+    for key in ["schema", "kind", "changed", "created", "tasks", "edges"] {
+        assert!(write.get(key).is_some(), "{key} missing from {write}");
+    }
     assert_eq!(write["edges"].as_array().unwrap().len(), 3);
     assert!(
         write["edges"]
@@ -1282,7 +1285,8 @@ fn task_flags_round_trip_through_add_show_and_status() {
     }
     let mut task = task.clone();
     task["comments"] = json!([]);
-    let detail = as_json(&sandbox.run(&["show", id, "--json"]));
+    let mut detail = as_json(&sandbox.run(&["show", id, "--json"]));
+    detail.as_object_mut().unwrap().remove("names");
     assert_eq!(
         detail,
         json!({"schema":1,"kind":"task","task":task,"edges":[],

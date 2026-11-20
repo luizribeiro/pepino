@@ -19,6 +19,7 @@ pub fn run(context: &Context<'_>, task: String) -> Result<CommandResult, CliErro
                 edges,
                 relation_titles,
                 assignee_names,
+                ..
             } = response
             else {
                 return Err(CliError::new(
