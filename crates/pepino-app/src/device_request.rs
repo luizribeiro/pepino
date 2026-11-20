@@ -89,19 +89,7 @@ impl DeviceRequest {
     }
 
     pub fn fingerprint(&self) -> String {
-        const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-        let mut bytes = [0; 16];
-        bytes[..10].copy_from_slice(&self.fingerprint_hash().as_bytes()[..10]);
-        let bits = u128::from_be_bytes(bytes) >> 48;
-        let mut text = String::with_capacity(19);
-        for index in 0..16 {
-            if index != 0 && index % 4 == 0 {
-                text.push('-');
-            }
-            let digit = (bits >> ((15 - index) * 5)) & 31;
-            text.push(char::from(ALPHABET[digit as usize]));
-        }
-        text
+        format_fingerprint(self.fingerprint_hash())
     }
 
     fn fingerprint_hash(&self) -> blake3::Hash {
@@ -115,6 +103,22 @@ impl DeviceRequest {
         }
         digest.finalize()
     }
+}
+
+pub(crate) fn format_fingerprint(hash: blake3::Hash) -> String {
+    const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    let mut bytes = [0; 16];
+    bytes[..10].copy_from_slice(&hash.as_bytes()[..10]);
+    let bits = u128::from_be_bytes(bytes) >> 48;
+    let mut text = String::with_capacity(19);
+    for index in 0..16 {
+        if index != 0 && index % 4 == 0 {
+            text.push('-');
+        }
+        let digit = (bits >> ((15 - index) * 5)) & 31;
+        text.push(char::from(ALPHABET[digit as usize]));
+    }
+    text
 }
 
 pub(crate) fn request_info_error(error: pepino_node::Error) -> AppError {
