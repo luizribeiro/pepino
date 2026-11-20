@@ -27,7 +27,7 @@ fn deps_deduplicates_the_shared_blocker_in_a_diamond() {
     ];
     direct.sort();
     let expected = format!(
-        "blocked by\n{}{}    {}  Check the delivery  done · no longer blocking\nblocks\n",
+        "blocked by\n{}{}    {}  Check the delivery  done · no longer blocking\n",
         direct[0],
         direct[1],
         &shared[..6]
@@ -135,4 +135,17 @@ fn task_reads_keep_reference_statuses_across_graphs_and_history() {
     let log = as_json(&sandbox.run(&["log", &deleted, "--json"]));
     let events = log["events"].as_array().unwrap();
     assert_eq!(events.last().unwrap()["change"]["action"], "deleted");
+}
+
+#[test]
+fn deps_prints_an_empty_state_only_on_human_stderr() {
+    let (sandbox, _) = task_sandbox();
+    let task = create_task(&sandbox, "Paint the shed", &[]);
+    let output = sandbox.command().args(["deps", &task]).output().unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_eq!(output.stderr, b"No dependencies for Paint the shed.\n");
+    let result = as_json(&sandbox.run(&["deps", &task, "--json"]));
+    assert_eq!(result["blockers"], serde_json::json!([]));
+    assert_eq!(result["dependents"], serde_json::json!([]));
 }
