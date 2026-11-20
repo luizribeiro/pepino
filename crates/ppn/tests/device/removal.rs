@@ -118,3 +118,97 @@ fn online_revocation_rotates_access_across_boards_and_preserves_history() {
         assert!(!check_task(&tablet, title));
     }
 }
+
+#[test]
+fn a_daemon_resumes_an_offline_revocation_and_readmission_restores_the_gap() {
+    let directory = tempfile::tempdir().unwrap();
+    let network = directory.path().file_name().unwrap().to_str().unwrap();
+    let owner = Host::owner(network);
+    let tablet = Host::new(network);
+    link(&owner, &tablet, "Garden tablet");
+    let target = id(&tablet);
+    tablet.stop();
+    let clean_node = tablet.data.with_file_name("known-good-node.sqlite");
+    std::fs::copy(tablet.data.join("node.sqlite"), &clean_node).unwrap();
+    owner.stop();
+    let queued = owner.json(&["device", "revoke", &target, "--yes"]);
+    assert_eq!(queued["boards"][0]["result"], "unavailable");
+    owner.start();
+    let board = owner.json(&["status"])["board"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let owner_id = id(&owner);
+    until(
+        || owner.json(&["status"])["network"]["board_members"][&board].clone(),
+        |members| {
+            members.as_array().is_some_and(|members| {
+                members.iter().any(|member| member == &owner_id)
+                    && members.iter().all(|member| member != &target)
+            })
+        },
+        WAIT,
+    );
+    assert_eq!(
+        owner.json(&["device", "revoke", &target, "--yes"])["boards"][0]["result"],
+        "removed"
+    );
+    owner.run(&["add", "Record the winter harvest"]);
+    owner.run(&["sync"]);
+    tablet.start();
+    assert_eq!(roster_state(&tablet, &target).unwrap()["state"], "active");
+    assert!(!check_task(&tablet, "Record the winter harvest"));
+    tablet.run(&["add", "Retired local draft"]);
+    assert!(!check_task(&owner, "Retired local draft"));
+    tablet.stop();
+    let backup = tablet.data.with_file_name("retired-board");
+    std::fs::rename(&tablet.data, &backup).unwrap();
+    std::fs::create_dir(&tablet.data).unwrap();
+    std::fs::copy(
+        backup.join("credentials.cbor"),
+        tablet.data.join("credentials.cbor"),
+    )
+    .unwrap();
+    std::fs::copy(&clean_node, tablet.data.join("node.sqlite")).unwrap();
+    link(&owner, &tablet, "Garden tablet");
+    assert_eq!(id(&tablet), target);
+    until(
+        || check_task(&tablet, "Record the winter harvest"),
+        |visible| *visible,
+        WAIT,
+    );
+    assert_eq!(roster_state(&tablet, &target).unwrap()["state"], "active");
+    assert!(!check_task(&owner, "Retired local draft"));
+    assert!(!check_task(&tablet, "Retired local draft"));
+}
+
+#[test]
+fn a_leave_request_remains_visible_then_another_daemon_completes_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let network = directory.path().file_name().unwrap().to_str().unwrap();
+    let owner = Host::owner(network);
+    let tablet = Host::new(network);
+    link(&owner, &tablet, "Garden tablet");
+    let target = id(&tablet);
+    owner.stop();
+    task_error(
+        tablet.output(&["device", "leave", "--json"]),
+        1,
+        "confirmation_required",
+    );
+    let request = tablet.json(&["device", "leave", "--yes"]);
+    assert_eq!(request["pending"], true);
+    assert!(tablet.run(&["status"]).contains("requested to leave"));
+    assert!(tablet.run(&["device", "ls"]).contains("leave requested"));
+    owner.start();
+    until(
+        || roster_state(&owner, &target),
+        |row| row.as_ref().is_some_and(|row| row["state"] == "revoked"),
+        WAIT,
+    );
+    until(
+        || tablet.json(&["status"])["device"]["revocation"].clone(),
+        Value::is_object,
+        WAIT,
+    );
+}
