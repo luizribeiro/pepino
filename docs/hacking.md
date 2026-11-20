@@ -30,17 +30,58 @@ nix build --no-link --print-build-logs ".#checks.$system.test"    # Rust tests
 nix build --no-link --print-build-logs .#checks.x86_64-linux.vm  # NixOS VM on x86_64-linux
 ```
 
-From the development shell, warm the test build and measure the workspace
-without synthetic load, then run the same suite with one load worker per
-available CPU on Linux.
+## Rust tests
+
+Enter the development shell with `nix develop`. It provides `cargo-nextest`
+and sets `PEPINO_NETWORK_TESTS=1`. Use the crate test loop before each commit.
+Repeat the last command for each changed crate.
 
 ```sh
-scripts/test-under-load.sh 1 0
-scripts/test-under-load.sh 20 "$(nproc)"
+export CARGO_PROFILE_DEV_DEBUG=0
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo nextest run -p pepino-app  # Substitute the changed crate
+```
+
+Run the full suite before handing off a branch.
+
+```sh
+cargo nextest run --workspace
+cargo test --workspace --doc
+```
+
+With a warm build, run `scripts/check-suite-budget.sh` before merging. It
+runs both commands, reports wall time and the ten slowest Nextest tests, and
+fails if the suite exceeds `PEPINO_SUITE_BUDGET_SECONDS` (120 seconds by
+default). If the one-minute load average at launch is at least 75% of the
+CPU count, the time limit is skipped and test failures still fail the check.
+
+Use the load harness to repeat the suite with or without synthetic CPU load.
+
+```sh
+scripts/test-under-load.sh 10 0
+scripts/test-under-load.sh 5 8
 ```
 
 The arguments specify the number of workspace runs and busy-loop processes.
-The harness enables network tests, uses Cargo's usual parallel test execution,
-and continues running all test binaries and subsequent iterations after a
-failure. It prints each failed run's output, retains every run's log under
-`target/test-under-load.*`, and exits unsuccessfully if any run failed.
+Each iteration runs the network-enabled Nextest suite and the doctests. The
+harness completes all iterations, prints each failed run's output, retains
+logs under `target/test-under-load.*`, and exits unsuccessfully if any run
+failed.
+
+### Scale tests
+
+Run these separately from the workspace suite. Each command selects one
+ignored scale test.
+
+```sh
+cargo nextest run -p pepino-node --test network --run-ignored ignored-only -E 'test(=scale::restart_skips_acknowledged_history_at_scale)'
+cargo nextest run -p pepino-node --lib --run-ignored ignored-only -E 'test(=delivery::tests::a_paused_consumer_resumes_with_the_queue_full_at_scale)'
+cargo nextest run -p pepino-store --lib --run-ignored ignored-only -E 'test(=edges::tests::loads_long_chains_in_adversarial_register_order_at_scale)'
+```
+
+To sample more generated store histories, raise the property case count.
+
+```sh
+PROPTEST_CASES=256 cargo nextest run -p pepino-store --lib -E 'test(convergence::)'
+```
