@@ -239,9 +239,23 @@ async fn restores_a_replaced_event_store_with_its_own_and_peer_events() {
 
 #[tokio::test]
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
-async fn the_running_engine_enrolls_a_device_without_reopening_its_board() {
+async fn the_running_engine_enrolls_a_device_on_every_board_idempotently() {
     let dir = tempfile::tempdir().unwrap();
     let owner = fixture::owner(dir.path()).await;
+    let node = pepino_node::Node::spawn(owner.settings.clone())
+        .await
+        .unwrap();
+    let workshop = node.create_board().await.unwrap();
+    let workshop_id = workshop.id();
+    workshop.close().await.unwrap();
+    node.shutdown().await.unwrap();
+    let path = dir.path().join("alice/local.json");
+    let mut local = serde_json::to_value(owner.app.local_state()).unwrap();
+    local["boards"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id": workshop_id, "name": "Workshop"}));
+    std::fs::write(path, local.to_string()).unwrap();
     let live = owner.start().await;
     let peer = pepino_app::App::request_device(
         &dir.path().join("ferrum"),
@@ -259,6 +273,22 @@ async fn the_running_engine_enrolls_a_device_without_reopening_its_board() {
         .unwrap();
     assert_eq!(local.local_state().devices()[&peer.id], "Ferrum");
     live.stop().await;
+    let node = pepino_node::Node::spawn(owner.settings.clone())
+        .await
+        .unwrap();
+    for id in [owner.board(), workshop_id] {
+        let board = node.open_board(id).await.unwrap();
+        board.wait_until_joined(fixture::WAIT).await.unwrap();
+        assert!(
+            board
+                .members()
+                .await
+                .unwrap()
+                .contains(&(peer.id, pepino_node::Role::Manage))
+        );
+        board.close().await.unwrap();
+    }
+    node.shutdown().await.unwrap();
 }
 
 #[tokio::test]
