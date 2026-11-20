@@ -159,7 +159,9 @@ pub fn as_json(text: &str) -> Value {
 
 pub fn task_sandbox() -> (ConfigSandbox, PathBuf) {
     let (sandbox, data) = uninitialized_task_sandbox();
-    sandbox.run(&["init"]);
+    fixture_runtime()
+        .block_on(pepino_app::App::init(&data, SEED_NOW))
+        .unwrap();
     (sandbox, data)
 }
 
@@ -241,14 +243,17 @@ pub fn seed_tasks<T>(
     data: &std::path::Path,
     seed: impl AsyncFnOnce(&mut pepino_app::App) -> T,
 ) -> T {
+    fixture_runtime().block_on(async {
+        let mut app = pepino_app::App::open(data, SEED_NOW).await.unwrap();
+        seed(&mut app).await
+    })
+}
+
+fn fixture_runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap()
-        .block_on(async {
-            let mut app = pepino_app::App::open(data, SEED_NOW).await.unwrap();
-            seed(&mut app).await
-        })
 }
 
 pub fn ambiguous_tasks(data: &std::path::Path) -> (String, [String; 2]) {
