@@ -1,3 +1,6 @@
+mod add;
+
+pub use add::new_task;
 mod task;
 
 pub use task::{DescriptionArgs, TaskWriteArgs};
