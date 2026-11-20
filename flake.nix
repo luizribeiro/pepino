@@ -53,6 +53,7 @@
 
           checks = {
             default = self.packages.${system}.default;
+            config = import ./nix/check.nix { inherit self pkgs; };
             fmt = mkCargoCheck "fmt" pkgs.rustfmt "cargo fmt --check";
             clippy = mkCargoCheck "clippy" pkgs.clippy "cargo clippy --all-targets -- -D warnings";
           };
