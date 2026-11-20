@@ -234,7 +234,17 @@ async fn reopening_projects_legacy_edges_on_every_board() {
     let task = envelope.created_task().unwrap();
     let bytes = envelope.encode().unwrap();
     let boards = [BoardId::from_bytes([19; 32]), BoardId::from_bytes([52; 32])];
-    let parent = TaskId::from_bytes([73; 32]);
+    let parent_creation = Envelope::new(
+        DeviceId::from_bytes([73; 32]),
+        envelope.hlc(),
+        Event::TaskCreated {
+            title: "Prepare the greenhouse for winter".into(),
+            fields: InitialFields::default(),
+        },
+    )
+    .unwrap();
+    let parent = parent_creation.created_task().unwrap();
+    let parent_bytes = parent_creation.encode().unwrap();
     let hlc = Hlc {
         counter: 4,
         ..envelope.hlc()
@@ -253,52 +263,66 @@ async fn reopening_projects_legacy_edges_on_every_board() {
     let decoded = Decoded::new(&edge_bytes, IdSource::Content).unwrap();
 
     let older = Store::open_file(&path, 1).await.unwrap();
+    let fresh = Store::open_in_memory().await.unwrap();
     for board in boards {
-        older
-            .append(board, &bytes, IdSource::Content)
+        for store in [&older, &fresh] {
+            store
+                .append(board, &bytes, IdSource::Content)
+                .await
+                .unwrap();
+            if board == boards[0] {
+                store
+                    .append(board, &parent_bytes, IdSource::Content)
+                    .await
+                    .unwrap();
+            }
+        }
+        fresh
+            .append(board, &edge_bytes, IdSource::Content)
             .await
             .unwrap();
-        let mut connection = older.connection.lock().await;
-        assert!(
-            decoded
-                .insert(&mut connection, board, &edge_bytes)
-                .await
-                .unwrap()
-        );
-        history::index(&mut connection, board, &edge).await.unwrap();
+        {
+            let mut connection = older.connection.lock().await;
+            assert!(
+                decoded
+                    .insert(&mut connection, board, &edge_bytes)
+                    .await
+                    .unwrap()
+            );
+            history::index(&mut connection, board, &edge).await.unwrap();
+        }
+        assert!(older.board(board).await.unwrap().edges(task).is_empty());
     }
     drop(older);
 
     let upgraded = Store::open(&path).await.unwrap();
     for board in boards {
-        let record = upgraded.task(board, task).await.unwrap().unwrap();
-        assert_eq!(record.updated, hlc);
-        let mut connection = upgraded.connection.lock().await;
-        let register: (Vec<u8>, Vec<u8>) = sqlx::query_as(
-            "SELECT member, value FROM task_register WHERE board = ? AND kind = 'edge'",
-        )
-        .bind(BoardKey(board))
+        let view = upgraded.board(board).await.unwrap();
+        assert_eq!(view, fresh.board(board).await.unwrap());
+        let task = view.task(task).unwrap();
+        assert_eq!(task.updated, hlc);
+        assert_eq!(task.parent, (board == boards[0]).then_some(parent));
+    }
+    let mut connection = upgraded.connection.lock().await;
+    let current: i64 = sqlx::query_scalar("SELECT version FROM fold_version")
         .fetch_one(&mut *connection)
         .await
         .unwrap();
-        assert_eq!(
-            register,
-            ([&[0], parent.as_bytes().as_slice()].concat(), vec![])
-        );
-        let updated: [u8; 12] =
-            sqlx::query_scalar("SELECT updated FROM task_state WHERE board = ? AND task = ?")
-                .bind(BoardKey(board))
-                .bind(*parent.as_bytes())
-                .fetch_one(&mut *connection)
-                .await
-                .unwrap();
-        assert_eq!(updated, hlc.to_key());
-    }
-    let current: i64 = sqlx::query_scalar("SELECT version FROM fold_version")
-        .fetch_one(&mut *upgraded.connection.lock().await)
+    assert_eq!(current, 2);
+
+    sqlx::query("DELETE FROM task_state WHERE board = ?")
+        .bind(BoardKey(boards[0]))
+        .execute(&mut *connection)
         .await
         .unwrap();
-    assert_eq!(current, 2);
+    drop(connection);
+    drop(upgraded);
+    let reopened = Store::open(&path).await.unwrap();
+    assert!(reopened.board(boards[0]).await.unwrap().tasks().is_empty());
+    assert_eq!(
+        reopened.board(boards[1]).await.unwrap(),
+        fresh.board(boards[1]).await.unwrap()
+    );
 }
 
 #[tokio::test]
