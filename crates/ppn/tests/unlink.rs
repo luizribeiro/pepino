@@ -82,6 +82,17 @@ fn unlink_cleans_up_a_link_to_a_deleted_task() {
             task: p.blocker.parse().unwrap(),
         },
     );
+    let before = as_json(&sandbox.run(&["show", &p.downstream, "--json"]));
+    let edges = before["edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 2);
+    assert!(edges.iter().any(|edge| edge["kind"] == "blocks"
+        && edge["effective"] == false
+        && edge["reason"] == "missing_endpoint"));
+    assert!(
+        edges
+            .iter()
+            .any(|edge| edge["kind"] == "parent" && edge["effective"] == true)
+    );
     let human = sandbox.run(&["unlink", &p.downstream, "blocked-by", &p.blocker[..8]]);
     assert!(human.starts_with("Unlinked "));
     assert!(human.contains("(deleted task)"));
