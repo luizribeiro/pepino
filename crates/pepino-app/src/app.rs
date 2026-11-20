@@ -31,6 +31,7 @@ pub struct App {
     pub(super) lock_timeout: Duration,
     pub(super) clock: Clock,
     migrate_on_write: bool,
+    pub(super) selected: Option<BoardId>,
 }
 
 impl App {
@@ -136,12 +137,19 @@ impl App {
         Ok(Self {
             clock: Clock::from_hlc(hlc),
             migrate_on_write,
+            selected: None,
             store,
             local,
             directory,
             credentials_file,
             lock_timeout,
         })
+    }
+
+    pub(super) fn selected_board(&self) -> &crate::LocalBoard {
+        self.selected
+            .and_then(|id| self.local.boards().iter().find(|board| board.id == id))
+            .unwrap_or_else(|| self.local.current_board())
     }
 
     pub fn local_state(&self) -> &LocalState {
@@ -202,7 +210,24 @@ impl App {
     }
 
     pub async fn handle(&mut self, request: Request, now: u64) -> Result<Response, AppError> {
+        self.handle_on(request, now, None).await
+    }
+
+    pub async fn handle_on(
+        &mut self,
+        request: Request,
+        now: u64,
+        board: Option<(&str, &str)>,
+    ) -> Result<Response, AppError> {
         let guard = lock(&self.directory, self.lock_timeout).await?;
+        self.reload_state().await?;
+        self.selected = board
+            .map(|(reference, field)| {
+                self.local
+                    .resolve_board(reference, field)
+                    .map(|board| board.id)
+            })
+            .transpose()?;
         if self.migrate_on_write && matches!(&request, Request::Write(_)) {
             LocalState::load_for_open(&self.directory, true)?;
             self.migrate_on_write = false;
@@ -238,7 +263,7 @@ impl App {
             }) => {
                 let title = if let Ok(id) = task.parse::<TaskId>() {
                     self.store
-                        .task_titles(self.local.board_id(), &[id])
+                        .task_titles(self.selected_board().id, &[id])
                         .await
                         .ok()
                         .and_then(|mut titles| titles.remove(&id))
@@ -428,4 +453,30 @@ pub(super) fn invalid(field: impl Into<String>, reason: impl std::fmt::Display) 
         reason: reason.to_string(),
         diagnostic: None,
     }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn scopes_a_read_to_another_board_for_one_request() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = crate::write::fixture::open(directory.path(), 0)
+        .await
+        .unwrap();
+    let mut local = app.local_state().clone();
+    let id = BoardId::from_bytes([81; 32]);
+    local.boards.push(crate::LocalBoard {
+        id,
+        name: "Workshop".into(),
+    });
+    local.replace(directory.path()).unwrap();
+    let status = Request::Read(crate::ReadRequest::Status);
+    let result = app
+        .handle_on(status.clone(), 0, Some(("5151", "--board")))
+        .await
+        .unwrap();
+    assert!(matches!(result, Response::Status { board, .. } if board.id == id.to_string()));
+    let result = app.handle(status, 0).await.unwrap();
+    assert!(
+        matches!(result, Response::Status { board, .. } if board.id == local.board_id().to_string())
+    );
 }

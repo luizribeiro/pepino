@@ -40,7 +40,7 @@ impl App {
 
     pub(super) async fn board(&self) -> Result<BoardView, AppError> {
         self.store
-            .board(self.local.board_id())
+            .board(self.selected_board().id)
             .await
             .map_err(store_error)
     }
@@ -80,7 +80,7 @@ impl App {
     async fn get_task(&self, reference: &str) -> Result<Response, AppError> {
         let board = self
             .store
-            .board_with_comments(self.local.board_id())
+            .board_with_comments(self.selected_board().id)
             .await
             .map_err(store_error)?;
         let task = resolve(&board, "task", reference)?;
@@ -103,7 +103,7 @@ impl App {
         if !missing.is_empty() {
             relation_titles.extend(
                 self.store
-                    .task_titles(self.local.board_id(), &missing)
+                    .task_titles(self.selected_board().id, &missing)
                     .await
                     .map_err(store_error)?
                     .into_iter()

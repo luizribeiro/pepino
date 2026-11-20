@@ -141,7 +141,7 @@ impl App {
         };
         let history = self
             .store
-            .history(self.local.board_id(), task, limit)
+            .history(self.selected_board().id, task, limit)
             .await
             .map_err(store_error)?;
         let task_ids: Vec<_> = history
@@ -158,7 +158,7 @@ impl App {
             .collect();
         let mut titles = self
             .store
-            .task_titles(self.local.board_id(), &task_ids)
+            .task_titles(self.selected_board().id, &task_ids)
             .await
             .map_err(store_error)?;
         let titles = task_ids
