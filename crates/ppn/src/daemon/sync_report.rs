@@ -18,7 +18,24 @@ pub struct Summary {
     pub last_received: Option<String>,
 }
 
+#[derive(serde::Serialize)]
+struct SyncedDevice<'a> {
+    id: &'a str,
+    name: Option<&'a str>,
+}
+
 impl Summary {
+    fn synced_devices(&self) -> impl Iterator<Item = SyncedDevice<'_>> {
+        self.network.peers_synced.iter().map(|id| SyncedDevice {
+            id,
+            name: id
+                .parse::<DeviceId>()
+                .ok()
+                .and_then(|id| self.devices.get(&id))
+                .map(String::as_str),
+        })
+    }
+
     pub fn describe(&self) -> String {
         let network = &self.network;
         let published: u64 = network.boards.values().map(|board| board.published).sum();
@@ -28,14 +45,12 @@ impl Summary {
             .values()
             .filter_map(|board| board.events_waiting)
             .sum();
-        let names = network
-            .peers_synced
-            .iter()
-            .map(|id| {
-                id.parse::<DeviceId>()
-                    .ok()
-                    .and_then(|id| self.devices.get(&id))
-                    .map_or_else(|| short_id(id).to_owned(), |name| single_line(name))
+        let names = self
+            .synced_devices()
+            .map(|device| {
+                device
+                    .name
+                    .map_or_else(|| short_id(device.id).to_owned(), single_line)
             })
             .collect::<Vec<_>>();
         let noun = if names.len() == 1 {
@@ -83,6 +98,10 @@ impl Render for Summary {
             ("kind".into(), json!("sync")),
             ("idle".into(), json!(true)),
             ("network".into(), json!(self.network)),
+            (
+                "synced_devices".into(),
+                json!(self.synced_devices().collect::<Vec<_>>()),
+            ),
         ])
     }
 }
@@ -139,5 +158,10 @@ fn names_peers_that_synced_even_after_transport_disconnects() {
         summary
             .describe()
             .contains("Synced with 1 device: Ferrum tablet.")
+    );
+    let json = summary.json_fields();
+    assert_eq!(
+        json["synced_devices"],
+        json!([{"id": peer, "name": "Ferrum tablet"}])
     );
 }

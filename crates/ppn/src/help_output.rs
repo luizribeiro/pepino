@@ -40,7 +40,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "sync" => (
             "sync",
-            "idle Whether all known sync work settled\nnetwork Peers and per-board sync activity",
+            "idle Whether all known sync work settled\nnetwork Peers and per-board sync activity\nsynced_devices IDs and known names of devices with a successful board sync",
         ),
         "device request" => (
             "device_request",
