@@ -21,7 +21,6 @@ impl Host {
     pub fn new(network: &str) -> Self {
         let sandbox = ConfigSandbox::new();
         let data = sandbox.home.path().join("board");
-        fs::create_dir(sandbox.home.path().join("runtime")).unwrap();
         fs::write(
             &sandbox.config,
             format!("data_dir = '~/board'\nnetwork = '{network}'\nrelay_urls = []\nmdns = true\nlog_level = 'info'\n"),
@@ -31,9 +30,7 @@ impl Host {
 
     pub fn command(&self) -> Command {
         let mut command = self.sandbox.command();
-        command
-            .env("XDG_RUNTIME_DIR", self.sandbox.home.path().join("runtime"))
-            .env("PPN_TEST_LOOPBACK", "1");
+        command.env("PPN_TEST_LOOPBACK", "1");
         command
     }
 

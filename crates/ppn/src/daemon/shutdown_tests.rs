@@ -13,6 +13,8 @@ use nix::{
 use super::{address::socket_path, client::Client, runtime};
 use crate::config::{Config, LogLevel, Platform, PlatformDirs, validate_file};
 
+#[path = "../../tests/common/sandbox.rs"]
+mod sandbox;
 #[path = "../../tests/common/wait.rs"]
 mod wait;
 
@@ -39,7 +41,7 @@ fn config(home: &Path, network: &str) -> Config {
     let dirs = PlatformDirs::new(Platform::Linux, home, None, None);
     validate_file(
         &home.join("config.toml"),
-        &format!("data_dir = '~/board'\nnetwork = '{network}'\nrelay_urls = []\nmdns = true\n"),
+        &format!("data_dir = '~/board'\nnetwork = '{network}'\nrelay_urls = []\nmdns = true\n[daemon]\nsocket_path = '~/runtime/control.sock'\n"),
         &dirs,
     )
     .unwrap()
@@ -60,7 +62,9 @@ struct Daemon(Option<Child>);
 impl Daemon {
     fn start(home: &Path, network: &str) -> Self {
         let test = "daemon::shutdown_tests::daemon_child";
-        let child = Command::new(std::env::current_exe().unwrap())
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        sandbox::isolate(&mut command, home);
+        let child = command
             .args(["--ignored", "--exact", "--nocapture", test])
             .env("PEPINO_SHUTDOWN_TEST_HOME", home)
             .env("PEPINO_SHUTDOWN_TEST_NETWORK", network)

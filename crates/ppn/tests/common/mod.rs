@@ -3,27 +3,32 @@
 #[path = "../../../pepino-app/tests/support/template.rs"]
 pub mod fixture;
 
+mod sandbox;
+
 use serde_json::Value;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
+thread_local! {
+    static DEFAULT_SANDBOX: ConfigSandbox = {
+        let sandbox = ConfigSandbox::new();
+        std::fs::write(&sandbox.config, "").unwrap();
+        sandbox
+    };
+}
+
 pub fn ppn() -> Command {
+    DEFAULT_SANDBOX.with(ConfigSandbox::command)
+}
+
+fn binary() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ppn"));
     for (name, _) in std::env::vars_os() {
         if name.to_string_lossy().starts_with("PPN_") {
             command.env_remove(name);
         }
     }
-    command
-        .env("PPN_NO_DAEMON", "1")
-        .env_remove("NO_COLOR")
-        .env(
-            "PPN_CONFIG",
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/default-config.toml"
-            ),
-        );
+    command.env("PPN_NO_DAEMON", "1").env_remove("NO_COLOR");
     command
 }
 
@@ -137,12 +142,9 @@ impl ConfigSandbox {
     }
 
     pub fn command(&self) -> Command {
-        let mut command = ppn();
-        command
-            .env("HOME", self.home.path())
-            .env("XDG_CONFIG_HOME", self.home.path().join("xdg-config"))
-            .env("XDG_STATE_HOME", self.home.path().join("xdg-state"))
-            .env("PPN_CONFIG", &self.config);
+        let mut command = binary();
+        sandbox::isolate(&mut command, self.home.path());
+        command.env("PPN_CONFIG", &self.config);
         command
     }
 

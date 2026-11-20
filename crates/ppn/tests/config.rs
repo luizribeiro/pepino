@@ -428,3 +428,26 @@ fn config_help_lists_environment_variables_from_the_settings_table() {
             .contains("node_id=https://relay.example")
     );
 }
+
+#[test]
+fn test_commands_resolve_xdg_paths_inside_their_home() {
+    let sandbox = ConfigSandbox::new();
+    for command in [ppn(), sandbox.command()] {
+        let env = command
+            .get_envs()
+            .filter_map(|(key, value)| Some((key.to_str()?, value?)))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let home = std::path::Path::new(env["HOME"]);
+        for key in [
+            "XDG_CACHE_HOME",
+            "XDG_CONFIG_DIRS",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_DIRS",
+            "XDG_DATA_HOME",
+            "XDG_RUNTIME_DIR",
+            "XDG_STATE_HOME",
+        ] {
+            assert!(std::path::Path::new(env[key]).starts_with(home), "{key}");
+        }
+    }
+}
