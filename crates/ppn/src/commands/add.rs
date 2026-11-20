@@ -1,18 +1,28 @@
 use pepino_app::Request;
 use ppn::app::AppClient;
 use ppn::error::{CliError, ErrorKind};
+use ppn::help_tree::example_help;
 use ppn::input::read_text;
 use ppn::output::CommandResult;
 use ppn::render::write_document;
 use ppn::terminal::Context;
 use ppn::write_args::{TaskWriteArgs, new_task};
 
-pub fn run(
-    context: &Context<'_>,
+#[derive(clap::Args)]
+/// Create a task.
+#[command(after_help = example_help(&[
+    "ppn add 'Replace the greenhouse latch' -t hardware --due tomorrow",
+    "ppn add 'Order screws' --json",
+]))]
+pub struct Args {
+    /// Task title. Use - for stdin text or, with --json, a JSON add_task object.
     title: String,
-    args: TaskWriteArgs,
-    json: bool,
-) -> Result<CommandResult, CliError> {
+    #[command(flatten)]
+    args: Box<TaskWriteArgs>,
+}
+
+pub fn run(context: &Context<'_>, input: Args, json: bool) -> Result<CommandResult, CliError> {
+    let Args { title, args } = input;
     let from_stdin = title == "-";
     if from_stdin && args.fields.description.reads_stdin() {
         return Err(CliError::new(

@@ -14,9 +14,8 @@ use ppn::help_tree::example_help;
 use ppn::output::{CommandResult, finish};
 use ppn::terminal::{Context, Terminal};
 
-use ppn::write_args::TaskWriteArgs;
-
-use crate::{add, config_command, debug, help, show, status, version};
+use crate::commands::add;
+use crate::{config_command, debug, help, show, status, version};
 
 #[derive(Parser)]
 #[command(
@@ -53,17 +52,7 @@ enum Command {
     /// Show local identity, board, and task counts.
     #[command(after_help = example_help(&["ppn status", "ppn status --json"]))]
     Status,
-    /// Create a task.
-    #[command(after_help = example_help(&[
-        "ppn add 'Replace the greenhouse latch' -t hardware --due tomorrow",
-        "ppn add 'Order screws' --json",
-    ]))]
-    Add {
-        /// Task title. Use - for stdin text or, with --json, a JSON add_task object.
-        title: String,
-        #[command(flatten)]
-        args: Box<TaskWriteArgs>,
-    },
+    Add(add::Args),
     /// Show a task, its relationships, and comments.
     #[command(after_help = example_help(&["ppn show 97ad97", "ppn show 97ad97 --json"]))]
     Show {
@@ -204,7 +193,7 @@ fn dispatch(
 ) -> Result<CommandResult, CliError> {
     match cli.command {
         Some(Command::Show { task }) => show::run(context, task),
-        Some(Command::Add { title, args }) => add::run(context, title, *args, json),
+        Some(Command::Add(args)) => add::run(context, args, json),
         Some(Command::Status) => status::run(context),
         Some(Command::Version) => Ok(version::run(context)),
         Some(Command::Help { path }) => {

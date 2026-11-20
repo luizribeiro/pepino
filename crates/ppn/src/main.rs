@@ -1,5 +1,5 @@
-mod add;
 mod cli;
+mod commands;
 mod config_command;
 mod debug;
 mod help;
