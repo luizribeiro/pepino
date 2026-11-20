@@ -6,8 +6,8 @@ mod lifecycle;
 mod support;
 
 use futures_util::StreamExt;
-use pepino_node::{Error, NodeEvent, Role};
-use std::collections::BTreeSet;
+use pepino_node::{Error, NodeEvent, OpenBoardOptions, Role};
+use std::{collections::BTreeSet, time::Duration};
 use support::*;
 use tokio::time::timeout;
 
@@ -96,6 +96,88 @@ async fn two_devices_exchange_events_and_a_late_member_gets_history() {
     expect(&mut events_c, &history).await;
     assert!(board_c.publish(DONE.to_vec()).await.is_err());
     c.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    a.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn restart_recovers_acks_individually_and_catches_up_offline() {
+    if !enabled() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let network = network(dir.path());
+    let a = start(&settings(&network, dir.path().join("alice"))).await;
+    let b_settings = settings(&network, dir.path().join("ben"));
+    let b = start(&b_settings).await;
+    let mut board_a = a.create_board().await.unwrap();
+    let board_id = board_a.id();
+    let mut board_b = enroll(&board_a, &b, Role::Write).await;
+    let mut events = board_b.events().unwrap();
+    let pending = board_a.publish(PLAN.to_vec()).await.unwrap();
+    assert_eq!(next(&mut events).await.id, pending);
+    let acked = board_a.publish(REVIEW.to_vec()).await.unwrap();
+    loop {
+        let event = next(&mut events).await;
+        if event.id == pending {
+            continue;
+        }
+        assert_eq!(
+            (event.id, event.author, event.bytes.as_slice()),
+            (acked, a.device_id(), REVIEW)
+        );
+        event.ack().await.unwrap();
+        break;
+    }
+    b.shutdown().await.unwrap();
+
+    let offline = board_a.publish(DONE.to_vec()).await.unwrap();
+    let b = start(&b_settings).await;
+    let mut board_b = b.open_board(board_id).await.unwrap();
+    let mut events = board_b.events().unwrap();
+    expect(
+        &mut events,
+        &[
+            (pending, a.device_id(), PLAN),
+            (offline, a.device_id(), DONE),
+        ],
+    )
+    .await;
+    let mut own = board_a.events().unwrap();
+    expect(
+        &mut own,
+        &[
+            (pending, a.device_id(), PLAN),
+            (acked, a.device_id(), REVIEW),
+            (offline, a.device_id(), DONE),
+        ],
+    )
+    .await;
+    b.shutdown().await.unwrap();
+
+    let b = start(&b_settings).await;
+    let mut board_b = b.open_board(board_id).await.unwrap();
+    assert!(
+        timeout(Duration::from_millis(400), board_b.events().unwrap().next())
+            .await
+            .is_err()
+    );
+    b.shutdown().await.unwrap();
+
+    let b = start(&b_settings).await;
+    let mut replay = b
+        .open_board_with(board_id, OpenBoardOptions { from_start: true })
+        .await
+        .unwrap();
+    expect(
+        &mut replay.events().unwrap(),
+        &[
+            (pending, a.device_id(), PLAN),
+            (acked, a.device_id(), REVIEW),
+            (offline, a.device_id(), DONE),
+        ],
+    )
+    .await;
     b.shutdown().await.unwrap();
     a.shutdown().await.unwrap();
 }
