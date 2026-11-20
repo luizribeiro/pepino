@@ -137,6 +137,40 @@ fn request_binding_canonicalizes_member_info_and_covers_the_device_name() {
 }
 
 impl App {
+    pub async fn cancel_device_request(
+        directory: &Path,
+        options: OpenOptions,
+    ) -> Result<bool, AppError> {
+        let path = directory.join(REQUEST);
+        if !exists(&path)? {
+            return Ok(false);
+        }
+        let _guard = lock(directory, options.lock_timeout).await?;
+        if !exists(&path)? {
+            return Ok(false);
+        }
+        if exists(&directory.join(FILE_NAME))?
+            || exists(&directory.join(PENDING))?
+            || exists(&directory.join(DATABASE))?
+        {
+            return Err(invalid(
+                "request",
+                "This device has already begun installing its identity.",
+            ));
+        }
+        for file in ["node.sqlite-wal", "node.sqlite-shm", NODE_DATABASE, REQUEST] {
+            let path = directory.join(file);
+            match fs::remove_file(&path) {
+                Ok(()) => (),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                Err(error) => return Err(path_io_error(&path, "cancel device request", error)),
+            }
+        }
+        crate::state::sync_directory(directory)
+            .map_err(|error| path_io_error(directory, "cancel device request", error))?;
+        Ok(true)
+    }
+
     pub async fn request_device(
         directory: &Path,
         options: OpenOptions,

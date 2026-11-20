@@ -56,8 +56,11 @@ enum Action {
     },
 
     /// Prepare an uninitialised host and print its reusable request code.
-    #[command(after_help = example_help(&["ppn device request --name ferrum", "ppn device request --json"]))]
+    #[command(after_help = example_help(&["ppn device request --name ferrum", "ppn device request --cancel", "ppn device request --json"]))]
     Request {
+        /// Remove the pending request and its node state so this host can initialise.
+        #[arg(long, conflicts_with = "name")]
+        cancel: bool,
         /// Name for the requesting device. Defaults to the hostname.
         #[arg(long, value_name = "NAME")]
         name: Option<String>,
@@ -85,9 +88,14 @@ pub fn run(
             selection,
             allow_start,
         ),
-        Action::Request { name } => {
+        Action::Request { name, cancel } => {
             let (directory, options) = local_options(context, name)?;
-            let request = runtime()?.block_on(App::request_device(directory, options))?;
+            let runtime = runtime()?;
+            if cancel {
+                let removed = runtime.block_on(App::cancel_device_request(directory, options))?;
+                return Ok(CommandResult::document(CancelRequest(removed)));
+            }
+            let request = runtime.block_on(App::request_device(directory, options))?;
             let code = Kind::Request.encode(&request).map_err(invalid_code)?;
             let fingerprint = request.fingerprint();
             let note = format!(
@@ -163,4 +171,24 @@ fn unexpected_reply() -> CliError {
         ErrorKind::DaemonUnreachable,
         "The daemon returned an unexpected control response.",
     )
+}
+
+struct CancelRequest(bool);
+
+impl Render for CancelRequest {
+    fn human(&self, _: &Terminal) -> String {
+        if self.0 {
+            "Device request cancelled."
+        } else {
+            "No device request was pending."
+        }
+        .into()
+    }
+
+    fn json_fields(self) -> Map<String, Value> {
+        Map::from_iter([
+            ("kind".into(), json!("device_request_cancel")),
+            ("cancelled".into(), json!(self.0)),
+        ])
+    }
 }

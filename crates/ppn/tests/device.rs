@@ -134,3 +134,39 @@ fn private_code_inputs_keep_codes_out_of_the_arguments() {
         }
     }
 }
+
+#[test]
+fn cancelling_a_request_removes_pending_state_and_is_idempotent() {
+    let (sandbox, data) = uninitialized_task_sandbox();
+    std::fs::create_dir_all(&data).unwrap();
+    let request = data.join("device-request.json");
+    let node = data.join("node.sqlite");
+    std::fs::write(&request, "{}").unwrap();
+    std::fs::write(&node, "prepared node").unwrap();
+    for args in [["init", "--json"], ["status", "--json"]] {
+        let error = task_error(
+            sandbox.command().args(args).output().unwrap(),
+            1,
+            "device_request_pending",
+        );
+        assert_eq!(
+            error["message"],
+            "Device request pending: run `ppn device join`"
+        );
+    }
+    let args = ["device", "request", "--cancel"];
+    assert_eq!(sandbox.run(&args).trim(), "Device request cancelled.");
+    assert!(!request.exists());
+    assert!(!node.exists());
+    let output = sandbox.run(&["device", "request", "--cancel", "--json"]);
+    assert_eq!(as_json(&output)["cancelled"], false);
+    task_error(
+        sandbox
+            .command()
+            .args(["status", "--json"])
+            .output()
+            .unwrap(),
+        1,
+        "not_initialized",
+    );
+}
