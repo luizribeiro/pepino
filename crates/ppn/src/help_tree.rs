@@ -79,6 +79,12 @@ struct ArgumentInfo {
     required: bool,
 }
 
+macro_rules! parser_is {
+    ($parser:expr, $($kind:ty),+ $(,)?) => {
+        $($parser == TypeId::of::<$kind>())||+
+    };
+}
+
 impl From<&Arg> for ArgumentInfo {
     fn from(arg: &Arg) -> Self {
         let choices: Vec<_> = arg
@@ -94,26 +100,11 @@ impl From<&Arg> for ArgumentInfo {
             _ if !choices.is_empty() => "enum".into(),
             _ if parser == TypeId::of::<Duration>() => "duration".into(),
             _ if parser == TypeId::of::<PathBuf>() => "path".into(),
-            _ if parser == TypeId::of::<String>() || parser == TypeId::of::<OsString>() => {
-                "string".into()
-            }
-            _ if parser == TypeId::of::<f32>() || parser == TypeId::of::<f64>() => "number".into(),
-            _ if [
-                TypeId::of::<i8>(),
-                TypeId::of::<i16>(),
-                TypeId::of::<i32>(),
-                TypeId::of::<i64>(),
-                TypeId::of::<i128>(),
-                TypeId::of::<isize>(),
-                TypeId::of::<u8>(),
-                TypeId::of::<u16>(),
-                TypeId::of::<u32>(),
-                TypeId::of::<u64>(),
-                TypeId::of::<u128>(),
-                TypeId::of::<usize>(),
-            ]
-            .into_iter()
-            .any(|integer| parser == integer) =>
+            _ if parser_is!(parser, String, OsString) => "string".into(),
+            _ if parser_is!(parser, f32, f64) => "number".into(),
+            _ if parser_is!(
+                parser, i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize
+            ) =>
             {
                 "integer".into()
             }
@@ -206,5 +197,22 @@ mod tests {
         assert_eq!(commands[0]["flags"][0]["type"], "integer");
         assert_eq!(commands[0]["flags"][0]["default"], "30");
         assert_eq!(commands[0]["flags"][0]["env"], "PPN_ARCHIVE_AGE");
+    }
+
+    #[test]
+    fn reflects_parser_types_without_relying_on_value_names() {
+        let flags: [(clap::builder::ValueParser, &str); 5] = [
+            (clap::value_parser!(i128).into(), "integer"),
+            (clap::value_parser!(u16).into(), "integer"),
+            (clap::value_parser!(f64).into(), "number"),
+            (clap::value_parser!(PathBuf), "path"),
+            (clap::value_parser!(OsString), "string"),
+        ];
+        for (parser, expected) in flags {
+            let arg = Arg::new("threshold")
+                .value_name("CUSTOM")
+                .value_parser(parser);
+            assert_eq!(ArgumentInfo::from(&arg).value_type, expected);
+        }
     }
 }
