@@ -123,6 +123,8 @@ pub enum Response {
         #[serde(skip_serializing_if = "Option::is_none")]
         created: Option<String>,
         tasks: Vec<TaskSummary>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        deleted: Vec<TaskSummary>,
         edges: Vec<EdgeEffect>,
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         names: BTreeMap<String, String>,

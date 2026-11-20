@@ -90,7 +90,7 @@ impl App {
         mut batch: Batch,
     ) -> Result<Response, AppError> {
         if batch.events.is_empty() {
-            return self.write_response(before, false, None, batch.affected, Vec::new());
+            return self.write_response(before, before, false, None, batch.affected, Vec::new());
         }
         let encoded = batch
             .events
@@ -121,7 +121,7 @@ impl App {
             })
             .collect();
         if applied.is_empty() {
-            return self.write_response(before, false, None, batch.affected, Vec::new());
+            return self.write_response(before, before, false, None, batch.affected, Vec::new());
         }
 
         let after = self
@@ -141,12 +141,13 @@ impl App {
             .filter_map(|event| edge_effect(&after, event.event()).transpose())
             .collect::<Result<Vec<_>, _>>()
             .map_err(committed_error)?;
-        self.write_response(&after, true, created, batch.affected, edges)
+        self.write_response(before, &after, true, created, batch.affected, edges)
             .map_err(committed_error)
     }
 
     fn write_response(
         &self,
+        before: &BoardView,
         view: &BoardView,
         changed: bool,
         created: Option<TaskId>,
@@ -154,14 +155,18 @@ impl App {
         edges: Vec<EdgeEffect>,
     ) -> Result<Response, AppError> {
         let mut tasks = Vec::new();
+        let mut deleted = Vec::new();
         for id in &affected {
             if let Some(task) = view.task(*id) {
                 tasks.push(project_summary(task)?);
+            } else if let Some(task) = before.task(*id) {
+                deleted.push(project_summary(task)?);
             }
         }
-        let names = self.local.task_names(&tasks);
+        let names = self.local.task_names(tasks.iter().chain(&deleted));
         Ok(Response::Write {
             names,
+            deleted,
             changed,
             created: created.map(|id| id.to_string()),
             tasks,

@@ -22,6 +22,7 @@ async fn write(
         tasks,
         edges,
         names,
+        ..
     } = handle(app, request).await.unwrap()
     else {
         panic!("expected write response");
@@ -1467,4 +1468,27 @@ async fn titles_are_normalized_on_creation_and_edit() {
             assert!(error.to_string().contains(&format!("{bad:?}")));
         }
     }
+}
+
+#[tokio::test]
+async fn deletion_returns_the_prior_record_for_write_rendering() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let id = add(&mut app, "Order the replacement latch").await;
+    let prior = get(&mut app, &id).await.summary;
+    let Response::Write {
+        changed,
+        tasks,
+        deleted,
+        names,
+        ..
+    } = handle(&mut app, json!({"op":"delete","task":id}))
+        .await
+        .unwrap()
+    else {
+        panic!("expected write response");
+    };
+    assert!(changed && tasks.is_empty());
+    assert_eq!(names[&prior.author], app.local_state().device_name);
+    assert_eq!(deleted, [prior]);
 }
