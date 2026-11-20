@@ -119,6 +119,13 @@ fn document(
     } else {
         ""
     };
+    let rejected_board_card_entries: usize = local
+        .boards()
+        .iter()
+        .flat_map(|board| local.board_people(board.id))
+        .map(pepino_app::BoardPerson::rejected_entries)
+        .sum();
+    let labels = local.person_labels();
     let boards = local
         .boards()
         .iter()
@@ -128,16 +135,43 @@ fn document(
                 local.board_join_state(board.id),
                 network.as_ref(),
             );
-            (board.clone(), state, sync)
+            let access = local.shared_access(board.id);
+            let waiting = local.waiting_for_access(board.id);
+            let owner = access.map(|access| pepino_app::NamedRecord {
+                id: access.owner.to_string(),
+                name: labels.get(&access.owner).cloned().unwrap_or_default(),
+            });
+            (
+                board.clone(),
+                state,
+                sync,
+                access.map_or(pepino_app::BoardRole::Manage, |access| access.role),
+                owner,
+                waiting,
+            )
         })
         .collect::<Vec<_>>();
     let membership_rows = boards
         .iter()
-        .map(|(board, state, sync)| {
+        .map(|(board, state, sync, role, owner, waiting)| {
+            let state = if *waiting {
+                "waiting for access"
+            } else {
+                membership(*state)
+            };
+            let sharing = owner.as_ref().map_or_else(String::new, |owner| {
+                format!(
+                    " · shared by {}",
+                    if owner.name.is_empty() {
+                        short_id(&owner.id).to_owned()
+                    } else {
+                        single_line(&owner.name)
+                    }
+                )
+            });
             format!(
-                "{}: {} ({})",
+                "{}: {state} ({}) · {role}{sharing}",
                 single_line(&board.name),
-                membership(*state),
                 sync.replace('_', " ")
             )
         })
@@ -170,7 +204,7 @@ fn document(
                 .as_deref()
                 .unwrap_or("offline (daemon not running)");
             Ok(format!(
-                "Identity: {} ({}) · {} devices{roster_note}\nRejected roster entries: {}\nDevice: {} (node ID {}){notice}{contact}\nBoard: {} ({})\n{selected_line}\nMembership:\n  {membership_rows}\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}",
+                "Identity: {} ({}) · {} devices{roster_note}\nRejected roster entries: {}\nRejected board card entries: {rejected_board_card_entries}\nDevice: {} (node ID {}){notice}{contact}\nBoard: {} ({})\n{selected_line}\nMembership:\n  {membership_rows}\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}",
                 single_line(&identity.display_name),
                 short_id(&identity.id),
                 identity.roster.len(),
@@ -194,9 +228,14 @@ fn document(
             ))
         },
         move |fields| {
-            let boards = boards.into_iter().map(|(board, state, sync)| {
-                serde_json::json!({"id": board.id, "name": board.name, "membership": state, "sync": sync})
+            let boards = boards.into_iter().map(|(board, state, sync, role, owner, waiting)| {
+                let membership = if waiting { serde_json::json!("waiting_for_access") } else { serde_json::json!(state) };
+                serde_json::json!({"id": board.id, "name": board.name, "membership": membership, "sync": sync, "role": role, "shared": owner.is_some(), "owner": owner})
             }).collect::<Vec<_>>();
+            fields.insert(
+                "rejected_board_card_entries".into(),
+                serde_json::json!(rejected_board_card_entries),
+            );
             fields.insert("boards".into(), serde_json::json!(boards));
             fields.insert("selected_board".into(), selected);
             if let Some(identity) = fields.get_mut("identity") {

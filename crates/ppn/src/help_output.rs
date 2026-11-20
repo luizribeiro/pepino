@@ -32,7 +32,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "init" | "status" => (
             "status",
-            "identity Identity name, shared roster, cache status and rejected roster entries\ndevice Local device, known revocation or pending leave, and last peer contact when available\nboard Selected board\nselected_board Board selected for this invocation and its source\nboards Known boards with membership and sync activity\ndata_dir Local data directory\ncounts Task and event counts\nnetwork Daemon network snapshot or offline\nprotocol_version Application protocol version",
+            "identity Identity name, shared roster, cache status and rejected roster entries\ndevice Local device, known revocation or pending leave, and last peer contact when available\nboard Selected board\nselected_board Board selected for this invocation and its source\nboards Known boards with membership, identity role, owner and sync activity\nrejected_board_card_entries Number of rejected identity card entries across known boards\ndata_dir Local data directory\ncounts Task and event counts\nnetwork Daemon network snapshot or offline\nprotocol_version Application protocol version",
         ),
         "board request" => (
             "board_request",
