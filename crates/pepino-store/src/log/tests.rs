@@ -84,7 +84,7 @@ async fn retains_each_skipped_classification_and_exact_bytes() {
         let row: (String, Vec<u8>, [u8; 12], [u8; 32]) = sqlx::query_as(
             "SELECT classification, bytes, hlc, author FROM event_log WHERE board = ? AND id = ?",
         )
-        .bind(board.as_bytes().as_slice())
+        .bind(BoardKey(board))
         .bind(id.as_bytes().as_slice())
         .fetch_one(&mut *store.connection.lock().await)
         .await
@@ -161,7 +161,7 @@ async fn rebuild_redecodes_skips_and_retains_trusted_ids() {
         "UPDATE event_log SET classification = 'unknown_event', hlc = NULL, author = NULL
                  WHERE board = ?",
     )
-    .bind(board.as_bytes().as_slice())
+    .bind(BoardKey(board))
     .execute(&mut *store.connection.lock().await)
     .await
     .unwrap();
@@ -188,7 +188,7 @@ async fn rebuild_redecodes_skips_and_retains_trusted_ids() {
     assert_eq!(store.latest_hlc(board).await.unwrap(), Some(original.hlc()));
     let classes: Vec<String> =
         sqlx::query_scalar("SELECT classification FROM event_log WHERE board = ? ORDER BY id")
-            .bind(board.as_bytes().as_slice())
+            .bind(BoardKey(board))
             .fetch_all(&mut *store.connection.lock().await)
             .await
             .unwrap();
@@ -212,7 +212,7 @@ async fn rebuild_failure_leaves_the_current_view_intact() {
         "INSERT INTO event_log (board, id, classification, bytes)
                  VALUES (?, ?, 'unknown_version', x'ff')",
     )
-    .bind(board.as_bytes().as_slice())
+    .bind(BoardKey(board))
     .bind([255_u8; 32])
     .execute(&mut *store.connection.lock().await)
     .await

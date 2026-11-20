@@ -3,7 +3,7 @@ use pepino_core::{
 };
 use sqlx::{Connection, SqliteConnection};
 
-use crate::{Store, StoreError, fold, history};
+use crate::{BoardKey, Store, StoreError, fold, history};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IdSource {
@@ -102,7 +102,7 @@ impl Decoded {
             "INSERT INTO event_log (board, id, hlc, author, classification, bytes)
              VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (board, id) DO NOTHING",
         )
-        .bind(board.as_bytes().as_slice())
+        .bind(BoardKey(board))
         .bind(self.id.as_bytes().as_slice())
         .bind(self.hlc.map(Hlc::to_key))
         .bind(self.author.map(|author| *author.as_bytes()))
@@ -138,7 +138,7 @@ impl Decoded {
             "UPDATE event_log SET hlc = ?3, author = ?4, classification = ?5
              WHERE board = ?1 AND id = ?2 AND (hlc, author, classification) IS NOT (?3, ?4, ?5)",
         )
-        .bind(board.as_bytes().as_slice())
+        .bind(BoardKey(board))
         .bind(self.id.as_bytes().as_slice())
         .bind(self.hlc.map(Hlc::to_key))
         .bind(self.author.map(|author| *author.as_bytes()))
@@ -189,7 +189,7 @@ pub(crate) async fn rebuild(
         "DELETE FROM task_state WHERE board = ?",
     ] {
         sqlx::query(delete)
-            .bind(board.as_bytes().as_slice())
+            .bind(BoardKey(board))
             .execute(&mut *connection)
             .await?;
     }
@@ -201,7 +201,7 @@ pub(crate) async fn rebuild(
             "SELECT id, bytes FROM event_log WHERE board = ? AND id > ?
                  ORDER BY id LIMIT 128",
         )
-        .bind(board.as_bytes().as_slice())
+        .bind(BoardKey(board))
         .bind(&after)
         .fetch_all(&mut *connection)
         .await?;

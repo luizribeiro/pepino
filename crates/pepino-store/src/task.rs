@@ -5,7 +5,7 @@ use pepino_core::{
 };
 use sqlx::FromRow;
 
-use crate::{Store, StoreError};
+use crate::{BoardKey, Store, StoreError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskRecord {
@@ -133,7 +133,7 @@ impl Store {
                      WHERE s.board = ? AND s.task BETWEEN ? AND ?
                      AND r.kind IN ('field', 'tag', 'assignee') AND r.value IS NOT NULL",
                 )
-                .bind(board.as_bytes().as_slice())
+                .bind(BoardKey(board))
                 .bind(first)
                 .bind(last)
                 .fetch_all(connection)

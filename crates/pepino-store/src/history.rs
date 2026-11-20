@@ -1,7 +1,7 @@
 use pepino_core::{BoardId, DeviceId, Envelope, EventId, Hlc, TaskId};
 use sqlx::{FromRow, SqliteConnection};
 
-use crate::{Store, StoreError};
+use crate::{BoardKey, Store, StoreError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EventRecord {
@@ -30,7 +30,7 @@ pub(crate) async fn index(
         .chain(envelope.event().referenced_tasks());
     for task in tasks {
         sqlx::query("INSERT INTO event_task (board, task, hlc, id) VALUES (?, ?, ?, ?)")
-            .bind(board.as_bytes().as_slice())
+            .bind(BoardKey(board))
             .bind(task.as_bytes().as_slice())
             .bind(envelope.hlc().to_key())
             .bind(envelope.id().as_bytes().as_slice())
@@ -53,7 +53,7 @@ impl Store {
                      JOIN event_log e USING (board, id)
                      WHERE t.board = ? AND t.task = ? ORDER BY t.hlc, t.id",
                 )
-                .bind(board.as_bytes().as_slice())
+                .bind(BoardKey(board))
                 .bind(task.as_bytes().as_slice())
                 .fetch_all(connection)
                 .await

@@ -1,7 +1,7 @@
 use pepino_core::{BoardId, Envelope, Event, FieldValue, TaskId};
 use sqlx::SqliteConnection;
 
-use crate::StoreError;
+use crate::{BoardKey, StoreError};
 
 pub(super) struct Registers<'a> {
     pub(super) connection: &'a mut SqliteConnection,
@@ -101,7 +101,7 @@ impl Registers<'_> {
                  hlc = excluded.hlc, id = excluded.id, value = excluded.value
              WHERE (excluded.hlc, excluded.id) > (task_register.hlc, task_register.id)",
         )
-        .bind(self.board.as_bytes().as_slice())
+        .bind(BoardKey(self.board))
         .bind(self.task.as_bytes().as_slice())
         .bind(kind)
         .bind(member)

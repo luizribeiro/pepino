@@ -1,7 +1,7 @@
 use pepino_core::{BoardId, Envelope, Event, TaskId};
 use sqlx::SqliteConnection;
 
-use crate::StoreError;
+use crate::{BoardKey, StoreError};
 use registers::Registers;
 
 pub(crate) fn target(envelope: &Envelope) -> Option<TaskId> {
@@ -43,7 +43,7 @@ pub(crate) async fn fold(
              updated = max(task_state.updated, excluded.updated),
              deleted = max(task_state.deleted, excluded.deleted)",
     )
-    .bind(board.as_bytes().as_slice())
+    .bind(BoardKey(board))
     .bind(task.as_bytes().as_slice())
     .bind(created.map(|_| hlc))
     .bind(created.map(|_| *envelope.author().as_bytes()))

@@ -1,3 +1,4 @@
+mod board_key;
 mod comment;
 mod error;
 mod fold;
@@ -8,6 +9,7 @@ mod task;
 
 use std::path::Path;
 
+use board_key::BoardKey;
 use pepino_core::{BoardId, Hlc};
 use sqlx::{
     Connection, SqliteConnection, SqlitePool,
@@ -89,7 +91,7 @@ impl Store {
                     "SELECT hlc FROM event_log WHERE board = ? AND hlc IS NOT NULL
                      ORDER BY hlc DESC LIMIT 1",
                 )
-                .bind(board.as_bytes().as_slice())
+                .bind(BoardKey(board))
                 .fetch_optional(connection)
                 .await
             })
@@ -183,7 +185,7 @@ mod tests {
             sqlx::query(
                 "INSERT INTO event_log VALUES (?, ?, ?, NULL, 'unknown_version', x'8202f6')",
             )
-            .bind(board.as_bytes().as_slice())
+            .bind(BoardKey(board))
             .bind([id; 32])
             .bind(hlc.map(Hlc::to_key))
             .execute(&mut *store.connection.lock().await)

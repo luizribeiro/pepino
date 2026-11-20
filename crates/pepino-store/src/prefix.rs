@@ -1,6 +1,6 @@
 use pepino_core::{BoardId, TaskId};
 
-use crate::{Store, StoreError};
+use crate::{BoardKey, Store, StoreError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PrefixResolution {
@@ -35,7 +35,7 @@ impl Store {
                     "SELECT task, count(*) OVER () FROM visible_tasks
                      WHERE board = ? AND task BETWEEN ? AND ? ORDER BY task LIMIT 10",
                 )
-                .bind(board.as_bytes().as_slice())
+                .bind(BoardKey(board))
                 .bind(first.as_bytes().as_slice())
                 .bind(last.as_bytes().as_slice())
                 .fetch_all(connection)

@@ -62,7 +62,7 @@ async fn only_creation_makes_a_task_visible_and_deletion_is_permanent() {
         let visible: Option<([u8; 12], [u8; 12], [u8; 32])> = sqlx::query_as(
             "SELECT created, updated, author FROM visible_tasks WHERE board = ? AND task = ?",
         )
-        .bind(board.as_bytes().as_slice())
+        .bind(BoardKey(board))
         .bind(task.as_bytes().as_slice())
         .fetch_optional(&mut *store.connection.lock().await)
         .await
@@ -123,7 +123,7 @@ async fn field_register_uses_clock_then_id_and_keeps_unset() {
             "SELECT value FROM task_register WHERE board = ? AND task = ?
              AND kind = 'field' AND member = ?",
         )
-        .bind(board.as_bytes().as_slice())
+        .bind(BoardKey(board))
         .bind(task.as_bytes().as_slice())
         .bind(field.as_str().as_bytes())
         .fetch_one(&mut *store.connection.lock().await)
@@ -227,7 +227,7 @@ async fn tag_and_assignee_registers_converge_in_reverse_arrival_order() {
             "SELECT kind, member, value FROM task_register WHERE board = ? AND task = ?
              ORDER BY kind, member",
         )
-        .bind(board.as_bytes().as_slice())
+        .bind(BoardKey(board))
         .bind(task.as_bytes().as_slice())
         .fetch_all(&mut *store.connection.lock().await)
         .await

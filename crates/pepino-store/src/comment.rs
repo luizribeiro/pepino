@@ -1,7 +1,7 @@
 use pepino_core::{BoardId, DeviceId, EventId, Hlc, TaskId};
 use sqlx::FromRow;
 
-use crate::{Store, StoreError};
+use crate::{BoardKey, Store, StoreError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommentRecord {
@@ -34,7 +34,7 @@ impl Store {
                      WHERE r.board = ? AND r.task = ? AND r.kind = 'comment'
                      ORDER BY r.hlc, r.id",
                 )
-                .bind(board.as_bytes().as_slice())
+                .bind(BoardKey(board))
                 .bind(task.as_bytes().as_slice())
                 .fetch_all(connection)
                 .await
