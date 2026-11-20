@@ -35,6 +35,15 @@ pub enum Outcome {
     Error { code: String, message: String },
 }
 
+impl Outcome {
+    pub(super) fn error(code: &str, message: &str) -> Self {
+        Self::Error {
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DaemonStatus {
     pub pid: u32,

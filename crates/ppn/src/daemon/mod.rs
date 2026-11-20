@@ -3,6 +3,7 @@ pub mod client;
 pub mod framing;
 pub mod network;
 pub mod node;
+mod operations;
 pub mod process;
 pub mod protocol;
 pub mod report;
