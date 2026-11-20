@@ -106,7 +106,7 @@ impl NodeSettings {
     }
 }
 
-fn relay_url(text: &str) -> Result<RelayUrl, Error> {
+pub(crate) fn relay_url(text: &str) -> Result<RelayUrl, Error> {
     let url: RelayUrl = text
         .parse()
         .map_err(|_| Error::Settings("invalid relay URL".into()))?;

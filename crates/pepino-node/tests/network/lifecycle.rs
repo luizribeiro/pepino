@@ -159,3 +159,20 @@ async fn publish_reports_uncertainty_at_the_configured_deadline() {
     pool.close().await;
     node.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn peer_hint_with_no_relay_uses_discovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let node = start(&settings(&network(dir.path()), dir.path().join("titanium"))).await;
+    let peer = pepino_node::DeviceCredentials::load_or_create(dir.path().join("ferrum.cbor"))
+        .unwrap()
+        .device_id();
+    node.register_peer_hint(peer, None).await.unwrap();
+    assert!(matches!(
+        node.register_peer_hint(peer, Some("udp://relay.example.org"))
+            .await,
+        Err(pepino_node::Error::Settings(_))
+    ));
+    node.shutdown().await.unwrap();
+}

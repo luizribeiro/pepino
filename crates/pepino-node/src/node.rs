@@ -89,6 +89,24 @@ impl Node {
         self.status.subscribe()
     }
 
+    pub async fn register_peer_hint(
+        &self,
+        device: DeviceId,
+        relay: Option<&str>,
+    ) -> Result<(), Error> {
+        let key = p2panda::VerifyingKey::from_bytes(device.as_bytes())
+            .map_err(|_| Error::Settings("invalid peer device ID".into()))?;
+        let Some(relay) = relay else {
+            // p2panda discovers LAN addresses through mDNS. A bare key carries no address.
+            return Ok(());
+        };
+        let url = crate::settings::relay_url(relay)?;
+        let node = self.inner.clone();
+        self.worker
+            .run(async move { node.insert_bootstrap(key, url).await.map_err(Error::node) })
+            .await
+    }
+
     pub async fn shutdown(self) -> Result<(), Error> {
         let Self { inner, worker, .. } = self;
         drop(inner);
