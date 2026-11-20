@@ -75,3 +75,55 @@ pub enum ErrorKind {
     #[error("keywords are lowercase. Use {lowercase:?} for {value:?}")]
     LowercaseKeyword { value: String, lowercase: String },
 }
+
+impl ErrorKind {
+    pub fn hint(&self) -> Option<String> {
+        use super::keywords::{STATUSES, accepted};
+
+        let hint = match self {
+            Self::UnterminatedQuote => "Add a closing double quote".into(),
+            Self::EmptyTerm => "Supply a search term".into(),
+            Self::EmptyView => "Supply a saved view name after '@'".into(),
+            Self::InvalidView { .. } => {
+                "View names cannot contain spaces and must match [a-z][a-z0-9_-]* within 64 bytes"
+                    .into()
+            }
+            Self::UnknownKey { suggested, .. } => format!("Use {suggested:?}"),
+            Self::EmptyValue => "Supply a value for each alternative".into(),
+            Self::UnsupportedComparison { key } => format!("Use {key}:value for equality"),
+            Self::UnknownStatus { .. } => format!("Use {}", accepted(STATUSES, None)),
+            Self::InvalidTag { .. } => "Tags must match [a-z][a-z0-9_./-]*".into(),
+            Self::UnknownState { .. } => format!("Use {}", accepted(super::State::WORDS, None)),
+            Self::UnsupportedPresence { .. } => format!(
+                "Use {}",
+                accepted(super::PresenceField::WORDS, Some("a custom field"))
+            ),
+            Self::InvalidDate { .. } => {
+                "Use YYYY-MM-DD, today, tomorrow, yesterday, a weekday, or an offset such as +3d"
+                    .into()
+            }
+            Self::InvalidInteger { .. } => "Enter a signed 64-bit integer".into(),
+            Self::DateOutOfRange { .. } => return None,
+            Self::LowercaseKeyword { value, lowercase } => {
+                format!("Use {lowercase:?} for {value:?}")
+            }
+        };
+        Some(hint)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integer_hint_can_be_read_without_formatting_the_error() {
+        let error = ErrorKind::InvalidInteger {
+            value: "3.5".into(),
+        };
+        assert_eq!(
+            error.hint().as_deref(),
+            Some("Enter a signed 64-bit integer")
+        );
+    }
+}
