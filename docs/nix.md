@@ -7,8 +7,9 @@ inputs.pepino.url = "github:luizribeiro/pepino";
 ```
 
 Add `inputs.pepino.nixosModules.default` to your NixOS system's `modules` list, or
-`inputs.pepino.darwinModules.default` to your nix-darwin system's list. Each module
-applies the Pepino overlay, which provides `pkgs.ppn`.
+`inputs.pepino.darwinModules.default` to your nix-darwin system's list. Both modules
+default to Pepino's flake package for the host system. To make `pkgs.ppn` available
+in your package set, add `inputs.pepino.overlays.default` to `nixpkgs.overlays`.
 
 ## Minimal client
 
@@ -69,7 +70,7 @@ NixOS firewall rule. The node does not bind that port.
 | --- | --- | --- | --- |
 | `programs.pepino.enable` | Boolean | `false` | Install the client and its system-wide config. |
 | `services.pepino.enable` | Boolean | `false` | Provision the always-on node's account, state and config. |
-| Both: `package` | Package | `pkgs.ppn` | Package for the client or always-on node. |
+| Both: `package` | Package | Pepino's flake package for the host system | Package for the client or always-on node. |
 | Both: `network` | String | Unset | Network name. |
 | Both: `relayUrls` | List of HTTPS URLs | Unset | Relay servers to use. |
 | Both: `mdns` | Boolean | Unset | Discover peers through multicast DNS. |

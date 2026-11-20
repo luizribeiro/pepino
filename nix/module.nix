@@ -1,4 +1,4 @@
-{ lib }:
+{ lib, self }:
 let
   inherit (lib) mkEnableOption mkOption types;
 
@@ -32,8 +32,8 @@ let
 
   packageOption = pkgs: mkOption {
     type = types.package;
-    default = pkgs.ppn;
-    defaultText = lib.literalExpression "pkgs.ppn";
+    default = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+    defaultText = lib.literalExpression "pepino.packages.\${pkgs.stdenv.hostPlatform.system}.default";
     description = "Pepino package to use.";
   };
 

@@ -9,14 +9,13 @@ let
   attrs = mkOption { type = types.attrs; default = { }; };
   list = mkOption { type = types.listOf types.unspecified; default = [ ]; };
   evaluate = platform: settings: (lib.evalModules {
-    specialArgs.pkgs = pkgs // { ppn = package; };
+    specialArgs = { inherit pkgs; };
     modules = [
       platform
       {
         options = {
           assertions = list;
           warnings = list;
-          nixpkgs.overlays = list;
           environment.etc = mkOption { type = types.attrsOf types.attrs; default = { }; };
           environment.systemPackages = list;
           users.users = attrs;
@@ -64,12 +63,12 @@ assert verify linux fixtures.full && verify darwin fullDarwinSettings;
 assert rejects linux fixtures.invalidLinux;
 assert rejects darwin fixtures.invalidDarwinFirewall;
 assert (linux fixtures.empty).environment.systemPackages == [ package ];
+assert (linux fixtures.typical).services.pepino.package == package;
 assert (linux fixtures.empty).services.pepino.configFile == null;
 assert !((linux fixtures.empty).environment.etc ? "pepino/node.toml");
 assert !((linux fixtures.untrusted).environment.etc ? "pepino/config.toml");
 assert fullLinux.environment.etc."pepino/node.toml".source == fullLinux.services.pepino.configFile;
 assert fullDarwin.environment.etc."pepino/node.toml".source == fullDarwin.services.pepino.configFile;
-assert builtins.length fullLinux.nixpkgs.overlays == 1;
 assert fullLinux.networking.firewall.allowedUDPPorts == [ 44123 ];
 assert fullLinux.users.users.pepino-relay.isSystemUser;
 assert fullLinux.systemd.tmpfiles.settings.pepino."/srv/pepino".d.mode == "0700";
