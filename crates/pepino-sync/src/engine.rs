@@ -126,7 +126,7 @@ impl<T: Transport> SyncEngine<T> {
             node.clone(),
             app.clone(),
             changes.clone(),
-            boards_stopping,
+            (stopping.clone(), boards_stopping),
             nudged,
             settings.poll_interval,
             store_instance,
@@ -232,6 +232,7 @@ impl<T: Transport> SyncEngine<T> {
             board_stop,
             mut workers,
             boards,
+            nudges: _nudges,
             ..
         } = self;
         drop(stop);

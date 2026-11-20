@@ -10,6 +10,7 @@ crates/pepino-app/src/app.rs:use tokio::time::{Instant, sleep};
 crates/pepino-app/src/app.rs:        sleep(delay.min(remaining)).await;
 crates/pepino-node/tests/network/support.rs:use tokio::time::{Instant, sleep, timeout};
 crates/pepino-node/tests/network/support.rs:        sleep(remaining.min(Duration::from_millis(25))).await;
+crates/pepino-sync/src/discover.rs:                _ = tokio::time::sleep(poll) => (),
 crates/pepino-sync/src/join_progress.rs:                tokio::time::sleep(Duration::from_millis(250)).await;
 crates/pepino-sync/src/join_progress.rs:                tokio::time::sleep(Duration::from_millis(250)).await;
 crates/pepino-sync/src/outbox.rs:                _ = tokio::time::sleep(poll_interval) => {},

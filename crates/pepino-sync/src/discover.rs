@@ -38,6 +38,7 @@ pub(crate) async fn run<T: Transport>(
         }
     };
     tokio::select! {
+        biased;
         _ = stopping.changed() => (),
         _ = sync => (),
     }

@@ -16,7 +16,8 @@ pub(crate) struct BoardWorkers<T: Transport> {
     pub app: Arc<App>,
     pub authority: Option<(std::path::PathBuf, DeviceCredentials)>,
     pub changes: watch::Sender<Status>,
-    pub stopping: watch::Receiver<()>,
+    stopping: watch::Receiver<()>,
+    closing: watch::Receiver<()>,
     pub nudged: watch::Receiver<u64>,
     pub poll: Duration,
     pub store_instance: [u8; 16],
@@ -29,7 +30,7 @@ impl<T: Transport> BoardWorkers<T> {
         node: Arc<T>,
         app: Arc<App>,
         changes: watch::Sender<Status>,
-        stopping: watch::Receiver<()>,
+        shutdown: (watch::Receiver<()>, watch::Receiver<()>),
         nudged: watch::Receiver<u64>,
         poll: Duration,
         store_instance: [u8; 16],
@@ -39,7 +40,8 @@ impl<T: Transport> BoardWorkers<T> {
             app,
             authority: None,
             changes,
-            stopping,
+            stopping: shutdown.0,
+            closing: shutdown.1,
             nudged,
             poll,
             store_instance,
@@ -82,18 +84,24 @@ impl<T: Transport> BoardWorkers<T> {
             status.node = self.node.status();
         });
         let mut stopping = self.stopping.clone();
+        let mut closing = self.closing.clone();
         let app = self.app.clone();
         let status = self.changes.clone();
         let nudged = self.nudged.clone();
         let poll = self.poll;
         let node_instance = self.node.instance_id();
         self.workers.spawn(async move {
-            let result = tokio::select! {
-                biased;
-                _ = stopping.changed() => Ok(()),
-                _ = crate::outbox::run(&app, id, board.as_ref(), node_instance, &status, nudged, poll) => Err("outbox worker ended".into()),
-                result = crate::inbox::run(&app, id, stream, &status) => result.map_err(|error| error.to_string()),
-            };
+            let result = {
+                let inbox = crate::inbox::run(&app, id, stream, &status, stopping.clone());
+                tokio::pin!(inbox);
+                tokio::select! {
+                    biased;
+                    _ = stopping.changed() => inbox.await,
+                    result = &mut inbox => result,
+                    _ = crate::outbox::run(&app, id, board.as_ref(), node_instance, &status, nudged, poll) => Err(Error::DeliveryStream("outbox worker ended".into())),
+                }
+            }
+            .map_err(|error| error.to_string());
             let result = result.map_err(|cause| BoardFailure { board: id, cause });
             status.send_modify(|status| {
                 let board = status.boards.entry(id).or_default();
@@ -103,6 +111,10 @@ impl<T: Transport> BoardWorkers<T> {
                     status.restart_required.get_or_insert_with(|| failure.clone());
                 }
             });
+            if result.is_ok() {
+                // Discovery and control requests may still hold a strong board handle.
+                let _ = closing.changed().await;
+            }
             let closed = match Arc::into_inner(board) {
                 Some(board) => board.close().await,
                 None => Err(pepino_node::Error::Closed),

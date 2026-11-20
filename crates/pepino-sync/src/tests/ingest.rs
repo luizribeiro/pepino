@@ -271,8 +271,9 @@ async fn stream_errors_back_off_and_keep_the_board_non_idle_until_repoll() {
                 .contains("still interrupted")
         );
     };
+    let (_stop, stopping) = watch::channel(());
     tokio::select! {
-        result = crate::inbox::run(&app, board, stream, &status) => panic!("{result:?}"),
+        result = crate::inbox::run(&app, board, stream, &status, stopping) => panic!("{result:?}"),
         _ = async { tokio::join!(observe, seq); } => (),
     }
 }
@@ -313,4 +314,36 @@ async fn retries_ack_without_appending_again() {
     assert!(ack.is_acked());
     assert_eq!(app.store().statistics(board).await.unwrap().total, 1);
     engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn shutdown_commits_and_acknowledges_the_delivery_it_already_took() {
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([74; 32]);
+    let device = DeviceId::from_bytes([75; 32]);
+    let app = directory::prepare(dir.path(), board, device).await;
+    let node = Arc::new(Stub::new(device));
+    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    let lock = std::fs::File::open(dir.path().join("local.lock")).unwrap();
+    lock.lock().unwrap();
+    let ack = node.deliver(board, device, vec![0x82, 2, 0xf6]);
+    super::wait_for_status(&engine, |status| status.boards[&board].ingest_pending).await;
+    let queued = node.deliver(board, device, vec![0x82, 2, 0xf5]);
+    let shutdown = engine.shutdown();
+    tokio::pin!(shutdown);
+    tokio::select! {
+        biased;
+        result = &mut shutdown => panic!("shutdown completed while the writer was locked: {result:?}"),
+        _ = std::future::ready(()) => (),
+    }
+    drop(lock);
+    shutdown.await.unwrap();
+    assert!(*ack.borrow());
+    assert!(!*queued.borrow());
+    assert_eq!(
+        app.store().statistics(board).await.unwrap().unknown_version,
+        1
+    );
 }

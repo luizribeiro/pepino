@@ -1,4 +1,4 @@
-use std::{future::poll_fn, task::Poll};
+use std::{future::poll_fn, task::Poll, time::Duration};
 
 use pepino_app::{App, SyncStoreError};
 use pepino_core::BoardId;
@@ -14,12 +14,13 @@ pub(crate) async fn run<A: Acknowledgement>(
     id: BoardId,
     mut deliveries: DeliveryStream<A>,
     status: &watch::Sender<Status>,
+    mut stopping: watch::Receiver<()>,
 ) -> Result<(), Error> {
     let mut stream_retry = Retry::new();
     let mut last_stream_error = None;
     loop {
         // A concurrent idle check must see the node queue or the item now owned by us.
-        let item = poll_fn(|cx| {
+        let next = poll_fn(|cx| {
             let mut item = Poll::Pending;
             status.send_if_modified(|status| {
                 item = deliveries.as_mut().poll_next(cx);
@@ -32,8 +33,12 @@ pub(crate) async fn run<A: Acknowledgement>(
                 changed
             });
             item
-        })
-        .await
+        });
+        let item = tokio::select! {
+            biased;
+            _ = stopping.changed() => return Ok(()),
+            item = next => item,
+        }
         .ok_or_else(|| {
             Error::DeliveryStream(
                 last_stream_error
@@ -46,15 +51,26 @@ pub(crate) async fn run<A: Acknowledgement>(
             Ok(delivery) => {
                 stream_retry = Retry::new();
                 last_stream_error = None;
-                ingest(app, id, &delivery, status).await;
-                let mut retry = Retry::new();
-                while let Err(error) = delivery.ack.ack().await {
-                    record_error(
-                        status,
-                        id,
-                        format!("ack operation {}: {error}", delivery.operation),
-                    );
-                    retry.wait().await;
+                let finish = async {
+                    ingest(app, id, &delivery, status).await;
+                    let mut retry = Retry::new();
+                    while let Err(error) = delivery.ack.ack().await {
+                        record_error(
+                            status,
+                            id,
+                            format!("ack operation {}: {error}", delivery.operation),
+                        );
+                        retry.wait().await;
+                    }
+                };
+                tokio::pin!(finish);
+                tokio::select! {
+                    biased;
+                    _ = stopping.changed() => {
+                        let _ = tokio::time::timeout(Duration::from_secs(1), finish).await;
+                        return Ok(());
+                    }
+                    _ = &mut finish => (),
                 }
                 status.send_modify(|state| {
                     state.boards.entry(id).or_default().ingest_pending = false
@@ -64,7 +80,10 @@ pub(crate) async fn run<A: Acknowledgement>(
                 let cause = error.to_string();
                 record_error(status, id, cause.clone());
                 last_stream_error = Some(cause);
-                stream_retry.wait().await;
+                tokio::select! {
+                    _ = stopping.changed() => return Ok(()),
+                    _ = stream_retry.wait() => (),
+                }
             }
         }
     }
