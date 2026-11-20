@@ -46,8 +46,8 @@ impl ConfigFile {
         &self,
         result: io::Result<bool>,
         problems: &mut Vec<String>,
-    ) -> Option<FileStatus> {
-        match result {
+    ) -> Result<Option<FileStatus>, CliError> {
+        Ok(match result {
             Ok(false) if self.required() => {
                 problems.push(format!(
                     "{}: configuration file does not exist",
@@ -59,11 +59,17 @@ impl ConfigFile {
                 path: self.path.clone(),
                 exists,
             }),
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                return Err(CliError::new(
+                    ErrorKind::PermissionDenied,
+                    format!("{}: {error}", self.path.display()),
+                ));
+            }
             Err(error) => {
                 problems.push(format!("{}: {error}", self.path.display()));
                 None
             }
-        }
+        })
     }
 }
 
@@ -116,10 +122,10 @@ pub fn paths(
     mut exists: impl FnMut(&Path) -> io::Result<bool>,
 ) -> Result<Vec<FileStatus>, CliError> {
     let mut problems = Vec::new();
-    let statuses = files
-        .iter()
-        .filter_map(|file| file.record(exists(&file.path), &mut problems))
-        .collect();
+    let mut statuses = Vec::new();
+    for file in files {
+        statuses.extend(file.record(exists(&file.path), &mut problems)?);
+    }
     invalid_config(problems)?;
     Ok(statuses)
 }

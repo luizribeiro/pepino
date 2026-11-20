@@ -26,7 +26,7 @@ pub fn load(
     let files = match select_files(flags, env, dirs) {
         Ok(files) => visit_files(&files, read, &mut problems, |file, text| {
             draft.apply_file(&file.path, text, &file.source)
-        }),
+        })?,
         Err(error) => {
             problems.push(error.to_string());
             Vec::new()
@@ -56,7 +56,7 @@ pub fn check(
     let mut problems = Vec::new();
     let statuses = visit_files(files, read, &mut problems, |file, text| {
         Draft::new(dirs).apply_file(&file.path, text, &file.source)
-    });
+    })?;
     invalid_config(problems)?;
     Ok(statuses)
 }
@@ -66,7 +66,7 @@ fn visit_files(
     mut read: impl FnMut(&Path) -> io::Result<String>,
     problems: &mut Vec<String>,
     mut visit: impl FnMut(&ConfigFile, &str) -> Result<(), CliError>,
-) -> Vec<FileStatus> {
+) -> Result<Vec<FileStatus>, CliError> {
     let mut statuses = Vec::new();
     for file in files {
         let read_result = match read(&file.path) {
@@ -79,9 +79,9 @@ fn visit_files(
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error),
         };
-        statuses.extend(file.record(read_result, problems));
+        statuses.extend(file.record(read_result, problems)?);
     }
-    statuses
+    Ok(statuses)
 }
 
 #[cfg(test)]

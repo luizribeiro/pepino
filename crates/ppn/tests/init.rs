@@ -68,3 +68,47 @@ fn task_commands_require_init_and_do_not_create_local_state() {
         assert!(!state.exists());
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn init_reports_a_read_only_data_directory_as_permission_denied() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    let (sandbox, data) = uninitialized_task_sandbox();
+    fs::create_dir(&data).unwrap();
+    fs::set_permissions(&data, fs::Permissions::from_mode(0o500)).unwrap();
+    let can_write = fs::write(data.join("probe"), "").is_ok();
+    let output = sandbox.command().args(["init", "--json"]).output().unwrap();
+    fs::set_permissions(&data, fs::Permissions::from_mode(0o700)).unwrap();
+    if !can_write {
+        let error = task_error(output, 5, "permission_denied");
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains(data.to_str().unwrap())
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_config_file_reports_permission_denied_and_its_path() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    let (sandbox, data) = uninitialized_task_sandbox();
+    fs::set_permissions(&sandbox.config, fs::Permissions::from_mode(0o000)).unwrap();
+    let can_read = fs::read(&sandbox.config).is_ok();
+    let output = sandbox.command().args(["ls", "--json"]).output().unwrap();
+    fs::set_permissions(&sandbox.config, fs::Permissions::from_mode(0o600)).unwrap();
+    if !can_read {
+        let error = task_error(output, 5, "permission_denied");
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains(sandbox.config.to_str().unwrap())
+        );
+        assert!(!data.exists());
+    }
+}
