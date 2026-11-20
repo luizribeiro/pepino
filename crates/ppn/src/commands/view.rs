@@ -82,7 +82,11 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
         }
     };
     let response = client.call(request)?;
-    CommandResult::app_document(context, response, |response, _| {
-        render::saved_views(response)
-    })
+    let empty = matches!(&response, pepino_app::Response::Views { views } if views.is_empty());
+    Ok(
+        CommandResult::app_document(context, response, |response, _| {
+            render::saved_views(response)
+        })?
+        .with_human_note(empty.then(|| "No saved views.".into())),
+    )
 }

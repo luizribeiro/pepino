@@ -7,7 +7,12 @@ use serde_json::json;
 fn view_saves_lists_shows_and_applies_a_filter() {
     let (sandbox, _) = task_sandbox();
     let project = small_project(&sandbox);
-    assert_eq!(sandbox.run(&["view", "ls"]), "");
+    let empty = sandbox.command().args(["view", "ls"]).output().unwrap();
+    assert!(empty.status.success());
+    assert!(empty.stdout.is_empty());
+    assert_eq!(empty.stderr, b"No saved views.\n");
+    let json = as_json(&sandbox.run(&["view", "ls", "--json"]));
+    assert_eq!(json["views"], serde_json::json!([]));
     assert_eq!(
         sandbox.run(&["view", "save", "weekend", "tag:hardware"]),
         "Saved weekend\n"
