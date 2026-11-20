@@ -50,9 +50,10 @@ impl Host {
     }
 
     pub fn request(&self, name: &str) -> String {
-        self.run(&["device", "request", "--name", name])
-            .trim()
-            .to_owned()
+        let output = self.output(&["device", "request", "--name", name]);
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("request code is secret"));
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
     }
 
     pub fn add(&self, request: &str, options: &[&str]) -> String {

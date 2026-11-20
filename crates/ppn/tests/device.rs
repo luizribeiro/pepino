@@ -26,9 +26,16 @@ fn device_request_is_stable_for_a_piped_script() {
     assert!(note.contains("Device Ferrum, fingerprint"));
     assert!(note.contains("request code is secret"));
     assert!(note.contains("Expires "));
-    let code = success(output);
+    assert!(output.status.success());
+    let code = String::from_utf8(output.stdout).unwrap();
     assert!(code.starts_with("PPN-REQUEST-"));
-    assert_eq!(sandbox.run(&["device", "request"]), code);
+    let repeated = sandbox
+        .command()
+        .args(["device", "request"])
+        .output()
+        .unwrap();
+    assert!(repeated.status.success());
+    assert_eq!(String::from_utf8(repeated.stdout).unwrap(), code);
     let json = as_json(&sandbox.run(&["device", "request", "--json"]));
     assert_eq!(json["schema"], 1);
     assert_eq!(json["request"], code.trim());
