@@ -1,7 +1,7 @@
 use pepino_store::{BoardView, Dependency};
 
 use crate::app::store_error;
-use crate::projection::{edge_effect, project_summary, resolve};
+use crate::projection::{edge_effect, project, project_summary, resolve};
 use crate::{App, AppError, DependencyRecord, ReadRequest, Response, TreeNode};
 
 impl App {
@@ -33,7 +33,11 @@ impl App {
     }
 
     async fn get_task(&self, reference: &str) -> Result<Response, AppError> {
-        let board = self.board().await?;
+        let board = self
+            .store
+            .board_with_comments(self.local.board_id)
+            .await
+            .map_err(store_error)?;
         let task = resolve(&board, "task", reference)?;
         let edges = board
             .edges(task.id)
@@ -42,7 +46,7 @@ impl App {
             .map(|edge| edge_effect(edge.from, edge.kind, edge.to, Some(edge)))
             .collect::<Result<_, _>>()?;
         Ok(Response::Task {
-            task: Box::new(self.record(task).await?),
+            task: Box::new(project(task, board.comments(task.id))?),
             edges,
         })
     }

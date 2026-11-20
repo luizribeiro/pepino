@@ -368,6 +368,7 @@ async fn comments_are_ordered_and_preserve_repeated_text() {
         );
     }
     let task = get(&mut app, &id).await;
+    assert_eq!(task.comment_count, task.comments.len() as u64);
     assert_ne!(task.comments[0].id, task.comments[1].id);
     assert!(
         task.comments

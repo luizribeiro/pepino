@@ -6,7 +6,7 @@ use pepino_store::{
 
 use crate::app::{invalid, store_error};
 use crate::{
-    App, AppError, CommentRecord, EdgeEffect, EdgeExclusionReason, MissingReference, TaskRecord,
+    AppError, CommentRecord, EdgeEffect, EdgeExclusionReason, MissingReference, TaskRecord,
     TaskSummary,
 };
 
@@ -36,17 +36,6 @@ pub(super) fn resolve<'a>(
             "expected a task reference of 4 to 64 hexadecimal digits",
         )),
         Err(error) => Err(store_error(error)),
-    }
-}
-
-impl App {
-    pub(super) async fn record(&self, task: &StoredTask) -> Result<TaskRecord, AppError> {
-        let comments = self
-            .store
-            .comments(self.local.board_id, task.id)
-            .await
-            .map_err(store_error)?;
-        project(task, &comments)
     }
 }
 
