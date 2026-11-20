@@ -37,7 +37,7 @@ Examples:
 
 const DATES: &str = "Use YYYY-MM-DD, today, tomorrow, yesterday, a three-letter or full weekday, \
 or a signed offset such as +3d or -1w. Units are d (days) and w (weeks). \
-A weekday chooses the next occurrence including today. Relative dates use the local calendar.";
+A weekday chooses the next occurrence including today. Keywords ignore case. Relative dates use the local calendar.";
 
 const JSON: &str = r#"Use --json or PPN_JSON=1. Success writes one versioned document to stdout
 with raw values, full IDs and UTC timestamps. Every document has schema and

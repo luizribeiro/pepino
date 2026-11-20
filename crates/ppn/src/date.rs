@@ -10,7 +10,7 @@ pub fn resolve_date(value: &str, today: Date) -> Result<Date, CliError> {
     let error = |reason| {
         CliError::new(ErrorKind::InvalidInput, format!("Invalid due date {value:?}: {reason}"))
             .with_field("due")
-            .with_hint("Use YYYY-MM-DD, today, tomorrow, yesterday, a lowercase weekday, or a signed offset such as +3d or -2w.")
+            .with_hint("Use YYYY-MM-DD, today, tomorrow, yesterday, a weekday, or a signed offset such as +3d or -2w.")
     };
     parse_date(value, today)
         .map_err(error)?
@@ -37,13 +37,14 @@ pub(crate) fn parse_date(value: &str, today: Date) -> Result<Option<Date>, &'sta
 }
 
 fn relative_days(value: &str, today: NaiveDate) -> Option<Option<i64>> {
-    let days = match value {
+    let keyword = value.to_ascii_lowercase();
+    let days = match keyword.as_str() {
         "today" => 0,
         "tomorrow" => 1,
         "yesterday" => -1,
         _ if let Some(day) = WEEKDAYS
             .split_whitespace()
-            .position(|name| value == name || value == &name[..3]) =>
+            .position(|name| keyword == name || keyword == name[..3]) =>
         {
             (day as i64 - i64::from(today.weekday().num_days_from_monday())).rem_euclid(7)
         }
@@ -101,16 +102,16 @@ mod tests {
         for (input, expected) in [
             ("2026-12-01", "2026-12-01"),
             ("today", "2026-11-20"),
-            ("tomorrow", "2026-11-21"),
+            ("Tomorrow", "2026-11-21"),
             ("yesterday", "2026-11-19"),
-            ("fri", "2026-11-20"),
+            ("Fri", "2026-11-20"),
             ("monday", "2026-11-23"),
             ("-02w", "2026-11-06"),
             ("+3d", "2026-11-23"),
         ] {
             assert_eq!(resolve_date(input, today).unwrap().to_string(), expected);
         }
-        for value in ["Friday", "2026-2-01", "+9223372036854775807w", "é"] {
+        for value in ["Fryday", "2026-2-01", "+9223372036854775807w", "é"] {
             assert_eq!(
                 resolve_date(value, today).unwrap_err().kind(),
                 ErrorKind::InvalidInput

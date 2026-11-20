@@ -302,12 +302,12 @@ fn add_diagnostics_report_invalid_values_and_hints() {
             .starts_with("invalid tag \"bad tag\":")
     );
     let due = error(
-        &["add", "Repair the latch", "--due", "Friday"],
+        &["add", "Repair the latch", "--due", "Fryday"],
         2,
         "invalid_input",
     );
     assert_eq!(due["field"], "due");
-    assert!(due["hint"].as_str().unwrap().contains("lowercase weekday"));
+    assert!(due["hint"].as_str().unwrap().contains("a weekday"));
 }
 
 #[test]
@@ -492,4 +492,21 @@ fn add_joins_multiple_words_with_options_between_them() {
     let json = as_json(&sandbox.run(&["add", "Buy", "-t", "shopping", "milk", "--json"]));
     assert_eq!(json["tasks"][0]["title"], "Buy milk");
     assert_eq!(json["tasks"][0]["tags"], json!(["shopping"]));
+}
+
+#[test]
+fn date_keywords_ignore_case_in_fields_and_filters() {
+    let (sandbox, _) = task_sandbox();
+    for (keyword, canonical) in [("Tomorrow", "tomorrow"), ("Fri", "fri")] {
+        let task = create_task(&sandbox, "Check the greenhouse", &["--due", keyword]);
+        let listing =
+            as_json(&sandbox.run(&["ls", "--filter", &format!("due:{keyword}"), "--json"]));
+        let picked = listing["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == task)
+            .unwrap();
+        assert_eq!(picked["due"], listing["resolved_dates"][canonical]);
+    }
 }

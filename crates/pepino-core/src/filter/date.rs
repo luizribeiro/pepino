@@ -64,9 +64,10 @@ impl fmt::Display for DateOperand {
 }
 
 fn relative(value: &str) -> Option<String> {
-    match value {
-        "today" | "tomorrow" | "yesterday" => Some(value.into()),
-        _ if weekday(value).is_some() => Some(value[..3].into()),
+    let keyword = value.to_ascii_lowercase();
+    match keyword.as_str() {
+        "today" | "tomorrow" | "yesterday" => Some(keyword),
+        _ if weekday(&keyword).is_some() => Some(keyword[..3].into()),
         _ => {
             let (number, unit) = offset_parts(value)?;
             let (sign, digits) = number.split_at(1);
@@ -156,7 +157,12 @@ mod tests {
 
     #[test]
     fn relative_operands_round_trip_in_canonical_form() {
-        for (raw, canonical) in [("friday", "fri"), ("-01w", "-1w"), ("-00d", "+0d")] {
+        for (raw, canonical) in [
+            ("Friday", "fri"),
+            ("Tomorrow", "tomorrow"),
+            ("-01w", "-1w"),
+            ("-00d", "+0d"),
+        ] {
             let operand = raw.parse::<DateOperand>().unwrap();
             assert_eq!(operand.to_string(), canonical);
             assert_eq!(canonical.parse(), Ok(operand));

@@ -78,7 +78,9 @@ fn dates_resolve_across_weeks_and_years() {
             value: value.into()
         }
     );
-    for (value, lowercase) in [("Fri", "fri"), ("+1W", "+1w")] {
+    assert_eq!(parse("due:Fri").unwrap(), parse("due:fri").unwrap());
+    {
+        let (value, lowercase) = ("+1W", "+1w");
         assert_eq!(
             parse(&format!("due:{value}")).unwrap_err().kind,
             ErrorKind::LowercaseKeyword {
@@ -722,10 +724,10 @@ fn each_error_kind_has_a_display_message() {
             "{input:?}"
         );
     }
-    let error = parse_argv(&["garden", " -due:<Fri "]).unwrap_err();
+    let error = parse_argv(&["garden", " -due:<+1W "]).unwrap_err();
     assert_eq!(
         error.to_string(),
-        r#"filter term "-due:<Fri" at argument 1, byte 7: keywords are lowercase. Use "fri" for "Fri""#
+        r#"filter term "-due:<+1W" at argument 1, byte 7: keywords are lowercase. Use "+1w" for "+1W""#
     );
 }
 
