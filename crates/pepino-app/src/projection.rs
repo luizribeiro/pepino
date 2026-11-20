@@ -5,7 +5,9 @@ use pepino_store::{
 };
 
 use crate::app::{invalid, store_error};
-use crate::{App, AppError, CommentRecord, EdgeEffect, EdgeExclusionReason, TaskRecord};
+use crate::{
+    App, AppError, CommentRecord, EdgeEffect, EdgeExclusionReason, MissingReference, TaskRecord,
+};
 
 pub(super) fn resolve<'a>(
     view: &'a BoardView,
@@ -22,7 +24,7 @@ pub(super) fn resolve<'a>(
         }),
         Ok(TaskPrefixResolution::Unknown) => Err(AppError::NotFound {
             field: field.into(),
-            task: reference.into(),
+            reference: MissingReference::Task(reference.into()),
         }),
         Ok(TaskPrefixResolution::Deleted { id }) => Err(AppError::Conflict {
             field: field.into(),

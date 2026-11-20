@@ -230,8 +230,12 @@ impl AppErrorKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AppError {
-    #[error("task {task} at {field} was not found")]
-    NotFound { field: String, task: String },
+    #[error("{reference} at {field} was not found")]
+    NotFound {
+        field: String,
+        #[serde(flatten)]
+        reference: MissingReference,
+    },
     #[error("task reference {task} at {field} matches {count} tasks")]
     AmbiguousId {
         field: String,
@@ -251,6 +255,23 @@ pub enum AppError {
     UnsupportedVersion { requested: u32, supported: u32 },
     #[error("write was committed: {reason}")]
     WriteCommitted { reason: String },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum MissingReference {
+    Task(String),
+    View(String),
+}
+
+impl std::fmt::Display for MissingReference {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Task(task) => write!(f, "task {task}"),
+            Self::View(view) => write!(f, "view {view}"),
+        }
+    }
 }
 
 impl AppError {

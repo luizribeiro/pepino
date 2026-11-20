@@ -121,7 +121,7 @@ async fn a_missing_parent_leaves_the_event_log_unchanged() {
         error,
         AppError::NotFound {
             field: "parent".into(),
-            task: "deadbeef".into()
+            reference: pepino_app::MissingReference::Task("deadbeef".into())
         }
     );
     assert!(store.tasks(board).await.unwrap().is_empty());

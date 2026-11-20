@@ -19,7 +19,7 @@ async fn get_distinguishes_invalid_and_missing_references_on_a_new_board() {
                 error,
                 AppError::NotFound {
                     field: "task".into(),
-                    task: task.into()
+                    reference: pepino_app::MissingReference::Task(task.into())
                 }
             );
         } else {
