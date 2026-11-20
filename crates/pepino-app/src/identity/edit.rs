@@ -44,6 +44,13 @@ pub(crate) struct SignedEdit {
     pub(super) signature: [u8; 64],
 }
 
+pub(super) fn portable_scope() -> BoardId {
+    BoardId::from_bytes(blake3::derive_key(
+        "Pepino portable identity roster v1",
+        b"",
+    ))
+}
+
 impl SignedEdit {
     pub(super) fn sign(
         edit: Edit,

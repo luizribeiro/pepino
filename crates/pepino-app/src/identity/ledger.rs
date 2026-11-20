@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::{AppError, WireFormat};
 
 use super::{
-    edit::{Change, Edit, SignedEdit},
+    edit::{Change, Edit, SignedEdit, portable_scope},
     fold::fold,
     record::Record,
 };
@@ -52,7 +52,10 @@ impl IdentityCatalog {
     ) -> Result<(), AppError> {
         let previous = self.edits.len();
         for signed in incoming {
-            if let Some(id) = signed.id(board, identity)? {
+            if let Some(id) = signed
+                .id(portable_scope(), identity)?
+                .or(signed.id(board, identity)?)
+            {
                 self.edits.entry(id).or_insert(signed);
             } else {
                 let bytes = WireFormat::Cbor.encode(&signed)?;
@@ -103,7 +106,7 @@ impl IdentityCatalog {
                 generation,
                 change,
             },
-            board,
+            portable_scope(),
             identity,
             keys,
         )?;
@@ -133,4 +136,32 @@ fn signed_edits_are_deduplicated_after_delivery() {
     assert_eq!(sender.edits.len(), 1);
     assert_eq!(sender.rejected_count(), 0);
     assert_eq!(sender.record.unwrap().display_name, "Ada Gardener");
+}
+
+#[cfg(test)]
+#[test]
+fn new_roster_edits_can_be_verified_without_the_private_catalog() {
+    let dir = tempfile::tempdir().unwrap();
+    let keys = DeviceCredentials::load_or_create(dir.path().join("titanium")).unwrap();
+    let catalog = BoardId::from_bytes([48; 32]);
+    let other_board = BoardId::from_bytes([51; 32]);
+    let identity = IdentityId::from_bytes([49; 32]);
+    let mut local = IdentityCatalog::with_root(keys.device_id());
+    local
+        .append(
+            catalog,
+            identity,
+            &keys,
+            Change::Initialize {
+                display_name: "Ada Gardener".into(),
+                device_name: "Titanium".into(),
+                added_ms: None,
+            },
+        )
+        .unwrap();
+    let mut remote = IdentityCatalog::with_root(keys.device_id());
+    remote
+        .merge(other_board, identity, local.edits().cloned())
+        .unwrap();
+    assert_eq!(remote, local);
 }
