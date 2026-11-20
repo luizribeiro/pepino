@@ -1,6 +1,12 @@
-use pepino_core::filter::{self, Filter};
+use std::{
+    collections::BTreeMap,
+    sync::{Mutex, MutexGuard, PoisonError},
+};
+
+use pepino_core::filter::{self, Clause, Filter};
 use serde::{Deserialize, Serialize};
 
+use crate::views::SavedViews;
 use crate::{AppError, Date};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -94,9 +100,76 @@ fn term_starts(text: &str) -> impl Iterator<Item = usize> {
     })
 }
 
+type ParsedViews = BTreeMap<String, (FilterInput, Result<Filter, AppError>)>;
+
+#[allow(dead_code)]
+pub(super) struct ViewFilters<'a> {
+    saved: &'a SavedViews,
+    today: Date,
+    parsed: Mutex<ParsedViews>,
+}
+
+#[allow(dead_code)]
+impl<'a> ViewFilters<'a> {
+    pub(super) fn new(saved: &'a SavedViews, today: Date) -> Self {
+        Self {
+            saved,
+            today,
+            parsed: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    pub(super) fn parsed(&self) -> MutexGuard<'_, ParsedViews> {
+        self.parsed.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(super) fn resolve(&self, name: &str) -> Option<Filter> {
+        let raw = self.saved.get(name)?;
+        self.parsed()
+            .entry(name.into())
+            .or_insert_with(|| {
+                let input = FilterInput::Text(raw.into());
+                let result = input.parse(self.today);
+                (input, result)
+            })
+            .1
+            .as_ref()
+            .ok()
+            .cloned()
+    }
+
+    pub(super) fn needs_comments(&self, filter: &Filter) -> bool {
+        let has_text = |filter: &Filter| {
+            filter
+                .terms()
+                .iter()
+                .any(|term| matches!(&term.clause, Clause::Text(_)))
+        };
+        has_text(filter)
+            || self
+                .parsed()
+                .values()
+                .filter_map(|(_, parsed)| parsed.as_ref().ok())
+                .any(has_text)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_filter_cache_only_parses_looked_up_views() {
+        let today = "2026-11-20".parse().unwrap();
+        let mut saved = SavedViews::default();
+        saved.insert("weekend".into(), "tag:hardware".into());
+        saved.insert("broken".into(), "tags:paint".into());
+        let views = ViewFilters::new(&saved, today);
+        assert!(views.resolve("weekend").is_some());
+        assert!(!views.parsed().contains_key("broken"));
+        assert!(views.resolve("broken").is_none());
+        assert!(views.parsed()["broken"].1.is_err());
+    }
 
     #[test]
     fn repeated_terms_have_separate_positions() {
