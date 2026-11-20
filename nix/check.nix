@@ -46,7 +46,7 @@ let
 
   verify = evaluate:
     lib.all (settings: let config = evaluate settings; in passes config && config.warnings == [ ])
-      [ fixtures.empty fixtures.cleared fixtures.typical fixtures.full ]
+      [ fixtures.empty fixtures.outsideStore fixtures.cleared fixtures.typical fixtures.full ]
     && (evaluate fixtures.untrusted).warnings != [ ]
     && lib.all (rejects evaluate) fixtures.invalid;
 

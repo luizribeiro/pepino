@@ -15,7 +15,7 @@ let
   invalidNode = {
     storeCredentials.credentialsFile = "${builtins.storeDir}/pepino-credentials";
     storeRoot.credentialsFile = builtins.storeDir;
-    normalizedStoreCredentials.credentialsFile = "${builtins.storeDir}/../store//pepino-credentials";
+    normalizedStoreCredentials.credentialsFile = "/../${lib.removePrefix "/" builtins.storeDir}//./pepino-credentials";
     trustedDuplicates.trustedDevices = [ laptop (lib.toUpper laptop) ];
     bootstrapDuplicates.bootstrapNodes = [ (node host) (node (lib.toUpper host)) ];
     nodeId.trustedDevices = [ "invalid" ];
@@ -30,6 +30,10 @@ let
 in
 {
   empty.programs.pepino.enable = true;
+  outsideStore = {
+    programs.pepino.credentialsFile = "/../run/secrets/pepino-client";
+    services.pepino.credentialsFile = "${builtins.storeDir}-secrets/pepino-node";
+  };
   untrusted.services.pepino.enable = true;
   cleared.programs.pepino = { enable = true; relayUrls = [ ]; trustedDevices = [ ]; bootstrapNodes = [ ]; };
   typical = {

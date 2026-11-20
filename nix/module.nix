@@ -39,7 +39,7 @@ let
 
   normalizedPath = path: "/" + lib.concatStringsSep "/" (lib.foldl'
     (parts: part:
-      if part == ".." then lib.take (lib.length parts - 1) parts
+      if part == ".." then lib.dropEnd 1 parts
       else if part == "" || part == "." then parts
       else parts ++ [ part ])
     [ ]
