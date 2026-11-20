@@ -38,3 +38,27 @@ fn assign_reports_reference_errors() {
             .unwrap()
     });
 }
+
+#[test]
+fn assign_reports_an_unknown_person_at_the_reference() {
+    let (sandbox, _) = task_sandbox();
+    let task = create_task(&sandbox, "Inspect the greenhouse latch", &[]);
+    let output = sandbox
+        .command()
+        .args([
+            "assign",
+            &task,
+            "Unregistered greenhouse colleague",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    let error = task_error(output, 2, "invalid_input");
+    assert_eq!(error["field"], "assignees[0]");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("Unregistered greenhouse colleague")
+    );
+}

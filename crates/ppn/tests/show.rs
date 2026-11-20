@@ -213,10 +213,6 @@ fn write_diagnostics_keep_one_prefix_and_short_edge_endpoints() {
             &["tag", &id, "Hardware"],
             "error: invalid tag \"Hardware\": expected a lowercase tag of at most 64 bytes\nhint: Use a tag matching [a-z][a-z0-9_./-]* with at most 64 bytes.\n",
         ),
-        (
-            &["assign", &id, "Ada"],
-            "error: invalid assignee \"Ada\": expected a full hexadecimal identity ID or me\nhint: Use `me` or a full identity ID.\n",
-        ),
     ] {
         let output = sandbox.command().args(args).output().unwrap();
         assert_eq!(output.status.code(), Some(2));
