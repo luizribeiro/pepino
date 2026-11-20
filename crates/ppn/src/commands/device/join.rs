@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
-use pepino_app::{BoardJoinState, DeviceGrant};
+use pepino_app::{BoardJoinState, SignedGrant};
 use pepino_core::BoardId;
 use ppn::daemon::{
     address::socket_path,
@@ -19,7 +19,7 @@ pub(super) fn run(
     code: &str,
     selection: Option<&Path>,
 ) -> Result<CommandResult, CliError> {
-    let grant: DeviceGrant = Kind::Grant.decode(code).map_err(invalid_code)?;
+    let grant: SignedGrant = Kind::Grant.decode(code).map_err(invalid_code)?;
     let (directory, options) = local_options(context, None)?;
     let local = runtime()?.block_on(App::join_device(directory, grant, options))?;
     let config = &context.config()?.config;

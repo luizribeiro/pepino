@@ -221,7 +221,9 @@ fn rejects_corrupt_truncated_unsupported_and_other_device_grants() {
         assert!(!host.data.join("local.json").exists());
     }
     join(&ferrum, &grant);
-    let board: pepino_app::DeviceGrant = Kind::Grant.decode(&grant).unwrap();
+    let signed: pepino_app::SignedGrant = Kind::Grant.decode(&grant).unwrap();
+    let request_record: pepino_app::DeviceRequest = Kind::Request.decode(&request).unwrap();
+    let board = signed.verify(&request_record).unwrap();
     for host in [&titanium, &ferrum] {
         let log = std::fs::read_to_string(host.data.join("daemon.log")).unwrap();
         for secret in [&request, &grant, &board.boards[0].id.to_string()] {

@@ -1,6 +1,7 @@
 use std::{path::Path, time::Duration};
 
-use pepino_app::{DeviceGrant, DeviceRequest, PeerHint};
+use pepino_app::{DeviceGrant, DeviceRequest, PeerHint, SignedGrant};
+use pepino_node::DeviceCredentials;
 use ppn::{
     app::AppClient,
     daemon::{
@@ -22,6 +23,12 @@ pub(super) fn run(
 ) -> Result<CommandResult, CliError> {
     let device: DeviceRequest = Kind::Request.decode(code).map_err(invalid_code)?;
     device.member_info()?;
+    if device.secret.is_none() {
+        return Err(CliError::new(
+            ErrorKind::InvalidInput,
+            "The request is missing its secret.",
+        ));
+    }
     if name.as_deref().is_some_and(|name| name.trim().is_empty()) {
         return Err(CliError::new(
             ErrorKind::InvalidInput,
@@ -36,6 +43,15 @@ pub(super) fn run(
             "The request must come from another device.",
         ));
     }
+    let keys = DeviceCredentials::load(config.credentials_file.value.as_path())
+        .ok()
+        .filter(|keys| keys.device_id() == app.local_state().device_id)
+        .ok_or_else(|| {
+            CliError::new(
+                ErrorKind::Failure,
+                "Could not load the granting device credentials.",
+            )
+        })?;
     let client = Client {
         path: socket_path(config),
     };
@@ -49,7 +65,10 @@ pub(super) fn run(
     let recipient = device.id;
     let outcome = client
         .call_with(
-            Operation::AddMember { device, name },
+            Operation::AddMember {
+                device: device.clone(),
+                name,
+            },
             Duration::from_secs(20),
         )
         .map_err(unreachable)?;
@@ -75,7 +94,8 @@ pub(super) fn run(
                 .map(|relay| relay.as_url().to_string()),
         },
     };
-    let code = Kind::Grant.encode(&grant).map_err(invalid_code)?;
+    let signed = SignedGrant::issue(&grant, &device, &keys)?;
+    let code = Kind::Grant.encode(&signed).map_err(invalid_code)?;
     let note = "This grant code is secret. It contains your board IDs.";
     Ok(CommandResult::document(GrantCode(code)).with_human_note(Some(note.into())))
 }
