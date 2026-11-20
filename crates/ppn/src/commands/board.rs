@@ -1,12 +1,12 @@
 use std::path::Path;
 
-use pepino_app::{ReadRequest, Request, Response};
+use pepino_app::{ReadRequest, Request, Response, WriteRequest};
 use ppn::{
     app::AppClient,
     daemon::{address::socket_path, client::Client, network::membership, protocol::Network},
     error::{CliError, ErrorKind},
     help_tree::example_help,
-    output::CommandResult,
+    output::{CommandResult, Warning},
     render::{ShortIds, single_line},
     terminal::Context,
 };
@@ -29,6 +29,20 @@ enum Operation {
         #[arg(value_name = "BOARD")]
         reference: Option<String>,
     },
+    #[command(about = "Set the host's current board.", after_help = example_help(&["ppn board use Workshop"]))]
+    Use {
+        /// Board name or unambiguous ID prefix.
+        #[arg(value_name = "BOARD")]
+        reference: String,
+    },
+    #[command(about = "Rename a board on all linked devices.", after_help = example_help(&["ppn board rename Workshop 'Tool Shed'"]))]
+    Rename {
+        /// Board name or unambiguous ID prefix.
+        #[arg(value_name = "BOARD")]
+        reference: String,
+        /// New name for the board.
+        name: String,
+    },
 }
 
 pub fn run(
@@ -38,14 +52,42 @@ pub fn run(
     _: bool,
 ) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
-    let read = match args.operation {
-        Operation::Ls => ReadRequest::BoardList,
-        Operation::Show { reference: board } => ReadRequest::BoardShow { board },
+    let using = matches!(args.operation, Operation::Use { .. });
+    let (response, show_selection) = match args.operation {
+        Operation::Ls => (client.call(Request::Read(ReadRequest::BoardList))?, true),
+        Operation::Show { reference: board } => (
+            client.call(Request::Read(ReadRequest::BoardShow { board }))?,
+            true,
+        ),
+        Operation::Use { reference: board } => (
+            client.call_unscoped(Request::Write(WriteRequest::BoardUse { board }))?,
+            false,
+        ),
+        Operation::Rename {
+            reference: board,
+            name,
+        } => (
+            client.call_unscoped(Request::Write(WriteRequest::BoardRename { board, name }))?,
+            false,
+        ),
     };
-    let response = client.call(Request::Read(read))?;
-    let selection = Some(client.selected_board()?);
+    let selection = show_selection
+        .then(|| client.selected_board())
+        .transpose()?;
     let network = daemon_network(context)?;
-    document(context, response, selection, network.as_ref())
+    let mut result = document(context, response, selection, network.as_ref())?;
+    if using
+        && context
+            .board_env
+            .as_ref()
+            .is_some_and(|value| !value.is_empty())
+    {
+        result = result.with_warnings([Warning {
+            message: "PPN_BOARD still overrides the current board in this shell.".into(),
+            details: serde_json::Map::from_iter([("code".into(), json!("board_overridden"))]),
+        }]);
+    }
+    Ok(result)
 }
 
 pub(super) fn daemon_network(context: &Context<'_>) -> Result<Option<Network>, CliError> {
