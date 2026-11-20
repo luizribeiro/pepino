@@ -42,6 +42,15 @@ impl Device {
         );
     }
 
+    pub(super) fn lock_store(&self) -> std::fs::File {
+        let lock = std::fs::File::options()
+            .write(true)
+            .open(self.path.join("local.lock"))
+            .unwrap();
+        lock.try_lock().unwrap();
+        lock
+    }
+
     pub(super) async fn drain(&self) {
         if let Some(engine) = &self.engine {
             engine.wait_idle(Duration::from_secs(5)).await.unwrap();

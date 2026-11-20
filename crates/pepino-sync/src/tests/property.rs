@@ -36,6 +36,7 @@ async fn scenario(actions: Vec<(u8, u8)>) -> Result<(), TestCaseError> {
     ];
     let mut wire = Wire::new(board);
     let mut written = seed_publications(&mut devices, &wire, board).await?;
+    exercise_busy_replay(&mut devices, &mut wire, board).await?;
     for (step, (action, choice)) in actions.into_iter().enumerate() {
         let who = usize::from(choice % 2);
         collect(&mut wire, &devices);
@@ -61,7 +62,7 @@ async fn scenario(actions: Vec<(u8, u8)>) -> Result<(), TestCaseError> {
                         &devices[who].node,
                         author,
                         usize::from(action % 10 == 4) + 1,
-                        0,
+                        usize::from(choice / 4 % 3),
                     );
                 }
             }
@@ -81,6 +82,15 @@ async fn scenario(actions: Vec<(u8, u8)>) -> Result<(), TestCaseError> {
                 devices[who]
                     .node
                     .fail_next_publish(PublishFault::Unconfirmed);
+            }
+            8 if devices[who].engine.is_some() => {
+                devices[who].drain().await;
+                let lock = devices[who].lock_store();
+                if wire.send(who, &devices[who].node, 1 - who, 1, 0) {
+                    wait_busy(&devices[who], board).await;
+                    assert_safe(&wire, &devices, board).await?;
+                }
+                drop(lock);
             }
             _ => devices[who].drain().await,
         }
@@ -214,4 +224,35 @@ async fn seed_publications(
         "an unconfirmed submission must be retried"
     );
     Ok(BTreeSet::from([first, second, third]))
+}
+
+async fn wait_busy(device: &Device, board: BoardId) {
+    super::publish::until(device.engine.as_ref().unwrap(), |status| {
+        let board = &status.boards[&board];
+        board.last_error.as_deref().is_some_and(|error| {
+            error.starts_with("store operation") && error.contains("holds the data directory")
+        })
+    })
+    .await;
+}
+
+async fn exercise_busy_replay(
+    devices: &mut [Device; 2],
+    wire: &mut Wire,
+    board: BoardId,
+) -> Result<(), TestCaseError> {
+    collect(wire, devices);
+    let lock = devices[1].lock_store();
+    prop_assert!(wire.send(1, &devices[1].node, 0, 1, 0));
+    wait_busy(&devices[1], board).await;
+    assert_safe(wire, devices, board).await?;
+    drop(devices[1].engine.take());
+    wire.restart(1);
+    drop(lock);
+    devices[1].start().await;
+    prop_assert!(wire.send(1, &devices[1].node, 0, 2, 1));
+    devices[1].drain().await;
+    assert_safe(wire, devices, board).await?;
+    prop_assert_eq!(wire.acknowledged(1).count(), 1);
+    Ok(())
 }
