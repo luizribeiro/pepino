@@ -1,3 +1,6 @@
+use std::collections::BTreeSet;
+
+use pepino_core::TaskId;
 use pepino_store::query::{matches, select};
 use proptest::{prelude::*, sample};
 
@@ -52,6 +55,14 @@ fn term() -> impl Strategy<Value = String> {
     ]
 }
 
+fn ids(input: &str) -> BTreeSet<TaskId> {
+    select(board(), &query(&filter(input)))
+        .unwrap()
+        .into_iter()
+        .map(|task| task.id)
+        .collect()
+}
+
 proptest! {
     #[test]
     fn select_equals_filtering_tasks_with_matches(
@@ -71,5 +82,30 @@ proptest! {
             .filter(|task| matches(view, task, &query).unwrap())
             .collect();
         prop_assert_eq!(select(view, &query).unwrap(), filtered);
+    }
+
+    #[test]
+    fn a_term_and_its_negation_partition_the_board(term in term()) {
+        let positive = ids(&term);
+        let negative = ids(&format!("-{term}"));
+        prop_assert!(positive.is_disjoint(&negative));
+        let union = positive.union(&negative).copied().collect::<BTreeSet<_>>();
+        prop_assert_eq!(union, ids(""));
+    }
+
+    #[test]
+    fn conjunction_is_intersection(left in term(), right in term(), negate_left in any::<bool>()) {
+        let left = if negate_left { format!("-{left}") } else { left };
+        let intersection = ids(&left).intersection(&ids(&right)).copied().collect::<BTreeSet<_>>();
+        prop_assert_eq!(ids(&format!("{left} {right}")), intersection);
+    }
+
+    #[test]
+    fn comma_alternatives_are_union((key, alternatives) in alternatives()) {
+        let union = alternatives
+            .iter()
+            .flat_map(|value| ids(&format!("{key}:{value}")))
+            .collect::<BTreeSet<_>>();
+        prop_assert_eq!(ids(&format!("{key}:{}", alternatives.join(","))), union);
     }
 }
