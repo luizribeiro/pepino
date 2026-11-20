@@ -167,3 +167,34 @@ fn both_codecs_check_the_version_before_the_operation_and_reject_extra_fields() 
         ));
     }
 }
+
+#[test]
+fn status_and_edge_kinds_are_protocol_strings() {
+    use pepino_app::{EdgeKind, Status};
+
+    for (status, label) in [
+        (Status::Todo, "todo"),
+        (Status::Doing, "doing"),
+        (Status::Done, "done"),
+        (Status::Cancelled, "cancelled"),
+    ] {
+        assert_eq!(serde_json::to_value(status).unwrap(), label);
+        assert_eq!(
+            Status::try_from(pepino_core::Status::from(status)).unwrap(),
+            status
+        );
+        round_trip(&status);
+    }
+    for (kind, label) in [
+        (EdgeKind::Parent, "parent"),
+        (EdgeKind::Blocks, "blocks"),
+        (EdgeKind::Relates, "relates"),
+    ] {
+        assert_eq!(serde_json::to_value(kind).unwrap(), label);
+        assert_eq!(
+            EdgeKind::try_from(pepino_core::EdgeKind::from(kind)).unwrap(),
+            kind
+        );
+        round_trip(&kind);
+    }
+}

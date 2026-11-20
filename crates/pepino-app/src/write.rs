@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use pepino_core::{Event, FieldName, IdentityId, InitialFields, TaskId};
+use pepino_core::{EdgeKind, Event, FieldName, IdentityId, InitialFields, TaskId};
 use pepino_store::{BoardView, TaskRecord};
 
 use crate::app::invalid;
 use crate::batch::Batch;
 use crate::projection::resolve;
-use crate::{App, AppError, EdgeKind, FieldValue, Request};
+use crate::{App, AppError, FieldValue, Request};
 
 impl App {
     pub(super) fn plan_write(
@@ -31,7 +31,7 @@ impl App {
             } => {
                 let fields = InitialFields {
                     description,
-                    status,
+                    status: status.into(),
                     due,
                     priority,
                     tags: tags.into_iter().collect(),
@@ -126,10 +126,11 @@ impl App {
         view: &BoardView,
         batch: &mut Batch,
         from: &str,
-        kind: EdgeKind,
+        kind: crate::EdgeKind,
         to: &str,
         present: bool,
     ) -> Result<(), AppError> {
+        let kind = kind.into();
         let mut from = resolve(view, "from", from)?.id;
         let mut to = resolve(view, "to", to)?.id;
         if kind == EdgeKind::Relates && from > to {

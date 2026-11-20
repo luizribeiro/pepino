@@ -154,8 +154,9 @@ impl App {
         let created = applied.iter().find_map(|event| event.created_task());
         let edges = applied
             .iter()
-            .filter_map(|event| edge_effect(&after, event.event()))
-            .collect();
+            .filter_map(|event| edge_effect(&after, event.event()).transpose())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(committed_error)?;
         self.write_response(&after, true, created, batch.affected, edges)
             .await
             .map_err(committed_error)
@@ -192,20 +193,20 @@ fn committed_error(error: impl std::fmt::Display) -> AppError {
     )
 }
 
-fn edge_effect(view: &BoardView, event: &Event) -> Option<EdgeEffect> {
+fn edge_effect(view: &BoardView, event: &Event) -> Result<Option<EdgeEffect>, AppError> {
     let (from, kind, to) = match *event {
         Event::EdgeAdded { from, kind, to } | Event::EdgeRemoved { from, kind, to } => {
             (from, kind, to)
         }
-        _ => return None,
+        _ => return Ok(None),
     };
     let edge = view
         .edges(from)
         .into_iter()
         .find(|edge| (edge.from, edge.kind, edge.to) == (from, kind, to));
-    Some(EdgeEffect {
+    Ok(Some(EdgeEffect {
         from: from.to_string(),
-        kind,
+        kind: kind.try_into()?,
         to: to.to_string(),
         effective: edge.is_some_and(|edge| edge.is_effective()),
         reason: edge
@@ -215,5 +216,5 @@ fn edge_effect(view: &BoardView, event: &Event) -> Option<EdgeEffect> {
                 EdgeExclusion::NewerParent => EdgeExclusionReason::SupersededParent,
                 EdgeExclusion::Cycle => EdgeExclusionReason::Cycle,
             }),
-    })
+    }))
 }

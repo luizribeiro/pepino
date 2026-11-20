@@ -11,6 +11,7 @@ mod batch;
 mod projection;
 mod protocol;
 mod state;
+mod values;
 mod wire;
 mod write;
 
@@ -18,8 +19,9 @@ pub use app::App;
 pub use state::{LocalState, OpenOptions};
 
 pub use protocol::{
-    AppError, AppErrorKind, CommentRecord, Date, EdgeEffect, EdgeExclusionReason, EdgeKind,
-    FieldValue, Hlc, Request, Response, Status, TaskRecord,
+    AppError, AppErrorKind, CommentRecord, Date, EdgeEffect, EdgeExclusionReason, FieldValue, Hlc,
+    Request, Response, TaskRecord,
 };
 
+pub use values::{EdgeKind, Status};
 pub use wire::{PROTOCOL_VERSION, WireFormat, WireRequest, WireResponse, WireResult};

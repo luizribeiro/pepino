@@ -39,7 +39,7 @@ impl App {
             id: task.id.to_string(),
             title: task.title.clone(),
             description: task.description.clone(),
-            status: task.status,
+            status: task.status.try_into()?,
             due: task.due,
             priority: task.priority,
             fields: task

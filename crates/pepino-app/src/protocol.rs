@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub use pepino_core::{Date, EdgeKind, FieldValue, Hlc, Status};
+use crate::{EdgeKind, Status};
+
+pub use pepino_core::{Date, FieldValue, Hlc};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
