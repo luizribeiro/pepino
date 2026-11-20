@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::AppError;
 
 const VERSION: u32 = 1;
-const FILE_NAME: &str = "local.json";
+pub(crate) const FILE_NAME: &str = "local.json";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OpenOptions {
@@ -28,7 +28,7 @@ pub struct LocalState {
 }
 
 impl LocalState {
-    pub fn load_or_create(directory: &Path, options: OpenOptions) -> Result<Self, AppError> {
+    pub(crate) fn load_or_create(directory: &Path, options: OpenOptions) -> Result<Self, AppError> {
         let path = directory.join(FILE_NAME);
         match fs::read(&path) {
             Ok(bytes) => return Self::decode(&bytes),
