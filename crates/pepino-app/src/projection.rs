@@ -6,8 +6,8 @@ use pepino_store::{
 
 use crate::app::{invalid, store_error};
 use crate::{
-    AppError, CommentRecord, EdgeEffect, EdgeExclusionReason, MissingReference, TaskRecord,
-    TaskSummary,
+    AppError, CommentRecord, ConflictReference, EdgeEffect, EdgeExclusionReason, MissingReference,
+    TaskRecord, TaskSummary,
 };
 
 pub(super) fn resolve<'a>(
@@ -47,7 +47,9 @@ pub(super) fn resolve_id(
         }),
         Ok(TaskPrefixResolution::Deleted { id }) => Err(AppError::Conflict {
             field: field.into(),
-            task: id.map_or_else(|| reference.into(), |id| id.to_string()),
+            reference: ConflictReference::Task {
+                task: id.map_or_else(|| reference.into(), |id| id.to_string()),
+            },
         }),
         Err(StoreError::InvalidPrefix) => Err(invalid(
             field,

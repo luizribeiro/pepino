@@ -299,8 +299,12 @@ pub enum AppError {
         #[serde(flatten)]
         diagnostic: Option<Box<FilterDiagnostic>>,
     },
-    #[error("task {task} at {field} is deleted")]
-    Conflict { field: String, task: String },
+    #[error("{reference} at {field}")]
+    Conflict {
+        field: String,
+        #[serde(flatten)]
+        reference: ConflictReference,
+    },
     #[error("another pepino process holds the data directory")]
     Busy,
     #[error("storage error: {reason}")]
@@ -326,6 +330,35 @@ impl std::fmt::Display for MissingReference {
             Self::Task(task) => write!(f, "task {task}"),
             Self::View(view) => write!(f, "view {view}"),
             Self::Board(board) => write!(f, "board {board}"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+#[non_exhaustive]
+pub enum ConflictReference {
+    Task {
+        task: String,
+    },
+    View {
+        view: String,
+        referenced_by: Vec<String>,
+    },
+}
+
+impl std::fmt::Display for ConflictReference {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Task { task } => write!(f, "task {task} is deleted"),
+            Self::View {
+                view,
+                referenced_by,
+            } => write!(
+                f,
+                "view {view} is referenced by {}",
+                referenced_by.join(", ")
+            ),
         }
     }
 }

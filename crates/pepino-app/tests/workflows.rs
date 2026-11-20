@@ -437,7 +437,9 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
             handle(&mut app, request).await.unwrap_err(),
             AppError::Conflict {
                 field: field.into(),
-                task: blocker.clone()
+                reference: pepino_app::ConflictReference::Task {
+                    task: blocker.clone()
+                },
             }
         );
     }

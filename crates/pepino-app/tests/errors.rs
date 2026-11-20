@@ -195,7 +195,7 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
             error,
             AppError::Conflict {
                 field: field.into(),
-                task: left.clone()
+                reference: pepino_app::ConflictReference::Task { task: left.clone() },
             }
         );
     }
@@ -206,7 +206,9 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
             .unwrap_err(),
         AppError::Conflict {
             field: "task".into(),
-            task: "abcd".into()
+            reference: pepino_app::ConflictReference::Task {
+                task: "abcd".into()
+            },
         },
     );
     assert_eq!(store.latest_hlc(board).await.unwrap(), before);
