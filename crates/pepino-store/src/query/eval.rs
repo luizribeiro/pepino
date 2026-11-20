@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, collections::BTreeMap};
+use std::{borrow::Borrow, collections::BTreeMap, fmt};
 
 use pepino_core::{
     IdentityId, TaskId,
@@ -59,10 +59,37 @@ pub struct Query<'a> {
     pub context: Context<'a>,
 }
 
+/// A query resolved against a particular board snapshot.
+pub struct Prepared<'view> {
+    predicates: Vec<Predicate<'view>>,
+}
+
+impl fmt::Debug for Prepared<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Prepared")
+            .field("term_count", &self.predicates.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'view> Prepared<'view> {
+    /// Tests a task from the snapshot used to prepare the query.
+    pub fn matches(&self, task: &TaskRecord) -> bool {
+        all_match(&self.predicates, task)
+    }
+}
+
+impl Query<'_> {
+    /// Resolves the filter before evaluating any task.
+    pub fn prepare<'view>(&self, view: &'view BoardView) -> Result<Prepared<'view>, QueryError> {
+        let predicates = prepare(view, self.filter, &self.context, &mut Vec::new())?;
+        Ok(Prepared { predicates })
+    }
+}
+
 /// Evaluates the query for a task from the supplied board snapshot.
 pub fn matches(view: &BoardView, task: &TaskRecord, query: &Query<'_>) -> Result<bool, QueryError> {
-    let predicates = prepare(view, query.filter, &query.context, &mut Vec::new())?;
-    Ok(all_match(&predicates, task))
+    Ok(query.prepare(view)?.matches(task))
 }
 
 /// Returns matching tasks in the order of the board snapshot.
@@ -70,11 +97,8 @@ pub fn select<'view>(
     view: &'view BoardView,
     query: &Query<'_>,
 ) -> Result<Vec<&'view TaskRecord>, QueryError> {
-    let predicates = prepare(view, query.filter, &query.context, &mut Vec::new())?;
-    Ok(view
-        .iter()
-        .filter(|task| all_match(&predicates, task))
-        .collect())
+    let prepared = query.prepare(view)?;
+    Ok(view.iter().filter(|task| prepared.matches(task)).collect())
 }
 
 type Predicate<'a> = Box<dyn Fn(&TaskRecord) -> bool + 'a>;
@@ -86,7 +110,7 @@ fn all_match(predicates: &[Predicate<'_>], task: &TaskRecord) -> bool {
 fn prepare<'a>(
     view: &'a BoardView,
     filter: &Filter,
-    context: &Context<'a>,
+    context: &Context<'_>,
     chain: &mut Vec<String>,
 ) -> Result<Vec<Predicate<'a>>, QueryError> {
     let mut predicates = Vec::<Predicate<'a>>::new();
@@ -134,7 +158,7 @@ fn resolve_view(
 fn prepare_clause<'a>(
     view: &'a BoardView,
     clause: &Clause,
-    context: &Context<'a>,
+    context: &Context<'_>,
 ) -> Result<Predicate<'a>, QueryErrorKind> {
     let predicate: Predicate<'a> = match clause.clone() {
         Clause::Text(text) => {

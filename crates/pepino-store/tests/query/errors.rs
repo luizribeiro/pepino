@@ -15,6 +15,7 @@ fn check(query: &Query<'_>, term: &str, kind: QueryErrorKind) {
         term: term.into(),
         kind,
     };
+    assert_eq!(query.prepare(board()).unwrap_err(), expected);
     assert_eq!(select(board(), query).unwrap_err(), expected);
     let task = board().task(id(0)).unwrap();
     let error = matches(board(), task, query).unwrap_err();

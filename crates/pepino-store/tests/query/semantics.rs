@@ -164,3 +164,26 @@ fn query_accepts_contact_maps_and_saved_view_closures() {
         [id(1), id(0)]
     );
 }
+
+#[test]
+fn prepared_queries_reuse_resolved_operands_across_tasks() {
+    use std::cell::Cell;
+
+    let calls = Cell::new(0);
+    let people = |_: &str| {
+        calls.set(calls.get() + 1);
+        vec![super::ANA]
+    };
+    let filter = filter("assignee:ana");
+    let mut query = query(&filter);
+    query.context.people = &people;
+    let prepared = query.prepare(board()).unwrap();
+    assert_eq!(calls.get(), 1);
+    let matched: Vec<_> = board()
+        .iter()
+        .filter(|task| prepared.matches(task))
+        .map(|task| task.id)
+        .collect();
+    assert_eq!(matched, [id(1), id(0)]);
+    assert_eq!(calls.get(), 1);
+}
