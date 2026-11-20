@@ -10,7 +10,7 @@ use crate::{BoardView, PrefixResolution, TaskRecord};
 use super::{
     QueryError, QueryErrorKind,
     predicates::{compare, custom, fold, has, is, text_matches, utc_days},
-    saved::SavedViews,
+    saved::{Expanded, SavedViews},
 };
 
 /// Resolves decoded person text to candidate identities.
@@ -85,7 +85,7 @@ impl Query<'_> {
     /// Resolves the filter before evaluating any task.
     pub fn prepare<'view>(&self, view: &'view BoardView) -> Result<Prepared<'view>, QueryError> {
         let mut saved = SavedViews::new(self.context.views);
-        let predicates = prepare(view, self.filter, &self.context, &mut saved)?;
+        let predicates = prepare(view, self.filter, &self.context, &mut saved)?.value;
         Ok(Prepared {
             predicates,
             view_count: saved.len(),
@@ -146,20 +146,31 @@ fn prepare<'a>(
     filter: &Filter,
     context: &Context<'_>,
     saved: &mut SavedViews<'_, Rc<ViewChecks<'a>>>,
-) -> Result<Vec<Check<'a>>, QueryError> {
+) -> Result<Expanded<Vec<Check<'a>>>, QueryError> {
     let mut predicates = Vec::new();
+    let mut has_boards = false;
     let mut terms: Vec<_> = filter.terms().iter().collect();
     terms.sort_by_cached_key(|term| term.to_string());
     for term in terms {
         let predicate = match &term.clause {
-            Clause::Board(_) => continue,
-            Clause::View(name) => CheckKind::View(saved.expand(term, name, |saved, nested| {
-                let checks = prepare(view, nested, context, saved)?;
-                Ok(Rc::new(ViewChecks {
-                    id: saved.len(),
-                    checks,
-                }))
-            })?),
+            Clause::Board(_) => {
+                has_boards = true;
+                continue;
+            }
+            Clause::View(name) => {
+                let nested = saved.expand(term, name, |saved, nested| {
+                    let expanded = prepare(view, nested, context, saved)?;
+                    Ok(Expanded {
+                        value: Rc::new(ViewChecks {
+                            id: saved.len(),
+                            checks: expanded.value,
+                        }),
+                        has_boards: expanded.has_boards,
+                    })
+                })?;
+                has_boards |= nested.has_boards;
+                CheckKind::View(nested.value)
+            }
             clause => {
                 let Some(predicate) = prepare_clause(view, clause, context)
                     .map_err(|kind| saved.error(term, kind))?
@@ -174,7 +185,10 @@ fn prepare<'a>(
             negated: term.negated,
         });
     }
-    Ok(predicates)
+    Ok(Expanded {
+        value: predicates,
+        has_boards,
+    })
 }
 
 fn prepare_clause<'a>(

@@ -209,3 +209,21 @@ async fn text_search_requires_comments_even_for_an_empty_board() {
     let with_comments = store.board_with_comments(board).await.unwrap();
     assert!(select(&with_comments, &query).unwrap().is_empty());
 }
+
+#[test]
+fn negated_view_with_transitive_board_terms_is_an_error() {
+    let root = filter("-@outer");
+    let saved = std::collections::BTreeMap::from([
+        ("outer", filter("@local")),
+        ("local", filter("-board:elsewhere tag:garden")),
+    ]);
+    let mut query = query(&root);
+    query.context.views = &saved;
+    check(
+        &query,
+        "-@outer",
+        QueryErrorKind::NegatedViewWithBoards {
+            name: "outer".into(),
+        },
+    );
+}

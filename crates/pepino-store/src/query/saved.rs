@@ -2,12 +2,18 @@ use std::collections::BTreeMap;
 
 use pepino_core::filter::{Filter, Term};
 
+#[derive(Clone)]
+pub(super) struct Expanded<T> {
+    pub(super) value: T,
+    pub(super) has_boards: bool,
+}
+
 use super::{QueryError, QueryErrorKind, ViewResolver};
 
 pub(super) struct SavedViews<'a, T> {
     resolver: &'a dyn ViewResolver,
     chain: Vec<String>,
-    cache: BTreeMap<String, T>,
+    cache: BTreeMap<String, Expanded<T>>,
 }
 
 impl<'a, T: Clone> SavedViews<'a, T> {
@@ -35,11 +41,31 @@ impl<'a, T: Clone> SavedViews<'a, T> {
         &mut self,
         term: &Term,
         name: &str,
-        build: impl FnOnce(&mut Self, &Filter) -> Result<T, QueryError>,
-    ) -> Result<T, QueryError> {
-        if let Some(expanded) = self.cache.get(name) {
-            return Ok(expanded.clone());
+        build: impl FnOnce(&mut Self, &Filter) -> Result<Expanded<T>, QueryError>,
+    ) -> Result<Expanded<T>, QueryError> {
+        let expanded = match self.cache.get(name) {
+            Some(expanded) => expanded.clone(),
+            None => {
+                let expanded = self.build(term, name, build)?;
+                self.cache.insert(name.to_owned(), expanded.clone());
+                expanded
+            }
+        };
+        if term.negated && expanded.has_boards {
+            return Err(self.error(
+                term,
+                QueryErrorKind::NegatedViewWithBoards { name: name.into() },
+            ));
         }
+        Ok(expanded)
+    }
+
+    fn build(
+        &mut self,
+        term: &Term,
+        name: &str,
+        build: impl FnOnce(&mut Self, &Filter) -> Result<Expanded<T>, QueryError>,
+    ) -> Result<Expanded<T>, QueryError> {
         if self.chain.iter().any(|active| active == name) {
             let chain = self
                 .chain
@@ -56,8 +82,6 @@ impl<'a, T: Clone> SavedViews<'a, T> {
         self.chain.push(name.to_owned());
         let expanded = build(self, &filter);
         self.chain.pop();
-        let expanded = expanded?;
-        self.cache.insert(name.to_owned(), expanded.clone());
-        Ok(expanded)
+        expanded
     }
 }

@@ -49,7 +49,7 @@ fn term() -> impl Strategy<Value = String> {
             "bolts",
             "@weekend",
             "@empty",
-            "@local"
+            "@garden-open"
         ])
         .prop_map(str::to_owned),
     ]
