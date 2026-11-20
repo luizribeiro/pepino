@@ -17,23 +17,15 @@ impl FilterInput {
             Self::Text(text) => filter::parse(text, today.into()),
             Self::Argv(argv) => filter::parse_argv(argv, today.into()),
         }
-        .map_err(|error| {
-            let message = error.kind.to_string();
-            let (reason, hint) = message
-                .rsplit_once(". ")
-                .map_or((message.as_str(), None), |(reason, hint)| {
-                    (reason, Some(hint.into()))
-                });
-            AppError::InvalidInput {
-                field: "filter".into(),
-                reason: reason.into(),
-                diagnostic: Some(Box::new(FilterDiagnostic {
-                    term: error.term,
-                    position: Some(error.position.into()),
-                    view_chain: Vec::new(),
-                    hint,
-                })),
-            }
+        .map_err(|error| AppError::InvalidInput {
+            field: "filter".into(),
+            reason: error.reason.into(),
+            diagnostic: Some(Box::new(FilterDiagnostic {
+                term: error.term.into(),
+                position: Some(error.position.into()),
+                view_chain: Vec::new(),
+                hint: error.hint.map(String::from),
+            })),
         })
     }
 }

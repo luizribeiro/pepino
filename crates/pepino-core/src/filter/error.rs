@@ -5,9 +5,11 @@ use thiserror::Error;
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[error("filter term {term:?} at {position}: {kind}")]
 pub struct ParseError {
-    pub term: String,
+    pub term: Box<str>,
     pub position: Position,
     pub kind: ErrorKind,
+    pub reason: Box<str>,
+    pub hint: Option<Box<str>>,
 }
 
 /// Zero-based UTF-8 byte position in the original string or argument.

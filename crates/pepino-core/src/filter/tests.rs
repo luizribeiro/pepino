@@ -167,7 +167,7 @@ fn calendar_dates_are_typed_and_validated() {
         ]
     );
     let error = parse("tag:garden due:2026-02-29").unwrap_err();
-    assert_eq!(error.term, "due:2026-02-29");
+    assert_eq!(&*error.term, "due:2026-02-29");
     assert_eq!(
         error.kind,
         ErrorKind::InvalidDate {
@@ -302,7 +302,7 @@ fn built_in_field_matches_preserve_symbolic_values() {
     );
 
     let error = parse("tag:garden status:todo,in-progress").unwrap_err();
-    assert_eq!(error.term, "status:todo,in-progress");
+    assert_eq!(&*error.term, "status:todo,in-progress");
     assert_eq!(
         error.kind,
         ErrorKind::UnknownStatus {
@@ -364,7 +364,7 @@ fn comparison_operators_apply_to_each_alternative() {
         );
     }
     let error = parse("garden -tag:>=seeds").unwrap_err();
-    assert_eq!(error.term, "-tag:>=seeds");
+    assert_eq!(&*error.term, "-tag:>=seeds");
     assert_eq!(error.position, Position::Byte(12));
     assert_eq!(
         error.kind,
@@ -380,7 +380,7 @@ fn comparison_operators_apply_to_each_alternative() {
 fn empty_values_report_the_whole_term() {
     for raw in ["tag:", "tag:,garden", "tag:garden,", r#"tag:"""#] {
         let error = parse_argv(&[raw]).unwrap_err();
-        assert_eq!(error.term, raw);
+        assert_eq!(&*error.term, raw);
         assert_eq!(error.kind, ErrorKind::EmptyValue);
     }
 }
@@ -423,7 +423,7 @@ fn argv_keeps_each_argument_together() {
 
     let error = parse_argv(&["garden", r#" "broken"#]).unwrap_err();
     assert_eq!(error.position, Position::Argument { index: 1, byte: 1 });
-    assert_eq!(error.term, r#""broken"#);
+    assert_eq!(&*error.term, r#""broken"#);
     assert_eq!(error.kind, ErrorKind::UnterminatedQuote);
 }
 
@@ -462,7 +462,7 @@ fn invalid_text_terms_include_the_source() {
     ] {
         let error = parse(input).unwrap_err();
         assert_eq!(error.position, Position::Byte(offset));
-        assert_eq!(error.term, input[6..]);
+        assert_eq!(&*error.term, &input[6..]);
         assert_eq!(error.kind, kind);
     }
 }
@@ -519,7 +519,7 @@ fn offsets_cross_calendar_boundaries() {
 fn errors_point_inside_the_offending_term() {
     let error = parse("café due:today,<=broken status:todo").unwrap_err();
     assert_eq!(error.position, Position::Byte("café due:today,<=".len()));
-    assert_eq!(error.term, "due:today,<=broken");
+    assert_eq!(&*error.term, "due:today,<=broken");
     let error = parse_argv(&["café", "due:today,<=broken"]).unwrap_err();
     assert_eq!(
         error.position,
@@ -723,5 +723,16 @@ fn each_error_kind_has_a_display_message() {
     assert_eq!(
         error.to_string(),
         r#"filter term "-due:<Fri" at argument 1, byte 7: keywords are lowercase. Use "fri" for "Fri""#
+    );
+}
+
+#[test]
+fn diagnostics_keep_punctuation_inside_the_reason() {
+    let error = parse(r#"tag:hardware tag:"spare. parts""#).unwrap_err();
+    assert_eq!(error.position, Position::Byte("tag:hardware tag:".len()));
+    assert_eq!(&*error.reason, r#"invalid tag "spare. parts""#);
+    assert_eq!(
+        error.hint.as_deref(),
+        Some("Tags must match [a-z][a-z0-9_./-]*")
     );
 }

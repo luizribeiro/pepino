@@ -313,8 +313,10 @@ fn error(term: &str, position: Position, (offset, kind): (usize, ErrorKind)) -> 
         },
     };
     ParseError {
-        term: term.to_owned(),
+        term: term.into(),
         position,
+        reason: kind.reason().into_boxed_str(),
+        hint: kind.hint().map(String::into_boxed_str),
         kind,
     }
 }
