@@ -69,6 +69,8 @@ impl<'a> TaskRows<'a> {
         let (status, color) = status_style(task.status);
         let title = single_line(&task.title);
         let mut metadata = self.metadata(task);
+        let id_label = self.terminal.paint(id, AnsiColor::Cyan);
+        let status_label = self.terminal.paint(status, color);
         let mut text = if self.terminal.stdout_is_tty {
             let [id_width, status_width, title_width, metadata_width] = self.widths;
             let space = self
@@ -96,10 +98,8 @@ impl<'a> TaskRows<'a> {
             metadata.truncate(retained);
             let id_space = id_width.saturating_sub(id.len()) + 2;
             let status_space = status_width.saturating_sub(status.len()) + 2;
-            let id = self.terminal.paint(id, AnsiColor::Cyan);
-            let status = self.terminal.paint(status, color);
             let mut line = format!(
-                "{prefix}{id}{:id_space$}{status}{:status_space$}{title}",
+                "{prefix}{id_label}{:id_space$}{status_label}{:status_space$}{title}",
                 "", ""
             );
             if !metadata.is_empty() {
@@ -109,7 +109,7 @@ impl<'a> TaskRows<'a> {
             line
         } else {
             let extra = if metadata.is_empty() { "" } else { "  " };
-            format!("{prefix}{id} {status}  {title}{extra}")
+            format!("{prefix}{id_label} {status_label}  {title}{extra}")
         };
         self.dates
             .highlight_due(task, &mut metadata, self.terminal, "due:");

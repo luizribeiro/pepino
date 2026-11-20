@@ -460,3 +460,24 @@ fn terminals_highlight_overdue_dates_and_distinguish_doing_from_todo() {
             .contains("\x1b[31mdue")
     );
 }
+
+#[test]
+fn forced_listing_color_applies_to_pipes_and_keeps_json_plain() {
+    let (sandbox, _) = task_sandbox();
+    create_task(&sandbox, "Fit the hinges", &[]);
+    let output = sandbox
+        .command()
+        .env("NO_COLOR", "1")
+        .args(["ls", "--color", "always"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("\x1b[33mtodo\x1b[0m")
+    );
+    assert!(!sandbox.run(&["ls", "--color", "auto"]).contains('\x1b'));
+    let json = sandbox.run(&["ls", "--color", "always", "--json"]);
+    assert_eq!(as_json(&json)["kind"], "tasks");
+}
