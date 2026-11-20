@@ -107,7 +107,7 @@ impl App {
         let parsed = ViewFilters::new(&views);
         parsed.remember(&name, filter.clone(), parsed_filter);
         query::validate_views(&entry.parse()?, &|name: &str| parsed.resolve(name))
-            .map_err(|error| query_error(error, &entry, &parsed, &self.local.display_name))?;
+            .map_err(|error| query_error(error, &entry, &parsed, self.local.display_name()))?;
         self.persist_views(views, guard).await?;
         Ok(Response::ViewSaved {
             view: SavedView {

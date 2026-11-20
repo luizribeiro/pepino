@@ -37,7 +37,7 @@ impl App {
             people: &people,
             views: &saved,
         };
-        let diagnostic = |error| query_error(error, source, &views, &self.local.display_name);
+        let diagnostic = |error| query_error(error, source, &views, self.local.display_name());
         let terms = (Query {
             filter: &supplied,
             context: context(),
@@ -149,7 +149,7 @@ impl LocalState {
         if let Ok(id) = name.parse() {
             return vec![id];
         }
-        let named = (fold_text(name) == fold_text(&self.display_name)).then_some(self.identity_id);
+        let named = (fold_text(name) == fold_text(self.display_name())).then_some(self.identity_id);
         if name.len() < 4 || !name.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return named.into_iter().collect();
         }
