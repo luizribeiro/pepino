@@ -1526,3 +1526,66 @@ fn show_uses_tty_dates_and_configured_color() {
     let suppressed = String::from_utf8(tty_output(&args, Some("1"))).unwrap();
     assert!(!suppressed.contains('\x1b'));
 }
+
+#[test]
+fn write_date_and_field_operands_match_the_app_filter() {
+    use pepino_app::{FilterInput, ReadRequest, Request, Response};
+
+    let (sandbox, data) = task_sandbox();
+    let id = create_task(
+        &sandbox,
+        "Inspect the latch",
+        &[
+            "--due",
+            "-2w",
+            "--set",
+            "anchor=today",
+            "--set",
+            "arrival=tomorrow",
+            "--set",
+            "part=\"004\"",
+            "--set",
+            "estimate=+004",
+        ],
+    );
+    let detail = as_json(&sandbox.run(&["show", &id, "--json"]));
+    let today = detail["task"]["fields"]["anchor"]["value"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let filter = FilterInput::Argv(
+        [
+            "due:-2w",
+            "arrival:tomorrow",
+            "part:\"004\"",
+            "estimate:+004",
+        ]
+        .map(String::from)
+        .into(),
+    );
+    let response = seed_tasks(&data, async |app| {
+        app.handle(
+            Request::Read(ReadRequest::ListTasks {
+                filter,
+                sort: None,
+                limit: None,
+                today,
+            }),
+            SEED_NOW,
+        )
+        .await
+        .unwrap()
+    });
+    let Response::Tasks {
+        tasks,
+        resolved_dates,
+        ..
+    } = response
+    else {
+        panic!("expected a listing");
+    };
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].id, id);
+    assert_eq!(resolved_dates["-2w"], tasks[0].due.unwrap());
+}
