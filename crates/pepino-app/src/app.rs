@@ -83,7 +83,7 @@ impl App {
             Ok::<_, AppError>(directory)
         })
         .await??;
-        let _guard = lock(&directory, lock_timeout).await?;
+        let guard = lock(&directory, lock_timeout).await?;
         let credentials_file = options
             .credentials_file
             .as_ref()
@@ -109,8 +109,13 @@ impl App {
         let (local, migrate_on_write) = match existing {
             Some(local) => local,
             None => (
-                crate::initialize::prepare(directory.clone(), credentials_file.clone(), options)
-                    .await?,
+                crate::initialize::prepare(
+                    directory.clone(),
+                    credentials_file.clone(),
+                    options,
+                    now,
+                )
+                .await?,
                 false,
             ),
         };
@@ -135,7 +140,7 @@ impl App {
             })
             .await??;
         }
-        Ok(Self {
+        let mut app = Self {
             clock: Clock::from_hlc(hlc),
             migrate_on_write,
             selected: None,
@@ -145,7 +150,18 @@ impl App {
             directory,
             credentials_file,
             lock_timeout,
-        })
+        };
+        if app.local.peer_hint().is_none()
+            && app.local.needs_roster_reconciliation()
+            && app.local.has_legacy_roster()
+            && let Ok(keys) = app.identity_credentials()
+        {
+            let mut local = app.local.clone();
+            local.reconcile_identity(local.device_id, &keys, None)?;
+            app.persist_boards(local, guard).await?;
+            app.migrate_on_write = false;
+        }
+        Ok(app)
     }
 
     pub(super) fn selected_board(&self) -> &crate::LocalBoard {

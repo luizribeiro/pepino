@@ -14,6 +14,10 @@ impl LocalState {
         self.catalog.identity.migration = Some(names);
     }
 
+    pub(crate) fn has_legacy_roster(&self) -> bool {
+        self.catalog.identity.migration.is_some()
+    }
+
     pub fn needs_roster_reconciliation(&self) -> bool {
         self.roster_root().is_none()
             || (self.active_roster_device(self.device_id)
@@ -119,10 +123,10 @@ async fn imports_a_v5_grant_once_and_keeps_the_add_origin() {
     old["other_devices"] = serde_json::json!({peer.to_string(): "Ferrum"});
     old["devices_added_here"] = serde_json::json!([peer]);
     std::fs::write(dir.path().join("local.json"), old.to_string()).unwrap();
-    let keys = app.identity_credentials().unwrap();
-    let first = app.reconcile_identity(owner, &keys).await.unwrap();
-    let second = app.reconcile_identity(owner, &keys).await.unwrap();
-    assert_eq!(first, second);
+    let first = App::open(dir.path(), 0).await.unwrap();
+    let second = App::open(dir.path(), 0).await.unwrap();
+    let first = first.local_state();
+    assert_eq!(first, second.local_state());
     assert_eq!(first.roster()[&peer].added_by, Some(owner));
     assert_eq!(first.roster()[&peer].added_at, None);
     assert_eq!(first.roster()[&peer].name, "Ferrum");

@@ -21,6 +21,7 @@ pub(super) async fn prepare(
     directory: PathBuf,
     credentials_path: PathBuf,
     options: OpenOptions,
+    now: u64,
 ) -> Result<LocalState, AppError> {
     let pending = directory.join(PENDING);
     let stage = directory.join(STAGING);
@@ -66,8 +67,10 @@ pub(super) async fn prepare(
         Prepared::Resume(state) => *state,
         Prepared::New(names) => {
             let device = credentials.device_id();
-            let board = create_board(NodeSettings::offline(credentials, &staged_database)).await?;
-            let state = LocalState::new(names, device, board)?;
+            let board =
+                create_board(NodeSettings::offline(credentials.clone(), &staged_database)).await?;
+            let mut state = LocalState::new(names, device, board)?;
+            state.reconcile_identity(device, &credentials, Some(now))?;
             worker("record pending board", {
                 let state = state.clone();
                 let stage = stage.clone();
@@ -289,9 +292,14 @@ mod tests {
         let abandoned = path.join(STAGING);
         fs::create_dir(&abandoned).unwrap();
         fs::write(abandoned.join(NODE_DATABASE), b"interrupted").unwrap();
-        let pending = prepare(path.to_owned(), credentials.clone(), OpenOptions::default())
-            .await
-            .unwrap();
+        let pending = prepare(
+            path.to_owned(),
+            credentials.clone(),
+            OpenOptions::default(),
+            now,
+        )
+        .await
+        .unwrap();
         assert_eq!(LocalState::read(&path.join(PENDING)).unwrap(), pending);
         assert!(matches!(
             App::open(path, now).await,
