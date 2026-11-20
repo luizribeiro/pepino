@@ -24,6 +24,13 @@ pub struct MembershipArgs {
 }
 
 impl MembershipArgs {
+    pub fn is_empty(&self) -> bool {
+        self.add.tags.is_empty()
+            && self.add.assignees.is_empty()
+            && self.remove_tags.is_empty()
+            && self.remove_assignees.is_empty()
+    }
+
     pub fn requests(self, task: &str) -> Vec<WriteRequest> {
         let mut requests = Vec::new();
         let Self {
@@ -82,6 +89,8 @@ mod tests {
             "--unassign",
             "me",
         ]);
+        assert!(!edit.membership.is_empty());
+        assert!(MembershipArgs::default().is_empty());
         assert_eq!(
             serde_json::to_value(edit.membership.requests("97ad97")).unwrap(),
             json!([
