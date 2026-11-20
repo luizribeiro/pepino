@@ -52,6 +52,7 @@ fn errors_and_write_responses_have_stable_tags() {
     ] {
         let error = serde_json::from_value::<AppError>(fixture.clone()).unwrap();
         assert_eq!(serde_json::to_value(error.kind()).unwrap(), fixture["kind"]);
+        assert_eq!(error.kind().code(), fixture["kind"].as_str().unwrap());
         assert_eq!(serde_json::to_value(&error).unwrap(), fixture);
         round_trip(&error);
     }

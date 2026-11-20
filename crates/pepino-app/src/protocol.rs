@@ -127,6 +127,18 @@ pub enum AppErrorKind {
     Storage,
 }
 
+impl AppErrorKind {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::NotFound => "not_found",
+            Self::AmbiguousId => "ambiguous_id",
+            Self::InvalidInput => "invalid_input",
+            Self::Conflict => "conflict",
+            Self::Storage => "storage",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, Error, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[non_exhaustive]
