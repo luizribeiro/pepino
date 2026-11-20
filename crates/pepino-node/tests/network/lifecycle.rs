@@ -134,3 +134,38 @@ async fn late_status_subscriber_sees_deliveries_waiting_for_the_consumer() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn publish_reports_uncertainty_at_the_configured_deadline() {
+    use pepino_node::Error;
+    use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = settings(&network(dir.path()), dir.path().join("alice"));
+    config.publish_confirmation_timeout = Duration::from_millis(25);
+    let node = start(&config).await;
+    let board = node.create_board().await.unwrap();
+    board
+        .wait_until_replayed(super::support::WAIT)
+        .await
+        .unwrap();
+    let pool =
+        SqlitePool::connect_with(SqliteConnectOptions::new().filename(&config.database_path))
+            .await
+            .unwrap();
+    let writer = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+
+    let result = timeout(
+        Duration::from_secs(1),
+        board.publish(b"Check deployment status".to_vec()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(result, Err(Error::PublishUnconfirmed(reason)) if reason.contains("timed out"))
+    );
+    writer.rollback().await.unwrap();
+    pool.close().await;
+    node.shutdown().await.unwrap();
+}
