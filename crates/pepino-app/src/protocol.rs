@@ -135,6 +135,7 @@ pub enum TaskChange {
         changes: BTreeMap<String, FieldValue>,
     },
     Delete,
+    Reopen,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

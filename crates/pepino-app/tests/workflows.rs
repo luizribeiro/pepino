@@ -1658,3 +1658,47 @@ async fn ready_filter_selects_only_unblocked_todo_tasks() {
     assert_eq!(tasks[0].id, ready);
     assert!(tasks[0].ready);
 }
+
+#[tokio::test]
+async fn reopening_keeps_open_statuses_and_restarts_closed_tasks() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut ids = Vec::new();
+    for (title, status) in [
+        ("Order spare hinges", "todo"),
+        ("Inspect the greenhouse frame", "doing"),
+        ("Check the delivery", "done"),
+        ("Reuse the old latch", "cancelled"),
+    ] {
+        ids.push(
+            write(
+                &mut app,
+                json!({"op":"add_task","title":title,"status":status}),
+            )
+            .await
+            .1
+            .unwrap(),
+        );
+    }
+    let response = handle(
+        &mut app,
+        json!({"op":"apply_to_tasks","tasks":ids,"change":{"type":"reopen"}}),
+    )
+    .await
+    .unwrap();
+    let Response::BatchWrite {
+        changed_targets, ..
+    } = response
+    else {
+        panic!("expected a batch response")
+    };
+    assert_eq!(changed_targets, ids[2..]);
+    assert_eq!(
+        get(&mut app, &ids[1]).await.status,
+        pepino_app::Status::Doing
+    );
+    assert_eq!(
+        get(&mut app, &ids[3]).await.status,
+        pepino_app::Status::Todo
+    );
+}

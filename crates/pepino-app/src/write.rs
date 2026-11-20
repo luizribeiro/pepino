@@ -45,6 +45,21 @@ impl App {
                     delete_task(&view, &mut batch, task, &field, &seen)?;
                 }
                 TaskChange::Delete => {}
+                TaskChange::Reopen => {
+                    let current = snapshot_task(&view, task)?;
+                    if current.status.is_open() {
+                        batch.targets.insert(task);
+                    } else {
+                        set_fields(
+                            &mut batch,
+                            current,
+                            BTreeMap::from([(
+                                "status".into(),
+                                crate::FieldValue::Status(crate::Status::Todo),
+                            )]),
+                        )?;
+                    }
+                }
             }
             order.push(task.to_string());
             if batch.event_count() != before {
