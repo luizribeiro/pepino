@@ -89,17 +89,22 @@ impl App {
         guard: File,
     ) -> Result<Response, AppError> {
         validate_name(&name)?;
-        let filter = filter.parse(today)?.to_string();
+        let parsed_filter = filter.parse(today)?;
+        let canonical = parsed_filter.to_string();
         self.reload_state().await?;
         let mut views = self.local.saved_views.clone();
-        let replaced = views.insert(name.clone(), filter.clone());
+        let replaced = views.insert(name.clone(), canonical.clone());
         let entry = FilterInput::Text(format!("@{name}"));
         let parsed = ViewFilters::new(&views, today);
+        parsed.remember(&name, filter.clone(), parsed_filter);
         query::validate_views(&entry.parse(today)?, &|name: &str| parsed.resolve(name))
             .map_err(|error| query_error(error, &entry, &parsed, &self.local.display_name))?;
         self.persist_views(views, guard).await?;
         Ok(Response::ViewSaved {
-            view: SavedView { name, filter },
+            view: SavedView {
+                name,
+                filter: canonical,
+            },
             replaced,
         })
     }

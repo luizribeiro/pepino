@@ -1210,7 +1210,7 @@ async fn saving_rejects_missing_and_cyclic_references_without_persisting() {
     handle(&mut app, save("last", "is:open @first"))
         .await
         .unwrap();
-    read_golden(&mut app, save("first", "@missing"), json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown saved view \"missing\"","term":"@missing","position":{"kind":"byte","byte":0},"view_chain":["first"],"hint":"Use list_views to see available saved views"}})).await;
+    read_golden(&mut app, json!({"op":"save_view","name":"first","filter":["tag:hardware","  @missing"],"today":"2026-11-20"}), json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown saved view \"missing\"","term":"@missing","position":{"kind":"argument","index":1,"byte":2},"view_chain":["first"],"hint":"Use list_views to see available saved views"}})).await;
     read_golden(&mut app, save("first", "@last"), json!({"error":{"kind":"invalid_input","field":"filter","reason":"saved view cycle: first -> last -> first","term":"@first","position":{"kind":"byte","byte":8},"view_chain":["first","last","first"]}})).await;
     read_golden(&mut app, json!({"op":"list_views"}), json!({"ok":{"kind":"views","views":[{"name":"first","filter":"tag:hardware"},{"name":"last","filter":"is:open @first"}]}})).await;
 }

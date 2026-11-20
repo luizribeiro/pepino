@@ -117,6 +117,10 @@ impl<'a> ViewFilters<'a> {
         }
     }
 
+    pub(super) fn remember(&self, name: &str, source: FilterInput, filter: Filter) {
+        self.parsed().insert(name.into(), (source, Ok(filter)));
+    }
+
     pub(super) fn parsed(&self) -> MutexGuard<'_, ParsedViews> {
         self.parsed.lock().unwrap_or_else(PoisonError::into_inner)
     }
