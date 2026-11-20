@@ -91,3 +91,39 @@ mod support;
 #[cfg(pepino_network_tests)]
 #[path = "device/workflow.rs"]
 mod workflow;
+
+#[test]
+fn private_code_inputs_keep_codes_out_of_the_arguments() {
+    use std::{io::Write, process::Stdio};
+
+    let (sandbox, _) = uninitialized_task_sandbox();
+    let path = sandbox.home.path().join("secret.txt");
+    for (action, code) in [("add", "PPN-REQUEST-ABCDE"), ("join", "PPN-GRANT-ABCDE")] {
+        std::fs::write(&path, code).unwrap();
+        for source in [
+            vec![],
+            vec!["-"],
+            vec!["--from-file", path.to_str().unwrap()],
+        ] {
+            let mut command = sandbox.command();
+            let reads_stdin = !source.contains(&"--from-file");
+            command
+                .args(["device", action, "--json"])
+                .args(source)
+                .stdin(if reads_stdin {
+                    Stdio::piped()
+                } else {
+                    Stdio::null()
+                })
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            assert!(command.get_args().all(|arg| arg != code));
+            let mut child = command.spawn().unwrap();
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(code.as_bytes()).unwrap();
+            }
+            let output = child.wait_with_output().unwrap();
+            assert_json_error(output, 2, "invalid_input");
+        }
+    }
+}

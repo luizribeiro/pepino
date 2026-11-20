@@ -1,4 +1,5 @@
 mod add;
+mod code_input;
 mod join;
 mod ls;
 
@@ -33,17 +34,17 @@ enum Action {
     Ls,
 
     /// Install a grant and wait for board membership and the first sync.
-    #[command(after_help = example_help(&["ppn device join GRANT --timeout 45s"]))]
+    #[command(after_help = example_help(&["ppn device join - --timeout 45s < grant.txt", "ppn device join --from-file grant.txt"]))]
     Join {
-        /// Secret grant code printed by an existing device.
-        grant: String,
+        #[command(flatten)]
+        input: code_input::CodeInput,
     },
 
     /// Grant a requested device manager access to your boards and print a secret code.
-    #[command(after_help = example_help(&["ppn device add REQUEST --name ferrum"]))]
+    #[command(after_help = example_help(&["ppn device add - --yes < request.txt", "ppn device add --from-file request.txt --yes"]))]
     Add {
-        /// Request code printed on the new device.
-        request: String,
+        #[command(flatten)]
+        input: code_input::CodeInput,
         /// Override the requesting device's name.
         #[arg(long, value_name = "NAME")]
         name: Option<String>,
@@ -66,8 +67,10 @@ pub fn run(
 ) -> Result<CommandResult, CliError> {
     match args.action {
         Action::Ls => ls::run(context),
-        Action::Join { grant } => join::run(context, &grant, selection),
-        Action::Add { request, name } => add::run(context, &request, name, selection, allow_start),
+        Action::Join { input } => join::run(context, &input.read(context)?, selection),
+        Action::Add { input, name } => {
+            add::run(context, &input.read(context)?, name, selection, allow_start)
+        }
         Action::Request { name } => {
             let (directory, options) = local_options(context, name)?;
             let request = runtime()?.block_on(App::request_device(directory, options))?;
