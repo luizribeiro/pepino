@@ -328,3 +328,7 @@ fn leaving_the_last_active_device_fails_before_confirmation() {
             .contains("last active device")
     );
 }
+
+#[cfg(pepino_network_tests)]
+#[path = "device/removal.rs"]
+mod removal;
