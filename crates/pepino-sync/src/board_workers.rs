@@ -57,7 +57,11 @@ impl<T: Transport> BoardWorkers<T> {
     }
 
     pub async fn open_missing(&mut self, local: &LocalState) -> Result<(), Error> {
-        for board in local.boards() {
+        for board in local
+            .boards()
+            .iter()
+            .filter(|board| !local.waiting_for_access(board.id))
+        {
             if self.stopping.has_changed().is_err() {
                 return Ok(());
             }

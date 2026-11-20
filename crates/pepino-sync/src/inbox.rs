@@ -174,7 +174,11 @@ async fn ingest_catalog<A>(
                 Ok(local) => {
                     status.send_if_modified(|state| {
                         let mut changed = false;
-                        for board in local.boards() {
+                        for board in local
+                            .boards()
+                            .iter()
+                            .filter(|board| !local.waiting_for_access(board.id))
+                        {
                             if let std::collections::btree_map::Entry::Vacant(entry) =
                                 state.boards.entry(board.id)
                             {
