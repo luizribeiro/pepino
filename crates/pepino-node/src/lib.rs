@@ -9,6 +9,8 @@ mod membership;
 mod node;
 mod receipt;
 mod settings;
+#[cfg(test)]
+mod spool;
 mod status;
 mod worker;
 
