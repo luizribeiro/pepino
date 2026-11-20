@@ -2,6 +2,7 @@ mod add;
 mod code_input;
 mod join;
 mod ls;
+mod rename;
 
 use std::path::Path;
 
@@ -34,6 +35,15 @@ enum Action {
     /// List this identity's devices and their membership status.
     #[command(after_help = example_help(&["ppn device ls", "ppn device ls --json"]))]
     Ls,
+
+    /// Rename this device or another device in the identity.
+    #[command(override_usage = "ppn device rename [OPTIONS] [DEVICE] <NAME>", after_help = example_help(&["ppn device rename Titanium", "ppn device rename Ferrum 'Garden tablet'"]))]
+    Rename {
+        /// New name, or a device name or ID when followed by a new name.
+        device_or_name: String,
+        /// New name when targeting a specific device.
+        name: Option<String>,
+    },
 
     /// Install a grant and wait for board membership and the first sync.
     #[command(after_help = example_help(&["ppn device join - --timeout 45s < grant.txt", "ppn device join --from-file grant.txt"]))]
@@ -69,7 +79,10 @@ enum Action {
 
 impl Args {
     pub(crate) fn requires_identity(&self) -> bool {
-        matches!(self.action, Action::Ls | Action::Add { .. })
+        matches!(
+            self.action,
+            Action::Ls | Action::Add { .. } | Action::Rename { .. }
+        )
     }
 }
 
@@ -81,6 +94,10 @@ pub fn run(
 ) -> Result<CommandResult, CliError> {
     match args.action {
         Action::Ls => ls::run(context),
+        Action::Rename {
+            device_or_name,
+            name,
+        } => rename::run(context, device_or_name, name),
         Action::Join { input } => join::run(context, &input.read(context)?, selection),
         Action::Add {
             input,

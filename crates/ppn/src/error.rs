@@ -365,6 +365,13 @@ impl From<AppError> for CliError {
             AppError::NotFound { reference, .. } => {
                 diagnostic.message = format!("{reference} was not found");
             }
+            AppError::AmbiguousDevice { candidates, .. } => {
+                let ids = candidates
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>();
+                diagnostic.hint = Some(format!("Choose a device ID from {}.", ids.join(", ")));
+            }
             AppError::AmbiguousId { task, count, .. } => {
                 diagnostic.message = format!("Task reference {task} matches {count} tasks");
                 diagnostic.hint = Some("Use a longer task ID.".into());

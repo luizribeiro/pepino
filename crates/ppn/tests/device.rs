@@ -190,3 +190,37 @@ fn cancelling_a_request_removes_pending_state_and_is_idempotent() {
         "not_initialized",
     );
 }
+
+#[test]
+fn device_rename_accepts_this_device_or_an_explicit_id_in_a_pipe() {
+    let (sandbox, _) = task_sandbox();
+    assert!(
+        sandbox
+            .run(&["device", "rename", " Garden tablet "])
+            .contains("Garden tablet")
+    );
+    let roster = as_json(&sandbox.run(&["device", "ls", "--json"]));
+    let id = roster["devices"][0]["id"].as_str().unwrap();
+    let changed = as_json(&sandbox.run(&["device", "rename", id, "--json", "Titanium"]));
+    assert_eq!(changed["schema"], 1);
+    assert_eq!(changed["device"]["id"], id);
+    assert_eq!(changed["device"]["name"], "Titanium");
+    task_error(
+        sandbox
+            .command()
+            .args(["device", "rename", "missing", "Ferrum", "--json"])
+            .output()
+            .unwrap(),
+        3,
+        "not_found",
+    );
+    task_error(
+        sandbox
+            .command()
+            .args(["device", "rename", " ", "--json"])
+            .output()
+            .unwrap(),
+        2,
+        "invalid_input",
+    );
+}
