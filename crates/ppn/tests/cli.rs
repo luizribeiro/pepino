@@ -238,7 +238,8 @@ fn help_describes_the_cli_in_both_formats() {
     assert_eq!(help["schema"], 1);
     assert_eq!(help["name"], "ppn");
     let commands = help["commands"].as_array().unwrap();
-    assert_eq!(commands.len(), 4);
+    assert_eq!(commands.len(), 5);
+    assert_eq!(commands[4]["name"], "add");
     assert_eq!(commands[3]["name"], "status");
     assert!(!human.contains("debug"));
     assert_eq!(commands[0]["name"], "version");
@@ -1050,4 +1051,22 @@ fn status_renders_empty_local_state_through_the_binary() {
         assert_eq!(status[kind]["id"].as_str().unwrap().len(), 64);
         assert!(!status[kind][name].as_str().unwrap().is_empty());
     }
+}
+
+#[test]
+fn add_reports_the_created_task_through_the_binary() {
+    let (sandbox, _) = task_sandbox();
+    let human = sandbox.run(&["add", "Order the replacement latch"]);
+    assert!(human.starts_with("Created "));
+    assert!(human.ends_with("  Order the replacement latch\n"));
+    assert_eq!(human.split_whitespace().nth(1).unwrap().len(), 6);
+
+    let write = as_json(&sandbox.run(&["add", "Check the hinges", "--json"]));
+    assert_eq!(write["schema"], 1);
+    assert_eq!(write["kind"], "write");
+    assert_eq!(write["changed"], true);
+    assert_eq!(write["edges"], json!([]));
+    assert_eq!(write["tasks"][0]["id"], write["created"]);
+    assert_eq!(write["created"].as_str().unwrap().len(), 64);
+    assert_eq!(write["tasks"][0]["title"], "Check the hinges");
 }
