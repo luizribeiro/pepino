@@ -8,13 +8,27 @@ use ppn::{
 
 use super::*;
 
+const CONSEQUENCES: &str = "Once removed, the device can no longer read anything new. It keeps everything it already had. If offline, it may never receive notice and will show stale data. Adding it again gives it the full history, including the time it was removed. Concurrent revocations between managers can leave a board without a manager.";
+
 pub(super) fn run(context: &Context<'_>, reference: &str) -> Result<CommandResult, CliError> {
     let client = AppClient::open(context)?;
     let local = client.local_state();
     local.check_device_write()?;
     let target = local.revocation_target(reference)?;
     let name = single_line(&target.name);
-    let prompt = format!("Revoke {name} ({})?", short_id(&target.id.to_string()));
+    let id = target.id.to_string();
+    let fingerprint = blake3::derive_key("Pepino device key fingerprint v1", target.id.as_bytes());
+    let fingerprint = hex::encode(&fingerprint[..8]);
+    let boards = local
+        .boards()
+        .iter()
+        .map(|board| single_line(&board.name))
+        .collect::<Vec<_>>();
+    let prompt = format!(
+        "Revoke {name} ({})? Key fingerprint {fingerprint}.\nBoards affected: {}.\n{CONSEQUENCES}",
+        short_id(&id),
+        boards.join(", "),
+    );
     let mut result = Report {
         device: target.id,
         name,

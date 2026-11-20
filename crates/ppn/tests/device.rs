@@ -231,9 +231,15 @@ fn device_rename_accepts_this_device_or_an_explicit_id_in_a_pipe() {
 }
 
 #[test]
-fn revocation_refuses_the_current_device() {
-    let (sandbox, _) = uninitialized_task_sandbox();
-    sandbox.run(&["init", "--name", "Ada Gardener"]);
+fn revoke_guards_the_current_device_and_confirms_another_device() {
+    let (sandbox, data) = uninitialized_task_sandbox();
+    sandbox.run(&["init", "--name", "Ada Gardener", "--board", "Greenhouse"]);
+    let peer = pepino_core::DeviceId::from_bytes([66; 32]);
+    seed_tasks(&data, async |app| {
+        app.remember_device(peer, "Garden tablet".into(), None)
+            .await
+            .unwrap();
+    });
     let own = as_json(&sandbox.run(&["status", "--json"]))["device"]["id"]
         .as_str()
         .unwrap()
@@ -250,4 +256,20 @@ fn revocation_refuses_the_current_device() {
             .unwrap()
             .contains("another device")
     );
+    let mut command = sandbox.command();
+    command.args(["device", "revoke", "Garden tablet"]);
+    let declined = task_terminal(command, Some(b"n\n"));
+    assert!(declined.status.success());
+    assert!(String::from_utf8_lossy(&declined.stdout).contains("Revocation cancelled"));
+    let prompt = String::from_utf8_lossy(&declined.stderr);
+    for expected in [
+        "Garden tablet",
+        &peer.to_string()[..6],
+        "fingerprint",
+        "Boards affected",
+        "stale data",
+        "full history",
+    ] {
+        assert!(prompt.contains(expected), "{prompt}");
+    }
 }
