@@ -136,3 +136,16 @@ fn view_requires_a_filter_and_preserves_argument_diagnostics() {
         .unwrap();
     assert_eq!(task_error(output, 2, "invalid_input")["field"], "name");
 }
+
+#[test]
+fn view_save_accepts_a_full_filter_with_or_without_positional_terms() {
+    let (sandbox, _) = task_sandbox();
+    let filter = r#"tag:hardware -"bad hinge""#;
+    let saved = as_json(&sandbox.run(&["view", "save", "weekend", "-f", filter, "--json"]));
+    assert_eq!(saved["view"]["filter"], filter);
+    let combined = as_json(&sandbox.run(&[
+        "view", "save", "weekend", "--filter", filter, "is:open", "--json",
+    ]));
+    assert_eq!(combined["view"]["filter"], format!("{filter} is:open"));
+    assert_eq!(combined["replaced"], true);
+}

@@ -20,6 +20,10 @@ substring. @name expands a saved view. Use ppn help dates for date forms.
 Double quotes in filter syntax protect spaces, commas and operators.
 Inside quotes, use \" for a literal double quote and \\ for a backslash.
 The shell removes its own quotes. Each positional argument is one term.
+Whitespace inside a keyed argument stays in its operand. Other arguments
+with internal whitespace are literal text. Empty arguments are ignored.
+Use --filter (or -f) for a full filter string with spaces and quoted phrases.
+It is ANDed with the positional terms. Pass a returned filter via --filter.
 Shell-quote terms containing whitespace or < and >. Use ppn ls -- -tag:later
 to end option parsing explicitly.
 
@@ -29,7 +33,7 @@ Examples:
   ppn ready 'due:<=fri' has:description
   ppn ls 'replace the greenhouse latch'
   ppn view save weekend is:open 'due:<=+1w'
-  ppn ls @weekend 'client:"Acme Corp"' 'estimate:<=3'"#;
+  ppn ls --filter '@weekend client:"Acme Corp" estimate:<=3'"#;
 
 const DATES: &str = "Use YYYY-MM-DD, today, tomorrow, yesterday, a three-letter or full weekday, \
 or a signed offset such as +3d or -1w. Units are d (days) and w (weeks). \

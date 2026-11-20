@@ -1,5 +1,5 @@
 use clap::Subcommand;
-use pepino_app::{FilterInput, ReadRequest, Request, SavedView, WriteRequest};
+use pepino_app::{ReadRequest, Request, SavedView, WriteRequest};
 use ppn::app::AppClient;
 use ppn::error::CliError;
 use ppn::help_tree::example_help;
@@ -28,8 +28,16 @@ enum Action {
         /// Name of the view to save.
         name: String,
         /// Filter terms to save. See ppn help filters.
-        #[arg(required = true, value_name = "FILTER", value_parser = crate::cli::filter::unescape_term)]
+        #[arg(required_unless_present = "filter_text", value_name = "FILTER", value_parser = crate::cli::filter::unescape_term)]
         filter: Vec<String>,
+        /// Parse a complete filter string, ANDed with any positional terms.
+        #[arg(
+            short = 'f',
+            long = "filter",
+            value_name = "STRING",
+            allow_hyphen_values = true
+        )]
+        filter_text: Option<String>,
     },
 
     /// List saved view names and filters.
@@ -57,9 +65,13 @@ enum Action {
 pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
     let request = match args.action {
-        Action::Save { name, filter } => Request::Write(WriteRequest::SaveView {
+        Action::Save {
             name,
-            filter: FilterInput::Argv(filter),
+            filter,
+            filter_text,
+        } => Request::Write(WriteRequest::SaveView {
+            name,
+            filter: crate::cli::filter::input(filter_text, filter)?,
         }),
         Action::Ls => Request::Read(ReadRequest::ListViews),
         Action::Rm { name, force } => Request::Write(WriteRequest::DeleteView { name, force }),

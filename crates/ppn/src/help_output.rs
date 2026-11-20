@@ -12,7 +12,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "ls" | "ready" => (
             "tasks",
-            "tasks Matching task records after sorting and limiting\ntotal Number of matches before the limit\nfilter Canonical filter string\nresolved_dates Calendar dates for relative operands\nsort Sort specification used\nwarnings Filter warnings\nconstrains_status Whether the user filter selects a status\nnames Display names keyed by identity or device ID",
+            "tasks Matching task records after sorting and limiting\ntotal Number of matches before the limit\nfilter Canonical filter accepted by --filter\nresolved_dates Calendar dates for relative operands\nsort Sort specification used\nwarnings Filter warnings\nconstrains_status Whether the user filter selects a status\nnames Display names keyed by identity or device ID",
         ),
         "show" => (
             "task",
