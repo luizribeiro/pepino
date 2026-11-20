@@ -99,6 +99,28 @@ async fn retains_each_skipped_classification_and_exact_bytes() {
             )
         );
     }
+    store
+        .append(board, &bytes, IdSource::Content)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.statistics(board).await.unwrap(),
+        crate::BoardStatistics {
+            total: 5,
+            applied: 1,
+            unknown_version: 1,
+            unknown_event: 1,
+            unknown_value: 1,
+            invalid: 1,
+        }
+    );
+    assert_eq!(
+        store
+            .statistics(BoardId::from_bytes([20; 32]))
+            .await
+            .unwrap(),
+        crate::BoardStatistics::default(),
+    );
     assert_eq!(store.latest_hlc(board).await.unwrap(), Some(original.hlc()));
 }
 

@@ -11,6 +11,7 @@ mod history;
 mod log;
 mod prefix;
 pub mod query;
+mod statistics;
 mod task;
 mod traversal;
 
@@ -32,6 +33,7 @@ pub use error::{DatabaseErrorKind, StoreError};
 pub use history::{EventClassification, EventRecord, HistoryEvent};
 pub use log::{AppendOutcome, IdSource, RebuildReport, SkipReason};
 pub use prefix::{PrefixResolution, TaskPrefixResolution};
+pub use statistics::BoardStatistics;
 pub use task::TaskRecord;
 pub use traversal::{Dependencies, Dependency, SubtreeEntry};
 
