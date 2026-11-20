@@ -64,9 +64,7 @@ impl Terminal {
 
     pub fn task_output(self, color: Color) -> Self {
         Self {
-            color: self.stdout_is_tty
-                && !self.no_color
-                && use_color(color, self.stdout_is_tty, self.no_color, self.dumb),
+            color: use_color(color, self.stdout_is_tty, self.no_color, self.dumb),
             ..self
         }
     }
@@ -230,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn task_color_honors_config_on_terminals_and_stays_plain_on_pipes() {
+    fn task_color_honors_explicit_modes_and_limits_auto_to_terminals() {
         let tty = Terminal::fixed(Some(48), false);
         assert_eq!(
             tty.task_output(Color::Always)
@@ -241,9 +239,11 @@ mod tests {
             no_color: true,
             ..tty
         };
-        assert!(!muted.task_output(Color::Always).color);
+        assert!(muted.task_output(Color::Always).color);
+        assert!(!muted.task_output(Color::Auto).color);
         let pipe = Terminal::fixed(None, false);
-        assert!(!pipe.task_output(Color::Always).color);
+        assert!(pipe.task_output(Color::Always).color);
+        assert!(!pipe.task_output(Color::Auto).color);
     }
 
     #[test]

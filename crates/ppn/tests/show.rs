@@ -14,7 +14,7 @@ fn show_renders_the_protocol_task_and_configured_due_date() {
         "--json",
     ]));
     let id = write["created"].as_str().unwrap();
-    let human = sandbox.run(&["show", &id[..6], "--color", "always"]);
+    let human = sandbox.run(&["show", &id[..6]]);
     assert!(human.starts_with(&format!(
         "{}  Check the greenhouse hinges  todo\n",
         &id[..6]
@@ -132,7 +132,7 @@ fn show_uses_tty_dates_and_configured_color() {
     )
     .unwrap();
     let id = create_task(&sandbox, "Inspect the hinge", &["--due", "tomorrow"]);
-    let plain = sandbox.run(&["show", &id, "--color", "always"]);
+    let plain = sandbox.run(&["show", &id, "--color", "never"]);
     assert!(
         plain
             .lines()
@@ -143,7 +143,9 @@ fn show_uses_tty_dates_and_configured_color() {
     assert!(colored.contains("\x1b[36m"));
     assert!(colored.contains("due tomorrow") || colored.contains("due today"));
     let suppressed = String::from_utf8(tty_output(&args, Some("1"))).unwrap();
-    assert!(!suppressed.contains('\x1b'));
+    assert_eq!(suppressed, colored);
+    let auto = [&args[..], &["--color", "auto"]].concat();
+    assert!(!tty_output(&auto, Some("1")).contains(&0x1b));
 }
 
 #[test]
@@ -235,4 +237,36 @@ fn write_diagnostics_keep_one_prefix_and_short_edge_endpoints() {
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(output.stderr, b"error: view weekend is referenced by maintenance\nhint: Pass `--force` to remove the referenced view.\n");
+}
+
+#[test]
+fn show_forces_color_on_a_pipe_when_requested_by_flag_or_config() {
+    let (sandbox, _) = task_sandbox();
+    let id = create_task(&sandbox, "Replace the greenhouse latch", &[]);
+    assert!(!sandbox.run(&["show", &id]).contains('\x1b'));
+    let show = |flags: &[&str]| {
+        let output = sandbox
+            .command()
+            .env("NO_COLOR", "1")
+            .args(["show", &id])
+            .args(flags)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(output.stderr.is_empty());
+        output.stdout
+    };
+    let forced = show(&["--color", "always"]);
+    assert!(forced.contains(&0x1b));
+    std::fs::write(
+        &sandbox.config,
+        "data_dir = '~/board'\n[ui]\ncolor = 'always'\ndate_format = '%d %b %Y'\n",
+    )
+    .unwrap();
+    assert_eq!(show(&[]), forced);
+    assert!(!show(&["--color", "auto"]).contains(&0x1b));
+    assert_eq!(
+        as_json(&sandbox.run(&["show", &id, "--json"]))["kind"],
+        "task"
+    );
 }
