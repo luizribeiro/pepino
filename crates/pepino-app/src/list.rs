@@ -54,7 +54,7 @@ impl App {
                 views: &saved,
             },
         };
-        let diagnostic = |error| query_error(error, source, &filter, &views);
+        let diagnostic = |error| query_error(error, source, &views);
         let terms = query().board_terms().map_err(diagnostic)?;
         let local_board = Board {
             id: self.local.board_id,
@@ -136,18 +136,13 @@ fn select_boards(boards: &[Board<'_>], terms: &[Term]) -> Result<Vec<BoardId>, A
     Ok(selected.into_iter().map(|board| board.id).collect())
 }
 
-fn query_error(
-    error: QueryError,
-    source: &FilterInput,
-    filter: &Filter,
-    views: &ViewFilters<'_>,
-) -> AppError {
-    let (source, filter) = error
+fn query_error(error: QueryError, source: &FilterInput, views: &ViewFilters<'_>) -> AppError {
+    let source = error
         .view_chain
         .last()
         .and_then(|name| views.get(name.as_str()))
-        .map_or((source, filter), |(source, filter)| (source, filter));
-    let position = source.position_of(filter, &error.term);
+        .map_or(source, |(source, _)| source);
+    let position = source.position_at(error.term_index);
     let reason = error.kind.to_string();
     let view_chain = match error.kind {
         QueryErrorKind::ViewCycle { chain } => chain,

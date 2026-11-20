@@ -59,11 +59,7 @@ impl From<filter::Position> for FilterPosition {
 }
 
 impl FilterInput {
-    pub(super) fn position_of(&self, filter: &Filter, term: &str) -> Option<FilterPosition> {
-        let index = filter
-            .terms()
-            .iter()
-            .position(|parsed| parsed.to_string() == term)?;
+    pub(super) fn position_at(&self, index: usize) -> Option<FilterPosition> {
         match self {
             Self::Text(text) => term_starts(text)
                 .nth(index)
@@ -96,4 +92,20 @@ fn term_starts(text: &str) -> impl Iterator<Item = usize> {
         in_term = true;
         start.then_some(index)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_terms_have_separate_positions() {
+        let text = FilterInput::Text("tag:hardware  tag:hardware".into());
+        let argv = FilterInput::Argv(vec!["tag:hardware".into(), "  tag:hardware".into()]);
+        assert_eq!(text.position_at(1), Some(FilterPosition::Byte { byte: 14 }));
+        assert_eq!(
+            argv.position_at(1),
+            Some(FilterPosition::Argument { index: 1, byte: 2 })
+        );
+    }
 }
