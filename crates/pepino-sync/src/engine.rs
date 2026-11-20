@@ -1,3 +1,4 @@
+mod invite;
 use std::{path::Path, sync::Arc, time::Duration};
 
 use futures_util::{Stream, StreamExt};
