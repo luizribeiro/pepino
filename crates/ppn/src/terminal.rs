@@ -116,6 +116,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn caches_the_first_configuration_error() {
+        let attempts = std::cell::Cell::new(0);
+        let context = Context::new(
+            Terminal::detect(Color::Never, &Env::new()),
+            false,
+            None,
+            || {
+                attempts.set(attempts.get() + 1);
+                Err(CliError::new(
+                    ErrorKind::InvalidConfig,
+                    "PPN_MDNS: expected a boolean",
+                ))
+            },
+        );
+        assert_eq!(attempts.get(), 0);
+        for _ in 0..2 {
+            assert_eq!(
+                context.config().unwrap_err().kind(),
+                ErrorKind::InvalidConfig
+            );
+        }
+        assert_eq!(attempts.get(), 1);
+    }
+
+    #[test]
     fn only_automatic_color_depends_on_the_terminal_and_environment() {
         assert!(use_color(Color::Always, false, false, false));
         assert!(use_color(Color::Always, false, true, true));

@@ -869,6 +869,7 @@ fn commands_load_configuration_only_when_needed() {
         success(
             sandbox
                 .command()
+                .env_remove("PPN_CONFIG")
                 .env("PPN_MDNS", "maybe")
                 .args(args)
                 .output()
@@ -877,6 +878,7 @@ fn commands_load_configuration_only_when_needed() {
     }
     let output = sandbox
         .command()
+        .env_remove("PPN_CONFIG")
         .args(["config", "show", "--json"])
         .output()
         .unwrap();
@@ -955,23 +957,21 @@ fn explicit_config_check_accepts_an_unset_or_relative_home() {
     let file = sandbox.home.path().join("sandbox.toml");
     std::fs::write(&file, "network = 'release-team'").unwrap();
     for home in [None, Some("relative")] {
-        let mut command = sandbox.command();
-        command
-            .env_remove("HOME")
-            .env_remove("XDG_CONFIG_HOME")
-            .env_remove("XDG_STATE_HOME");
-        if let Some(home) = home {
-            command.env("HOME", home);
-        }
-        for args in [&["version"][..], &["help"], &[]] {
+        let command = || {
             let mut command = sandbox.command();
-            command.env_remove("HOME");
+            command
+                .env_remove("HOME")
+                .env_remove("XDG_CONFIG_HOME")
+                .env_remove("XDG_STATE_HOME");
             if let Some(home) = home {
                 command.env("HOME", home);
             }
-            success(command.args(args).output().unwrap());
+            command
+        };
+        for args in [&["version"][..], &["help"], &[]] {
+            success(command().args(args).output().unwrap());
         }
-        let output = command
+        let output = command()
             .args(["config", "check"])
             .arg(&file)
             .arg("--json")
