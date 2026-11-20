@@ -1,3 +1,5 @@
+mod add;
+
 use std::path::Path;
 
 use clap::Subcommand;
@@ -24,6 +26,16 @@ pub struct Args {
 
 #[derive(Subcommand)]
 enum Action {
+    /// Grant a requested device manager access to your boards and print a secret code.
+    #[command(after_help = example_help(&["ppn device add REQUEST --name ferrum"]))]
+    Add {
+        /// Request code printed on the new device.
+        request: String,
+        /// Override the requesting device's name.
+        #[arg(long, value_name = "NAME")]
+        name: Option<String>,
+    },
+
     /// Prepare an uninitialised host and print its reusable request code.
     #[command(after_help = example_help(&["ppn device request --name ferrum", "ppn device request --json"]))]
     Request {
@@ -36,10 +48,11 @@ enum Action {
 pub fn run(
     context: &Context<'_>,
     args: Args,
-    _selection: Option<&Path>,
-    _allow_start: bool,
+    selection: Option<&Path>,
+    allow_start: bool,
 ) -> Result<CommandResult, CliError> {
     match args.action {
+        Action::Add { request, name } => add::run(context, &request, name, selection, allow_start),
         Action::Request { name } => {
             let (directory, options) = local_options(context, name)?;
             let request = runtime()?.block_on(App::request_device(directory, options))?;
@@ -94,4 +107,11 @@ impl Render for RequestCode {
             ("request".into(), json!(self.0)),
         ])
     }
+}
+
+fn unexpected_reply() -> CliError {
+    CliError::new(
+        ErrorKind::DaemonUnreachable,
+        "The daemon returned an unexpected control response.",
+    )
 }

@@ -67,6 +67,10 @@ impl AppClient {
         })
     }
 
+    pub fn local_state(&self) -> &pepino_app::LocalState {
+        self.app.local_state()
+    }
+
     pub fn author_labels(&self, verbose: bool) -> impl Fn(Option<&str>) -> String + use<> {
         let local = self.app.local_state();
         let devices = local.devices();

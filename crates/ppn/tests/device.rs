@@ -30,3 +30,15 @@ fn device_request_is_stable_for_a_piped_script() {
     assert!(data.join("node.sqlite").exists());
     assert!(!data.join("local.json").exists());
 }
+
+#[test]
+fn device_add_rejects_a_corrupt_request_without_starting_a_daemon() {
+    let (sandbox, data) = uninitialized_task_sandbox();
+    let args = ["device", "add", "PPN-REQUEST-ABCDE", "--json"];
+    assert_json_error(
+        sandbox.command().args(args).output().unwrap(),
+        2,
+        "invalid_input",
+    );
+    assert!(!data.exists());
+}

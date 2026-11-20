@@ -46,6 +46,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "device_request",
             "request Reusable request code for an existing device",
         ),
+        "device add" => (
+            "device_grant",
+            "grant Secret object with code and secret fields",
+        ),
         "view ls" => ("views", "views Saved filters ordered by name"),
         "view save" => (
             "view_saved",
