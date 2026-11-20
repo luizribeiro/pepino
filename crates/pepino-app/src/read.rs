@@ -62,6 +62,7 @@ impl App {
                 }
             }
         }
+        ids.retain(|id| view.task(*id).is_some());
         let (top_level, unblocked) = deletion_impact(&view, &view.edges_after_removing(&ids), &ids);
         let summarize = |ids: Vec<_>| {
             ids.into_iter()

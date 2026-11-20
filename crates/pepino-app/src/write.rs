@@ -290,7 +290,7 @@ fn delete_task(
     for edge in view.edges(task) {
         let (from, kind, to) = (edge.from, edge.kind, edge.to);
         let peer = if from == task { to } else { from };
-        if !seen.contains(&peer) {
+        if !seen.contains(&peer) || view.task(peer).is_none() {
             let direct_target = batch.targets.contains(&peer);
             batch.push(Event::EdgeRemoved { from, kind, to }, field)?;
             if !direct_target {

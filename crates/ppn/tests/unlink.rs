@@ -126,3 +126,20 @@ fn unlink_reports_a_link_activated_by_the_write() {
         }
     }
 }
+
+#[test]
+fn deleting_a_live_task_cleans_up_edges_to_older_tombstones_in_the_batch() {
+    let (sandbox, data) = task_sandbox();
+    let p = small_project(&sandbox);
+    append_remote(
+        &data,
+        pepino_core::Event::TaskDeleted {
+            task: p.parent.parse().unwrap(),
+        },
+    );
+    let reply = as_json(&sandbox.run(&["rm", &p.parent, &p.blocker, "--yes", "--json"]));
+    assert!(reply["edges"].as_array().unwrap().iter().any(|edge| {
+        edge["from"] == p.blocker && edge["to"] == p.parent && edge["effective"] == false
+    }));
+    assert_eq!(reply["deleted"].as_array().unwrap().len(), 1);
+}

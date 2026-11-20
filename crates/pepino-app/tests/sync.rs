@@ -193,3 +193,62 @@ async fn unlink_reports_activation_of_a_dormant_remote_blocker() {
         }]
     );
 }
+
+#[tokio::test]
+async fn deleting_a_live_task_cleans_up_edges_to_already_deleted_batch_targets() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let bench = create(
+        &mut app,
+        json!({"op":"add_task","title":"Repair the greenhouse bench"}),
+        "Repair the greenhouse bench",
+    )
+    .await;
+    let wood = create(
+        &mut app,
+        json!({"op":"add_task","title":"Pick up cedar","parent":bench.id}),
+        "Pick up cedar",
+    )
+    .await;
+    let board = app.local_state().board_id;
+    let store = Store::open(directory.path().join("pepino.sqlite"))
+        .await
+        .unwrap();
+    let mut clock = pepino_core::Clock::from_hlc(store.latest_hlc(board).await.unwrap().unwrap());
+    let remote = pepino_core::Envelope::new(
+        pepino_core::DeviceId::from_bytes([42; 32]),
+        clock.tick(NOW).unwrap(),
+        pepino_core::Event::TaskDeleted {
+            task: bench.id.parse().unwrap(),
+        },
+    )
+    .unwrap();
+    store
+        .append(board, &remote.encode().unwrap(), IdSource::Content)
+        .await
+        .unwrap();
+
+    let response = dispatch(
+        &mut app,
+        json!({"op":"apply_to_tasks","tasks":[bench.id, wood.id],"change":{"type":"delete"}}),
+    )
+    .await;
+    let Response::BatchWrite {
+        outcome,
+        changed_targets,
+    } = response
+    else {
+        panic!("expected batch write")
+    };
+    assert_eq!(changed_targets, std::slice::from_ref(&wood.id));
+    assert!(
+        matches!(*outcome, Response::Write { edges, .. } if edges.len() == 1 && !edges[0].effective)
+    );
+    assert!(
+        store
+            .edges(board, wood.id.parse().unwrap())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
