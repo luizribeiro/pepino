@@ -1,4 +1,5 @@
 mod history;
+mod model;
 
 use std::collections::BTreeMap;
 
