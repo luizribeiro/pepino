@@ -880,14 +880,69 @@ async fn saved_views_migrate_v1_state_and_survive_concurrent_opens() {
     read_golden(&mut app, json!({"op":"save_view","name":"latch","filter":"tags:hardware","today":"2026-11-20"}), json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown filter key \"tags\"","hint":"Use \"tag\"","term":"tags:hardware","position":{"kind":"byte","byte":0}}})).await;
 }
 
-#[tokio::test]
-async fn task_lists_an_empty_board() {
-    let directory = tempfile::tempdir().unwrap();
-    let mut app = App::open(directory.path(), NOW).await.unwrap();
+async fn list_golden(
+    app: &mut App,
+    filter: Value,
+    sort: Option<&str>,
+    limit: Option<usize>,
+    expected: Value,
+) {
     read_golden(
+        app,
+        json!({"op":"list_tasks","filter":filter,"sort":sort,"limit":limit,"today":"2026-11-20"}),
+        expected,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn task_lists_sort_limit_and_search_project_records_with_both_filter_forms() {
+    use pepino_app::OpenOptions;
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open_with_options(
+        directory.path(),
+        NOW,
+        OpenOptions {
+            display_name: Some("Ada Gardener".into()),
+            board_name: Some("Greenhouse".into()),
+            ..OpenOptions::default()
+        },
+    )
+    .await
+    .unwrap();
+    list_golden(
         &mut app,
-        json!({"op":"list_tasks","filter":"","sort":null,"limit":null,"today":"2026-11-20"}),
+        json!(""),
+        None,
+        None,
         json!({"ok":{"kind":"tasks","tasks":[],"total":0,"filter":"","sort":"default"}}),
     )
     .await;
+    let (_, latch, _, _) = write(&mut app,json!({"op":"add_task","title":"Replace the latch","tags":["hardware"],"assignees":["me"],"due":"2026-11-21","priority":9})).await;
+    let (_, hinges, _, _) = write(&mut app,json!({"op":"add_task","title":"Inspect the hinges","tags":["hardware"],"assignees":["me"],"due":"2026-11-27","priority":1})).await;
+    let latch = latch.unwrap();
+    let hinges = get(&mut app, &hinges.unwrap()).await;
+    add(&mut app, "Clean the gutters").await;
+    write(
+        &mut app,
+        json!({"op":"comment","task":latch,"text":"Look for stainless screws"}),
+    )
+    .await;
+    let latch = get(&mut app, &latch).await;
+    let mut summary = latch.clone();
+    summary.comments.clear();
+
+    list_golden(&mut app,json!("tag:hardware assignee:me"),None, None,
+        json!({"ok":{"kind":"tasks","tasks":[summary,hinges],"total":2,"filter":"tag:hardware assignee:me","sort":"default"}})).await;
+    list_golden(&mut app,json!(["tag:hardware","assignee:Ada Gardener"]),Some("title"),Some(1),
+        json!({"ok":{"kind":"tasks","tasks":[hinges],"total":2,"filter":"tag:hardware assignee:\"Ada Gardener\"","sort":"title"}})).await;
+    list_golden(&mut app,json!("due:tomorrow"),None,Some(0),
+        json!({"ok":{"kind":"tasks","tasks":[],"total":1,"filter":"due:2026-11-21","sort":"default"}})).await;
+    for filter in [
+        json!(" tag:hardware  \"STAINLESS screws\" "),
+        json!(["tag:hardware", "STAINLESS screws"]),
+    ] {
+        list_golden(&mut app,filter,None,None,
+            json!({"ok":{"kind":"tasks","tasks":[latch],"total":1,"filter":"tag:hardware \"STAINLESS screws\"","sort":"default"}})).await;
+    }
 }
