@@ -185,6 +185,11 @@ async fn two_devices_exchange_events_and_a_late_member_gets_history() {
         board_a.publish(PLAN.to_vec()).await,
         Err(Error::Removed)
     ));
+    assert!(matches!(
+        timeout(WAIT, events_a.next()).await.unwrap(),
+        Some(Err(Error::Removed))
+    ));
+    assert!(events_a.next().await.is_none());
     c.shutdown().await.unwrap();
     b.shutdown().await.unwrap();
     a.shutdown().await.unwrap();

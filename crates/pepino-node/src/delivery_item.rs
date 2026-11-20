@@ -16,6 +16,7 @@ pub(crate) enum Delivery {
     Replay(String),
     Storage(String),
     Node(String),
+    Removed,
 }
 
 impl Delivery {
@@ -38,6 +39,7 @@ impl Delivery {
             Self::Replay(details) => Err(Error::Replay(details)),
             Self::Storage(details) => Err(Error::Storage(details)),
             Self::Node(details) => Err(Error::Node(details)),
+            Self::Removed => Err(Error::Removed),
         }
     }
 }

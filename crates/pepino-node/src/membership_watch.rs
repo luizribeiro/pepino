@@ -33,6 +33,14 @@ pub struct MembershipEvent {
     pub members: MemberStates,
 }
 
+pub(crate) fn is_removed(members: &Mutex<MemberStates>, device: MemberId) -> bool {
+    members
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&DeviceId::from_bytes(*device.as_bytes()))
+        == Some(&MemberState::Removed)
+}
+
 pub(crate) struct MembershipMonitor {
     pub(crate) members: Arc<Mutex<MemberStates>>,
     pub(crate) changes: broadcast::Sender<MembershipEvent>,

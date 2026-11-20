@@ -18,7 +18,7 @@ use crate::{
     delivery::DeliveryWriter,
     delivery_item::Delivery,
     events::pipeline_error,
-    membership_watch::MembershipMonitor,
+    membership_watch::{MembershipMonitor, is_removed},
     receipt::{Payload, Receipts},
     status::board_status,
     status_state::Status,
@@ -49,6 +49,7 @@ pub(crate) struct BoardTask {
     pub(crate) replay_status: watch::Sender<bool>,
     pub(crate) stop: oneshot::Receiver<()>,
     pub(crate) events: DeliveryWriter,
+    pub(crate) ejected: bool,
     pub(crate) receipts: Receipts,
     pub(crate) author: p2panda::NodeId,
 }
@@ -61,7 +62,11 @@ impl BoardTask {
     ) -> Result<(), Error> {
         let mut joined = std::pin::pin!(joined);
         let mut space = None;
+        let mut initial_error = self.observe_removal().await.err();
         let result = loop {
+            if let Some(error) = initial_error.take() {
+                break Err(error);
+            }
             tokio::select! {
                 biased;
                 _ = &mut self.stop => break Ok(()),
@@ -101,9 +106,21 @@ impl BoardTask {
         result
     }
 
-    async fn forward(&self, event: StreamEvent<Payload>) -> Result<(), Error> {
+    async fn observe_removal(&mut self) -> Result<(), Error> {
+        let removed = is_removed(&self.membership.members, self.author);
+        if removed && !self.ejected {
+            self.events.send(Delivery::Removed).await?;
+        }
+        self.ejected = removed;
+        Ok(())
+    }
+
+    async fn forward(&mut self, event: StreamEvent<Payload>) -> Result<(), Error> {
         match &event {
-            StreamEvent::Space { members, inner, .. } => self.membership.update(members, inner),
+            StreamEvent::Space { members, inner, .. } => {
+                self.membership.update(members, inner);
+                self.observe_removal().await?;
+            }
             StreamEvent::ReplayStarted { .. } => {
                 self.replay_status.send_replace(true);
             }
@@ -113,6 +130,9 @@ impl BoardTask {
             _ => (),
         }
         board_status(&self.status, self.lease.id, &event);
+        if self.ejected {
+            return Ok(());
+        }
         if let StreamEvent::Processed { operation, source } = event {
             let id = EventId::from_bytes(*operation.id().as_bytes());
             let position = operation.processed().header().into();
@@ -174,6 +194,7 @@ mod tests {
             replay_status: watch::channel(false).0,
             stop: stop_rx,
             events,
+            ejected: false,
             receipts,
             author: p2panda::Credentials::generate().verifying_key(),
         };

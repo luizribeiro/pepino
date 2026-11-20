@@ -62,6 +62,7 @@ pub struct BoardHandle {
     receipts: Receipts,
     confirmation_timeout: Duration,
     events: DeliveryInbox,
+    events_taken: bool,
     stop: oneshot::Sender<()>,
     done: JoinHandle<Result<(), Error>>,
 }
@@ -212,6 +213,7 @@ impl BoardHandle {
             ready,
             replay_status,
             events: events_tx,
+            ejected: false,
             receipts: receipts.clone(),
             author: node.id(),
             stop: stop_rx,
@@ -230,6 +232,7 @@ impl BoardHandle {
             receipts,
             confirmation_timeout,
             events: DeliveryInbox::new(events),
+            events_taken: false,
             stop,
             done: tokio::spawn(task.drive(subscription, joined)),
         }
@@ -240,10 +243,22 @@ impl BoardHandle {
     }
 
     /// Take this board's single consumer stream. An event ID identifies every redelivery of that event.
+    ///
+    /// Removal ends the stream with [`Error::Removed`]. Once readmitted, call this
+    /// again after consuming that item to resume application delivery.
     pub fn events(&mut self) -> Result<BoardEvents, Error> {
         let board = self.id;
         let status = self.status.clone();
-        self.events.subscribe(move || status.delivered(board))
+        if self.events_taken
+            && self.node.upgrade().is_some_and(|node| {
+                crate::membership_watch::is_removed(&self.membership, node.id())
+            })
+        {
+            return Err(Error::Removed);
+        }
+        let events = self.events.subscribe(move || status.delivered(board))?;
+        self.events_taken = true;
+        Ok(events)
     }
 
     pub async fn wait_until_joined(&self, limit: Duration) -> Result<(), Error> {
