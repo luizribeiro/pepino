@@ -18,8 +18,8 @@ pub struct TaskRecord {
     pub custom: BTreeMap<FieldName, FieldValue>,
     pub tags: BTreeSet<String>,
     pub assignees: BTreeSet<IdentityId>,
-    pub created: u64,
-    pub updated: u64,
+    pub created: Hlc,
+    pub updated: Hlc,
     pub author: DeviceId,
 }
 
@@ -46,8 +46,8 @@ impl TaskRow {
             custom: BTreeMap::new(),
             tags: BTreeSet::new(),
             assignees: BTreeSet::new(),
-            created: Hlc::from_key(self.created).wall_ms,
-            updated: Hlc::from_key(self.updated).wall_ms,
+            created: Hlc::from_key(self.created),
+            updated: Hlc::from_key(self.updated),
             author: DeviceId::from_bytes(self.author),
         }
     }
@@ -112,8 +112,11 @@ impl Store {
             .pop())
     }
 
+    /// Lists live tasks in ascending creation order by `(created Hlc, task ID)`.
     pub async fn tasks(&self, board: BoardId) -> Result<Vec<TaskRecord>, StoreError> {
-        self.task_range(board, [0; 32], [255; 32]).await
+        let mut tasks = self.task_range(board, [0; 32], [255; 32]).await?;
+        tasks.sort_unstable_by_key(|task| (task.created, task.id));
+        Ok(tasks)
     }
 
     async fn task_range(

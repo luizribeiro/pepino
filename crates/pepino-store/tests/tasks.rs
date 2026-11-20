@@ -1,6 +1,6 @@
 use pepino_core::{
-    BoardId, Clock, Date, DeviceId, Envelope, Event, FieldName, FieldValue, IdentityId,
-    InitialFields, Status,
+    BoardId, Clock, Date, DeviceId, Envelope, Event, FieldName, FieldValue, Hlc, IdentityId,
+    InitialFields, Status, TaskId,
 };
 use pepino_store::{IdSource, Store, TaskRecord};
 
@@ -80,8 +80,11 @@ async fn creation_merges_with_retained_registers_by_clock() {
         custom: [(custom, FieldValue::Text("Oak Street Hardware".into()))].into(),
         tags: ["garden".into(), "weekend".into()].into(),
         assignees: [who].into(),
-        created: wall_ms + 10,
-        updated: wall_ms + 20,
+        created: creation.hlc(),
+        updated: Hlc {
+            wall_ms: wall_ms + 20,
+            counter: 1,
+        },
         author,
     };
     assert_eq!(
@@ -95,5 +98,53 @@ async fn creation_merges_with_retained_registers_by_clock() {
             .await
             .unwrap()
             .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn lists_tasks_by_full_creation_clock_then_id() {
+    let store = Store::open_in_memory().await.unwrap();
+    let board = BoardId::from_bytes([19; 32]);
+    let author = DeviceId::from_bytes([33; 32]);
+    let later = Hlc {
+        wall_ms: 1 << 63,
+        counter: 3,
+    };
+    let earlier = Hlc {
+        counter: 2,
+        ..later
+    };
+    for (id, hlc, title) in [
+        (40, later, "Paint the porch"),
+        (12, later, "Order the paint"),
+        (91, earlier, "Measure the porch"),
+    ] {
+        let creation = Envelope::new(
+            author,
+            hlc,
+            Event::TaskCreated {
+                title: title.into(),
+                fields: InitialFields::default(),
+            },
+        )
+        .unwrap();
+        let task = TaskId::from_bytes([id; 32]);
+        store
+            .append(
+                board,
+                &creation.encode().unwrap(),
+                IdSource::Trusted(task.0),
+            )
+            .await
+            .unwrap();
+    }
+    let tasks = store.tasks(board).await.unwrap();
+    assert_eq!(
+        tasks
+            .into_iter()
+            .map(|task| (task.created, task.id))
+            .collect::<Vec<_>>(),
+        [(earlier, 91), (later, 12), (later, 40)]
+            .map(|(hlc, id)| (hlc, TaskId::from_bytes([id; 32])))
     );
 }
