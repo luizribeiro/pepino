@@ -1,13 +1,14 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use pepino_app::BoardJoinState;
-use pepino_core::{BoardId, EventId};
+use pepino_core::{BoardId, DeviceId, EventId};
 use pepino_node::{NodeEvent, NodeStatus};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Status {
     pub board_joins: BTreeMap<BoardId, BoardJoinState>,
     pub(crate) catalog_generation: u64,
+    pub members: BTreeMap<BoardId, BTreeSet<DeviceId>>,
     pub boards: BTreeMap<BoardId, BoardStatus>,
     pub node: NodeStatus,
     pub last_node_event: Option<NodeEvent>,
@@ -39,6 +40,13 @@ pub struct BoardStatus {
     pub last_error: Option<String>,
     pub closed: bool,
     pub(crate) scan_generation: Option<u64>,
+    pub(crate) enrollment_pending: bool,
+}
+
+impl BoardStatus {
+    pub fn enrollment_pending(&self) -> bool {
+        self.enrollment_pending
+    }
 }
 
 impl Status {

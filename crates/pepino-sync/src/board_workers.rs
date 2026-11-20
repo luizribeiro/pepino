@@ -72,7 +72,9 @@ impl<T: Transport> BoardWorkers<T> {
         let board = Arc::new(board);
         self.handles.insert(id, Arc::downgrade(&board));
         self.changes.send_modify(|status| {
-            status.boards.entry(id).or_default();
+            let board = status.boards.entry(id).or_default();
+            board.enrollment_pending =
+                local.created_boards().contains(&id) && local.devices().len() > 1;
             status.board_joins.insert(id, local.board_join_state(id));
             status.node = self.node.status();
         });

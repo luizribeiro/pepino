@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use pepino_core::DeviceId;
 use tokio::sync::{Mutex, watch};
@@ -52,6 +55,40 @@ async fn reconcile<T: Transport>(
     let local = boards.app.fresh_local_state().await?;
     boards.open_missing(&local).await?;
     let node_status = boards.node.status();
+    let mut members = BTreeMap::new();
+    let mut enrolled = BTreeMap::new();
+    for board in local.boards() {
+        if !node_status
+            .boards
+            .get(&board.id)
+            .is_some_and(|signals| signals.joined)
+        {
+            continue;
+        }
+        if let Some(handle) = boards.handle(board.id) {
+            let ids = handle
+                .known_members(&local, local.created_boards().contains(&board.id))
+                .await?;
+            if let Some(ids) = ids {
+                if local.created_boards().contains(&board.id) {
+                    enrolled.insert(board.id, local.devices().keys().all(|id| ids.contains(id)));
+                }
+                members.insert(board.id, ids);
+            }
+        }
+    }
+    boards.changes.send_if_modified(|status| {
+        let mut changed = status.members != members;
+        status.members = members;
+        for (id, complete) in enrolled {
+            if let Some(board) = status.boards.get_mut(&id) {
+                changed |= board.enrollment_pending == complete;
+                board.enrollment_pending = !complete;
+            }
+        }
+        changed
+    });
+
     let catalog = local.catalog_board();
     if local.devices().len() > 1
         && node_status

@@ -1,8 +1,9 @@
-use std::future::Future;
+use std::{collections::BTreeSet, future::Future};
 
 use futures_util::{StreamExt, TryStreamExt, stream::BoxStream};
+use pepino_app::LocalState;
 use pepino_core::{BoardId, DeviceId, EventId};
-use pepino_node::{Ack, BoardHandle, Error, MemberInfo, Node, NodeEvents, NodeStatus};
+use pepino_node::{Ack, BoardHandle, Error, MemberInfo, Node, NodeEvents, NodeStatus, Role};
 
 pub type DeliveryStream<A> = BoxStream<'static, Result<Delivery<A>, Error>>;
 
@@ -22,6 +23,13 @@ pub trait TransportBoard: Send + Sync + 'static {
 
     fn deliveries(&mut self) -> Result<DeliveryStream<Self::Ack>, Error>;
     fn publish(&self, bytes: Vec<u8>) -> impl Future<Output = Result<EventId, Error>> + Send;
+    fn known_members(
+        &self,
+        _local: &LocalState,
+        _enroll: bool,
+    ) -> impl Future<Output = Result<Option<BTreeSet<DeviceId>>, Error>> + Send {
+        async { Ok(None) }
+    }
     fn close(self) -> impl Future<Output = Result<(), Error>> + Send;
 }
 
@@ -76,6 +84,26 @@ impl TransportBoard for BoardHandle {
 
     async fn publish(&self, bytes: Vec<u8>) -> Result<EventId, Error> {
         BoardHandle::publish(self, bytes).await
+    }
+
+    async fn known_members(
+        &self,
+        local: &LocalState,
+        enroll: bool,
+    ) -> Result<Option<BTreeSet<DeviceId>>, Error> {
+        let members = self.members().await?;
+        let mut ids: BTreeSet<_> = members.iter().map(|(device, _)| *device).collect();
+        if enroll && members.contains(&(local.device_id, Role::Manage)) {
+            for device in local.devices().into_keys() {
+                if !ids.contains(&device)
+                    && let Some(bundle) = local.device_bundle(device)
+                    && self.add_member(&bundle, Role::Manage).await.is_ok()
+                {
+                    ids.insert(device);
+                }
+            }
+        }
+        Ok(Some(ids))
     }
 
     async fn close(self) -> Result<(), Error> {
