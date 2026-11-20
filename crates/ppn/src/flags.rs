@@ -61,17 +61,33 @@ pub fn json_on_command_line(args: &[OsString]) -> bool {
     options(args).iter().any(|arg| arg == "--json")
 }
 
-pub fn color_on_early_exit(args: &[OsString]) -> Color {
+impl Globals {
+    pub fn on_early_exit(args: &[OsString], json: bool) -> Self {
+        Self {
+            json,
+            yes: options(args).iter().any(|arg| arg == "--yes"),
+            color: option_values(args, "--color")
+                .filter_map(|value| Color::from_str(value, false).ok())
+                .next_back()
+                .unwrap_or_default(),
+            timeout: option_values(args, "--timeout")
+                .filter_map(|value| parse_timeout(value).ok())
+                .next_back(),
+        }
+    }
+}
+
+fn option_values<'a>(
+    args: &'a [OsString],
+    option: &'a str,
+) -> impl DoubleEndedIterator<Item = &'a str> {
     let args = options(args);
     args.iter()
         .enumerate()
-        .filter_map(|(index, arg)| match arg.to_str()? {
-            "--color" => args.get(index + 1)?.to_str(),
-            arg => arg.strip_prefix("--color="),
+        .filter_map(move |(index, arg)| match arg.to_str()? {
+            arg if arg == option => args.get(index + 1)?.to_str(),
+            arg => arg.strip_prefix(option)?.strip_prefix('='),
         })
-        .filter_map(|value| Color::from_str(value, false).ok())
-        .next_back()
-        .unwrap_or_default()
 }
 
 fn options(args: &[OsString]) -> &[OsString] {

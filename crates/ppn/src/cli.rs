@@ -3,7 +3,7 @@ use std::{env, process::ExitCode};
 
 use clap::{ColorChoice, CommandFactory, Parser, Subcommand, error::ErrorKind};
 use ppn::error::CliError;
-use ppn::flags::{Globals, color_on_early_exit, json_from_env, json_on_command_line};
+use ppn::flags::{Globals, json_from_env, json_on_command_line};
 use ppn::help_tree::example_help;
 use ppn::output::finish;
 use ppn::terminal::Context;
@@ -54,11 +54,8 @@ pub fn run() -> ExitCode {
     let json_env = match json_from_env() {
         Ok(json) => json,
         Err(error) => {
-            return finish(
-                Err(error),
-                json_flag,
-                &Context::detect(color_on_early_exit(&args), false, None).terminal,
-            );
+            let context = context_for(&Globals::on_early_exit(&args, json_flag));
+            return finish(Err(error), json_flag, &context.terminal);
         }
     };
     match Cli::try_parse_from(&args) {
@@ -80,7 +77,7 @@ pub fn run() -> ExitCode {
         Err(error) => {
             let mut definition = Cli::command();
             let json = json_flag || json_env;
-            let context = Context::detect(color_on_early_exit(&args), false, None);
+            let context = context_for(&Globals::on_early_exit(&args, json));
             let result = match error.kind() {
                 ErrorKind::DisplayHelp => {
                     definition.build();
@@ -156,6 +153,41 @@ mod tests {
         assert_documented(&command);
     }
 
+    #[test]
+    fn context_carries_global_command_options() {
+        let args = [
+            "ppn",
+            "debug",
+            "confirm",
+            "--timeout",
+            "5",
+            "--yes",
+            "--color=never",
+        ];
+        let cli = Cli::try_parse_from(args).unwrap();
+        let context = context_for(&cli.globals);
+        assert_eq!(context.timeout, Some(std::time::Duration::from_secs(5)));
+        assert!(context.yes);
+        assert!(!context.terminal.color);
+
+        let early = [
+            "ppn",
+            "version",
+            "--help",
+            "--timeout=5",
+            "--color",
+            "never",
+            "--yes",
+            "--",
+            "--timeout=6",
+        ]
+        .map(OsString::from);
+        let context = context_for(&Globals::on_early_exit(&early, false));
+        assert_eq!(context.timeout, Some(std::time::Duration::from_secs(5)));
+        assert!(context.yes);
+        assert!(!context.terminal.color);
+    }
+
     fn assert_documented(command: &clap::Command) {
         let name = command.get_bin_name().unwrap_or_else(|| command.get_name());
         let summary = command
@@ -188,22 +220,4 @@ mod tests {
             assert_documented(child);
         }
     }
-}
-#[test]
-fn context_carries_global_command_options() {
-    let cli = Cli::try_parse_from([
-        "ppn",
-        "debug",
-        "confirm",
-        "--timeout",
-        "5",
-        "--yes",
-        "--color",
-        "never",
-    ])
-    .unwrap();
-    let context = context_for(&cli.globals);
-    assert_eq!(context.timeout, Some(std::time::Duration::from_secs(5)));
-    assert!(context.yes);
-    assert!(!context.terminal.color);
 }
