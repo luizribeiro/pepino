@@ -35,6 +35,7 @@ pub fn write_documents(
             .tasks
             .iter()
             .chain(write.deleted)
+            .filter(|task| write.targets.is_empty() || write.targets.contains(&task.id))
             .map(|task| task.id.as_str())
             .chain(
                 write
@@ -86,14 +87,23 @@ fn combine_responses(
             .iter()
             .flat_map(|write| write.targets.iter().cloned())
             .collect();
-        *tasks = writes
+        let snapshots: BTreeMap<_, _> = writes
             .iter()
-            .flat_map(|write| write.tasks.iter().cloned())
+            .flat_map(|write| {
+                write
+                    .tasks
+                    .iter()
+                    .map(|task| (task, false))
+                    .chain(write.deleted.iter().map(|task| (task, true)))
+            })
+            .map(|(task, removed)| (task.id.as_str(), (task, removed)))
             .collect();
-        *deleted = writes
-            .iter()
-            .flat_map(|write| write.deleted.iter().cloned())
-            .collect();
+        tasks.clear();
+        deleted.clear();
+        for (task, removed) in snapshots.into_values() {
+            let records = if removed { &mut *deleted } else { &mut *tasks };
+            records.push(task.clone());
+        }
         *edges = writes
             .iter()
             .flat_map(|write| write.edges.iter().cloned())
@@ -226,9 +236,20 @@ mod tests {
         let mut changed = response.clone();
         changed.as_object_mut().unwrap().remove("created");
         changed["targets"] = json!([id]);
-        let (message, _) = write_output(&serde_json::from_value(changed).unwrap(), "Done").unwrap();
-        assert_eq!(message, "Done 97ad97  Replace the greenhouse latch");
-
+        changed["tasks"][0]["title"] = json!("Install the greenhouse latch");
+        let changed: Response = serde_json::from_value(changed).unwrap();
+        let (message, _) = write_output(&changed, "Done").unwrap();
+        assert_eq!(message, "Done 97ad97  Install the greenhouse latch");
+        let responses = [serde_json::from_value(response.clone()).unwrap(), changed];
+        let writes = responses
+            .iter()
+            .map(ResponseExt::write)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let combined = combine_responses(&responses, &writes).unwrap();
+        let write = combined.write().unwrap();
+        assert_eq!(write.tasks.len(), 2);
+        assert_eq!(write.tasks[0].title, "Install the greenhouse latch");
         let ids = ShortIds::new([id, peer]);
         let created: Response = serde_json::from_value(response.clone()).unwrap();
         let (message, _) = write_output_with_ids(&created, "Created", Some(&ids)).unwrap();
