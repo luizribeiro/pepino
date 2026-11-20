@@ -47,6 +47,7 @@ impl App {
         let directory = worker("initialize local state", move || {
             let directory = std::path::absolute(directory)
                 .map_err(|error| io_error("resolve data directory", error))?;
+            LocalState::prepare_directory(&directory)?;
             LocalState::load_or_create(&directory, options)?;
             Ok::<_, AppError>(directory)
         })
@@ -54,7 +55,9 @@ impl App {
         let guard = lock(&directory, lock_timeout).await?;
         let state_dir = directory.clone();
         let (_guard, local) = worker("migrate local state", move || {
-            LocalState::migrate(&state_dir).map(|local| (guard, local))
+            LocalState::load(&state_dir)?
+                .migrate(&state_dir)
+                .map(|local| (guard, local))
         })
         .await??;
         let database = directory.join("pepino.sqlite");

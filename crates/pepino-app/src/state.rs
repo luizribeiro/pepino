@@ -11,7 +11,7 @@ use crate::app::invalid;
 use crate::views::SavedViews;
 
 const VERSION: u32 = 2;
-const FILE_NAME: &str = "local.json";
+pub(super) const FILE_NAME: &str = "local.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenOptions {
@@ -125,13 +125,17 @@ impl LocalState {
         Self::decode(&bytes)
     }
 
-    pub(crate) fn migrate(directory: &Path) -> Result<Self, AppError> {
-        let mut state = Self::load(directory)?;
-        if state.version != VERSION {
-            state.version = VERSION;
-            state.replace(directory)?;
+    pub(super) fn migrate(mut self, directory: &Path) -> Result<Self, AppError> {
+        if self.version != VERSION {
+            self.version = VERSION;
+            self.replace(directory)?;
         }
-        Ok(state)
+        Ok(self)
+    }
+
+    pub(super) fn prepare_directory(directory: &Path) -> Result<(), AppError> {
+        create_directory(directory)
+            .map_err(|error| io_error(&format!("create {}", directory.display()), error))
     }
 
     pub(crate) fn replace(&self, directory: &Path) -> Result<(), AppError> {
@@ -167,7 +171,7 @@ impl LocalState {
     }
 }
 
-fn save(directory: &Path, path: &Path, state: LocalState) -> io::Result<LocalState> {
+fn create_directory(directory: &Path) -> io::Result<()> {
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -175,7 +179,11 @@ fn save(directory: &Path, path: &Path, state: LocalState) -> io::Result<LocalSta
         use std::os::unix::fs::DirBuilderExt;
         builder.mode(0o700);
     }
-    builder.create(directory)?;
+    builder.create(directory)
+}
+
+fn save(directory: &Path, path: &Path, state: LocalState) -> io::Result<LocalState> {
+    create_directory(directory)?;
     let file = stage(directory, &state)?;
     match file.persist_noclobber(path) {
         Ok(_) => {
@@ -238,6 +246,9 @@ mod tests {
     #[test]
     fn open_persists_private_state_and_preserves_first_names() {
         let directory = tempfile::tempdir().unwrap();
+        let child = directory.path().join("greenhouse");
+        LocalState::prepare_directory(&child).unwrap();
+        assert!(child.is_dir() && !child.join(FILE_NAME).exists());
         let options = OpenOptions {
             display_name: Some("Ada Gardener".into()),
             device_name: Some("garden tablet".into()),
