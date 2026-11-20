@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::views::SavedView;
 use crate::{
     Date, EdgeKind, EventRecord, FieldValue, FilterDiagnostic, Hlc, IdentityRecord, NamedRecord,
     Status, StatusCounts,
@@ -34,6 +35,7 @@ pub enum ReadRequest {
         task: Option<String>,
         limit: Option<usize>,
     },
+    ListViews,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -132,6 +134,9 @@ pub enum Response {
     },
     Log {
         events: Vec<EventRecord>,
+    },
+    Views {
+        views: Vec<SavedView>,
     },
 }
 

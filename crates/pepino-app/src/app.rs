@@ -101,7 +101,7 @@ fn create_database_file(path: &Path) -> Result<(), AppError> {
     }
 }
 
-async fn worker<T: Send + 'static>(
+pub(super) async fn worker<T: Send + 'static>(
     context: &str,
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, AppError> {

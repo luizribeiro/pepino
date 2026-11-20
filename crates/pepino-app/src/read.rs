@@ -7,6 +7,7 @@ use crate::{App, AppError, DependencyRecord, ReadRequest, Response, TreeNode};
 impl App {
     pub(super) async fn read(&mut self, request: ReadRequest) -> Result<Response, AppError> {
         match request {
+            ReadRequest::ListViews => self.list_views().await,
             ReadRequest::Log { task, limit } => self.log(task.as_deref(), limit).await,
             ReadRequest::Status => self.status().await,
             ReadRequest::GetTask { task } => self.get_task(&task).await,

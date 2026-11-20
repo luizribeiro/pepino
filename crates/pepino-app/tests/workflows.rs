@@ -823,3 +823,15 @@ async fn saved_views_migrate_v1_state_and_survive_concurrent_opens() {
         legacy
     );
 }
+
+#[tokio::test]
+async fn listing_views_starts_empty() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    read_golden(
+        &mut app,
+        json!({"op":"list_views"}),
+        json!({"ok":{"kind":"views","views":[]}}),
+    )
+    .await;
+}
