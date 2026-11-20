@@ -58,3 +58,81 @@ fn deps_deduplicates_the_shared_blocker_in_a_diamond() {
         .unwrap();
     assert_eq!(task_error(output, 2, "invalid_input")["field"], "task");
 }
+
+#[test]
+fn task_reads_keep_reference_statuses_across_graphs_and_history() {
+    use pepino_app::{Request, Response, WriteRequest};
+    use ppn::write_args::new_task;
+    use std::collections::BTreeMap;
+
+    let (sandbox, data) = task_sandbox();
+    let project = small_project(&sandbox);
+    let deleted = project.downstream;
+    let (prefix, mut candidates) = common::seed_tasks(&data, async |app| {
+        app.handle(
+            Request::Write(WriteRequest::Delete {
+                task: deleted.clone(),
+            }),
+            common::SEED_NOW,
+        )
+        .await
+        .unwrap();
+        let mut prefixes = BTreeMap::new();
+        for n in 0..=65_536 {
+            let response = app
+                .handle(
+                    Request::Write(new_task(format!("Inspect greenhouse hinge {n}"))),
+                    common::SEED_NOW,
+                )
+                .await
+                .unwrap();
+            let Response::Write {
+                created: Some(id), ..
+            } = response
+            else {
+                panic!("expected a task creation");
+            };
+            let prefix = id[..4].to_owned();
+            if project.parent.starts_with(&prefix) || project.blocker.starts_with(&prefix) {
+                continue;
+            }
+            if let Some(previous) = prefixes.insert(prefix.clone(), id.clone()) {
+                return (prefix, [previous, id]);
+            }
+        }
+        panic!("four-character prefixes must collide");
+    });
+    candidates.sort();
+
+    let missing = "0".repeat(64);
+    for command in ["deps", "tree", "log"] {
+        for (task, status, code) in [
+            ("bad", 2, "invalid_input"),
+            (missing.as_str(), 3, "not_found"),
+            (prefix.as_str(), 4, "ambiguous_id"),
+        ] {
+            let output = sandbox
+                .command()
+                .args([command, task, "--json"])
+                .output()
+                .unwrap();
+            let error = task_error(output, status, code);
+            assert_eq!(error["field"], "task");
+            if status == 4 {
+                assert_eq!(error["candidates"], serde_json::json!(candidates));
+            }
+        }
+    }
+
+    for command in ["deps", "tree"] {
+        let output = sandbox
+            .command()
+            .args([command, &deleted, "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(task_error(output, 1, "conflict")["task"], deleted);
+    }
+    let log = as_json(&sandbox.run(&["log", &deleted, "--json"]));
+    let events = log["events"].as_array().unwrap();
+    assert_eq!(events.last().unwrap()["change"]["action"], "deleted");
+}
