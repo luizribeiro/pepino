@@ -185,7 +185,7 @@ pub(crate) fn records(
     Ok(tasks
         .into_values()
         .map(|mut task| {
-            task.ready = task.status.is_open() && !task.blocked;
+            task.ready = task.status == Status::Todo && !task.blocked;
             task
         })
         .collect())

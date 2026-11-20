@@ -354,6 +354,8 @@ async fn readiness_follows_status_and_live_blockers() {
     assert_state(true, false).await;
     append(&store, 17, 17, Event::TaskDeleted { task: hinges }).await;
     assert_state(false, true).await;
+    append(&store, 18, 18, status(door, Status::Doing)).await;
+    assert_state(false, false).await;
     assert!(
         store
             .task(BOARD, door)

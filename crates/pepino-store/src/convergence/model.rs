@@ -123,7 +123,10 @@ fn reference(history: &History, board: BoardId) -> Reference {
         .map(|&task| {
             let mut relations = relations(task, &edges);
             relations.blocked = is_open(task) && relations.blocked_by.iter().copied().any(is_open);
-            relations.ready = is_open(task) && !relations.blocked;
+            relations.ready = status_registers
+                .get(&task)
+                .is_some_and(|(_, status)| *status == Status::Todo)
+                && !relations.blocked;
             (task, relations)
         })
         .collect();
