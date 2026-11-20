@@ -111,3 +111,46 @@ fn offline_conflicting_edits_converge_in_both_directions() {
     wait_for_events(&titanium, 5);
     assert_views(&titanium, &ferrum, &[&task]);
 }
+
+#[test]
+fn a_timed_out_join_completes_when_the_grantor_returns() {
+    let (_dir, network) = network();
+    let titanium = Host::owner(&network);
+    let ferrum = Host::new(&network);
+    let project = task(&titanium, &["add", "Catalogue the seed bank"]);
+    titanium.run(&["sync"]);
+    let grant = titanium.add(&ferrum.request("Ferrum"), &[]);
+    titanium.stop();
+
+    let human = ferrum.run(&["device", "join", &grant, "--timeout", "150ms"]);
+    assert!(human.contains("Timed out waiting for initial sync"));
+    assert!(
+        human.contains("The join is kept and will complete when the granting device is reachable.")
+    );
+    assert!(human.contains("Check with `ppn status` or `ppn sync`"));
+    let pending = ferrum.json(&["device", "join", &grant, "--timeout", "150ms"]);
+    assert_eq!(pending["joined"], false);
+    assert_eq!(pending["boards"][0], "waiting_to_be_added");
+    assert!(
+        ferrum
+            .run(&["status"])
+            .contains("Greenhouse: waiting to be added")
+    );
+    assert!(
+        ferrum
+            .run(&["sync"])
+            .contains("Board membership: waiting to be added")
+    );
+
+    titanium.start();
+    // From here the daemon completes the join without another join command.
+    until(|| ferrum.json(&["status"])["boards"][0]["membership"] == "joined");
+    assert_views(&titanium, &ferrum, &[&project]);
+    ferrum.stop();
+    assert_eq!(
+        ferrum.json(&["status"])["boards"][0]["membership"],
+        "joined"
+    );
+    titanium.stop();
+    join(&ferrum, &grant);
+}
