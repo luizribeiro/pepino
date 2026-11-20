@@ -3,7 +3,7 @@ use ppn::app::AppClient;
 use ppn::error::CliError;
 use ppn::help_tree::example_help;
 use ppn::output::CommandResult;
-use ppn::render::{ShortIds, single_line, task_row};
+use ppn::render::{TaskRows, single_line};
 use ppn::response::ResponseExt;
 use ppn::terminal::Context;
 
@@ -25,11 +25,14 @@ pub fn run(context: &Context<'_>, Args { task }: Args) -> Result<CommandResult, 
     Ok(
         CommandResult::app_document(context, response, |response, settings| {
             let deps = response.deps()?;
-            let ids = ShortIds::new(
+            let renderer = TaskRows::new(
                 deps.blockers
                     .iter()
                     .chain(deps.dependents)
-                    .map(|entry| entry.task.id.as_str()),
+                    .map(|entry| &entry.task),
+                deps.names,
+                settings.dates(),
+                &settings.terminal,
             );
             let mut rows = Vec::new();
             for (heading, entries, blocker) in [
@@ -48,12 +51,7 @@ pub fn run(context: &Context<'_>, Args { task }: Args) -> Result<CommandResult, 
                     } else {
                         ""
                     };
-                    let mut terminal = settings.terminal;
-                    terminal.width = terminal
-                        .width
-                        .map(|width| width.saturating_sub(prefix.len() + suffix.chars().count()));
-                    let row = task_row(&entry.task, &ids, deps.names, settings.dates(), &terminal);
-                    rows.push(format!("{prefix}{row}{suffix}"));
+                    rows.push(renderer.row(&entry.task, &prefix, suffix));
                 }
             }
             Ok(rows.join("\n"))

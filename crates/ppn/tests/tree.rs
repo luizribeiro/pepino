@@ -14,7 +14,7 @@ fn tree_shows_a_forest_and_omits_closed_tasks_by_default() {
     let leaf = create_task(&sandbox, "Count the spare washers", &["--parent", &closed]);
     let root = create_task(&sandbox, "Prune the apple trees", &[]);
     let expected = format!(
-        "{}  Renovate the greenhouse  todo #garden\n  {}  Order stainless fittings  todo #hardware\n    {}  Count the spare washers  todo\n  {}  Test the new latch  todo · blocked\n{}  Prune the apple trees  todo\n",
+        "{} todo  Renovate the greenhouse  #garden\n  {} todo  Order stainless fittings  #hardware\n    {} todo  Count the spare washers\n  {} todo  Test the new latch  blocked\n{} todo  Prune the apple trees\n",
         &project.parent[..6],
         &project.blocker[..6],
         &leaf[..6],
@@ -84,6 +84,6 @@ fn tree_draws_guides_and_budgets_their_width_on_a_terminal() {
     assert!(
         sandbox
             .run(&["tree"])
-            .contains(&format!("    {}  {title}", &leaf[..6]))
+            .contains(&format!("    {} todo  {title}", &leaf[..6]))
     );
 }

@@ -20,14 +20,14 @@ fn deps_deduplicates_the_shared_blocker_in_a_diamond() {
 
     let mut direct = [
         format!(
-            "  {}  Order stainless fittings  todo #hardware\n",
+            "  {} todo  Order stainless fittings  #hardware\n",
             &project.blocker[..6]
         ),
-        format!("  {}  Inspect the hinge  todo\n", &other[..6]),
+        format!("  {} todo  Inspect the hinge\n", &other[..6]),
     ];
     direct.sort();
     let expected = format!(
-        "blocked by\n{}{}    {}  Check the delivery  done · no longer blocking\n",
+        "blocked by\n{}{}    {} done  Check the delivery · no longer blocking\n",
         direct[0],
         direct[1],
         &shared[..6]

@@ -3,7 +3,7 @@ use ppn::app::AppClient;
 use ppn::error::CliError;
 use ppn::help_tree::example_help;
 use ppn::output::CommandResult;
-use ppn::render::{ShortIds, task_row};
+use ppn::render::TaskRows;
 use ppn::response::ResponseExt;
 use ppn::terminal::Context;
 
@@ -42,7 +42,12 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
 
     CommandResult::app_document(context, response, |response, settings| {
         let tree = response.tree()?;
-        let ids = ShortIds::new(tree.nodes.iter().map(|node| node.task.id.as_str()));
+        let rows = TaskRows::new(
+            tree.nodes.iter().map(|node| &node.task),
+            tree.names,
+            settings.dates(),
+            &settings.terminal,
+        );
         let prefixes = if settings.terminal.stdout_is_tty {
             let depths: Vec<_> = tree.nodes.iter().map(|node| node.depth).collect();
             guides::tree_guides(&depths)
@@ -56,14 +61,7 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
             .nodes
             .iter()
             .zip(prefixes)
-            .map(|(node, prefix)| {
-                let mut terminal = settings.terminal;
-                terminal.width = terminal
-                    .width
-                    .map(|width| width.saturating_sub(prefix.chars().count()));
-                let row = task_row(&node.task, &ids, tree.names, settings.dates(), &terminal);
-                format!("{prefix}{row}")
-            })
+            .map(|(node, prefix)| rows.row(&node.task, &prefix, ""))
             .collect::<Vec<_>>()
             .join("\n"))
     })
