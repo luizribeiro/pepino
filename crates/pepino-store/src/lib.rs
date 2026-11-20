@@ -1,5 +1,7 @@
 mod board_key;
 mod comment;
+#[cfg(test)]
+mod convergence;
 mod error;
 mod fold;
 mod history;

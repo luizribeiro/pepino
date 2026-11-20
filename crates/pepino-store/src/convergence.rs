@@ -1,24 +1,16 @@
-#[path = "convergence/history.rs"]
 mod history;
 
 use std::collections::BTreeMap;
 
 use history::{History, histories};
 use pepino_core::{BoardId, EventId, Hlc, TaskId};
-use pepino_store::{AppendOutcome, CommentRecord, EventRecord, IdSource, Store, TaskRecord};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
-use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
-use tempfile::TempDir;
+
+use crate::{AppendOutcome, CommentRecord, EventRecord, IdSource, Store, TaskRecord};
 
 const BOARD: BoardId = BoardId::from_bytes([29; 32]);
 const OTHER: BoardId = BoardId::from_bytes([47; 32]);
-
-struct TestStore {
-    store: Store,
-    audit: SqliteConnection,
-    _directory: TempDir,
-}
 
 #[derive(Debug, Eq, PartialEq)]
 struct BoardSnapshot {
@@ -46,7 +38,7 @@ impl History {
         indices
     }
 
-    async fn apply(&self, store: &TestStore, order: &[usize]) {
+    async fn apply(&self, store: &Store, order: &[usize]) {
         for &index in order {
             let event = &self.events[index];
             for board in [BOARD, OTHER]
@@ -54,7 +46,6 @@ impl History {
                 .filter(|&board| on_board(board, index))
             {
                 let outcome = store
-                    .store
                     .append(board, &event.bytes, IdSource::Content)
                     .await
                     .unwrap();
@@ -73,15 +64,14 @@ impl History {
         }
     }
 
-    async fn snapshot(&self, test: &mut TestStore) -> [BoardSnapshot; 2] {
-        let primary = self.board_snapshot(test, BOARD).await;
+    async fn snapshot(&self, store: &Store) -> [BoardSnapshot; 2] {
+        let primary = self.board_snapshot(store, BOARD).await;
         assert!(!primary.tasks.is_empty());
         assert!(primary.by_id.values().any(|task| !task.comments.is_empty()));
-        [primary, self.board_snapshot(test, OTHER).await]
+        [primary, self.board_snapshot(store, OTHER).await]
     }
 
-    async fn board_snapshot(&self, test: &mut TestStore, board: BoardId) -> BoardSnapshot {
-        let store = &test.store;
+    async fn board_snapshot(&self, store: &Store, board: BoardId) -> BoardSnapshot {
         let mut by_id = BTreeMap::new();
         for &id in &self.tasks {
             by_id.insert(
@@ -96,7 +86,7 @@ impl History {
         let rows: Vec<([u8; 32], String)> =
             sqlx::query_as("SELECT id, classification FROM event_log WHERE board = ?")
                 .bind(*board.as_bytes())
-                .fetch_all(&mut test.audit)
+                .fetch_all(&mut *store.connection.lock().await)
                 .await
                 .unwrap();
         let classifications: BTreeMap<_, _> = rows
@@ -119,19 +109,10 @@ impl History {
         }
     }
 
-    async fn store(&self, order: &[usize]) -> TestStore {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("pepino.sqlite");
-        let store = Store::open(&path).await.unwrap();
-        let options = SqliteConnectOptions::new().filename(&path).read_only(true);
-        let audit = SqliteConnection::connect_with(&options).await.unwrap();
-        let test = TestStore {
-            store,
-            audit,
-            _directory: directory,
-        };
-        self.apply(&test, order).await;
-        test
+    async fn store(&self, order: &[usize]) -> Store {
+        let store = Store::open_in_memory().await.unwrap();
+        self.apply(&store, order).await;
+        store
     }
 }
 
@@ -147,9 +128,9 @@ proptest! {
     fn shuffled_orders_match(input in histories(), first in any::<u64>(), second in any::<u64>()) {
         runtime().block_on(async {
             let history = History::new(input);
-            let mut first = history.store(&history.order(first)).await;
-            let mut second = history.store(&history.order(second)).await;
-            prop_assert_eq!(history.snapshot(&mut first).await, history.snapshot(&mut second).await);
+            let first = history.store(&history.order(first)).await;
+            let second = history.store(&history.order(second)).await;
+            prop_assert_eq!(history.snapshot(&first).await, history.snapshot(&second).await);
             Ok(())
         })?;
     }
@@ -159,7 +140,7 @@ proptest! {
         runtime().block_on(async {
             let history = History::new(input);
             let order = history.order(seed);
-            let mut original = history.store(&order).await;
+            let original = history.store(&order).await;
             let mut rng = StdRng::seed_from_u64(repeats);
             let mut duplicated = order;
             for _ in 0..rng.random_range(1..=history.events.len()) {
@@ -167,8 +148,8 @@ proptest! {
                 let position = rng.random_range(0..=duplicated.len());
                 duplicated.insert(position, event);
             }
-            let mut duplicate = history.store(&duplicated).await;
-            prop_assert_eq!(history.snapshot(&mut original).await, history.snapshot(&mut duplicate).await);
+            let duplicate = history.store(&duplicated).await;
+            prop_assert_eq!(history.snapshot(&original).await, history.snapshot(&duplicate).await);
             Ok(())
         })?;
     }
@@ -177,16 +158,16 @@ proptest! {
     fn rebuild_matches_incremental_view(input in histories(), seed in any::<u64>()) {
         runtime().block_on(async {
             let history = History::new(input);
-            let mut store = history.store(&history.order(seed)).await;
-            let before = history.snapshot(&mut store).await;
+            let store = history.store(&history.order(seed)).await;
+            let before = history.snapshot(&store).await;
             for board in [BOARD, OTHER] {
-                let report = store.store.rebuild(board).await.unwrap();
+                let report = store.rebuild(board).await.unwrap();
                 let expected = history.events.iter().enumerate()
                     .filter(|(index, event)| on_board(board, *index) && event.classification != "known")
                     .count();
                 prop_assert_eq!(report.skipped, expected);
             }
-            prop_assert_eq!(before, history.snapshot(&mut store).await);
+            prop_assert_eq!(before, history.snapshot(&store).await);
             Ok(())
         })?;
     }
@@ -198,11 +179,11 @@ proptest! {
             let order = history.order(seed);
             let split = StdRng::seed_from_u64(split_seed).random_range(1..order.len());
             let (left, right) = order.split_at(split);
-            let mut first = history.store(left).await;
-            let mut second = history.store(right).await;
+            let first = history.store(left).await;
+            let second = history.store(right).await;
             history.apply(&first, right).await;
             history.apply(&second, left).await;
-            prop_assert_eq!(history.snapshot(&mut first).await, history.snapshot(&mut second).await);
+            prop_assert_eq!(history.snapshot(&first).await, history.snapshot(&second).await);
             Ok(())
         })?;
     }
@@ -214,10 +195,10 @@ proptest! {
             let order = history.order(seed);
             let split = StdRng::seed_from_u64(split_seed).random_range(1..order.len());
             let (left, right) = order.split_at(split);
-            let mut serial = history.store(&order).await;
-            let mut concurrent = history.store(&[]).await;
+            let serial = history.store(&order).await;
+            let concurrent = history.store(&[]).await;
             tokio::join!(history.apply(&concurrent, left), history.apply(&concurrent, right));
-            prop_assert_eq!(history.snapshot(&mut serial).await, history.snapshot(&mut concurrent).await);
+            prop_assert_eq!(history.snapshot(&serial).await, history.snapshot(&concurrent).await);
             Ok(())
         })?;
     }
