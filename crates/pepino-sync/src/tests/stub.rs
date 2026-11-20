@@ -17,7 +17,14 @@ type Queue = mpsc::UnboundedSender<Delivery<Receipt>>;
 struct Publisher {
     reject: AtomicBool,
     pause: Mutex<Option<watch::Sender<bool>>>,
-    operations: Mutex<Vec<Vec<u8>>>,
+    operations: Arc<Mutex<Vec<Vec<u8>>>>,
+    next_fault: Mutex<Option<PublishFault>>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum PublishFault {
+    NotSubmitted,
+    Unconfirmed,
 }
 
 pub(super) struct Stub {
@@ -32,7 +39,10 @@ pub(super) struct Stub {
 impl Stub {
     pub(super) fn restarted(&self) -> Self {
         Self {
-            publisher: self.publisher.clone(),
+            publisher: Arc::new(Publisher {
+                operations: self.publisher.operations.clone(),
+                ..Default::default()
+            }),
             instance: self.instance,
             ..Self::new(self.device)
         }
@@ -117,6 +127,10 @@ impl Stub {
 
     pub(super) fn reject(&self, reject: bool) {
         self.publisher.reject.store(reject, Ordering::Relaxed);
+    }
+
+    pub(super) fn fail_next_publish(&self, fault: PublishFault) {
+        self.publisher.next_fault.lock().unwrap().replace(fault);
     }
 
     pub(super) fn published(&self) -> Vec<Vec<u8>> {
@@ -237,7 +251,10 @@ impl TransportBoard for Board {
     }
 
     async fn publish(&self, bytes: Vec<u8>) -> Result<EventId, Error> {
-        if self.publisher.reject.load(Ordering::Relaxed) {
+        let fault = self.publisher.next_fault.lock().unwrap().take();
+        if self.publisher.reject.load(Ordering::Relaxed)
+            || matches!(fault, Some(PublishFault::NotSubmitted))
+        {
             return Err(Error::PublishNotSubmitted("test rejection".into()));
         }
         let pause = self.publisher.pause.lock().unwrap().take();
@@ -247,6 +264,9 @@ impl TransportBoard for Board {
         }
         let mut operations = self.publisher.operations.lock().unwrap();
         operations.push(bytes);
+        if matches!(fault, Some(PublishFault::Unconfirmed)) {
+            return Err(Error::PublishUnconfirmed("test confirmation loss".into()));
+        }
         let mut id = [0; 32];
         id[..8].copy_from_slice(&(operations.len() as u64).to_le_bytes());
         Ok(EventId::from_bytes(id))
@@ -390,4 +410,35 @@ async fn a_closed_delivery_stream_signals_that_the_daemon_must_restart() {
     assert!(
         matches!(engine.shutdown().await, Err(crate::Error::RestartRequired(error)) if error == failure)
     );
+}
+
+#[tokio::test]
+async fn a_restart_preserves_submitted_operations_but_clears_transient_faults() {
+    let node = Stub::new(DeviceId::from_bytes([80; 32]));
+    let board = BoardId::from_bytes([81; 32]);
+    let handle = node.open_board(board).await.unwrap();
+    let bytes = b"Replace missing latch".to_vec();
+    node.fail_next_publish(PublishFault::NotSubmitted);
+    assert!(matches!(
+        handle.publish(bytes.clone()).await,
+        Err(Error::PublishNotSubmitted(_))
+    ));
+    assert!(node.published().is_empty());
+    node.fail_next_publish(PublishFault::Unconfirmed);
+    assert!(matches!(
+        handle.publish(bytes.clone()).await,
+        Err(Error::PublishUnconfirmed(_))
+    ));
+    node.reject(true);
+    let restarted = node.restarted();
+    assert!(restarted.status().boards.is_empty());
+    assert_eq!(restarted.published(), std::slice::from_ref(&bytes));
+    restarted
+        .open_board(board)
+        .await
+        .unwrap()
+        .publish(bytes.clone())
+        .await
+        .unwrap();
+    assert_eq!(restarted.published(), [bytes.clone(), bytes]);
 }
