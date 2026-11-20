@@ -13,6 +13,8 @@ const PREFIX: &[u8] = b"pepino-board-catalog\0";
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct CatalogState {
     revisions: BTreeMap<BoardId, Revision>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) shared: BTreeMap<BoardId, crate::SharedAccess>,
     joins: BTreeMap<BoardId, BoardJoinState>,
     created_here: BTreeSet<BoardId>,
     bundles: BTreeMap<DeviceId, String>,
