@@ -129,11 +129,8 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
                 );
             } else if kind == AppErrorKind::NotFound {
                 assert_eq!(
-                    error,
-                    AppError::NotFound {
-                        field: field.into(),
-                        task: reference.into()
-                    }
+                    serde_json::to_value(error).unwrap(),
+                    json!({"kind":"not_found","field":field,"task":reference})
                 );
             } else {
                 assert!(
