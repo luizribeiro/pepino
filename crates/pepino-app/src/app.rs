@@ -52,7 +52,7 @@ impl App {
         &self.local
     }
 
-    pub async fn handle(&mut self, request: Request, _now: u64) -> Result<Response, AppError> {
+    pub async fn handle(&mut self, request: Request, now: u64) -> Result<Response, AppError> {
         let _lock = lock(&self.directory)?;
         let board = self
             .store
@@ -67,7 +67,11 @@ impl App {
                     task: Box::new(task),
                 })
             }
-            _ => Err(invalid("op", "write operation is unavailable")),
+            request => {
+                let mut batch = self.batch(now).await?;
+                self.plan_write(&board, &mut batch, request).await?;
+                self.commit_batch(&board, batch).await
+            }
         }
     }
 }

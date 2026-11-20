@@ -1,9 +1,9 @@
 mod app;
-#[allow(dead_code)]
 mod batch;
 mod projection;
 mod protocol;
 mod state;
+mod write;
 
 pub use app::App;
 pub use state::{LocalState, OpenOptions};
