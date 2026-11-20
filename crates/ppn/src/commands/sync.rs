@@ -4,7 +4,7 @@ use ppn::{
     daemon::{
         address::socket_path,
         client::Client,
-        protocol::{Operation, Outcome},
+        protocol::{Operation, Outcome, wait_millis},
         sync_report::Summary,
     },
     error::{CliError, ErrorKind},
@@ -26,6 +26,8 @@ pub fn run(
     selection: Option<&Path>,
     enabled: bool,
 ) -> Result<CommandResult, CliError> {
+    let wait = context.timeout.unwrap_or(Duration::from_secs(30));
+    let timeout_ms = wait_millis(wait)?;
     let config = &context.config()?.config;
     let client = Client {
         path: socket_path(config),
@@ -42,8 +44,6 @@ pub fn run(
     ) {
         return Err(protocol_error());
     }
-    let wait = context.timeout.unwrap_or(Duration::from_secs(30));
-    let timeout_ms = wait.as_millis().try_into().unwrap_or(u64::MAX);
     let operation = Operation::WaitIdle { timeout_ms };
     let outcome = client
         .call_with(operation, wait.saturating_add(Duration::from_secs(2)))

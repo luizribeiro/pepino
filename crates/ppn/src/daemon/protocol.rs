@@ -5,6 +5,7 @@ use pepino_core::BoardId;
 use serde::{Deserialize, Serialize};
 
 pub const VERSION: u32 = 1;
+pub const MAX_WAIT_MS: u64 = 300_000;
 
 #[derive(Serialize, Deserialize)]
 pub struct Request {
@@ -31,6 +32,26 @@ pub enum Operation {
         timeout_ms: u64,
     },
     Stop,
+}
+
+impl Operation {
+    pub(super) fn wait_ms(&self) -> Option<u64> {
+        match *self {
+            Self::WaitIdle { timeout_ms } | Self::BoardJoinState { timeout_ms } => Some(timeout_ms),
+            _ => None,
+        }
+    }
+}
+
+pub fn wait_millis(wait: std::time::Duration) -> Result<u64, crate::error::CliError> {
+    use crate::error::{CliError, ErrorKind};
+    if wait > std::time::Duration::from_millis(MAX_WAIT_MS) {
+        return Err(CliError::new(
+            ErrorKind::Usage,
+            "The maximum sync or join timeout is 5 minutes.",
+        ));
+    }
+    Ok(wait.as_millis().try_into().unwrap_or(MAX_WAIT_MS))
 }
 
 #[derive(Debug, Serialize, Deserialize)]

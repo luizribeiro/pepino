@@ -14,7 +14,7 @@ use tokio::{
 use super::{
     framing,
     operations::operate,
-    protocol::{Operation, Outcome, Request, Response, VERSION},
+    protocol::{MAX_WAIT_MS, Operation, Outcome, Request, Response, VERSION},
 };
 
 const IO_LIMIT: Duration = Duration::from_secs(2);
@@ -89,9 +89,18 @@ fn decode(frame: io::Result<serde_json::Value>) -> Result<Operation, Box<Outcome
             "Unsupported control protocol version.",
         )));
     }
-    serde_json::from_value::<Request>(frame)
-        .map(|request| request.request)
-        .map_err(|_| invalid())
+    let request: Request = serde_json::from_value(frame).map_err(|_| invalid())?;
+    if request
+        .request
+        .wait_ms()
+        .is_some_and(|wait| wait > MAX_WAIT_MS)
+    {
+        return Err(Box::new(Outcome::error(
+            "invalid_request",
+            "The maximum sync or join timeout is 5 minutes.",
+        )));
+    }
+    Ok(request.request)
 }
 
 #[cfg(test)]
@@ -108,4 +117,20 @@ fn rejects_an_invalid_timeout_in_the_current_protocol() {
     let request = serde_json::json!({"v": 1, "request": {"op": "wait_idle", "timeout_ms": -1}});
     let outcome = decode(Ok(request)).err().unwrap();
     assert!(matches!(*outcome, Outcome::Error { code, .. } if code == "invalid_request"));
+}
+
+#[cfg(test)]
+#[test]
+fn bounds_both_types_of_wait_at_the_control_boundary() {
+    for op in ["wait_idle", "board_join_state"] {
+        for timeout_ms in [MAX_WAIT_MS + 1, u64::MAX] {
+            let request =
+                serde_json::json!({"v": 1, "request": {"op": op, "timeout_ms": timeout_ms}});
+            assert!(
+                matches!(*decode(Ok(request)).err().unwrap(), Outcome::Error { code, .. } if code == "invalid_request")
+            );
+        }
+        let request = serde_json::json!({"v": 1, "request": {"op": op, "timeout_ms": MAX_WAIT_MS}});
+        assert!(decode(Ok(request)).is_ok());
+    }
 }

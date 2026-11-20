@@ -6,7 +6,7 @@ use ppn::daemon::{
     address::socket_path,
     client::Client,
     process,
-    protocol::{Operation, Outcome},
+    protocol::{Operation, Outcome, wait_millis},
 };
 
 use super::*;
@@ -19,6 +19,8 @@ pub(super) fn run(
     code: &str,
     selection: Option<&Path>,
 ) -> Result<CommandResult, CliError> {
+    let wait = context.timeout.unwrap_or(Duration::from_secs(30));
+    let timeout_ms = wait_millis(wait)?;
     let grant: SignedGrant = Kind::Grant.decode(code).map_err(invalid_code)?;
     let (directory, options) = local_options(context, None)?;
     let local = runtime()?.block_on(App::join_device(directory, grant, options))?;
@@ -39,8 +41,6 @@ pub(super) fn run(
             return Err(unexpected_reply());
         }
     }
-    let wait = context.timeout.unwrap_or(Duration::from_secs(30));
-    let timeout_ms = wait.as_millis().try_into().unwrap_or(u64::MAX);
     let outcome = client
         .call_with(
             Operation::BoardJoinState { timeout_ms },
