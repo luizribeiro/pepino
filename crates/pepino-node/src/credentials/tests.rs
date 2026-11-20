@@ -56,6 +56,10 @@ fn removes_interrupted_creation_after_install_or_before_retry() {
     fs::hard_link(&path, &stale).unwrap();
     let loaded = DeviceCredentials::load_or_create(&path).unwrap();
     assert_eq!(installed.device_id(), loaded.device_id());
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
     assert!(!stale.exists());
     assert!(other.exists());
 }

@@ -1,4 +1,4 @@
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
     fs,
     io::{self, Write},
@@ -56,6 +56,9 @@ impl DeviceCredentials {
         let temporary =
             tempfile::TempPath::try_from_path(temporary).map_err(Error::CredentialIo)?;
         let mut file = tempfile::NamedTempFile::from_parts(file, temporary);
+        file.as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(Error::CredentialIo)?;
         let credentials = CredentialFile {
             version: VERSION,
             keys: Credentials::generate(),
