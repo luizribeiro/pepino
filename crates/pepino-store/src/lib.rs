@@ -10,6 +10,7 @@ mod fold;
 mod history;
 mod log;
 mod prefix;
+pub mod query;
 mod task;
 mod traversal;
 
