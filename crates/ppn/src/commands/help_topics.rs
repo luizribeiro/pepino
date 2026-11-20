@@ -8,9 +8,11 @@ separates OR alternatives in a keyed term. Omit a comparison operator for
 equality. Use <, <=, > or >= with priority, due, created, updated and custom
 fields. Priority accepts signed 64-bit integers. Custom fields accept
 integers, dates or text, in that order. Quote a custom operand to make it text.
-Both keys and custom field names use lowercase letters, digits, underscores
+Both keys and custom field names use lowercase ASCII letters, digits, underscores
 and hyphens, start with a letter and are at most 64 bytes. The tags use
 lowercase letters, digits, underscores, hyphens, slashes and periods.
+Open includes todo and doing. Closed includes done and cancelled.
+A blocked task has an open blocker. Ready means todo with no open blockers.
 has: also accepts custom field names. assignee:me selects the local identity.
 Use ppn help ids for task references used with parent, blocks and blocked-by.
 board: accepts a board name or full ID.
@@ -35,7 +37,7 @@ Examples:
   ppn view save weekend is:open 'due:<=+1w'
   ppn ls --filter '@weekend client:"Acme Corp" estimate:<=3'"#;
 
-const DATES: &str = "Use YYYY-MM-DD, today, tomorrow, yesterday, a three-letter or full weekday, \
+const DATES: &str = "Use YYYY-MM-DD with a signed year outside 0000–9999. Relative forms include today, tomorrow, yesterday, a three-letter or full weekday, \
 or a signed offset such as +3d or -1w. Units are d (days) and w (weeks). \
 A weekday chooses the next occurrence including today. Keywords ignore case. Relative dates use the local calendar.";
 

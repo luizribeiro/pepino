@@ -173,10 +173,11 @@ impl From<&Arg> for ArgumentInfo {
 fn value_syntax(arg: &Arg) -> Option<&'static str> {
     match arg.get_long()? {
         "due" => Some(
-            "Use YYYY-MM-DD, today, tomorrow, yesterday, a full or three-letter weekday, or a signed offset with d (days) or w (weeks).",
+            "Use YYYY-MM-DD, today, tomorrow, yesterday, a full or three-letter weekday, or a signed offset with d (days) or w (weeks). Keywords ignore case. An empty value or none clears the date.",
         ),
+        "priority" => Some("Use a signed 64-bit integer or an empty value to clear it."),
         "set" => Some(
-            "Use KEY=VALUE. An unquoted decimal without a plus sign or redundant leading zeros is a signed 64-bit integer. Date operands become dates. Other values and values with double quotes are text.",
+            "Use KEY=VALUE. A leading plus sign, redundant integer leading zeros, or double quotes keep the value as text. Otherwise a signed decimal is a 64-bit integer, a date in ppn help dates is a date, and other values are text.",
         ),
         "sort" => Some(
             "Use default or comma-separated keys: created, updated, due, priority, status, title. Prefix a key with - for descending. The default groups open tasks first, then descending priority (missing is zero), ascending due date, creation time and ID. An empty sort orders by ID.",

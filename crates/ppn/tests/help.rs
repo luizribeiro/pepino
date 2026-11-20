@@ -203,6 +203,8 @@ fn topics_are_available_without_a_board_in_both_formats() {
     for (group, words) in pepino_app::filter_keyword_groups() {
         assert!(filters.contains(&format!("{group} {}", words.join(", "))));
     }
+    assert!(filters.contains("Ready means todo with no open blockers"));
+    assert!(filters.contains("lowercase ASCII"));
     assert_eq!(
         filters
             .lines()
