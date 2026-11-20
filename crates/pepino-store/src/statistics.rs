@@ -12,6 +12,7 @@ pub struct BoardStatistics {
     pub unknown_event: i64,
     pub unknown_value: i64,
     pub invalid: i64,
+    pub forged_author: i64,
 }
 
 impl Store {
@@ -23,7 +24,8 @@ impl Store {
                         count(*) FILTER (WHERE classification = 'unknown_version') AS unknown_version,
                         count(*) FILTER (WHERE classification = 'unknown_event') AS unknown_event,
                         count(*) FILTER (WHERE classification = 'unknown_value') AS unknown_value,
-                        count(*) FILTER (WHERE classification = 'invalid') AS invalid
+                        count(*) FILTER (WHERE classification = 'invalid') AS invalid,
+                        count(*) FILTER (WHERE classification = 'forged_author') AS forged_author
                  FROM event_log WHERE board = ?",
             )
             .bind(BoardKey(board))

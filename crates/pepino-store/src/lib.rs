@@ -38,7 +38,7 @@ pub use statistics::BoardStatistics;
 pub use task::TaskRecord;
 pub use traversal::{Dependencies, Dependency, SubtreeEntry};
 
-const FOLD_VERSION: i64 = 3;
+const FOLD_VERSION: i64 = 4;
 
 static MIGRATOR: Migrator = sqlx::migrate!();
 
@@ -105,7 +105,7 @@ impl Store {
         let key = self
             .read(async |connection| {
                 sqlx::query_scalar::<_, [u8; 12]>(
-                    "SELECT hlc FROM event_log WHERE board = ? AND hlc IS NOT NULL
+                    "SELECT hlc FROM event_log WHERE board = ? AND hlc IS NOT NULL AND classification != 'forged_author'
                      ORDER BY hlc DESC LIMIT 1",
                 )
                 .bind(BoardKey(board))

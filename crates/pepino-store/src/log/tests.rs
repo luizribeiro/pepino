@@ -112,6 +112,7 @@ async fn retains_each_skipped_classification_and_exact_bytes() {
             unknown_event: 1,
             unknown_value: 1,
             invalid: 1,
+            forged_author: 0,
         }
     );
     assert_eq!(
@@ -340,7 +341,7 @@ async fn reopening_projects_legacy_edges_on_every_board() {
         .fetch_one(&mut *connection)
         .await
         .unwrap();
-    assert_eq!(current, 3);
+    assert_eq!(current, crate::FOLD_VERSION);
 
     sqlx::query("DELETE FROM task_state WHERE board = ?")
         .bind(BoardKey(boards[0]))
@@ -702,6 +703,7 @@ async fn verified_signers_gate_projection_and_survive_rebuild() {
     let projected = store.tasks(board).await.unwrap();
     assert_eq!(projected.len(), 1);
     assert_eq!(projected[0].id, real.created_task().unwrap());
+    assert_eq!(store.statistics(board).await.unwrap().forged_author, 1);
     let history = store.history(board, None, None).await.unwrap();
     let entry = history
         .events
