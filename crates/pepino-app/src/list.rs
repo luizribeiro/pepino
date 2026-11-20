@@ -208,22 +208,35 @@ pub(super) fn query_error(
         }
         QueryErrorKind::UnknownPerson { .. } => Some(format!("Known person is {known_person}")),
         QueryErrorKind::AmbiguousPerson { candidates, .. } => Some(candidate_hint(candidates)),
-        QueryErrorKind::AmbiguousTaskPrefix { candidates, .. } => Some(candidate_hint(candidates)),
         _ => None,
     };
-    let view_chain = match error.kind {
-        QueryErrorKind::ViewCycle { chain } => chain,
-        _ => error.view_chain,
+    let mut diagnostic = FilterDiagnostic {
+        term: error.term,
+        position,
+        view_chain: error.view_chain,
+        hint,
     };
+    if let QueryErrorKind::AmbiguousTaskPrefix {
+        prefix,
+        count,
+        candidates,
+    } = error.kind
+    {
+        return AppError::AmbiguousId {
+            field: "filter".into(),
+            task: prefix,
+            count,
+            candidates: candidates.iter().map(ToString::to_string).collect(),
+            diagnostic: Some(Box::new(diagnostic)),
+        };
+    }
+    if let QueryErrorKind::ViewCycle { chain } = error.kind {
+        diagnostic.view_chain = chain;
+    }
     AppError::InvalidInput {
         field: "filter".into(),
         reason,
-        diagnostic: Some(Box::new(FilterDiagnostic {
-            term: error.term,
-            position,
-            view_chain,
-            hint,
-        })),
+        diagnostic: Some(Box::new(diagnostic)),
     }
 }
 

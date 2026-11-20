@@ -349,3 +349,19 @@ fn default_sort_places_negative_priority_below_unprioritized_tasks() {
     let explicit = as_json(&sandbox.run(&["ls", "--sort=-priority", "--json"]));
     assert_eq!(explicit["tasks"][1]["id"], low);
 }
+
+#[test]
+fn a_task_prefix_in_a_filter_has_the_standard_ambiguity_exit_status() {
+    let (sandbox, data) = task_sandbox();
+    let (prefix, candidates) = common::ambiguous_tasks(&data);
+    let term = format!("parent:{prefix}");
+    let output = sandbox
+        .command()
+        .args(["ls", &term, "--json"])
+        .output()
+        .unwrap();
+    let error = task_error(output, 4, "ambiguous_id");
+    assert_eq!(error["task"], prefix);
+    assert_eq!(error["term"], term);
+    assert_eq!(error["candidates"], serde_json::json!(candidates));
+}

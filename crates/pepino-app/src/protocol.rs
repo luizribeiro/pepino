@@ -361,6 +361,8 @@ pub enum AppError {
         task: String,
         count: u64,
         candidates: Vec<String>,
+        #[serde(flatten)]
+        diagnostic: Option<Box<FilterDiagnostic>>,
     },
     #[error("invalid {field}: {reason}")]
     InvalidInput {

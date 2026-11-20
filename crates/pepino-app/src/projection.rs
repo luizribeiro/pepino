@@ -40,6 +40,7 @@ pub(super) fn resolve_id(
             task: reference.into(),
             count,
             candidates: candidates.iter().map(ToString::to_string).collect(),
+            diagnostic: None,
         }),
         Ok(TaskPrefixResolution::Unknown) => Err(AppError::NotFound {
             field: field.into(),

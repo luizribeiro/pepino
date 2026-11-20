@@ -106,6 +106,17 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
     let (left, right, peer) = (&ids[0], &ids[1], &ids[2]);
     let before = store.latest_hlc(board).await.unwrap();
 
+    let request = json!({"op":"list_tasks","filter":"parent:abcd","today":"2026-11-20"});
+    let error = app
+        .handle(serde_json::from_value(request).unwrap(), NOW)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, AppError::AmbiguousId { field, task, count: 2, candidates, diagnostic: Some(diagnostic) }
+        if field == "filter" && task == "abcd" && candidates == &vec![left.clone(), right.clone()]
+            && diagnostic.term == "parent:abcd")
+    );
+
     for (reference, kind) in [
         ("g123", AppErrorKind::InvalidInput),
         ("0000", AppErrorKind::NotFound),
@@ -125,6 +136,7 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
                         task: reference.into(),
                         count: 2,
                         candidates: vec![left.clone(), right.clone()],
+                        diagnostic: None,
                     }
                 );
             } else if kind == AppErrorKind::NotFound {
