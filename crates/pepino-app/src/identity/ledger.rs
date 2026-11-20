@@ -19,6 +19,8 @@ pub(crate) struct IdentityCatalog {
     invalid: BTreeSet<EventId>,
     rejected: BTreeSet<EventId>,
     pub(super) record: Option<Record>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) migration: Option<BTreeMap<DeviceId, String>>,
 }
 
 impl IdentityCatalog {

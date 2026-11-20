@@ -11,7 +11,7 @@ use crate::AppError;
 use crate::app::invalid;
 use crate::views::SavedViews;
 
-pub(super) const VERSION: u32 = 5;
+pub(super) const VERSION: u32 = 6;
 pub(super) const FILE_NAME: &str = "local.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -228,13 +228,15 @@ impl LocalState {
                 );
                 fields.insert("version".into(), VERSION.into());
             }
-            4 => value["version"] = VERSION.into(),
+            4 | 5 => value["version"] = VERSION.into(),
             version if version == u64::from(VERSION) => (),
             version => return Err(storage("unsupported local state version", version, false)),
         }
-        serde_json::from_value(value)
-            .map(|local| (local, version))
-            .map_err(decode_error)
+        let mut local: Self = serde_json::from_value(value).map_err(decode_error)?;
+        if version == 5 {
+            local.stage_legacy_roster();
+        }
+        Ok((local, version))
     }
 }
 

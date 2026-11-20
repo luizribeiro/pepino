@@ -228,13 +228,24 @@ impl App {
         &self,
         update: impl FnOnce(&mut LocalState) + Send + 'static,
     ) -> Result<LocalState, AppError> {
+        self.try_update_local_state(move |local| {
+            update(local);
+            Ok(())
+        })
+        .await
+    }
+
+    pub(super) async fn try_update_local_state(
+        &self,
+        update: impl FnOnce(&mut LocalState) -> Result<(), AppError> + Send + 'static,
+    ) -> Result<LocalState, AppError> {
         let guard = lock(&self.directory, self.lock_timeout).await?;
         let directory = self.directory.clone();
         worker("update local state", move || {
             let _guard = guard;
             let previous = LocalState::load(&directory)?;
             let mut local = previous.clone();
-            update(&mut local);
+            update(&mut local)?;
             if local != previous {
                 local.replace(&directory)?;
             }
