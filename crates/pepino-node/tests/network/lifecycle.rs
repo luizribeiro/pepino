@@ -62,6 +62,10 @@ async fn closed_board_can_be_reopened_on_a_restarted_node() {
     assert!(
         matches!(node.open_board(id).await, Err(pepino_node::Error::BoardRestartRequired(board)) if board == id)
     );
+    assert!(matches!(
+        node.open_board_with(id, pepino_node::OpenBoardOptions { from_start: true }).await,
+        Err(pepino_node::Error::BoardRestartRequired(board)) if board == id
+    ));
     node.shutdown().await.unwrap();
     let node = start(&settings).await;
     let board = node.open_board(id).await.unwrap();

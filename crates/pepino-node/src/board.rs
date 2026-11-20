@@ -28,6 +28,9 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OpenBoardOptions {
+    /// Replay the complete history to recover a lost application store.
+    ///
+    /// Set this only on the first open of the board in this node's lifetime.
     pub from_start: bool,
 }
 
@@ -67,6 +70,10 @@ impl Node {
         self.open_board_with(id, OpenBoardOptions::default()).await
     }
 
+    /// Open a board with an explicit replay policy.
+    ///
+    /// p2panda 0.8.1 requires a node restart before reopening a previously closed board.
+    /// Both replay policies return [`Error::BoardRestartRequired`] in that case.
     pub async fn open_board_with(
         &self,
         id: BoardId,
