@@ -39,3 +39,51 @@ fn tree_shows_a_forest_and_omits_closed_tasks_by_default() {
         .unwrap();
     assert_eq!(task_error(output, 3, "not_found")["task"], missing);
 }
+
+#[cfg(unix)]
+#[test]
+fn tree_draws_guides_and_budgets_their_width_on_a_terminal() {
+    use nix::pty::{Winsize, openpty};
+    use std::{fs::File, io::Read, process::Stdio};
+
+    let (sandbox, _) = task_sandbox();
+    let project = small_project(&sandbox);
+    let title = "Check the replacement fasteners against the greenhouse plans";
+    let leaf = create_task(&sandbox, title, &["--parent", &project.blocker]);
+    let pty = openpty(
+        Some(&Winsize {
+            ws_row: 24,
+            ws_col: 52,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        }),
+        None,
+    )
+    .unwrap();
+    let child = sandbox
+        .command()
+        .args(["tree", "--color", "never"])
+        .stdout(File::from(pty.slave))
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut bytes = Vec::new();
+    if let Err(error) = File::from(pty.master).read_to_end(&mut bytes) {
+        assert_eq!(error.raw_os_error(), Some(nix::errno::Errno::EIO as i32));
+    }
+    common::success(child.wait_with_output().unwrap());
+
+    let tty = String::from_utf8(bytes).unwrap();
+    let rows: Vec<_> = tty.lines().collect();
+    assert_eq!(rows.len(), 4);
+    assert!(rows[1].starts_with(&format!("├── {}", &project.blocker[..6])));
+    assert!(rows[2].starts_with(&format!("│   └── {}", &leaf[..6])));
+    assert!(rows[3].starts_with(&format!("└── {}", &project.downstream[..6])));
+    assert_eq!(rows[2].chars().count(), 52);
+    assert!(rows[2].contains('…'));
+    assert!(
+        sandbox
+            .run(&["tree"])
+            .contains(&format!("    {}  {title}", &leaf[..6]))
+    );
+}
