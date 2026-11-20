@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 
-use super::{AddMembershipArgs, FieldArgs};
+use super::{AddMembershipArgs, CustomArgs};
 use crate::error::CliError;
 use crate::input::read_text;
 
@@ -10,6 +10,14 @@ use crate::input::read_text;
 pub struct TaskWriteArgs {
     #[command(flatten)]
     pub membership: AddMembershipArgs,
+    #[command(flatten)]
+    pub relations: RelationArgs,
+    #[command(flatten)]
+    pub fields: AddFieldArgs,
+}
+
+#[derive(Args, Default)]
+pub struct AddFieldArgs {
     /// Set the due date. Accepts YYYY-MM-DD or relative dates such as tomorrow and -2w.
     #[arg(long, allow_hyphen_values = true, value_name = "DATE")]
     pub due: Option<String>,
@@ -17,9 +25,7 @@ pub struct TaskWriteArgs {
     #[arg(long, allow_negative_numbers = true)]
     pub priority: Option<i64>,
     #[command(flatten)]
-    pub relations: RelationArgs,
-    #[command(flatten)]
-    pub fields: FieldArgs,
+    pub custom: CustomArgs,
     #[command(flatten)]
     pub description: DescriptionArgs,
 }
@@ -107,13 +113,13 @@ mod tests {
         .unwrap()
         .args;
         assert_eq!(edit.membership.tags, ["release", "docs"]);
-        assert_eq!(edit.due.as_deref(), Some("-1w"));
-        assert_eq!(edit.priority, Some(-2));
+        assert_eq!(edit.fields.due.as_deref(), Some("-1w"));
+        assert_eq!(edit.fields.priority, Some(-2));
         assert_eq!(edit.membership.assignees, ["me"]);
-        assert!(edit.description.reads_stdin());
+        assert!(edit.fields.description.reads_stdin());
         let edit = Edit::try_parse_from(["edit", "--description", "Check release notes"]).unwrap();
         assert_eq!(
-            edit.args.description.read().unwrap().as_deref(),
+            edit.args.fields.description.read().unwrap().as_deref(),
             Some("Check release notes")
         );
         assert_eq!(DescriptionArgs::default().read().unwrap(), None);

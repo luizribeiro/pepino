@@ -14,7 +14,7 @@ pub fn run(
     json: bool,
 ) -> Result<CommandResult, CliError> {
     let from_stdin = title == "-";
-    if from_stdin && args.description.reads_stdin() {
+    if from_stdin && args.fields.description.reads_stdin() {
         return Err(CliError::new(
             ErrorKind::Usage,
             "The title and description both use stdin.",

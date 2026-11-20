@@ -41,16 +41,16 @@ impl TaskWriteArgs {
                 "Expected an add_task request.",
             ));
         };
-        if let Some(value) = self.due {
+        if let Some(value) = self.fields.due {
             *due = Some(resolve_date(&value, today)?);
         }
-        if let Some(value) = self.description.read()? {
+        if let Some(value) = self.fields.description.read()? {
             *description = Some(value);
         }
-        *priority = self.priority.or(*priority);
+        *priority = self.fields.priority.or(*priority);
         tags.extend(self.membership.tags);
         assignees.extend(self.membership.assignees);
-        fields.extend(self.fields.changes(today)?);
+        fields.extend(self.fields.custom.changes(today)?);
         self.relations.apply(&mut request);
         Ok(request)
     }
@@ -69,13 +69,16 @@ mod tests {
                 blocks: vec!["eb01".into()],
                 ..Default::default()
             },
-            due: Some("tomorrow".into()),
+
             membership: crate::write_args::AddMembershipArgs {
                 tags: vec!["hardware".into()],
                 assignees: vec!["me".into()],
             },
-            priority: Some(2),
-            ..Default::default()
+            fields: crate::write_args::AddFieldArgs {
+                due: Some("tomorrow".into()),
+                priority: Some(2),
+                ..Default::default()
+            },
         };
         let input = new_task("Replace the greenhouse latch".into());
         let request = args.apply_to_add(input, today).unwrap();

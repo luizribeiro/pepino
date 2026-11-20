@@ -3,7 +3,7 @@ mod add;
 pub use add::new_task;
 mod task;
 
-pub use task::{DescriptionArgs, RelationArgs, TaskWriteArgs};
+pub use task::{AddFieldArgs, DescriptionArgs, RelationArgs, TaskWriteArgs};
 
 use std::collections::BTreeMap;
 
@@ -14,7 +14,7 @@ use crate::date::{digits, parse_date};
 use crate::error::{CliError, ErrorKind};
 
 #[derive(Args, Default)]
-pub struct FieldArgs {
+pub struct CustomArgs {
     /// Set a custom field from KEY=VALUE. Repeat for more fields.
     #[arg(long = "set", value_name = "KEY=VALUE")]
     set: Vec<String>,
@@ -23,7 +23,7 @@ pub struct FieldArgs {
     unset: Vec<String>,
 }
 
-impl FieldArgs {
+impl CustomArgs {
     pub fn changes(self, today: Date) -> Result<BTreeMap<String, FieldValue>, CliError> {
         let mut fields = BTreeMap::new();
         for entry in self.set {
@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn infers_custom_operands_and_applies_unsets() {
-        let fields = FieldArgs {
+        let fields = CustomArgs {
             set: [
                 "estimate=-03",
                 "arrival=tomorrow",
