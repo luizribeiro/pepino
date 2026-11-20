@@ -724,16 +724,20 @@ async fn status_reports_local_context_and_counts_from_the_log() {
 
 #[tokio::test]
 async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
+    use ciborium::Value as Cbor;
     use pepino_store::IdSource;
     let directory = tempfile::tempdir().unwrap();
     let mut app = App::open(directory.path(), NOW).await.unwrap();
     let board = app.local_state().board_id;
+    let author = app.local_state().device_id.to_string();
     let task = add(&mut app, "Replace the greenhouse latch").await;
     write(
         &mut app,
         json!({"op":"comment","task":task,"text":"Bring stainless screws"}),
     )
     .await;
+    let task_record = get(&mut app, &task).await;
+    let comment = &task_record.comments[0];
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();
@@ -744,9 +748,59 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
     let pepino_store::AppendOutcome::Skipped { id: future_id, .. } = future else {
         panic!("expected a skip")
     };
-    let Response::Log { events } = handle(&mut app, json!({"op":"log"})).await.unwrap() else {
-        panic!("expected history");
-    };
-    assert_eq!(events.len(), 3);
-    assert_eq!(events[0].id, future_id.to_string());
+    let mut bytes = store
+        .events(board, task.parse().unwrap())
+        .await
+        .unwrap()
+        .pop()
+        .unwrap()
+        .bytes;
+    let mut frame: Cbor = ciborium::from_reader(bytes.as_slice()).unwrap();
+    let (_, event) = frame.as_array_mut().unwrap()[1]
+        .as_map_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|(key, _)| key.as_text() == Some("event"))
+        .unwrap();
+    event.as_map_mut().unwrap()[0].0 = Cbor::from("reminder_added");
+    bytes.clear();
+    ciborium::into_writer(&frame, &mut bytes).unwrap();
+    let skip_id = pepino_core::EventId::from_bytes([255; 32]);
+    assert!(matches!(
+        store
+            .append(board, &bytes, IdSource::Trusted(skip_id))
+            .await
+            .unwrap(),
+        pepino_store::AppendOutcome::Skipped { .. }
+    ));
+    let events = json!([
+        {"id":future_id.to_string(),"author":null,"hlc":null,"kind":"unknown","classification":"unknown_version","change":{"type":"skipped","version":2,"tasks":[]}},
+        {"id":task,"author":author,"hlc":task_record.created,"kind":"task_created","classification":"applied","change":{"type":"creation","title":"Replace the greenhouse latch","fields":{"description":null,"status":"todo","due":null,"priority":null,"tags":[],"assignees":[],"fields":{}}}},
+        {"id":comment.id,"author":author,"hlc":comment.hlc,"kind":"comment_added","classification":"applied","change":{"type":"comment","task":task,"text":"Bring stainless screws"}},
+        {"id":skip_id.to_string(),"author":author,"hlc":comment.hlc,"kind":"reminder_added","classification":"unknown_event","change":{"type":"skipped","tasks":[task]}}
+    ]);
+    read_golden(
+        &mut app,
+        json!({"op":"log","task":null,"limit":null}),
+        json!({"ok":{"kind":"log","events":events}}),
+    )
+    .await;
+    read_golden(
+        &mut app,
+        json!({"op":"log","task":null,"limit":0}),
+        json!({"ok":{"kind":"log","events":[]}}),
+    )
+    .await;
+    read_golden(
+        &mut app,
+        json!({"op":"log","task":task,"limit":2}),
+        json!({"ok":{"kind":"log","events":&events.as_array().unwrap()[2..]}}),
+    )
+    .await;
+    read_golden(
+        &mut app,
+        json!({"op":"log","task":"0000","limit":null}),
+        json!({"error":{"kind":"not_found","field":"task","task":"0000"}}),
+    )
+    .await;
 }
