@@ -44,6 +44,15 @@ pub struct LocalState {
 }
 
 impl LocalState {
+    pub(super) fn task_names<'a>(
+        &self,
+        tasks: impl IntoIterator<Item = &'a crate::TaskSummary>,
+    ) -> std::collections::BTreeMap<String, String> {
+        self.names_for(tasks.into_iter().flat_map(|task| {
+            std::iter::once(task.author.as_str()).chain(task.assignees.iter().map(String::as_str))
+        }))
+    }
+
     pub(super) fn names_for<'a>(
         &self,
         ids: impl IntoIterator<Item = &'a str>,

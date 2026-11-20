@@ -173,6 +173,8 @@ pub enum Response {
         filter: String,
         resolved_dates: BTreeMap<String, Date>,
         sort: String,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        names: BTreeMap<String, String>,
     },
 }
 

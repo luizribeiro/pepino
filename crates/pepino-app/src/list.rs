@@ -64,7 +64,7 @@ impl App {
                 .into_iter()
                 .take(limit.unwrap_or(total))
                 .map(project_summary)
-                .collect::<Result<_, _>>()?;
+                .collect::<Result<Vec<_>, _>>()?;
             let resolved_dates = prepared
                 .resolved_dates()
                 .iter()
@@ -74,7 +74,9 @@ impl App {
         } else {
             (Vec::new(), 0, BTreeMap::new())
         };
+        let names = self.local.task_names(&tasks);
         Ok(Response::Tasks {
+            names,
             tasks,
             total,
             filter: filter.to_string(),

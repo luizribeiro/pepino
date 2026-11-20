@@ -1101,11 +1101,15 @@ async fn task_lists_sort_limit_and_search_project_records_with_both_filter_forms
     let latch = get(&mut app, &latch).await;
     let summary = latch.summary;
     assert_eq!(summary.comment_count, 1);
+    let names = json!({
+        app.local_state().identity_id.to_string(): "Ada Gardener",
+        app.local_state().device_id.to_string(): app.local_state().device_name
+    });
 
     list_golden(&mut app,json!("tag:hardware assignee:me"),None, None,
-        json!({"ok":{"kind":"tasks","tasks":[summary,hinges.summary],"total":2,"filter":"tag:hardware assignee:me","resolved_dates":{},"sort":"default"}})).await;
+        json!({"ok":{"kind":"tasks","names":names,"tasks":[summary,hinges.summary],"total":2,"filter":"tag:hardware assignee:me","resolved_dates":{},"sort":"default"}})).await;
     list_golden(&mut app,json!(["tag:hardware","assignee:Ada Gardener"]),Some("title"),Some(1),
-        json!({"ok":{"kind":"tasks","tasks":[hinges.summary],"total":2,"filter":"tag:hardware assignee:\"Ada Gardener\"","resolved_dates":{},"sort":"title"}})).await;
+        json!({"ok":{"kind":"tasks","names":names,"tasks":[hinges.summary],"total":2,"filter":"tag:hardware assignee:\"Ada Gardener\"","resolved_dates":{},"sort":"title"}})).await;
     list_golden(&mut app,json!("due:tomorrow"),None,Some(0),
         json!({"ok":{"kind":"tasks","tasks":[],"total":1,"filter":"due:tomorrow","resolved_dates":{"tomorrow":"2026-11-21"},"sort":"default"}})).await;
     for filter in [
@@ -1113,7 +1117,7 @@ async fn task_lists_sort_limit_and_search_project_records_with_both_filter_forms
         json!(["tag:hardware", "STAINLESS screws"]),
     ] {
         list_golden(&mut app,filter,None,None,
-            json!({"ok":{"kind":"tasks","tasks":[summary],"total":1,"filter":"tag:hardware \"STAINLESS screws\"","resolved_dates":{},"sort":"default"}})).await;
+            json!({"ok":{"kind":"tasks","names":names,"tasks":[summary],"total":1,"filter":"tag:hardware \"STAINLESS screws\"","resolved_dates":{},"sort":"default"}})).await;
     }
 
     for (name, filter) in [
@@ -1133,7 +1137,7 @@ async fn task_lists_sort_limit_and_search_project_records_with_both_filter_forms
     drop(app);
     let mut app = App::open(directory.path(), NOW).await.unwrap();
     list_golden(&mut app, json!("@weekend"), None, None,
-        json!({"ok":{"kind":"tasks","tasks":[summary],"total":1,"filter":"@weekend","resolved_dates":{"tomorrow":"2026-11-21"},"sort":"default"}})).await;
+        json!({"ok":{"kind":"tasks","names":names,"tasks":[summary],"total":1,"filter":"@weekend","resolved_dates":{"tomorrow":"2026-11-21"},"sort":"default"}})).await;
     list_golden(&mut app, json!("-board:Greenhouse @weekend"), None, None,
         json!({"ok":{"kind":"tasks","tasks":[],"total":0,"filter":"-board:Greenhouse @weekend","resolved_dates":{},"sort":"default"}})).await;
     list_golden(
