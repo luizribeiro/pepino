@@ -27,6 +27,8 @@ fn network() -> (tempfile::TempDir, String) {
 fn join(peer: &Host, grant: &str) {
     let result = peer.json(&["device", "join", grant, "--timeout", "35s"]);
     assert_eq!(result["joined"], true, "{result}");
+    assert_eq!(result["grantor"]["id"].as_str().unwrap().len(), 64);
+    assert!(result["grantor"]["name"].is_string());
     assert_eq!(result["schema"], 1);
 }
 
@@ -196,6 +198,7 @@ fn a_timed_out_join_completes_when_the_grantor_returns() {
         "pending",
     );
     assert_eq!(pending["joined"], false);
+    assert_eq!(pending["grantor"]["name"], "Titanium");
     assert_eq!(pending["boards"][0], "waiting_to_be_added");
     assert!(
         ferrum

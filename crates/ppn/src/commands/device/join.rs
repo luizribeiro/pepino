@@ -33,13 +33,15 @@ pub(super) fn run(
     } else {
         process::wait_for_service(&client, process::START_LIMIT).map_err(unreachable)?;
     }
-    if let Some(peer) = local.peer_hint() {
-        let outcome = client
-            .call(Operation::RegisterPeerHint { peer })
-            .map_err(unreachable)?;
-        if !matches!(outcome, Outcome::PeerHintRegistered) {
-            return Err(unexpected_reply());
-        }
+    let peer = local.peer_hint().ok_or_else(unexpected_reply)?;
+    let id = peer.id;
+    let name = local.devices().remove(&id).ok_or_else(unexpected_reply)?;
+    let grantor = Grantor { id, name };
+    let outcome = client
+        .call(Operation::RegisterPeerHint { peer })
+        .map_err(unreachable)?;
+    if !matches!(outcome, Outcome::PeerHintRegistered) {
+        return Err(unexpected_reply());
     }
     let outcome = client
         .call_with(
@@ -50,23 +52,46 @@ pub(super) fn run(
     let Outcome::BoardJoinState { boards } = outcome else {
         return Err(unexpected_reply());
     };
-    let result = JoinResult(boards);
+    let result = JoinResult { boards, grantor };
     if !result.joined() {
         return Err(CliError::new(
             ErrorKind::Pending,
-            format!("Timed out waiting for initial sync. {PENDING}"),
+            format!(
+                "{}. Timed out waiting for initial sync. {PENDING}",
+                result.grantor.display()
+            ),
         )
         .with_detail("joined", json!(false))
-        .with_detail("boards", json!(result.0.values().collect::<Vec<_>>())));
+        .with_detail("boards", json!(result.boards.values().collect::<Vec<_>>()))
+        .with_detail("grantor", json!(result.grantor)));
     }
     Ok(CommandResult::document(result))
 }
 
-struct JoinResult(BTreeMap<BoardId, BoardJoinState>);
+struct JoinResult {
+    boards: BTreeMap<BoardId, BoardJoinState>,
+    grantor: Grantor,
+}
+
+#[derive(serde::Serialize)]
+struct Grantor {
+    id: DeviceId,
+    name: String,
+}
+
+impl Grantor {
+    fn display(&self) -> String {
+        format!(
+            "Granted by {} ({})",
+            single_line(&self.name),
+            ppn::render::short_id(&self.id.to_string())
+        )
+    }
+}
 
 impl JoinResult {
     fn joined(&self) -> bool {
-        self.0
+        self.boards
             .values()
             .all(|state| *state == BoardJoinState::Joined)
     }
@@ -74,7 +99,10 @@ impl JoinResult {
 
 impl Render for JoinResult {
     fn human(&self, _: &Terminal) -> String {
-        "Device joined. Initial sync complete.".into()
+        format!(
+            "Device joined. Initial sync complete. {}.",
+            self.grantor.display()
+        )
     }
 
     fn json_fields(self) -> Map<String, Value> {
@@ -82,7 +110,11 @@ impl Render for JoinResult {
         Map::from_iter([
             ("kind".into(), json!("device_join")),
             ("joined".into(), json!(joined)),
-            ("boards".into(), json!(self.0.values().collect::<Vec<_>>())),
+            (
+                "boards".into(),
+                json!(self.boards.values().collect::<Vec<_>>()),
+            ),
+            ("grantor".into(), json!(self.grantor)),
             ("message".into(), json!((!joined).then_some(PENDING))),
         ])
     }
