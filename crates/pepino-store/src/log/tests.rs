@@ -284,7 +284,7 @@ async fn reopening_projects_legacy_edges_on_every_board() {
     let edge_bytes = edge.encode().unwrap();
     let decoded = Decoded::new(&edge_bytes, IdSource::Content).unwrap();
 
-    let older = Store::open_file(&path, 1).await.unwrap();
+    let older = Store::open_file(&path, 1, true).await.unwrap();
     let fresh = Store::open_in_memory().await.unwrap();
     for board in boards {
         for store in [&older, &fresh] {
@@ -568,7 +568,7 @@ async fn upgrading_a_file_reindexes_skips_without_replaying_them_as_applied() {
         .position(|part| part == b"comment_added")
         .unwrap();
     bytes[offset..offset + "comment_added".len()].copy_from_slice(b"reminder_sent");
-    let store = Store::open_file(&path, 2).await.unwrap();
+    let store = Store::open_file(&path, 2, true).await.unwrap();
     assert!(matches!(
         store
             .append(board, &bytes, IdSource::Content)

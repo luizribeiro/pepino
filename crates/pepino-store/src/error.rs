@@ -14,6 +14,8 @@ pub enum StoreError {
         to: TaskId,
         reason: Option<EdgeExclusion>,
     },
+    #[error("database does not match the local identity, device, or board")]
+    LocalBindingMismatch,
     #[error("invalid event bytes: {0}")]
     Decode(#[from] DecodeError),
     #[error("invalid task view value: {0}")]

@@ -1,3 +1,4 @@
+mod binding;
 mod board;
 mod board_key;
 mod comment;
@@ -48,17 +49,21 @@ pub struct Store {
 
 impl Store {
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        Self::open_file(path.as_ref(), FOLD_VERSION).await
+        Self::open_file(path.as_ref(), FOLD_VERSION, true).await
     }
 
-    async fn open_file(path: &Path, version: i64) -> Result<Self, StoreError> {
+    pub async fn open_existing(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        Self::open_file(path.as_ref(), FOLD_VERSION, false).await
+    }
+
+    async fn open_file(path: &Path, version: i64, create: bool) -> Result<Self, StoreError> {
         let path = std::path::absolute(path).map_err(sqlx::Error::Io)?;
         let options = SqliteConnectOptions::new()
             .filename(path)
             .foreign_keys(true);
         let writer = options
             .clone()
-            .create_if_missing(true)
+            .create_if_missing(create)
             .journal_mode(SqliteJournalMode::Wal);
         let connection = Self::connect(writer, version).await?;
         let readers = SqlitePoolOptions::new()
