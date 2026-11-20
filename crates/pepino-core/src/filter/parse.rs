@@ -53,6 +53,14 @@ pub fn parse_argv<S: AsRef<str>>(argv: &[S], today: Date) -> Result<Filter, Pars
         .map(Filter::from_terms)
 }
 
+pub fn parse_at(input: &str, today: Date) -> Result<Filter, ParseError> {
+    parse(input, today)
+}
+
+pub fn parse_argv_at<S: AsRef<str>>(argv: &[S], today: Date) -> Result<Filter, ParseError> {
+    parse_argv(argv, today)
+}
+
 fn parse_argument(input: &str, index: usize, today: Date) -> Result<Term, ParseError> {
     let start = input.trim_start();
     let raw = start.trim_end();

@@ -19,4 +19,4 @@ pub use ast::{
 pub use date::{DateOperand, RelativeDate};
 pub use error::{ErrorKind, ParseError, Position};
 pub use keywords::State;
-pub use parse::{parse, parse_argv};
+pub use parse::{parse, parse_argv, parse_argv_at, parse_at};

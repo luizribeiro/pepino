@@ -20,8 +20,8 @@ pub enum FilterInput {
 impl FilterInput {
     pub(super) fn parse(&self, today: Date) -> Result<Filter, AppError> {
         match self {
-            Self::Text(text) => filter::parse(text, today.into()),
-            Self::Argv(argv) => filter::parse_argv(argv, today.into()),
+            Self::Text(text) => filter::parse_at(text, today.into()),
+            Self::Argv(argv) => filter::parse_argv_at(argv, today.into()),
         }
         .map_err(|error| AppError::InvalidInput {
             field: "filter".into(),

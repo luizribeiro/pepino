@@ -13,7 +13,7 @@ impl SavedViews {
     fn referencing(&self, target: &str) -> Vec<String> {
         self.iter()
             .filter_map(|(name, text)| {
-                let filter = pepino_core::filter::parse(text, pepino_core::Date::MIN).ok()?;
+                let filter = pepino_core::filter::parse_at(text, pepino_core::Date::MIN).ok()?;
                 filter
                     .terms()
                     .iter()
