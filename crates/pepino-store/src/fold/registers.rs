@@ -31,11 +31,51 @@ impl Registers<'_> {
                 for (name, value) in &fields.custom {
                     self.field(name.as_str(), value).await?;
                 }
+                for tag in &fields.tags {
+                    self.presence("tag", tag.as_bytes(), true).await?;
+                }
+                for who in &fields.assignees {
+                    self.presence("assignee", who.as_bytes(), true).await?;
+                }
                 Ok(())
             }
             Event::TaskFieldSet { field, value, .. } => self.field(field.as_str(), value).await,
-            _ => Ok(()),
+            event @ (Event::TagAdded { tag, .. } | Event::TagRemoved { tag, .. }) => {
+                self.presence(
+                    "tag",
+                    tag.as_bytes(),
+                    matches!(event, Event::TagAdded { .. }),
+                )
+                .await
+            }
+            event @ (Event::AssigneeAdded { who, .. } | Event::AssigneeRemoved { who, .. }) => {
+                self.presence(
+                    "assignee",
+                    who.as_bytes(),
+                    matches!(event, Event::AssigneeAdded { .. }),
+                )
+                .await
+            }
+            Event::CommentAdded { text, .. } => {
+                self.write(
+                    "comment",
+                    self.envelope.id().as_bytes(),
+                    Some(text.as_bytes()),
+                )
+                .await
+            }
+            Event::TaskDeleted { .. } => Ok(()),
+            _ => Err(StoreError::UnsupportedEvent),
         }
+    }
+
+    async fn presence(
+        &mut self,
+        kind: &str,
+        member: &[u8],
+        present: bool,
+    ) -> Result<(), StoreError> {
+        self.write(kind, member, present.then_some(&[])).await
     }
 
     async fn field(&mut self, name: &str, value: &FieldValue) -> Result<(), StoreError> {

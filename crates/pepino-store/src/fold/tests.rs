@@ -170,3 +170,117 @@ async fn failed_register_write_rolls_back_the_log() {
         .unwrap();
     assert_eq!(tasks, 0);
 }
+
+#[tokio::test]
+async fn tag_and_assignee_registers_converge_in_reverse_arrival_order() {
+    use pepino_core::IdentityId;
+
+    let board = BoardId::from_bytes([19; 32]);
+    let task = TaskId::from_bytes([70; 32]);
+    let who = IdentityId::from_bytes([29; 32]);
+    let events = [
+        Event::TagAdded {
+            task,
+            tag: "garden".into(),
+        },
+        Event::TagRemoved {
+            task,
+            tag: "garden".into(),
+        },
+        Event::TagAdded {
+            task,
+            tag: "garden".into(),
+        },
+        Event::AssigneeAdded { task, who },
+        Event::AssigneeRemoved { task, who },
+    ];
+    let bytes: Vec<_> = events
+        .into_iter()
+        .zip([32, 51, 59, 32, 51])
+        .enumerate()
+        .map(|(index, (event, author))| {
+            Envelope::new(
+                DeviceId::from_bytes([author; 32]),
+                Hlc {
+                    wall_ms: 1_795_144_800_000 + index as u64,
+                    counter: 0,
+                },
+                event,
+            )
+            .unwrap()
+            .encode()
+            .unwrap()
+        })
+        .collect();
+    for order in [
+        bytes.iter().collect::<Vec<_>>(),
+        bytes.iter().rev().collect(),
+    ] {
+        let store = Store::open_in_memory().await.unwrap();
+        for bytes in order {
+            store.append(board, bytes, IdSource::Content).await.unwrap();
+        }
+        let rows: Vec<(String, Vec<u8>, Option<Vec<u8>>)> = sqlx::query_as(
+            "SELECT kind, member, value FROM task_register WHERE board = ? AND task = ?
+             ORDER BY kind, member",
+        )
+        .bind(board.as_bytes().as_slice())
+        .bind(task.as_bytes().as_slice())
+        .fetch_all(&mut *store.connection.lock().await)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            [
+                ("assignee".into(), who.as_bytes().to_vec(), None),
+                ("tag".into(), b"garden".to_vec(), Some(vec![])),
+            ]
+        );
+    }
+}
+
+#[tokio::test]
+async fn same_clock_comments_have_distinct_registers() {
+    let board = BoardId::from_bytes([19; 32]);
+    let task = TaskId::from_bytes([70; 32]);
+    let store = Store::open_in_memory().await.unwrap();
+    let clock = Hlc {
+        wall_ms: 1_795_144_800_000,
+        counter: 0,
+    };
+    for (id, author, text) in [
+        (50, 32, "Bring a drill"),
+        (40, 51, "Hinges are on the shelf"),
+    ] {
+        let envelope = Envelope::new(
+            DeviceId::from_bytes([author; 32]),
+            clock,
+            Event::CommentAdded {
+                task,
+                text: text.into(),
+            },
+        )
+        .unwrap();
+        store
+            .append(
+                board,
+                &envelope.encode().unwrap(),
+                IdSource::Trusted(EventId::from_bytes([id; 32])),
+            )
+            .await
+            .unwrap();
+    }
+    let rows: Vec<([u8; 32], Vec<u8>)> = sqlx::query_as(
+        "SELECT id, value FROM task_register WHERE kind = 'comment' ORDER BY hlc, id",
+    )
+    .fetch_all(&mut *store.connection.lock().await)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        [
+            ([40; 32], b"Hinges are on the shelf".to_vec()),
+            ([50; 32], b"Bring a drill".to_vec())
+        ]
+    );
+}
