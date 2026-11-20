@@ -124,12 +124,18 @@ pub struct Network {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub board_joins: BTreeMap<BoardId, BoardJoinState>,
     pub boards: BTreeMap<String, Board>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub board_members: BTreeMap<BoardId, std::collections::BTreeSet<pepino_core::DeviceId>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Board {
     #[serde(default)]
     pub starting_up: bool,
+    #[serde(default)]
+    pub enrollment_pending: bool,
+    #[serde(default)]
+    pub active: bool,
     pub events_waiting: Option<u64>,
     pub published: u64,
     pub received: u64,

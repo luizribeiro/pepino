@@ -3,6 +3,7 @@ use super::protocol::{Board, Network};
 pub fn snapshot(status: pepino_sync::Status) -> Network {
     Network {
         board_joins: status.board_join_states(),
+        board_members: status.members,
         last_seen: status
             .node
             .last_seen
@@ -34,6 +35,13 @@ pub fn snapshot(status: pepino_sync::Status) -> Network {
                 (
                     id.to_string(),
                     Board {
+                        enrollment_pending: board.enrollment_pending(),
+                        active: board.ingest_pending
+                            || status.node.boards.get(&id).is_some_and(|node| {
+                                node.pending_deliveries != 0
+                                    || !node.active_syncs.is_empty()
+                                    || !status.node.connected_peers.is_subset(&node.caught_up)
+                            }),
                         starting_up: status
                             .node
                             .boards

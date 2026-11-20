@@ -189,7 +189,10 @@ pub(super) fn board_activity(
         Some(board) if board.last_error.is_some() => "error",
         Some(board) if board.starting_up => "starting_up",
         Some(board)
-            if board.events_waiting == Some(0) && state == pepino_app::BoardJoinState::Joined =>
+            if board.events_waiting == Some(0)
+                && !board.active
+                && !board.enrollment_pending
+                && state == pepino_app::BoardJoinState::Joined =>
         {
             "idle"
         }
