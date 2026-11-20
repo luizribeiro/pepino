@@ -1,4 +1,7 @@
+use std::cmp::Ordering;
+
 use pepino_store::query::{Direction::*, Sort, SortKey::*};
+use proptest::{prelude::*, sample::subsequence};
 
 use super::fixture::{board, id};
 
@@ -36,6 +39,34 @@ fn each_explicit_key_supports_both_directions_and_keeps_missing_values_last() {
                 Due => assert!(task.due.is_none()),
                 Priority => assert!(task.priority.is_none()),
                 _ => unreachable!(),
+            }
+        }
+    }
+}
+
+proptest! {
+    #[test]
+    fn sort_is_total_and_invariant_under_input_permutation(
+        keys in subsequence(vec![Created, Updated, Due, Priority, Status, Title], 0..=6),
+        descending in any::<[bool; 6]>(),
+        weights in any::<[u32; 14]>(),
+    ) {
+        let custom = Sort::By(keys.into_iter().zip(descending.map(|desc| {
+            if desc { Descending } else { Ascending }
+        })).collect());
+        for sort in [Sort::default(), custom] {
+            let mut listed: Vec<_> = board().iter().collect();
+            let mut permuted = listed.clone();
+            permuted.sort_by_key(|task| weights[usize::from(task.id.as_bytes()[2] - 1)]);
+            sort.sort(&mut listed);
+            sort.sort(&mut permuted);
+            prop_assert_eq!(&listed, &permuted);
+            for (index, left) in listed.iter().enumerate() {
+                prop_assert_eq!(sort.compare(left, left), Ordering::Equal);
+                for right in &listed[index + 1..] {
+                    prop_assert_eq!(sort.compare(left, right), Ordering::Less);
+                    prop_assert_eq!(sort.compare(right, left), Ordering::Greater);
+                }
             }
         }
     }
