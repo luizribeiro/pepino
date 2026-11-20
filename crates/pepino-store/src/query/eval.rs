@@ -184,6 +184,9 @@ fn prepare_clause<'a>(
 ) -> Result<Option<Predicate<'a>>, QueryErrorKind> {
     let predicate: Predicate<'a> = match clause.clone() {
         Clause::Text(text) => {
+            if !view.comments_loaded() {
+                return Err(QueryErrorKind::CommentsRequired);
+            }
             let needle = fold(&text);
             Box::new(move |task| text_matches(view, task, &needle))
         }

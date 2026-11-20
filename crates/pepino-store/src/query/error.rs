@@ -21,6 +21,8 @@ fn view_location(chain: &[String]) -> String {
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum QueryErrorKind {
+    #[error("text search requires a board snapshot loaded with comments")]
+    CommentsRequired,
     #[error("no current identity for me")]
     MissingIdentity,
     #[error("unknown person {text:?}")]

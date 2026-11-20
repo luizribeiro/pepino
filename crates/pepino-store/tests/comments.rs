@@ -63,6 +63,7 @@ async fn comments_are_visible_only_on_live_tasks_and_ordered_by_clock_then_id() 
         .unwrap();
     comments.sort_by_key(|comment| (comment.hlc, comment.id));
     assert_eq!(store.comments(board, task).await.unwrap(), comments);
+    assert!(store.board(board).await.unwrap().comments(task).is_empty());
     let snapshot = store.board_with_comments(board).await.unwrap();
     assert_eq!(snapshot.comments(task), comments);
     let deletion = Envelope::new(creation.author(), hlc, Event::TaskDeleted { task }).unwrap();

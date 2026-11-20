@@ -9,14 +9,14 @@ use crate::{
     TaskRecord, comment, edges, task,
 };
 
-/// An owned snapshot of a board's live tasks, their comments, and present edges.
+/// An owned snapshot of a board's live tasks, present edges, and optional comments.
 #[derive(Debug, Eq, PartialEq)]
 pub struct BoardView {
     tasks: Vec<TaskRecord>,
     by_id: BTreeMap<TaskId, usize>,
     edges: Vec<EdgeRecord>,
     incident: HashMap<TaskId, Vec<usize>>,
-    comments: HashMap<TaskId, Vec<CommentRecord>>,
+    comments: Option<HashMap<TaskId, Vec<CommentRecord>>>,
 }
 
 impl BoardView {
@@ -34,8 +34,17 @@ impl BoardView {
     }
 
     /// Lists comments on a live task in ascending `(hlc, id)` order.
+    ///
+    /// Load with [Store::board_with_comments] to include comments in the snapshot.
     pub fn comments(&self, task: TaskId) -> &[CommentRecord] {
-        self.comments.get(&task).map_or(&[], Vec::as_slice)
+        self.comments
+            .as_ref()
+            .and_then(|comments| comments.get(&task))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    pub(crate) fn comments_loaded(&self) -> bool {
+        self.comments.is_some()
     }
 
     pub(crate) fn ids_in_range(&self, first: TaskId, last: TaskId) -> impl Iterator<Item = TaskId> {
@@ -55,14 +64,31 @@ impl BoardView {
 }
 
 impl Store {
-    /// Loads the board's tasks, edges, and comments from a single SQLite read snapshot.
+    /// Loads the board's tasks and edges from a single SQLite read snapshot.
     pub async fn board(&self, board: BoardId) -> Result<BoardView, StoreError> {
+        self.load_board(board, false).await
+    }
+
+    /// Loads the board's tasks, edges, and comments from a single SQLite read snapshot.
+    pub async fn board_with_comments(&self, board: BoardId) -> Result<BoardView, StoreError> {
+        self.load_board(board, true).await
+    }
+
+    async fn load_board(
+        &self,
+        board: BoardId,
+        with_comments: bool,
+    ) -> Result<BoardView, StoreError> {
         let (task_rows, edge_rows, comment_records) = self
-            .read(async |connection| {
+            .read(async move |connection| {
                 let mut tx = connection.begin().await?;
                 let tasks = task::task_rows(&mut tx, board).await?;
                 let edges = edges::edge_rows(&mut tx, board).await?;
-                let comments = comment::records(&mut tx, board, None).await?;
+                let comments = if with_comments {
+                    Some(comment::records(&mut tx, board, None).await?)
+                } else {
+                    None
+                };
                 tx.commit().await?;
                 Ok((tasks, edges, comments))
             })
@@ -81,10 +107,13 @@ impl Store {
             incident.entry(edge.from).or_default().push(index);
             incident.entry(edge.to).or_default().push(index);
         }
-        let mut comments = HashMap::<_, Vec<_>>::new();
-        for (task, comment) in comment_records {
-            comments.entry(task).or_default().push(comment);
-        }
+        let comments = comment_records.map(|records| {
+            let mut comments = HashMap::<_, Vec<_>>::new();
+            for (task, comment) in records {
+                comments.entry(task).or_default().push(comment);
+            }
+            comments
+        });
         Ok(BoardView {
             tasks,
             by_id,
@@ -92,11 +121,6 @@ impl Store {
             incident,
             comments,
         })
-    }
-
-    /// Loads the board's tasks, edges, and comments from a single SQLite read snapshot.
-    pub async fn board_with_comments(&self, board: BoardId) -> Result<BoardView, StoreError> {
-        self.board(board).await
     }
 
     pub async fn task(&self, board: BoardId, id: TaskId) -> Result<Option<TaskRecord>, StoreError> {

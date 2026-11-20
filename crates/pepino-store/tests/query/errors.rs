@@ -187,3 +187,25 @@ fn nested_clause_errors_report_the_views_that_led_there() {
         &["weekend", "garden"],
     );
 }
+
+#[tokio::test]
+async fn text_search_requires_comments_even_for_an_empty_board() {
+    let store = Store::open_in_memory().await.unwrap();
+    let board = BoardId::from_bytes([0; 32]);
+    let plain = store.board(board).await.unwrap();
+    assert!(
+        select(&plain, &query(&filter("tag:garden")))
+            .unwrap()
+            .is_empty()
+    );
+    let text = filter("@woodwork");
+    let saved = std::collections::BTreeMap::from([("woodwork", filter("-fence"))]);
+    let mut query = query(&text);
+    query.context.views = &saved;
+    let error = select(&plain, &query).unwrap_err();
+    assert_eq!(error.kind, QueryErrorKind::CommentsRequired);
+    assert_eq!(error.term, "-fence");
+    assert_eq!(error.view_chain, ["woodwork"]);
+    let with_comments = store.board_with_comments(board).await.unwrap();
+    assert!(select(&with_comments, &query).unwrap().is_empty());
+}
