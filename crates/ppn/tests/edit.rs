@@ -165,7 +165,7 @@ fn edit_opens_editor_on_a_terminal_and_writes_the_form_difference() {
     let script = sandbox.home.path().join("edit task.sh");
     std::fs::write(
         &script,
-        r#"sed -e 's/Renovate the greenhouse/Rebuild the greenhouse/' -e 's/"garden"/"carpentry"/' -e 's/"assignees": \[\]/"assignees": ["me"]/' "$1" > "$1.edited"
+        r#"sed -e 's/Renovate the greenhouse/Rebuild the greenhouse/' -e 's/tags: garden/tags: carpentry/' -e 's/^assignees: $/assignees: me/' "$1" > "$1.edited"
     mv "$1.edited" "$1"
 "#,
     )
@@ -212,6 +212,7 @@ fn edit_reopens_the_same_file_after_a_parse_error() {
 if test -f "$1.before"; then
     test "$(cat "$1")" = 'bad form' || exit 5
     sed 's/Paint the shed/Stain the shed/' "$1.before" > "$1"
+    printf 'Keep the door open.\n# Editor note\n\\# Final coat\n' >> "$1"
 else
     cp "$1" "$1.before"
     printf 'bad form' > "$1"
@@ -228,7 +229,9 @@ fi
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .starts_with("error: Invalid edit form:")
+            .contains("error: Invalid edit form line \"bad form\": expected field: value")
     );
-    assert_eq!(show_task(&sandbox, &task)["title"], "Stain the shed");
+    let task = show_task(&sandbox, &task);
+    assert_eq!(task["title"], "Stain the shed");
+    assert_eq!(task["description"], "Keep the door open.\n# Final coat\n");
 }

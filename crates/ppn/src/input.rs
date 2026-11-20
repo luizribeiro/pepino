@@ -63,7 +63,7 @@ fn run_editor<T>(
     use std::process::{Command, Stdio};
 
     let directory = tempfile::tempdir().map_err(|error| read_error("editor directory", error))?;
-    let file = directory.path().join("task.json");
+    let file = directory.path().join("task.txt");
     fs::write(&file, text).map_err(|error| read_error("editor file", error))?;
     let mut command = if Path::new(editor).is_file() {
         Command::new(editor)

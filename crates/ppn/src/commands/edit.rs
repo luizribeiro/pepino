@@ -4,16 +4,17 @@ use pepino_app::{Date, FieldValue, ReadRequest, Request, Status, TaskSummary, Wr
 use ppn::app::AppClient;
 use ppn::error::{CliError, ErrorKind};
 use ppn::help_tree::example_help;
-use ppn::input::edit_text;
+use ppn::input::{edit_text, form};
 use ppn::output::CommandResult;
 use ppn::render::{merge_write_responses, write_document};
 use ppn::response::ResponseExt;
 use ppn::terminal::Context;
 use ppn::write_args::{AddMembershipArgs, FieldArgs, MembershipArgs};
-use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use serde::Deserialize;
 
 #[derive(clap::Args)]
-#[command(about = "Change a task’s fields and membership.", long_about = "Change a task’s fields and membership. On a terminal, pass only the task ID to edit a JSON text form in VISUAL or EDITOR.", after_help = example_help(&[
+#[command(about = "Change a task’s fields and membership.", long_about = "Change a task’s fields and membership. On a terminal, pass only the task ID to edit a plain text form in VISUAL or EDITOR.", after_help = example_help(&[
     "ppn edit 97ad97",
     "ppn edit 97ad97 --title 'Fix the latch'",
     "ppn edit 97ad97 --status doing --tag hardware --json",
@@ -66,15 +67,8 @@ fn edit_interactively(
     let mut client = AppClient::open(context)?;
     let task = client.task(reference)?;
     let before = Form::from(&task);
-    let text = serde_json::to_string_pretty(&before).map_err(|error| {
-        CliError::new(
-            ErrorKind::Failure,
-            format!("Could not prepare the edit form: {error}"),
-        )
-    })?;
-    let mut after: Form = edit_text(&(text + "\n"), json, |edited| {
-        serde_json::from_str(edited)
-            .map_err(|error| CliError::new(ErrorKind::Usage, format!("Invalid edit form: {error}")))
+    let mut after = edit_text(&before.render(), json, |text| {
+        before.parse(text, context.time.today)
     })?;
     after.resolve_assignees(&mut client)?;
     let mut requests = after.membership_from(&before).requests(&task.id);
@@ -88,8 +82,8 @@ fn edit_interactively(
     apply(context, &mut client, requests)
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[cfg_attr(test, derive(Deserialize))]
+#[derive(Default)]
 struct Form {
     title: String,
     description: Option<String>,
@@ -117,6 +111,100 @@ impl From<&TaskSummary> for Form {
 }
 
 impl Form {
+    fn render(&self) -> String {
+        use std::fmt::Write;
+
+        let due = self.due.map(|date| date.to_string()).unwrap_or_default();
+        let priority = self
+            .priority
+            .map(|priority| priority.to_string())
+            .unwrap_or_default();
+        let status = serde_json::json!(self.status);
+        let mut text = format!(
+            "# Edit one field per line. Separate tags and assignees with commas.\n# Remove a field.NAME line to clear it. Quote custom text to preserve its type.\ntitle: {}\nstatus: {}\ndue: {due}\npriority: {priority}\ntags: {}\nassignees: {}\n",
+            self.title,
+            status.as_str().unwrap_or("todo"),
+            self.tags.iter().cloned().collect::<Vec<_>>().join(", "),
+            self.assignees
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        for (key, value) in &self.fields {
+            let value = match value {
+                FieldValue::Text(text) => serde_json::Value::String(text.clone()).to_string(),
+                FieldValue::Integer(value) => value.to_string(),
+                FieldValue::Date(value) => value.to_string(),
+                FieldValue::Status(value) => {
+                    format!("existing status {}", serde_json::json!(value))
+                }
+                _ => continue,
+            };
+            let _ = writeln!(text, "field.{key}: {value}");
+        }
+        text.push_str("\n# Description follows. Start a literal # line with \\#.\n");
+        text.push_str(&form::escape_description(
+            self.description.as_deref().unwrap_or_default(),
+        ));
+        text
+    }
+
+    fn parse(&self, text: &str, today: Date) -> Result<Self, CliError> {
+        let (lines, description) = form::parse_form(text)?;
+        let has_status = lines.iter().any(|line| line.key == "status");
+        let mut after = Self::default();
+        for line in lines {
+            let value = line.value;
+            let invalid = |reason: &str| line.invalid(reason);
+            match line.key {
+                "title" => after.title = form::title(value).map_err(invalid)?,
+                "status" => after.status = form::status(value).map_err(invalid)?,
+                "due" if !value.is_empty() => {
+                    after.due = Some(
+                        ppn::date::resolve_date(value, today)
+                            .map_err(|error| line.invalid(error))?,
+                    );
+                }
+                "priority" if !value.is_empty() => {
+                    after.priority =
+                        Some(value.parse().map_err(|_| invalid("expected an integer"))?);
+                }
+                "due" | "priority" => {}
+                "tags" => after.tags = form::membership(value, true).map_err(invalid)?,
+                "assignees" => after.assignees = form::membership(value, false).map_err(invalid)?,
+                key if let Some(key) = key.strip_prefix("field.") => {
+                    let value = match self.fields.get(key) {
+                        Some(FieldValue::Status(status))
+                            if value
+                                == format!("existing status {}", serde_json::json!(status)) =>
+                        {
+                            FieldValue::Status(*status)
+                        }
+                        _ => form::custom_field(key, value, today).map_err(invalid)?,
+                    };
+                    after.fields.insert(key.into(), value);
+                }
+                _ => return Err(invalid("unknown field")),
+            }
+        }
+        if after.title.is_empty() || !has_status {
+            return Err(CliError::new(
+                ErrorKind::Usage,
+                "The edit form requires title and status lines.",
+            ));
+        }
+        if description.len() > 65536 {
+            return Err(CliError::new(
+                ErrorKind::Usage,
+                "The edit form description exceeds 65536 bytes.",
+            ));
+        }
+        after.description = (!description.is_empty() || self.description.as_deref() == Some(""))
+            .then_some(description);
+        Ok(after)
+    }
+
     fn resolve_assignees(&mut self, client: &mut AppClient) -> Result<(), CliError> {
         if self.assignees.remove("me") {
             let status = client.call(Request::Read(ReadRequest::Status))?;
