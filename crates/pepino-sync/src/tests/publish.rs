@@ -41,6 +41,10 @@ async fn publishes_existing_local_writes_in_store_order() {
         .await
         .unwrap();
     until(&engine, Status::is_idle).await;
+    let snapshot = engine.status();
+    assert_eq!(snapshot.boards[&board].published, 2);
+    assert_eq!(snapshot.boards[&board].received, 0);
+    assert!(snapshot.boards[&board].last_published_at.is_some());
     assert_eq!(
         engine.status().boards[&board].last_published,
         Some(events[1].id)

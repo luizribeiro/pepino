@@ -56,6 +56,9 @@ async fn malformed_payloads_are_retained_before_acknowledging_and_ingest_continu
             .unwrap()
             .contains("invalid event CBOR")
     );
+    let snapshot = engine.status();
+    assert_eq!(snapshot.boards[&board].received, 1);
+    assert!(snapshot.boards[&board].last_received_at.is_some());
     engine.shutdown().await.unwrap();
 }
 

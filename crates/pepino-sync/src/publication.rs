@@ -39,5 +39,7 @@ pub(crate) async fn publish(
         let board = state.boards.entry(id).or_default();
         board.outbox_pending = board.outbox_pending.map(|count| count.saturating_sub(1));
         board.last_published = Some(event.id);
+        board.published += 1;
+        board.last_published_at = Some(std::time::SystemTime::now());
     });
 }

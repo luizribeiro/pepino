@@ -84,7 +84,10 @@ async fn ingest<A>(
         {
             Ok(AppendOutcome::Applied { id, .. } | AppendOutcome::Skipped { id, .. }) => {
                 status.send_modify(|state| {
-                    state.boards.entry(board).or_default().last_ingested = Some(id)
+                    let board = state.boards.entry(board).or_default();
+                    board.last_ingested = Some(id);
+                    board.received += 1;
+                    board.last_received_at = Some(std::time::SystemTime::now());
                 });
                 return;
             }
