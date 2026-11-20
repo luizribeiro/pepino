@@ -872,6 +872,12 @@ async fn saved_views_migrate_v1_state_and_survive_concurrent_opens() {
     read_golden(
         &mut app,
         json!({"op":"delete_view","name":"latch"}),
+        json!({"error":{"kind":"conflict","field":"name","view":"latch","referenced_by":["weekend"]}}),
+    )
+    .await;
+    read_golden(
+        &mut app,
+        json!({"op":"delete_view","name":"latch","force":true}),
         json!({"ok":{"kind":"view_deleted","view":latch}}),
     )
     .await;

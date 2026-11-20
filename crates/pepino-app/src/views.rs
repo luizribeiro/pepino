@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 
+use pepino_core::filter::Clause;
 use pepino_store::query;
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +10,19 @@ use serde::{Deserialize, Serialize};
 pub(crate) struct SavedViews(BTreeMap<String, String>);
 
 impl SavedViews {
+    fn referencing(&self, target: &str) -> Vec<String> {
+        self.iter()
+            .filter_map(|(name, text)| {
+                let filter = pepino_core::filter::parse(text, pepino_core::Date::MIN).ok()?;
+                filter
+                    .terms()
+                    .iter()
+                    .any(|term| matches!(&term.clause, Clause::View(view) if view == target))
+                    .then(|| name.to_owned())
+            })
+            .collect()
+    }
+
     pub(crate) fn get(&self, name: &str) -> Option<&str> {
         self.0.get(name).map(String::as_str)
     }
@@ -31,7 +45,7 @@ impl SavedViews {
 use crate::app::{invalid, worker};
 use crate::filter::ViewFilters;
 use crate::list::query_error;
-use crate::{App, AppError, Date, FilterInput, MissingReference, Response};
+use crate::{App, AppError, ConflictReference, Date, FilterInput, MissingReference, Response};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SavedView {
@@ -93,6 +107,7 @@ impl App {
     pub(super) async fn delete_view(
         &mut self,
         name: String,
+        force: bool,
         guard: File,
     ) -> Result<Response, AppError> {
         validate_name(&name)?;
@@ -104,6 +119,18 @@ impl App {
                 reference: MissingReference::View(name),
             });
         };
+        if !force {
+            let referenced_by = views.referencing(&name);
+            if !referenced_by.is_empty() {
+                return Err(AppError::Conflict {
+                    field: "name".into(),
+                    reference: ConflictReference::View {
+                        view: name,
+                        referenced_by,
+                    },
+                });
+            }
+        }
         self.persist_views(views, guard).await?;
         Ok(Response::ViewDeleted {
             view: SavedView { name, filter },

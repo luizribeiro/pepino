@@ -110,6 +110,8 @@ pub enum WriteRequest {
     },
     DeleteView {
         name: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        force: bool,
     },
 }
 

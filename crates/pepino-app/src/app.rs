@@ -81,8 +81,8 @@ impl App {
                 filter,
                 today,
             }) => self.save_view(name, &filter, today, guard).await,
-            Request::Write(WriteRequest::DeleteView { name }) => {
-                self.delete_view(name, guard).await
+            Request::Write(WriteRequest::DeleteView { name, force }) => {
+                self.delete_view(name, force, guard).await
             }
             Request::Write(request) => {
                 let board = self.board().await?;
