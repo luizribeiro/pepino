@@ -1,4 +1,4 @@
-use pepino_core::{DeviceId, EventId, Hlc, InitialFields};
+use pepino_core::{DeviceId, Hlc, InitialFields};
 
 use super::*;
 use crate::{IdSource, Store};
@@ -50,13 +50,8 @@ async fn only_creation_makes_a_task_visible_and_deletion_is_permanent() {
             event,
         )
         .unwrap();
-        let id = if index == 1 {
-            task.0
-        } else {
-            EventId::from_bytes([index as u8; 32])
-        };
         store
-            .append(board, &envelope.encode().unwrap(), IdSource::Trusted(id))
+            .append(board, &envelope.encode().unwrap(), IdSource::Content)
             .await
             .unwrap();
         let visible: Option<([u8; 12], [u8; 12], [u8; 32])> = sqlx::query_as(
@@ -94,12 +89,14 @@ async fn field_register_uses_clock_then_id_and_keeps_unset() {
     let field = FieldName::new("description").unwrap();
     let original = FieldValue::Text("Measure the door before buying hinges".into());
     let newer = FieldValue::Text("Use the brass hinges from the shed".into());
-    for (id, author, counter, value, expected) in [
-        (11, 32, 3, original.clone(), Some(original.clone())),
-        (22, 51, 4, newer.clone(), Some(newer.clone())),
-        (17, 12, 4, original.clone(), Some(newer)),
-        (23, 12, 4, FieldValue::Unset, None),
-        (90, 32, 3, original, None),
+    let mut winner = None;
+    let mut expected = None;
+    for (author, counter, value) in [
+        (32, 3, original.clone()),
+        (51, 4, newer),
+        (12, 4, original.clone()),
+        (12, 5, FieldValue::Unset),
+        (33, 3, original),
     ] {
         let envelope = Envelope::new(
             DeviceId::from_bytes([author; 32]),
@@ -107,16 +104,17 @@ async fn field_register_uses_clock_then_id_and_keeps_unset() {
             Event::TaskFieldSet {
                 task,
                 field: field.clone(),
-                value,
+                value: value.clone(),
             },
         )
         .unwrap();
+        let key = envelope.order_key();
+        if winner.is_none_or(|previous| key > previous) {
+            winner = Some(key);
+            expected = (value != FieldValue::Unset).then_some(value);
+        }
         store
-            .append(
-                board,
-                &envelope.encode().unwrap(),
-                IdSource::Trusted(EventId::from_bytes([id; 32])),
-            )
+            .append(board, &envelope.encode().unwrap(), IdSource::Content)
             .await
             .unwrap();
         let stored: Option<Vec<u8>> = sqlx::query_scalar(
@@ -251,10 +249,8 @@ async fn same_clock_comments_have_distinct_registers() {
         wall_ms: 1_795_144_800_000,
         counter: 0,
     };
-    for (id, author, text) in [
-        (50, 32, "Bring a drill"),
-        (40, 51, "Hinges are on the shelf"),
-    ] {
+    let mut expected = Vec::new();
+    for (author, text) in [(32, "Bring a drill"), (51, "Hinges are on the shelf")] {
         let envelope = Envelope::new(
             DeviceId::from_bytes([author; 32]),
             clock,
@@ -264,12 +260,9 @@ async fn same_clock_comments_have_distinct_registers() {
             },
         )
         .unwrap();
+        expected.push((*envelope.id().as_bytes(), text.as_bytes().to_vec()));
         store
-            .append(
-                board,
-                &envelope.encode().unwrap(),
-                IdSource::Trusted(EventId::from_bytes([id; 32])),
-            )
+            .append(board, &envelope.encode().unwrap(), IdSource::Content)
             .await
             .unwrap();
     }
@@ -279,11 +272,6 @@ async fn same_clock_comments_have_distinct_registers() {
     .fetch_all(&mut *store.connection.lock().await)
     .await
     .unwrap();
-    assert_eq!(
-        rows,
-        [
-            ([40; 32], b"Hinges are on the shelf".to_vec()),
-            ([50; 32], b"Bring a drill".to_vec())
-        ]
-    );
+    expected.sort_unstable();
+    assert_eq!(rows, expected);
 }
