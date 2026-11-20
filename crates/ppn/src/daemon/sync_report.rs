@@ -1,4 +1,4 @@
-use super::protocol::Network;
+use super::{network::membership, protocol::Network};
 use crate::{output::Render, terminal::Terminal};
 use serde_json::{Map, Value, json};
 
@@ -22,6 +22,14 @@ impl Summary {
             text.push_str(&format!(
                 "\nno other device reachable; {pending} events waiting to be sent"
             ));
+        }
+        for state in network
+            .board_joins
+            .values()
+            .copied()
+            .filter(|state| *state != pepino_app::BoardJoinState::Joined)
+        {
+            text.push_str(&format!("\nBoard membership: {}", membership(state)));
         }
         text
     }
@@ -51,4 +59,22 @@ fn an_idle_engine_with_no_peers_has_a_clear_summary() {
             .contains("no other device reachable; 0 events waiting to be sent")
     );
     assert_eq!(summary.json_fields()["idle"], true);
+}
+
+#[cfg(test)]
+#[test]
+fn reports_a_pending_join_even_when_the_outbox_is_idle() {
+    let network = Network {
+        board_joins: [(
+            pepino_core::BoardId::from_bytes([43; 32]),
+            pepino_app::BoardJoinState::WaitingForFirstSync,
+        )]
+        .into(),
+        ..Default::default()
+    };
+    assert!(
+        Summary(network)
+            .describe()
+            .contains("waiting for first sync")
+    );
 }
