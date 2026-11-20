@@ -31,6 +31,34 @@ fn join(peer: &Host, grant: &str) {
 }
 
 #[test]
+fn join_waits_for_a_supervised_daemon_without_spawning_one() {
+    let (_dir, network) = network();
+    let owner = Host::owner(&network);
+    let peer = Host::new(&network);
+    let grant = owner.add(&peer.request("Ferrum"), &[]);
+    let joining = peer
+        .command()
+        .env("PPN_DAEMON_AUTOSTART", "false")
+        .args(["device", "join", &grant, "--timeout", "35s", "--json"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    until(|| peer.data.join("local.json").exists());
+    let mut daemon = peer.command().args(["daemon", "run"]).spawn().unwrap();
+    let output = joining.wait_with_output().unwrap();
+    let status = peer.json(&["daemon", "status"]);
+    peer.stop();
+    assert!(daemon.wait().unwrap().success());
+    assert_eq!(status["pid"], daemon.id());
+    assert_eq!(
+        crate::common::as_json(&crate::common::success(output))["joined"],
+        true
+    );
+    assert!(!peer.data.join("daemon.log").exists());
+}
+
+#[test]
 fn linked_devices_share_tasks_and_late_members_get_history() {
     let (_dir, network) = network();
     let titanium = Host::owner(&network);

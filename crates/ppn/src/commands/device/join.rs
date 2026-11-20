@@ -5,6 +5,7 @@ use pepino_core::BoardId;
 use ppn::daemon::{
     address::socket_path,
     client::Client,
+    process,
     protocol::{Operation, Outcome},
 };
 
@@ -32,10 +33,15 @@ pub(super) fn run(
     }
     let (directory, options) = local_options(context, None)?;
     let local = runtime()?.block_on(App::join_device(directory, grant, options))?;
+    let config = &context.config()?.config;
     let client = Client {
-        path: socket_path(&context.config()?.config),
+        path: socket_path(config),
     };
-    ensure_running(&client, context, selection, true)?;
+    if config.daemon.autostart.value {
+        ensure_running(&client, context, selection, true)?;
+    } else {
+        process::wait_for_service(&client, process::START_LIMIT).map_err(unreachable)?;
+    }
     if let Some(peer) = local.peer_hint() {
         let outcome = client
             .call(Operation::RegisterPeerHint { peer })

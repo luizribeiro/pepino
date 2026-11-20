@@ -87,6 +87,20 @@ pub fn wait_started(
     result
 }
 
+pub fn wait_for_service(client: &Client, limit: Duration) -> io::Result<()> {
+    let start = Instant::now();
+    while client.status()?.is_none() {
+        if start.elapsed() >= limit {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Start the service for this data directory and repeat the join.",
+            ));
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+    Ok(())
+}
+
 pub fn nudge_on_startup(client: &Client, mut child: Child) -> io::Result<()> {
     let deadline = Instant::now() + Duration::from_millis(100);
     loop {
