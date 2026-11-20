@@ -22,6 +22,8 @@ pub(crate) struct CatalogState {
     pub(super) last_seen_ms: BTreeMap<DeviceId, i64>,
     #[serde(default)]
     pub(crate) identity: crate::identity::IdentityCatalog,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) observed_catalog_removal: Option<crate::Revocation>,
 }
 
 impl CatalogState {
