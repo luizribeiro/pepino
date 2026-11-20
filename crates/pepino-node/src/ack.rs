@@ -21,6 +21,15 @@ impl AckStore {
         Ok(Self(pool))
     }
 
+    pub(crate) async fn reset(&self, board: BoardId) -> Result<(), Error> {
+        sqlx::query("DELETE FROM pepino_board_ack WHERE board = ?")
+            .bind(board.as_bytes().as_slice())
+            .execute(&self.0)
+            .await
+            .map_err(Error::storage)?;
+        Ok(())
+    }
+
     pub(crate) fn receipt(&self, board: BoardId, event: EventId) -> Ack {
         Ack {
             store: self.clone(),
@@ -75,6 +84,8 @@ mod tests {
         later.ack().await.unwrap();
         assert!(later.acknowledged().await.unwrap());
         assert!(!earlier.acknowledged().await.unwrap());
+        store.reset(board).await.unwrap();
+        assert!(!later.acknowledged().await.unwrap());
         assert!(
             !store
                 .receipt(BoardId::from_bytes([22; 32]), later_id)
