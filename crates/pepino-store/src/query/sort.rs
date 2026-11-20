@@ -1,6 +1,7 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, fmt, str::FromStr};
 
 use pepino_core::Status;
+use thiserror::Error;
 
 use crate::TaskRecord;
 
@@ -12,6 +13,47 @@ pub enum SortKey {
     Priority,
     Status,
     Title,
+}
+
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[error("unknown sort key {0:?}")]
+pub struct InvalidSortKey(pub String);
+
+impl SortKey {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Updated => "updated",
+            Self::Due => "due",
+            Self::Priority => "priority",
+            Self::Status => "status",
+            Self::Title => "title",
+        }
+    }
+}
+
+impl fmt::Display for SortKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl FromStr for SortKey {
+    type Err = InvalidSortKey;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        [
+            Self::Created,
+            Self::Updated,
+            Self::Due,
+            Self::Priority,
+            Self::Status,
+            Self::Title,
+        ]
+        .into_iter()
+        .find(|key| key.name() == input)
+        .ok_or_else(|| InvalidSortKey(input.into()))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

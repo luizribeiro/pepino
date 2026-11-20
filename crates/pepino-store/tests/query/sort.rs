@@ -71,3 +71,25 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn sort_keys_parse_and_display_with_cli_names() {
+    for (key, name) in [
+        (Created, "created"),
+        (Updated, "updated"),
+        (Due, "due"),
+        (Priority, "priority"),
+        (Status, "status"),
+        (Title, "title"),
+    ] {
+        assert_eq!(key.to_string(), name);
+        assert_eq!(name.parse(), Ok(key));
+    }
+    assert_eq!(
+        "modified"
+            .parse::<pepino_store::query::SortKey>()
+            .unwrap_err()
+            .0,
+        "modified"
+    );
+}

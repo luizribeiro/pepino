@@ -8,7 +8,7 @@ mod sort;
 
 pub use error::{QueryError, QueryErrorKind};
 pub use eval::{Context, PersonResolver, Prepared, Query, ViewResolver, matches, select};
-pub use sort::{Direction, Sort, SortKey};
+pub use sort::{Direction, InvalidSortKey, Sort, SortKey};
 
 use pepino_core::filter::{Clause, Filter, Term};
 
