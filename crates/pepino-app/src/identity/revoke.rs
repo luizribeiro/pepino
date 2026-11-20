@@ -7,6 +7,32 @@ use crate::{App, AppError, LocalState, app::invalid, initialize::NODE_DATABASE};
 use super::{RosterDevice, RosterState, edit::Change};
 
 impl LocalState {
+    pub fn check_can_leave(&self) -> Result<(), AppError> {
+        if self.device_revocation().is_none() && self.device_leave_requested_at().is_some() {
+            return Ok(());
+        }
+        self.check_device_write()?;
+        if !self.active_roster_device(self.device_id) {
+            return Err(invalid(
+                "device",
+                "wait for an active identity roster before leaving",
+            ));
+        }
+        if self
+            .roster()
+            .values()
+            .filter(|row| row.state == RosterState::Active)
+            .count()
+            < 2
+        {
+            return Err(invalid(
+                "device",
+                "the last active device cannot leave; link another device first",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn revocation_target(&self, reference: &str) -> Result<RosterDevice, AppError> {
         let id = self.resolve_device(reference)?;
         if id == self.device_id {
@@ -29,6 +55,7 @@ impl App {
     ) -> Result<LocalState, AppError> {
         let keys = self.identity_credentials()?;
         let local = self.fresh_local_state().await?;
+        local.check_device_write()?;
         if local.revocation_target(&device.to_string())?.state == RosterState::Revoked {
             return Ok(local);
         }
@@ -61,13 +88,14 @@ impl App {
                 return Err(invalid(
                     "device",
                     format!(
-                        "{:?} would lose its only manager. Grant Manage to another device on that board first.",
+                        "{:?} would lose its only manager. Use the target device to grant Manage to another member on that board first (BoardHandle::set_role).",
                         board.name,
                     ),
                 ));
             }
         }
         self.try_update_local_state(move |local| {
+            local.check_device_write()?;
             if local.boards() != boards || !local.active_roster_device(local.device_id) {
                 return Err(AppError::Busy);
             }
@@ -99,6 +127,8 @@ async fn revocation_keeps_the_first_signed_record_when_retried() {
             .contains("device leave")
     );
     let first = app.record_device_revocation(tablet, at).await.unwrap();
+    drop(app);
+    let app = App::open(dir.path(), 0).await.unwrap();
     let retry = app
         .record_device_revocation(tablet, at + chrono::TimeDelta::seconds(1))
         .await
@@ -114,25 +144,8 @@ impl App {
     pub async fn record_leave_request(&self, at: DateTime<Utc>) -> Result<LocalState, AppError> {
         let keys = self.identity_credentials()?;
         self.try_update_local_state(move |local| {
-            let roster = local.roster();
-            if !local.active_roster_device(local.device_id) {
-                return Err(invalid(
-                    "device",
-                    "wait for an active identity roster before leaving",
-                ));
-            }
-            if roster
-                .values()
-                .filter(|row| row.state == RosterState::Active)
-                .count()
-                < 2
-            {
-                return Err(invalid(
-                    "device",
-                    "the last active device cannot leave; link another device first",
-                ));
-            }
-            if roster[&local.device_id].leave_requested_at.is_none() {
+            local.check_can_leave()?;
+            if local.device_leave_requested_at().is_none() {
                 local.append_identity(&keys, Change::RequestLeave { at })?;
             }
             Ok(())
@@ -168,4 +181,59 @@ async fn leave_requires_another_active_device_and_stays_pending() {
             .await
             .unwrap()
     );
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn a_board_with_only_the_target_as_manager_blocks_revocation() {
+    use pepino_node::{DeviceCredentials, NodeSettings};
+
+    let dir = tempfile::tempdir().unwrap();
+    let peer = tempfile::tempdir().unwrap();
+    let app = App::init(dir.path(), 0).await.unwrap();
+    let owner = app.local_state().device_id;
+    let id = app.local_state().catalog_board();
+    let owner_keys = app.identity_credentials().unwrap();
+    let peer_keys =
+        DeviceCredentials::load_or_create(peer.path().join("credentials.cbor")).unwrap();
+    let tablet = peer_keys.device_id();
+    app.remember_device(tablet, "Garden tablet".into(), None)
+        .await
+        .unwrap();
+    let node = Node::spawn(NodeSettings::offline(
+        owner_keys,
+        dir.path().join(NODE_DATABASE),
+    ))
+    .await
+    .unwrap();
+    let tablet_node = Node::spawn(NodeSettings::offline(
+        peer_keys,
+        peer.path().join(NODE_DATABASE),
+    ))
+    .await
+    .unwrap();
+    let board = node.open_board(id).await.unwrap();
+    board
+        .wait_until_joined(std::time::Duration::from_secs(60))
+        .await
+        .unwrap();
+    board
+        .add_member(&tablet_node.member_info().await.unwrap(), Role::Manage)
+        .await
+        .unwrap();
+    board.set_role(owner, Role::Write).await.unwrap();
+    assert!(
+        app.record_device_revocation(tablet, Utc::now())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("only manager")
+    );
+    assert_eq!(
+        app.fresh_local_state().await.unwrap().roster()[&tablet].state,
+        RosterState::Active
+    );
+    board.close().await.unwrap();
+    node.shutdown().await.unwrap();
+    tablet_node.shutdown().await.unwrap();
 }
