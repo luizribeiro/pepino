@@ -62,6 +62,11 @@ pub async fn settings(config: &Config) -> Result<NodeSettings, CliError> {
         MdnsMode::Disabled
     };
     settings.bind_port = config.port.value;
+    #[cfg(pepino_network_tests)]
+    if std::env::var_os("PPN_TEST_LOOPBACK").is_some() {
+        settings.bind_ip_v4 = Some(std::net::Ipv4Addr::LOCALHOST);
+        settings.bind_ip_v6 = Some(std::net::Ipv6Addr::LOCALHOST);
+    }
     Ok(settings)
 }
 
