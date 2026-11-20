@@ -783,7 +783,7 @@ async fn graph_reads_render_the_project_forest_and_transitive_dependencies() {
 async fn status_reports_local_context_and_counts_from_the_log() {
     use pepino_app::OpenOptions;
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init_with_options(
+    let mut app = fixture::open_with_options(
         directory.path(),
         NOW,
         OpenOptions {
@@ -823,7 +823,7 @@ async fn status_reports_local_context_and_counts_from_the_log() {
 async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
     use ciborium::Value as Cbor;
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let board = app.local_state().board_id;
     let author = app.local_state().device_id.to_string();
     let task = add(&mut app, "Replace the greenhouse latch").await;
@@ -1017,7 +1017,7 @@ async fn saved_relative_dates_follow_each_listing_date() {
         .parse::<chrono::DateTime<chrono::Utc>>()
         .unwrap();
     let early = u64::try_from(early.timestamp_millis()).unwrap();
-    let mut app = App::init(directory.path(), early).await.unwrap();
+    let mut app = fixture::open(directory.path(), early).await.unwrap();
     for (title, due, now) in [
         ("Order weatherstripping", "2026-11-18", early),
         ("Check the old seal", "2026-11-25", early),
@@ -1102,7 +1102,7 @@ async fn saved_relative_dates_follow_each_listing_date() {
 #[tokio::test]
 async fn listing_reports_relative_overflow_on_the_offending_term() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     list_golden(
         &mut app,
         json!(["  updated:>+9223372036854775807w"]),
@@ -1122,7 +1122,7 @@ async fn listing_reports_relative_overflow_on_the_offending_term() {
 async fn task_lists_sort_limit_and_search_project_records_with_both_filter_forms() {
     use pepino_app::OpenOptions;
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init_with_options(
+    let mut app = fixture::open_with_options(
         directory.path(),
         NOW,
         OpenOptions {
@@ -1222,7 +1222,7 @@ async fn task_lists_sort_limit_and_search_project_records_with_both_filter_forms
 #[tokio::test]
 async fn listing_errors_report_source_positions_and_saved_view_chains() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     list_golden(&mut app,json!(""),Some("-deadline"),None,
         json!({"error":{"kind":"invalid_input","field":"sort","reason":"unknown sort key \"deadline\""}})).await;
     list_golden(&mut app,json!(["is:open","  tags:hardware"]),None,None,
@@ -1252,7 +1252,7 @@ async fn history_describes_invalid_events_and_preserves_unknown_value_targets() 
     use pepino_core::{DeviceId, Envelope, Event, FieldName, FieldValue, Hlc, Status};
 
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let board = app.local_state().board_id;
     let app_task = add(&mut app, "Refit the greenhouse door").await;
     let task = app_task.parse().unwrap();
@@ -1325,7 +1325,7 @@ async fn history_describes_invalid_events_and_preserves_unknown_value_targets() 
 #[tokio::test]
 async fn log_actions_distinguish_sets_unsets_and_presence_changes() {
     let dir = tempfile::tempdir().unwrap();
-    let mut app = App::init(dir.path(), NOW).await.unwrap();
+    let mut app = fixture::open(dir.path(), NOW).await.unwrap();
     let task = add(&mut app, "Replace the greenhouse latch").await;
     for request in [
         json!({"op":"set_fields","task":task,"changes":{"priority":{"type":"integer","value":3}}}),
@@ -1369,7 +1369,7 @@ async fn log_actions_distinguish_sets_unsets_and_presence_changes() {
 #[tokio::test]
 async fn an_edge_change_identifies_its_source_task() {
     let dir = tempfile::tempdir().unwrap();
-    let mut app = App::init(dir.path(), NOW).await.unwrap();
+    let mut app = fixture::open(dir.path(), NOW).await.unwrap();
     let from = add(&mut app, "Order latches").await;
     let to = add(&mut app, "Repair greenhouse door").await;
     handle(
@@ -1396,7 +1396,7 @@ async fn an_edge_change_identifies_its_source_task() {
 #[tokio::test]
 async fn lists_only_parse_reachable_saved_filters() {
     let dir = tempfile::tempdir().unwrap();
-    let mut app = App::init(dir.path(), NOW).await.unwrap();
+    let mut app = fixture::open(dir.path(), NOW).await.unwrap();
     replace_saved_views(
         dir.path(),
         json!({"weekend":"tag:hardware","broken":"tags:hardware","nested":"@broken"}),
@@ -1422,7 +1422,7 @@ fn replace_saved_views(directory: &std::path::Path, views: Value) {
 #[tokio::test]
 async fn saving_rejects_missing_and_cyclic_references_without_persisting() {
     let dir = tempfile::tempdir().unwrap();
-    let mut app = App::init(dir.path(), NOW).await.unwrap();
+    let mut app = fixture::open(dir.path(), NOW).await.unwrap();
     let save = |name, filter| json!({"op":"save_view","name":name,"filter":filter});
     handle(&mut app, save("first", "tag:hardware"))
         .await
@@ -1441,7 +1441,7 @@ async fn an_invalid_creation_lists_its_implicit_task_id_without_a_title() {
     use pepino_core::{DeviceId, Envelope, Event, Hlc, InitialFields};
 
     let dir = tempfile::tempdir().unwrap();
-    let mut app = App::init(dir.path(), NOW).await.unwrap();
+    let mut app = fixture::open(dir.path(), NOW).await.unwrap();
     let store = Store::open(dir.path().join("pepino.sqlite")).await.unwrap();
     let creation = Envelope::new(
         DeviceId::from_bytes([31; 32]),
@@ -1494,7 +1494,7 @@ async fn an_invalid_creation_lists_its_implicit_task_id_without_a_title() {
 #[tokio::test]
 async fn titles_are_normalized_on_creation_and_edit() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let (_, id, tasks, _) = write(
         &mut app,
         json!({
@@ -1526,7 +1526,7 @@ async fn titles_are_normalized_on_creation_and_edit() {
 #[tokio::test]
 async fn deletion_returns_the_prior_record_for_write_rendering() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let id = add(&mut app, "Order the replacement latch").await;
     let prior = get(&mut app, &id).await.summary;
     let Response::Write {
@@ -1549,7 +1549,7 @@ async fn deletion_returns_the_prior_record_for_write_rendering() {
 #[tokio::test]
 async fn task_validation_reports_the_offending_values() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     for (request, value) in [
         (json!({"op":"get_task","task":"latch"}), "latch"),
         (
@@ -1570,7 +1570,7 @@ async fn task_validation_reports_the_offending_values() {
 #[tokio::test]
 async fn replacing_a_parent_removes_the_previous_edge() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let latch = add(&mut app, "Install a new latch").await;
     let greenhouse = add(&mut app, "Renovate the greenhouse").await;
     let door = add(&mut app, "Rebuild the door").await;
@@ -1595,7 +1595,7 @@ async fn replacing_a_parent_removes_the_previous_edge() {
 #[tokio::test]
 async fn open_listing_respects_status_inside_nested_views() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     for request in [
         json!({"op":"add_task","title":"Paint the shed","status":"done"}),
         json!({"op":"add_task","title":"Repair the hinge"}),
@@ -1633,7 +1633,7 @@ async fn open_listing_respects_status_inside_nested_views() {
 #[tokio::test]
 async fn ready_filter_selects_only_unblocked_todo_tasks() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let ready = add(&mut app, "Order replacement hinges").await;
     for input in [
         json!({"op":"add_task","title":"Check the measurements","status":"doing"}),
@@ -1659,7 +1659,7 @@ async fn ready_filter_selects_only_unblocked_todo_tasks() {
 #[tokio::test]
 async fn reopening_keeps_open_statuses_and_restarts_closed_tasks() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let mut ids = Vec::new();
     for (title, status) in [
         ("Order spare hinges", "todo"),
@@ -1703,7 +1703,7 @@ async fn reopening_keeps_open_statuses_and_restarts_closed_tasks() {
 #[tokio::test]
 async fn repeating_an_edit_and_status_write_preserves_the_task_record() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let task = add(&mut app, "Inspect the greenhouse frame").await;
     for changes in [
         json!({"description":{"type":"text","value":"Check the corner joints."}}),
@@ -1720,7 +1720,7 @@ async fn repeating_an_edit_and_status_write_preserves_the_task_record() {
 #[tokio::test]
 async fn numeric_filter_warns_about_text_through_saved_views() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     for (title, field) in [
         (
             "Order stainless hinges",
@@ -1766,7 +1766,7 @@ async fn numeric_filter_warns_about_text_through_saved_views() {
 #[tokio::test]
 async fn default_priority_sort_treats_missing_priority_as_zero() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     for (index, (title, priority)) in [
         ("Low-priority trim", Some(-2)),
         ("Inspect the frame", None),
@@ -1808,7 +1808,7 @@ async fn default_priority_sort_treats_missing_priority_as_zero() {
 #[tokio::test]
 async fn membership_and_filters_resolve_the_same_people() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init_with_options(
+    let mut app = fixture::open_with_options(
         directory.path(),
         NOW,
         pepino_app::OpenOptions {
