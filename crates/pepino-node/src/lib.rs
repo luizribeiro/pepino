@@ -4,6 +4,8 @@ mod board_lease;
 mod board_task;
 mod credentials;
 mod cursor;
+#[cfg(test)]
+mod delivery_item;
 mod events;
 mod membership;
 mod node;
