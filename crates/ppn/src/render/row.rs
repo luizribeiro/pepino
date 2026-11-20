@@ -65,6 +65,7 @@ pub(super) fn task_line(
     let mut labels = vec![status.as_str()];
     labels.extend(metadata.iter().map(String::as_str));
     let mut title = single_line(&task.title);
+    let mut spacing = 2;
     if let Some(width) = terminal.width.filter(|_| terminal.stdout_is_tty) {
         let room = width.saturating_sub(id.width() + 2).max(1);
         let minimum = title.width().min(12).min(room);
@@ -84,12 +85,13 @@ pub(super) fn task_line(
             room - suffix_width - 1
         };
         title = truncate_title(&title, title_width);
+        spacing += title_width.saturating_sub(title.width());
     }
     let id = terminal.paint(id, AnsiColor::Cyan);
     match labels.split_first() {
         Some((status, rest)) => {
             let status = terminal.paint(status, color);
-            let mut output = format!("{id}  {title}  {status}");
+            let mut output = format!("{id}  {title}{:spacing$}{status}", "");
             for label in rest {
                 output.push(' ');
                 output.push_str(label);

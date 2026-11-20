@@ -1,4 +1,4 @@
-97ad97a  Replace the greenhouse latch  todo · blocked
+97ad97a  Replace the greenhouse latch                        todo · blocked
 Use stainless hardware.
 
 #hardware  @Ada Gardener  due tomorrow  p2
