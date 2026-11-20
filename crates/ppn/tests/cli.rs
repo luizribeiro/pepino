@@ -268,7 +268,7 @@ fn help_describes_the_cli_in_both_formats() {
     assert_eq!(help["exit_codes"].as_array().unwrap().len(), 7);
     assert_eq!(
         help["exit_codes"][6],
-        serde_json::json!({"status": 6, "code": "daemon_unreachable"})
+        serde_json::json!({"status": 6, "code": "daemon_unreachable", "error_codes": ["daemon_unreachable"]})
     );
 }
 
@@ -366,6 +366,10 @@ fn simulated_errors_keep_their_codes_and_exit_statuses() {
 fn help_lists_every_error_code_and_its_exit_status() {
     let help: serde_json::Value = serde_json::from_str(&run_ppn(&["help", "--json"])).unwrap();
     let codes = help["error_codes"].as_array().unwrap();
+    assert_eq!(
+        help["exit_codes"][2]["error_codes"],
+        json!(["usage", "invalid_input"])
+    );
     assert_eq!(codes.len(), ErrorKind::all().len());
     for kind in ErrorKind::all() {
         let code = codes
@@ -375,13 +379,13 @@ fn help_lists_every_error_code_and_its_exit_status() {
         assert_eq!(code["status"], kind.status());
         assert_eq!(code["meaning"], kind.meaning());
         assert_eq!(kind.meaning().trim().lines().count(), 1);
-        assert!(
-            help["exit_codes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|entry| entry["status"] == kind.status())
-        );
+        assert!(help["exit_codes"].as_array().unwrap().iter().any(|entry| {
+            entry["status"] == kind.status()
+                && entry["error_codes"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(kind.code()))
+        }));
     }
 }
 

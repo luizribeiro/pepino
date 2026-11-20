@@ -17,6 +17,7 @@ struct Help {
 struct ExitStatus {
     status: u8,
     code: &'static str,
+    error_codes: Vec<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -27,17 +28,24 @@ struct ErrorCode {
 }
 
 fn exit_codes() -> Vec<ExitStatus> {
-    let mut codes = vec![ExitStatus {
+    let mut codes = std::collections::BTreeMap::new();
+    for kind in ErrorKind::all() {
+        codes
+            .entry(kind.status())
+            .or_insert_with(Vec::new)
+            .push(kind.code());
+    }
+    std::iter::once(ExitStatus {
         status: 0,
         code: "ok",
-    }];
-    codes.extend(ErrorKind::all().iter().map(|kind| ExitStatus {
-        status: kind.status(),
-        code: kind.code(),
-    }));
-    codes.sort_by_key(|entry| entry.status);
-    codes.dedup_by_key(|entry| entry.status);
-    codes
+        error_codes: Vec::new(),
+    })
+    .chain(codes.into_iter().map(|(status, error_codes)| ExitStatus {
+        status,
+        code: error_codes[0],
+        error_codes,
+    }))
+    .collect()
 }
 
 impl Render for Help {
