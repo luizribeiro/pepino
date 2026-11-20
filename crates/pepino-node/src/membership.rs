@@ -72,6 +72,30 @@ impl BoardHandle {
         .await
     }
 
+    pub async fn set_role(&self, member: DeviceId, role: Role) -> Result<(), Error> {
+        let space = self.space_for_management()?;
+        let device = self.node.upgrade().ok_or(Error::Closed)?.id();
+        let lock = self.membership_lock.clone();
+        self.run(async move {
+            let _guard = lock.lock().await;
+            let actors = space.actors().await.map_err(Error::node)?;
+            require_manager(&actors, device)?;
+            let (member, current) = find_actor(&actors, member).ok_or(Error::NotMember)?;
+            let level = role.level();
+            match level.cmp(&current) {
+                std::cmp::Ordering::Greater => {
+                    space.promote(member, level).await.map_err(Error::node)
+                }
+                std::cmp::Ordering::Less => {
+                    keep_manager(&actors, current)?;
+                    space.demote(member, level).await.map_err(Error::node)
+                }
+                std::cmp::Ordering::Equal => Ok(()),
+            }
+        })
+        .await
+    }
+
     fn space_for_management(
         &self,
     ) -> Result<std::sync::Arc<p2panda::spaces::Space<crate::receipt::Payload>>, Error> {
@@ -104,6 +128,29 @@ fn require_manager(actors: &[(MemberId, AccessLevel)], device: MemberId) -> Resu
     } else {
         Err(Error::NotPermitted)
     }
+}
+
+fn find_actor(
+    actors: &[(MemberId, AccessLevel)],
+    device: DeviceId,
+) -> Option<(MemberId, AccessLevel)> {
+    actors
+        .iter()
+        .copied()
+        .find(|(actor, _)| actor.as_bytes() == device.as_bytes())
+}
+
+fn keep_manager(actors: &[(MemberId, AccessLevel)], current: AccessLevel) -> Result<(), Error> {
+    if current == AccessLevel::Manage
+        && actors
+            .iter()
+            .filter(|(_, role)| *role == AccessLevel::Manage)
+            .count()
+            == 1
+    {
+        return Err(Error::LastManager);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

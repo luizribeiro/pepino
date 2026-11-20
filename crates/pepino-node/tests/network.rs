@@ -65,6 +65,14 @@ async fn two_devices_exchange_events_and_a_late_member_gets_history() {
         board_b.add_member(&member, Role::Write).await,
         Err(Error::NotPermitted)
     ));
+    assert!(matches!(
+        board_b.set_role(a.device_id(), Role::Read).await,
+        Err(Error::NotPermitted)
+    ));
+    assert!(matches!(
+        board_a.set_role(a.device_id(), Role::Read).await,
+        Err(Error::LastManager)
+    ));
     let second = board_b.publish(REVIEW.to_vec()).await.unwrap();
     let third = board_a.publish(DONE.to_vec()).await.unwrap();
     let history = [
@@ -120,6 +128,14 @@ async fn two_devices_exchange_events_and_a_late_member_gets_history() {
         board_c.publish(DONE.to_vec()).await,
         Err(Error::PublishNotSubmitted(_))
     ));
+    board_a.set_role(c.device_id(), Role::Write).await.unwrap();
+    assert!(
+        board_a
+            .members()
+            .await
+            .unwrap()
+            .contains(&(c.device_id(), Role::Write))
+    );
     c.shutdown().await.unwrap();
     b.shutdown().await.unwrap();
     a.shutdown().await.unwrap();

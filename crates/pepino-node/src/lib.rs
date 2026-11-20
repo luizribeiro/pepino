@@ -35,6 +35,10 @@ pub enum Error {
     Member(String),
     #[error("this device lacks permission for the board operation")]
     NotPermitted,
+    #[error("the board must retain a manager")]
+    LastManager,
+    #[error("the target device is not a direct board member")]
+    NotMember,
     #[error("device member info has expired")]
     MemberExpired,
     #[error("the board's event stream has already been taken")]
