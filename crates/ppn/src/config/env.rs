@@ -174,6 +174,23 @@ mod tests {
         assert_eq!(loaded.config.ui.color.source, Source::Flag);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn reports_the_name_of_a_non_utf8_setting() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let dirs = PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None);
+        let env = Env::from([(
+            "PPN_NETWORK".into(),
+            std::ffi::OsString::from_vec(b"release\xff".to_vec()),
+        )]);
+        let error = apply(&mut Draft::new(&dirs), &env).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "PPN_NETWORK: network: expected a UTF-8 value"
+        );
+    }
+
     #[test]
     fn names_each_invalid_environment_variable() {
         let dirs = PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None);
