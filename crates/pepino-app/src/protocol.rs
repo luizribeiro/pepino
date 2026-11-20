@@ -76,7 +76,8 @@ pub enum Request {
 pub enum Response {
     Write {
         changed: bool,
-        task_ids: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        created: Option<String>,
         tasks: Vec<TaskRecord>,
     },
     Task {

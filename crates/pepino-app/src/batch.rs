@@ -93,7 +93,9 @@ impl App {
         mut batch: Batch,
     ) -> Result<Response, AppError> {
         if batch.events.is_empty() {
-            return self.write_response(before, false, batch.affected).await;
+            return self
+                .write_response(before, false, None, batch.affected)
+                .await;
         }
         let encoded = batch
             .events
@@ -110,6 +112,15 @@ impl App {
             .append_batch(self.local.board_id, &writes)
             .await
             .map_err(store_error)?;
+        let created =
+            batch
+                .events
+                .iter()
+                .zip(&outcomes)
+                .find_map(|(event, outcome)| match outcome {
+                    AppendOutcome::Applied { .. } => event.created_task(),
+                    _ => None,
+                });
         for event in batch.events {
             let hlc = event.hlc();
             self.clock.observe(hlc, batch.now.max(hlc.wall_ms));
@@ -128,7 +139,9 @@ impl App {
             .iter()
             .any(|outcome| matches!(outcome, AppendOutcome::Applied { .. }));
         if !changed {
-            return self.write_response(before, false, batch.affected).await;
+            return self
+                .write_response(before, false, None, batch.affected)
+                .await;
         }
 
         let after = self
@@ -137,18 +150,12 @@ impl App {
             .await
             .map_err(committed_error)?;
         batch.affected.extend(
-            before
-                .iter()
-                .filter(|task| after.task(task.id).is_none())
-                .map(|task| task.id),
-        );
-        batch.affected.extend(
             after
                 .iter()
                 .filter(|task| before.task(task.id) != Some(*task))
                 .map(|task| task.id),
         );
-        self.write_response(&after, true, batch.affected)
+        self.write_response(&after, true, created, batch.affected)
             .await
             .map_err(committed_error)
     }
@@ -157,6 +164,7 @@ impl App {
         &self,
         view: &BoardView,
         changed: bool,
+        created: Option<TaskId>,
         affected: BTreeSet<TaskId>,
     ) -> Result<Response, AppError> {
         let mut tasks = Vec::new();
@@ -167,7 +175,7 @@ impl App {
         }
         Ok(Response::Write {
             changed,
-            task_ids: affected.into_iter().map(|id| id.to_string()).collect(),
+            created: created.map(|id| id.to_string()),
             tasks,
         })
     }

@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use pepino_app::{AppError, Request, Response};
 use serde::{Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde_json::json;
 
 fn round_trip<T: Debug + Eq + DeserializeOwned + Serialize>(value: &T) {
     let json = serde_json::to_vec(value).unwrap();
@@ -58,11 +58,13 @@ fn errors_and_write_responses_have_stable_tags() {
     }
     let response = Response::Write {
         changed: true,
-        task_ids: vec!["97ad".repeat(16)],
+        created: Some("97ad".repeat(16)),
         tasks: Vec::new(),
     };
     let json = serde_json::to_value(&response).unwrap();
-    assert_eq!(json["kind"], Value::from("write"));
-    assert_eq!(json["changed"], Value::from(true));
+    assert_eq!(
+        json,
+        json!({"kind":"write","changed":true,"created":"97ad".repeat(16),"tasks":[]})
+    );
     round_trip(&response);
 }

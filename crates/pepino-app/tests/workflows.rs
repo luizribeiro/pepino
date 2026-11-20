@@ -9,24 +9,24 @@ async fn handle(app: &mut App, request: Value) -> Result<Response, AppError> {
         .await
 }
 
-async fn write(app: &mut App, request: Value) -> (bool, Vec<String>, Vec<TaskRecord>) {
+async fn write(app: &mut App, request: Value) -> (bool, Option<String>, Vec<TaskRecord>) {
     let Response::Write {
         changed,
-        task_ids,
+        created,
         tasks,
     } = handle(app, request).await.unwrap()
     else {
         panic!("expected write response");
     };
-    (changed, task_ids, tasks)
+    (changed, created, tasks)
 }
 
 async fn add(app: &mut App, title: &str) -> String {
-    let (changed, ids, tasks) = write(app, json!({"op":"add_task","title":title})).await;
+    let (changed, created, tasks) = write(app, json!({"op":"add_task","title":title})).await;
     assert!(changed);
-    assert_eq!(ids, [tasks[0].id.clone()]);
+    assert_eq!(created.as_deref(), Some(tasks[0].id.as_str()));
     assert_eq!(tasks[0].title, title);
-    ids.into_iter().next().unwrap()
+    created.unwrap()
 }
 
 async fn get(app: &mut App, id: &str) -> TaskRecord {
@@ -49,19 +49,20 @@ async fn add_plans_a_project_and_returns_each_affected_record() {
     let following = add(&mut app, "Check the door seal").await;
     let assignee = app.local_state().identity_id.to_string();
 
-    let (changed, ids, tasks) = write(&mut app, json!({
+    let (changed, created, tasks) = write(&mut app, json!({
         "op":"add_task", "title":"Replace the greenhouse latch", "description":"Use stainless hardware.",
         "priority":2, "due":"2026-12-01", "tags":["greenhouse","garden/tools"], "assignees":["me",&assignee],
         "fields":{"estimate":{"integer":3}}, "parent":&parent[..12],
         "blocked_by":[&blocker[..12]], "blocks":[&following,&following[..12]]
     })).await;
     assert!(changed);
-    assert_eq!(ids.len(), 4);
+    assert_eq!(tasks.len(), 4);
     let child = tasks
         .iter()
         .find(|task| task.title == "Replace the greenhouse latch")
         .unwrap();
-    let id = child.id.clone();
+    let id = created.unwrap();
+    assert_eq!(child.id, id);
     assert_eq!(*child, get(&mut app, &id).await);
     assert_eq!(child.parent.as_deref(), Some(parent.as_str()));
     assert_eq!(child.assignees, [assignee].into());
@@ -130,8 +131,9 @@ async fn edit_fields_completes_work_and_clears_optional_values() {
             "status":{"status":"done"}, "estimate":{"integer":1}
         }
     });
-    let (changed, ids, _) = write(&mut app, edit.clone()).await;
-    assert!(changed && ids.contains(&child));
+    let (changed, created, tasks) = write(&mut app, edit.clone()).await;
+    assert!(changed && tasks.iter().any(|task| task.id == child));
+    assert_eq!(created, None);
     let done = get(&mut app, &id).await;
     assert_eq!(done.title, "Order a stainless latch");
     assert_eq!(done.description.as_deref(), Some("Use the local supplier."));
@@ -142,7 +144,7 @@ async fn edit_fields_completes_work_and_clears_optional_values() {
     assert!(get(&mut app, &child).await.ready);
     assert_eq!(
         write(&mut app, edit).await,
-        (false, vec![id.clone()], vec![done.clone()])
+        (false, None, vec![done.clone()])
     );
 
     let invalid = json!({
@@ -182,11 +184,11 @@ async fn tags_and_assignees_deduplicate_and_validate_entire_batches() {
     let unassign = json!({"op":"unassign","task":&id,"assignees":["me"]});
 
     for request in [add_tags, remove_tags, assign, unassign] {
-        let (changed, ids, new) = write(&mut app, request.clone()).await;
+        let (changed, created, new) = write(&mut app, request.clone()).await;
         assert!(changed);
-        assert_eq!(ids, std::slice::from_ref(&id));
+        assert_eq!(created, None);
         assert_eq!(new, [get(&mut app, &id).await]);
-        assert_eq!(write(&mut app, request).await, (false, ids, new));
+        assert_eq!(write(&mut app, request).await, (false, None, new));
     }
     let before = get(&mut app, &id).await;
     assert_eq!(before.tags, ["maintenance".into()].into());
@@ -230,7 +232,7 @@ async fn link_and_unlink_use_present_edges_including_excluded_ones() {
 
     let related = write(&mut app, link(&first[..12], "relates", &second)).await;
     assert!(related.0);
-    assert_eq!(related.1.len(), 2);
+    assert_eq!(related.2.len(), 2);
     assert_eq!(get(&mut app, &second).await.relates, [first.clone()].into());
     assert!(!write(&mut app, link(&second, "relates", &first)).await.0);
     assert!(write(&mut app, unlink(&second, "relates", &first)).await.0);
@@ -320,8 +322,10 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
         .clone();
     assert!(get(&mut app, &child).await.blocked);
 
-    let (changed, ids, tasks) = write(&mut app, json!({"op":"delete","task":&blocker[..12]})).await;
-    assert!(changed && ids.contains(&blocker) && ids.contains(&child));
+    let (changed, created, tasks) =
+        write(&mut app, json!({"op":"delete","task":&blocker[..12]})).await;
+    assert!(changed);
+    assert_eq!(created, None);
     let remaining = get(&mut app, &child).await;
     assert_eq!(tasks, std::slice::from_ref(&remaining));
     assert!(remaining.blocked_by.is_empty() && remaining.ready);
