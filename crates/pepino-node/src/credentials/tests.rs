@@ -79,3 +79,27 @@ fn loading_credentials_requires_an_existing_file() {
         created.device_id()
     );
 }
+
+#[test]
+fn device_signatures_bind_the_message_and_signer() {
+    let dir = tempfile::tempdir().unwrap();
+    let host = DeviceCredentials::load_or_create(dir.path().join("titanium.cbor")).unwrap();
+    let other = DeviceCredentials::load_or_create(dir.path().join("ferrum.cbor")).unwrap();
+    let message = b"Pepino grant for garden tablet";
+    let signature = host.sign(message);
+    assert!(DeviceCredentials::verify(
+        host.device_id(),
+        message,
+        &signature
+    ));
+    assert!(!DeviceCredentials::verify(
+        other.device_id(),
+        message,
+        &signature
+    ));
+    assert!(!DeviceCredentials::verify(
+        host.device_id(),
+        b"Pepino grant for shed tablet",
+        &signature
+    ));
+}

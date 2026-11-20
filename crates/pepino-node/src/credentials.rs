@@ -6,6 +6,7 @@ use std::{
 };
 
 use p2panda::Credentials;
+use p2panda_core::{Signature, VerifyingKey, identity::Signer};
 use pepino_core::DeviceId;
 use serde::{Deserialize, Serialize};
 
@@ -82,6 +83,15 @@ impl DeviceCredentials {
             }
             Err(error) => Err(Error::CredentialIo(error.error)),
         }
+    }
+
+    pub fn sign(&self, message: &[u8]) -> [u8; 64] {
+        self.0.sign(message).to_bytes()
+    }
+
+    pub fn verify(device: DeviceId, message: &[u8], signature: &[u8; 64]) -> bool {
+        VerifyingKey::from_bytes(device.as_bytes())
+            .is_ok_and(|key| key.verify(message, &Signature::from_bytes(signature)))
     }
 
     pub fn device_id(&self) -> DeviceId {
