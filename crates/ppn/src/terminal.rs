@@ -3,7 +3,7 @@ use std::ffi::OsStr;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::time::Duration;
 
-use clap::ValueEnum;
+use clap::{ValueEnum, builder::styling::AnsiColor};
 use serde::Serialize;
 
 use crate::app::InvocationTime;
@@ -51,6 +51,14 @@ impl Terminal {
             no_color,
             dumb,
         }
+    }
+
+    pub fn paint(&self, text: &str, color: AnsiColor) -> String {
+        if !self.color {
+            return text.to_owned();
+        }
+        let style = color.on_default();
+        format!("{}{text}{}", style.render(), style.render_reset())
     }
 
     pub fn task_output(self, color: Color) -> Self {
@@ -194,7 +202,11 @@ mod tests {
     #[test]
     fn task_color_honors_config_on_terminals_and_stays_plain_on_pipes() {
         let tty = Terminal::fixed(Some(48), false);
-        assert!(tty.task_output(Color::Always).color);
+        assert_eq!(
+            tty.task_output(Color::Always)
+                .paint("Ready", AnsiColor::Green),
+            "[32mReady[0m"
+        );
         let muted = Terminal {
             no_color: true,
             ..tty

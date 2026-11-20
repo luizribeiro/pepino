@@ -5,3 +5,7 @@ pub use ids::{ShortIds, short_id};
 mod dates;
 
 pub use dates::Dates;
+
+mod text;
+
+pub use text::{assignee_label, single_line, truncate_title};

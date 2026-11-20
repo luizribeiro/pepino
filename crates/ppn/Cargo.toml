@@ -23,6 +23,8 @@ toml = { version = "1.1", default-features = false, features = ["parse", "std"] 
 
 terminal_size = "0.4"
 tokio = { version = "1", features = ["rt", "time"] }
+unicode-segmentation = "1"
+unicode-width = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
