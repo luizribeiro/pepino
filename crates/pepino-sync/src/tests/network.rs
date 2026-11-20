@@ -177,6 +177,7 @@ async fn a_forged_transport_author_is_logged_without_changing_the_view() {
     .unwrap();
     board.publish(forged.encode().unwrap()).await.unwrap();
     b.await_events(&right, 2).await;
+    views_match(&a, &b).await;
     let history = b.app.store().history(b.board(), None, None).await.unwrap();
     assert!(
         history
