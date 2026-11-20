@@ -148,6 +148,13 @@ async fn board_history_keeps_skips_and_limits_after_task_filtering() {
             .unwrap()
             .is_empty()
     );
+    assert!(
+        store
+            .history(board, Some(TaskId::from_bytes([3; 32])), None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     let replay = store.events(board, task).await.unwrap();
     assert_eq!(replay.len(), 1);
     assert_eq!(replay[0].bytes, bytes);

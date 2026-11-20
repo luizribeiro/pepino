@@ -173,38 +173,50 @@ impl Store {
         task: Option<TaskId>,
         limit: Option<usize>,
     ) -> Result<Vec<(StoredEvent, HistoryEvent)>, StoreError> {
-        let sql_limit = if task.is_none() {
-            limit.and_then(|n| i64::try_from(n).ok()).unwrap_or(-1)
-        } else {
-            -1
-        };
+        let sql_limit = limit.and_then(|n| i64::try_from(n).ok()).unwrap_or(-1);
+        if let Some(task) = task {
+            let rows = self
+                .read(async |connection| {
+                    sqlx::query_as::<_, StoredEvent>(
+                        "SELECT t.id, e.classification, e.bytes FROM event_task t
+                     JOIN event_log e USING (board, id)
+                     WHERE t.board = ? AND t.task = ?
+                     ORDER BY t.hlc DESC, t.id DESC LIMIT ?",
+                    )
+                    .bind(BoardKey(board))
+                    .bind(task.as_bytes().as_slice())
+                    .bind(sql_limit)
+                    .fetch_all(connection)
+                    .await
+                })
+                .await?;
+            return rows
+                .into_iter()
+                .rev()
+                .map(|row| {
+                    let event = row.decode()?;
+                    Ok((row, event))
+                })
+                .collect();
+        }
         let rows = self
             .read(async |connection| {
                 sqlx::query_as::<_, StoredEvent>(
                     "SELECT id, classification, bytes FROM event_log
-                 WHERE board = ?1 AND (?2 IS NULL OR classification IN ('unknown_event', 'unknown_value', 'invalid') OR id IN (
-                     SELECT id FROM event_task WHERE board = ?1 AND task = ?2
-                 ))
-                 ORDER BY hlc DESC, id DESC LIMIT ?3",
+                     WHERE board = ? ORDER BY hlc DESC, id DESC LIMIT ?",
                 )
                 .bind(BoardKey(board))
-                .bind(task.map(|id| *id.as_bytes()))
                 .bind(sql_limit)
                 .fetch_all(connection)
                 .await
             })
             .await?;
-        let mut history = Vec::new();
-        for row in rows {
-            if limit == Some(history.len()) {
-                break;
-            }
-            let event = row.decode()?;
-            if task.is_none_or(|task| event.tasks.contains(&task)) {
-                history.push((row, event));
-            }
-        }
-        history.reverse();
-        Ok(history)
+        rows.into_iter()
+            .rev()
+            .map(|row| {
+                let event = row.decode()?;
+                Ok((row, event))
+            })
+            .collect()
     }
 }
