@@ -18,6 +18,7 @@ pub enum Request {
 #[non_exhaustive]
 pub enum ReadRequest {
     GetTask { task: String },
+    Tree { task: Option<String> },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -98,6 +99,15 @@ pub enum Response {
         #[serde(default)]
         edges: Vec<EdgeEffect>,
     },
+    Tree {
+        nodes: Vec<TreeNode>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TreeNode {
+    pub depth: usize,
+    pub task: TaskRecord,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

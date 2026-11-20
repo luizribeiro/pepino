@@ -1,13 +1,14 @@
 use pepino_store::BoardView;
 
 use crate::app::store_error;
-use crate::projection::{edge_effect, resolve};
-use crate::{App, AppError, ReadRequest, Response};
+use crate::projection::{edge_effect, project, resolve};
+use crate::{App, AppError, ReadRequest, Response, TreeNode};
 
 impl App {
     pub(super) async fn read(&mut self, request: ReadRequest) -> Result<Response, AppError> {
         match request {
             ReadRequest::GetTask { task } => self.get_task(&task).await,
+            ReadRequest::Tree { task } => self.tree(task.as_deref()).await,
         }
     }
 
@@ -31,5 +32,34 @@ impl App {
             task: Box::new(self.record(task).await?),
             edges,
         })
+    }
+    async fn tree(&self, reference: Option<&str>) -> Result<Response, AppError> {
+        let board = self
+            .store
+            .board_with_comments(self.local.board_id)
+            .await
+            .map_err(store_error)?;
+        let roots = match reference {
+            Some(reference) => vec![resolve(&board, "task", reference)?.id],
+            None => board
+                .iter()
+                .filter(|task| task.parent.is_none())
+                .map(|task| task.id)
+                .collect(),
+        };
+        let nodes = roots
+            .into_iter()
+            .flat_map(|root| board.subtree(root))
+            .map(|node| {
+                let task = board
+                    .task(node.task)
+                    .expect("subtree task belongs to the snapshot");
+                Ok(TreeNode {
+                    depth: node.depth,
+                    task: project(task, board.comments(task.id))?,
+                })
+            })
+            .collect::<Result<_, AppError>>()?;
+        Ok(Response::Tree { nodes })
     }
 }

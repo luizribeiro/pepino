@@ -573,3 +573,43 @@ async fn a_projection_failure_after_the_commit_reports_that_the_write_landed() {
         .unwrap();
     assert_eq!(history.len(), 2);
 }
+
+async fn read_golden(app: &mut App, request: Value, expected: Value) {
+    use pepino_app::{WireFormat, WireRequest, WireResponse};
+    let request = json!({"v":1,"request":request});
+    let expected = json!({"v":1,"result":expected});
+    let wire: WireRequest = WireFormat::Json
+        .decode(&serde_json::to_vec(&request).unwrap())
+        .unwrap();
+    assert_eq!(serde_json::to_value(&wire).unwrap(), request);
+    for codec in [WireFormat::Json, WireFormat::Cbor] {
+        assert_eq!(
+            codec
+                .decode::<WireRequest>(&codec.encode(&wire).unwrap())
+                .unwrap(),
+            wire
+        );
+    }
+    let response = WireResponse::new(app.handle(wire.request, NOW).await);
+    assert_eq!(serde_json::to_value(&response).unwrap(), expected);
+    for codec in [WireFormat::Json, WireFormat::Cbor] {
+        assert_eq!(
+            codec
+                .decode::<WireResponse>(&codec.encode(&response).unwrap())
+                .unwrap(),
+            response
+        );
+    }
+}
+
+#[tokio::test]
+async fn tree_starts_with_an_empty_forest() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    read_golden(
+        &mut app,
+        json!({"op":"tree","task":null}),
+        json!({"ok":{"kind":"tree","nodes":[]}}),
+    )
+    .await;
+}

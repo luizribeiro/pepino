@@ -23,7 +23,7 @@ pub use state::{LocalState, OpenOptions};
 
 pub use protocol::{
     AppError, AppErrorKind, CommentRecord, EdgeEffect, EdgeExclusionReason, ReadRequest, Request,
-    Response, TaskRecord, WriteRequest,
+    Response, TaskRecord, TreeNode, WriteRequest,
 };
 
 pub use values::{Date, EdgeKind, FieldValue, InvalidDate, Status};
