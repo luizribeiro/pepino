@@ -1,3 +1,4 @@
+mod comment;
 mod fold;
 mod log;
 mod task;
@@ -13,6 +14,7 @@ use sqlx::{
 use thiserror::Error;
 use tokio::sync::Mutex;
 
+pub use comment::CommentRecord;
 pub use log::{AppendOutcome, IdSource, SkipReason};
 pub use task::TaskRecord;
 
