@@ -26,24 +26,25 @@ fn resolve(config: &Config, runtime: Option<&Path>, linux: bool) -> PathBuf {
 pub fn prepare_parent(config: &Config, path: &Path) -> io::Result<()> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 
-    if config.daemon.socket_path.value.is_some() {
-        return Ok(());
-    }
     let parent = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
-    match fs::DirBuilder::new().mode(0o700).create(parent) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            let metadata = fs::symlink_metadata(parent)?;
-            if metadata.is_dir() && metadata.mode() & 0o777 == 0o700 {
-                Ok(())
-            } else {
-                Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "Expected a private runtime directory",
-                ))
-            }
+    if config.daemon.socket_path.value.is_none() {
+        match fs::DirBuilder::new().mode(0o700).create(parent) {
+            Ok(()) => (),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
+            Err(error) => return Err(error),
         }
-        Err(error) => Err(error),
+    }
+    let metadata = fs::symlink_metadata(parent)?;
+    if metadata.is_dir()
+        && metadata.mode() & 0o777 == 0o700
+        && metadata.uid() == nix::unistd::geteuid().as_raw()
+    {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Expected a runtime directory owned by the current user with mode 0700",
+        ))
     }
 }
 
@@ -73,5 +74,11 @@ mod tests {
         );
         prepare_parent(&config, &path).unwrap();
         prepare_parent(&config, &path).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            prepare_parent(&config, &path).unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied,
+        );
     }
 }

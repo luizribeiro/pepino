@@ -1,5 +1,6 @@
 use std::{
     fs::{self, File},
+    os::unix::fs::PermissionsExt,
     path::PathBuf,
     process::{Child, Command, Output, Stdio},
     thread,
@@ -20,6 +21,7 @@ pub struct Fixture {
 impl Fixture {
     pub fn new(extra: &str) -> Self {
         let sandbox = ConfigSandbox::new();
+        fs::set_permissions(sandbox.home.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let data = sandbox.home.path().join("board");
         let socket = sandbox.home.path().join("control.sock");
         fs::write(
