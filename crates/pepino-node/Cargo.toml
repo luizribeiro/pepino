@@ -14,3 +14,6 @@ pepino-core = { path = "../pepino-core" }
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 thiserror = "2"
+p2panda-store.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
