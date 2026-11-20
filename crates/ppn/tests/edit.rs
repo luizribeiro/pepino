@@ -273,3 +273,24 @@ fn empty_field_options_clear_values_like_unset() {
     let cleared = as_json(&sandbox.run(&["edit", &id, "--due", "", "--json"]));
     assert!(cleared["tasks"][0]["due"].is_null());
 }
+
+#[test]
+fn conflicting_custom_field_flags_are_usage_errors() {
+    let (sandbox, _) = task_sandbox();
+    let id = create_task(&sandbox, "Paint the shed", &[]);
+    for second in [["--set", "estimate=2"], ["--unset", "estimate"]] {
+        let output = sandbox
+            .command()
+            .args(["edit", &id, "--set", "estimate=1", "--json"])
+            .args(second)
+            .output()
+            .unwrap();
+        let error = task_error(output, 2, "usage");
+        assert!(error["message"].as_str().unwrap().contains("estimate"));
+    }
+    assert!(
+        common::show_task(&sandbox, &id)["fields"]
+            .get("estimate")
+            .is_none()
+    );
+}

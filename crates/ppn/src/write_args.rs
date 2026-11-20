@@ -45,6 +45,12 @@ impl CustomArgs {
             if matches!(key, "title" | "description" | "status" | "due" | "priority") {
                 return Err(invalid("use the dedicated field option"));
             }
+            if fields.contains_key(key) || self.unset.iter().any(|name| name == key) {
+                return Err(CliError::new(
+                    ErrorKind::Usage,
+                    format!("Specify only one --set or --unset for {key:?}."),
+                ));
+            }
             fields.insert(key.to_owned(), custom_value(value, today).map_err(invalid)?);
         }
         fields.extend(self.unset.into_iter().map(|key| (key, FieldValue::Unset)));
@@ -105,7 +111,7 @@ mod tests {
                 "arrival=tomorrow",
                 "part=\"007\"",
                 "notes=Use a 3mm screw",
-                "old=4",
+                "stock=4",
             ]
             .map(String::from)
             .into(),
@@ -129,6 +135,7 @@ mod tests {
         );
         assert_eq!(fields["part"], FieldValue::Text("007".into()));
         assert_eq!(fields["notes"], FieldValue::Text("Use a 3mm screw".into()));
+        assert_eq!(fields["stock"], FieldValue::Integer(4));
         assert_eq!(fields["old"], FieldValue::Unset);
         assert!(custom_value("9223372036854775808", "2026-11-20".parse().unwrap()).is_err());
     }
