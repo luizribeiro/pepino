@@ -3418,6 +3418,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pepino-sync"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "pepino-app",
+ "pepino-core",
+ "pepino-node",
+ "pepino-store",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
