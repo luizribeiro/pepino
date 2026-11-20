@@ -63,7 +63,7 @@
             inherit inputs pkgs;
             modules = [
               ({ lib, pkgs, ... }: {
-                packages = [ pkgs.git ];
+                packages = [ pkgs.git pkgs.cargo-nextest ];
                 languages.rust.enable = true;
                 env.PEPINO_NETWORK_TESTS = "1";
                 task.package = taskWorkspace.crates.devenv-tasks;
