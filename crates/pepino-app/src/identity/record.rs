@@ -30,6 +30,8 @@ pub struct RosterDevice {
     pub state: RosterState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revocation: Option<Revocation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leave_requested_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl RosterDevice {
@@ -49,6 +51,7 @@ impl RosterDevice {
             }),
             state: RosterState::Active,
             revocation: None,
+            leave_requested_at: None,
         }
     }
 }
@@ -106,12 +109,20 @@ impl Record {
                         );
                     }
                 }
+                Change::RequestLeave { at } => {
+                    if let Some(row) = current.devices.get_mut(&writer)
+                        && row.state == RosterState::Active
+                    {
+                        row.leave_requested_at.get_or_insert(*at);
+                    }
+                }
                 Change::Revoke { device, at } => {
                     if current.active_count() > 1
                         && let Some(row) = current.devices.get_mut(device)
                         && row.state == RosterState::Active
                     {
                         row.state = RosterState::Revoked;
+                        row.leave_requested_at = None;
                         row.revocation = Some(Revocation {
                             by: writer,
                             at: *at,

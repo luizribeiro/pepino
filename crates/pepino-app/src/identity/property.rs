@@ -66,6 +66,11 @@ fn arrival_order_preserves_concurrent_adds_renames_and_rejections() {
     left.merge(board, identity, right.edits.into_values())
         .unwrap();
     let at = chrono::DateTime::from_timestamp(1795145000, 0).unwrap();
+    append(&mut left, &ferrum, Change::RequestLeave { at });
+    assert_eq!(
+        left.record.as_ref().unwrap().devices[&ferrum.device_id()].leave_requested_at,
+        Some(at)
+    );
     append(
         &mut left,
         &titanium,
@@ -86,6 +91,11 @@ fn arrival_order_preserves_concurrent_adds_renames_and_rejections() {
         .unwrap();
     assert_eq!(revocation.by, root);
     assert_eq!(revocation.at, at);
+    assert!(
+        record.devices[&ferrum.device_id()]
+            .leave_requested_at
+            .is_none()
+    );
     assert_eq!(record.devices[&cobalt].added_by, Some(root));
     assert_eq!(record.devices[&copper].added_by, Some(ferrum.device_id()));
     assert_eq!(record.devices[&cobalt].name, "Cobalt tablet");

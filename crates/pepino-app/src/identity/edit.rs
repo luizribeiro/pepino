@@ -22,6 +22,9 @@ pub(super) enum Change {
         device: DeviceId,
         at: chrono::DateTime<chrono::Utc>,
     },
+    RequestLeave {
+        at: chrono::DateTime<chrono::Utc>,
+    },
     RenameIdentity(String),
     RenameDevice(DeviceId, String),
 }
