@@ -2,7 +2,7 @@ use std::future::Future;
 
 use futures_util::{StreamExt, TryStreamExt, stream::BoxStream};
 use pepino_core::{BoardId, DeviceId, EventId};
-use pepino_node::{Ack, BoardHandle, Error, Node, NodeEvents, NodeStatus};
+use pepino_node::{Ack, BoardHandle, Error, MemberInfo, Node, NodeEvents, NodeStatus};
 
 pub type DeliveryStream<A> = BoxStream<'static, Result<Delivery<A>, Error>>;
 
@@ -39,6 +39,12 @@ pub trait Transport: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Self::Board, Error>> + Send {
         let _ = store_instance;
         self.open_board(board)
+    }
+
+    fn local_member_bundle(
+        &self,
+    ) -> impl Future<Output = Result<Option<MemberInfo>, Error>> + Send {
+        async { Ok(None) }
     }
 
     fn events(&self) -> NodeEvents;
@@ -98,6 +104,10 @@ impl Transport for Node {
         store_instance: [u8; 16],
     ) -> Result<Self::Board, Error> {
         Node::open_board_for_store(self, board, store_instance).await
+    }
+
+    async fn local_member_bundle(&self) -> Result<Option<MemberInfo>, Error> {
+        self.member_info().await.map(Some)
     }
 
     fn events(&self) -> NodeEvents {
