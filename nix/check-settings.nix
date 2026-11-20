@@ -30,16 +30,30 @@ let
     };
   };
 
-  invalidTypes = {
-    nodeId.trustedDevices = [ "invalid" ];
-    bootstrapId.bootstrapNodes = [ (node "invalid") ];
-    insecureRelay.relayUrls = [ "http://relay.example.com" ];
-    relayWithoutHost.relayUrls = [ "https://" ];
-    insecureBootstrapRelay.bootstrapNodes = [{ nodeId = host; relayUrl = "http://relay.example.com"; }];
-    relativeCredentials.credentialsFile = "keys/pepino.cbor";
-    relativeState.dataDir = "state/pepino";
-    blankNetwork.network = "  ";
+  firstEntry = ''."[definition 1-entry 1]"'';
+  typeError = option: settings: {
+    inherit settings;
+    message = "error: A definition for option `${option}' is not of type";
   };
+  invalidNodeTypes = scope: {
+    nodeId = typeError "${scope}.trustedDevices${firstEntry}" { trustedDevices = [ "invalid" ]; };
+    bootstrapId = typeError "${scope}.bootstrapNodes${firstEntry}.nodeId" { bootstrapNodes = [ (node "invalid") ]; };
+    insecureRelay = typeError "${scope}.relayUrls${firstEntry}" { relayUrls = [ "http://relay.example.com" ]; };
+    relayWithoutHost = typeError "${scope}.relayUrls${firstEntry}" { relayUrls = [ "https://" ]; };
+    insecureBootstrapRelay = typeError "${scope}.bootstrapNodes${firstEntry}.relayUrl" {
+      bootstrapNodes = [{ nodeId = host; relayUrl = "http://relay.example.com"; }];
+    };
+    relativeCredentials = typeError "${scope}.credentialsFile" { credentialsFile = "keys/pepino.cbor"; };
+    relativeState = typeError "${scope}.dataDir" { dataDir = "state/pepino"; };
+    blankNetwork = typeError "${scope}.network" { network = "  "; };
+  };
+  nodeTypesFor = prefix: lib.mapAttrs'
+    (name: { settings, message }: lib.nameValuePair "${prefix}-${name}" {
+      settings.${prefix}.pepino = settings;
+      inherit message;
+    })
+    (invalidNodeTypes "${prefix}.pepino");
+  invalidPort = port: typeError "services.pepino.port" { services.pepino = { inherit port; }; };
   forBoth = makeCase: cases:
     lib.concatMap (prefix: lib.mapAttrsToList (makeCase prefix) cases) [ "programs" "services" ];
 in
@@ -108,12 +122,14 @@ in
       message = "${prefix}.pepino.${message}";
     })
     invalidValues;
-  invalidTypes = forBoth (prefix: _: settings: { ${prefix}.pepino = settings; }) invalidTypes
-    ++ [
-    { programs.pepino.ui.color = "sometimes"; }
-    { services.pepino.port = 0; }
-    { services.pepino.port = 65536; }
-    { services.pepino.port = "44123"; }
-    { services.pepino.configFile = "/tmp/pepino.toml"; }
-  ];
+  invalidTypes = nodeTypesFor "programs" // nodeTypesFor "services" // {
+    clientColor = typeError "programs.pepino.ui.color" { programs.pepino.ui.color = "sometimes"; };
+    zeroPort = invalidPort 0;
+    highPort = invalidPort 65536;
+    stringPort = invalidPort "44123";
+    readOnlyConfig = {
+      settings.services.pepino.configFile = "/tmp/pepino.toml";
+      message = "error: The option `services.pepino.configFile' is read-only";
+    };
+  };
 }

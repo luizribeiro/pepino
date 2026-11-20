@@ -1,41 +1,12 @@
 { self, pkgs }:
 let
   inherit (pkgs) lib;
-  inherit (lib) mkOption types;
+  inherit (import ./check-eval.nix { inherit lib pkgs; }) evaluate forceOptions;
 
   package = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
   fixtures = import ./check-settings.nix { inherit lib package; };
 
-  attrs = mkOption { type = types.attrs; default = { }; };
-  list = mkOption { type = types.listOf types.unspecified; default = [ ]; };
-  evaluate = platform: settings: (lib.evalModules {
-    specialArgs = { inherit pkgs; };
-    modules = [
-      platform
-      {
-        options = {
-          assertions = list;
-          warnings = list;
-          environment.etc = mkOption { type = types.attrsOf types.attrs; default = { }; };
-          environment.systemPackages = list;
-          users.users = mkOption { type = types.attrsOf types.attrs; default = { }; };
-          users.groups = mkOption { type = types.attrsOf types.attrs; default = { }; };
-          users.knownUsers = list;
-          users.knownGroups = list;
-          networking.firewall.allowedUDPPorts = list;
-          systemd.tmpfiles.settings = attrs;
-          system.activationScripts.postActivation.text = mkOption { type = types.str; default = ""; };
-        };
-      }
-      settings
-    ];
-  }).config;
-
   failedAssertions = config: map (entry: entry.message) (lib.filter (entry: !entry.assertion) config.assertions);
-  forceOptions = config:
-    builtins.deepSeq (removeAttrs config.programs.pepino [ "package" ])
-      (builtins.deepSeq (removeAttrs config.services.pepino [ "package" "configFile" ])
-        (builtins.seq config.services.pepino.configFile true));
   accepts = config: warnings:
     failedAssertions config == [ ] && forceOptions config && config.warnings == warnings;
   rejects = config: expected:
@@ -49,7 +20,9 @@ let
       [ fixtures.empty fixtures.outsideStore fixtures.cleared fixtures.typical ]
     && accepts (evaluate fixtures.untrusted) [ untrustedWarning ]
     && lib.all ({ settings, message }: rejects (evaluate settings) message) fixtures.invalidAssertions
-    && lib.all (settings: !(builtins.tryEval (forceOptions (evaluate settings))).success) fixtures.invalidTypes;
+    && lib.all
+      ({ settings, ... }: !(builtins.tryEval (forceOptions (evaluate settings))).success)
+      (lib.attrValues fixtures.invalidTypes);
 
   portWarning = "services.pepino.port only drives the NixOS firewall rule. The node does not bind this port.";
   untrustedWarning = "services.pepino.enable is set with no trusted devices, so the node will accept boards from nobody.";
@@ -97,7 +70,9 @@ assert fullDarwin.users.users.pepino-relay.gid == 450;
 assert lib.hasInfix "/srv/pepino" fullDarwin.system.activationScripts.postActivation.text;
 pkgs.runCommand "pepino-config-check"
 {
-  nativeBuildInputs = [ package ];
+  nativeBuildInputs = [ package pkgs.nix ];
+  checkDir = ./.;
+  nixpkgsSource = self.inputs.nixpkgs.outPath;
   empty = (linux fixtures.empty).environment.etc."pepino/config.toml".source;
   cleared = (linux fixtures.cleared).environment.etc."pepino/config.toml".source;
   client = fullLinux.environment.etc."pepino/config.toml".source;
@@ -108,6 +83,21 @@ pkgs.runCommand "pepino-config-check"
 }
   ''
     export HOME="$TMPDIR"
+    check_error() {
+      local fixture="$1" expected="$2" actual
+      for platform in nixos darwin; do
+        if actual=$(nix-instantiate --store dummy:// --eval --strict "$checkDir/check-error.nix" \
+          --argstr nixpkgsSource "$nixpkgsSource" --argstr platform "$platform" --argstr fixture "$fixture" 2>&1) ||
+          ! grep -Fq -- "$expected" <<< "$actual"; then
+          printf '%s/%s expected diagnostic containing %s\n%s\n' "$platform" "$fixture" "$expected" "$actual" >&2
+          return 1
+        fi
+      done
+    }
+    ${lib.concatStringsSep "\n" (lib.mapAttrsToList
+      (name: { message, ... }: "check_error ${lib.escapeShellArgs [ name message ]}")
+      fixtures.invalidTypes)}
+
     for file in "$empty" "$cleared" "$client" "$node" "$typicalClient" "$typicalNode" "$untrustedNode"; do
       ppn config check "$file"
     done
