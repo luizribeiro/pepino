@@ -45,7 +45,7 @@ pub fn batch_write_document(
         .chain(write.deleted)
         .map(|task| (task.id.as_str(), task))
         .collect();
-    let message = write
+    let mut message = write
         .targets
         .iter()
         .map(|id| {
@@ -60,7 +60,59 @@ pub fn batch_write_document(
         })
         .collect::<Result<Vec<_>, CliError>>()?
         .join("\n");
+    if let Response::Write {
+        top_level,
+        unblocked,
+        ..
+    } = outcome.as_ref()
+    {
+        message.push_str(&describe_delete_impact(top_level, unblocked, true));
+    }
     CommandResult::app_document(context, *outcome, move |_, _| Ok(message))
+}
+
+pub fn describe_delete_impact(
+    top_level: &[TaskSummary],
+    unblocked: &[TaskSummary],
+    applied: bool,
+) -> String {
+    use std::fmt::Write as _;
+
+    let ids = ShortIds::new(
+        top_level
+            .iter()
+            .chain(unblocked)
+            .map(|task| task.id.as_str()),
+    );
+    let mut text = String::new();
+    for (description, tasks) in [
+        (
+            if applied {
+                "Became top-level"
+            } else {
+                "Will become top-level"
+            },
+            top_level,
+        ),
+        (
+            if applied {
+                "Unblocked"
+            } else {
+                "Will be unblocked"
+            },
+            unblocked,
+        ),
+    ] {
+        for task in tasks {
+            let _ = write!(
+                text,
+                "\n  {description} {}  {}",
+                ids.get(&task.id),
+                single_line(&task.title)
+            );
+        }
+    }
+    text
 }
 
 fn task_write_line(task: &TaskSummary, ids: &ShortIds<'_>, label: &str) -> String {

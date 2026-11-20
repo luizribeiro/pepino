@@ -16,22 +16,31 @@ fn rm_requires_yes_through_a_pipe_and_reports_permanent_deletion() {
         "confirmation_required",
     );
     assert_eq!(error["hint"], "Pass --yes to confirm.");
-    assert_eq!(
-        error["message"],
-        "Refusing to delete 1 task without confirmation\n  Renovate the greenhouse"
+    let message = error["message"].as_str().unwrap();
+    assert!(
+        message.starts_with(
+            "Refusing to delete 1 task without confirmation\n  Renovate the greenhouse"
+        )
     );
+    assert!(message.contains("Will become top-level"));
     let output = sandbox
         .command()
         .args(["rm", task, &project.blocker])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
-    assert_eq!(output.stderr, b"error: Refusing to delete 2 tasks without confirmation\n  Renovate the greenhouse\n  Order stainless fittings\nhint: Pass --yes to confirm.\n");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("Refusing to delete 2 tasks without confirmation"));
+    assert!(stderr.contains(&format!(
+        "Will be unblocked {}  Test the new latch",
+        &project.downstream[..6]
+    )));
     assert_eq!(show_task(&sandbox, task)["id"], project.parent);
 
     let json = as_json(&sandbox.run(&["rm", task, &project.parent, "--yes", "--json"]));
     assert_write(&json, true);
     assert_eq!(json["deleted"][0]["id"], project.parent);
+    assert_eq!(json["top_level"].as_array().unwrap().len(), 2);
     assert_eq!(json["deleted"].as_array().unwrap().len(), 1);
     assert_deleted(&sandbox, task);
     task_error(
@@ -84,8 +93,14 @@ fn rm_lists_titles_and_accepts_yes_and_no_on_a_terminal() {
         let prompt = String::from_utf8(output.stderr).unwrap();
         assert!(prompt.contains("Renovate the greenhouse"));
         assert!(prompt.contains("Order stainless fittings"));
+        assert!(prompt.contains("Will become top-level"));
+        assert!(prompt.contains("Will be unblocked"));
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(stdout.starts_with(expected));
+        if answer == b"y\n" {
+            assert!(stdout.contains("Became top-level"));
+            assert!(stdout.contains("Unblocked"));
+        }
         if answer == b"n\n" {
             assert_eq!(show_task(&sandbox, &project.parent)["id"], project.parent);
             assert_eq!(show_task(&sandbox, &project.blocker)["id"], project.blocker);

@@ -35,5 +35,6 @@ pub use detail::task_detail;
 mod write;
 
 pub use write::{
-    batch_write_document, merge_write_responses, relation_document, write_document, write_documents,
+    batch_write_document, describe_delete_impact, merge_write_responses, relation_document,
+    write_document, write_documents,
 };
