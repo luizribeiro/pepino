@@ -18,6 +18,15 @@ pub enum FilterInput {
 }
 
 impl FilterInput {
+    /// Checks whether the supplied filter explicitly selects a status or state.
+    pub fn has_status_term(&self) -> Result<bool, AppError> {
+        Ok(self
+            .parse()?
+            .terms()
+            .iter()
+            .any(|term| matches!(term.clause, Clause::Status(_) | Clause::Is(_))))
+    }
+
     pub(super) fn parse(&self) -> Result<Filter, AppError> {
         match self {
             Self::Text(text) => filter::parse(text),
@@ -157,6 +166,30 @@ impl<'a> ViewFilters<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_detection_uses_the_filter_grammar() {
+        for (arg, expected) in [
+            ("  status:done", true),
+            ("-is:blocked", true),
+            ("\"status:done\"", false),
+            ("tag:hardware", false),
+            ("@weekend", false),
+        ] {
+            assert_eq!(
+                FilterInput::Argv(vec![arg.into()])
+                    .has_status_term()
+                    .unwrap(),
+                expected,
+                "{arg}"
+            );
+        }
+        assert!(
+            FilterInput::Argv(vec!["status:finished".into()])
+                .has_status_term()
+                .is_err()
+        );
+    }
 
     #[test]
     fn saved_filter_cache_only_parses_looked_up_views() {
