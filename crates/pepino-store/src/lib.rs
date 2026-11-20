@@ -1,4 +1,5 @@
 mod comment;
+mod error;
 mod fold;
 mod history;
 mod log;
@@ -7,44 +8,22 @@ mod task;
 
 use std::path::Path;
 
-use pepino_core::{BoardId, DecodeError, Hlc};
+use pepino_core::{BoardId, Hlc};
 use sqlx::{
     Connection, SqliteConnection,
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqliteJournalMode},
 };
-use thiserror::Error;
 use tokio::sync::Mutex;
 
 pub use comment::CommentRecord;
+pub use error::{DatabaseErrorKind, StoreError};
 pub use history::EventRecord;
 pub use log::{AppendOutcome, IdSource, SkipReason};
 pub use prefix::PrefixResolution;
 pub use task::TaskRecord;
 
 static MIGRATOR: Migrator = sqlx::migrate!();
-
-#[derive(Debug, Error)]
-pub enum StoreError {
-    #[error("expected a prefix of 1 to 64 hexadecimal digits")]
-    InvalidPrefix,
-    #[error("invalid event bytes: {0}")]
-    Decode(#[from] DecodeError),
-    #[error("the store does not support this decoded event")]
-    UnsupportedEvent,
-    #[error("invalid task view value: {0}")]
-    ViewValue(String),
-    #[error("SQLite operation failed: {0}")]
-    Database(String),
-    #[error("SQLite migration failed: {0}")]
-    Migration(String),
-}
-
-impl StoreError {
-    fn database(error: sqlx::Error) -> Self {
-        Self::Database(error.to_string())
-    }
-}
 
 pub struct Store {
     connection: Mutex<SqliteConnection>,
@@ -72,19 +51,13 @@ impl Store {
         )
         .bind(board.as_bytes().as_slice())
         .fetch_optional(&mut *self.connection.lock().await)
-        .await
-        .map_err(StoreError::database)?;
+        .await?;
         Ok(key.map(Hlc::from_key))
     }
 
     async fn connect(options: SqliteConnectOptions) -> Result<Self, StoreError> {
-        let mut connection = SqliteConnection::connect_with(&options.foreign_keys(true))
-            .await
-            .map_err(StoreError::database)?;
-        MIGRATOR
-            .run(&mut connection)
-            .await
-            .map_err(|error| StoreError::Migration(error.to_string()))?;
+        let mut connection = SqliteConnection::connect_with(&options.foreign_keys(true)).await?;
+        MIGRATOR.run(&mut connection).await?;
         Ok(Self {
             connection: Mutex::new(connection),
         })

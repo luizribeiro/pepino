@@ -110,8 +110,7 @@ impl Registers<'_> {
         .bind(id.as_bytes().as_slice())
         .bind(value)
         .execute(&mut *self.connection)
-        .await
-        .map_err(StoreError::database)?;
+        .await?;
         Ok(())
     }
 }

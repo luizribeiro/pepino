@@ -33,8 +33,7 @@ impl Store {
         .bind(first.as_bytes().as_slice())
         .bind(last.as_bytes().as_slice())
         .fetch_all(&mut *self.connection.lock().await)
-        .await
-        .map_err(StoreError::database)?;
+        .await?;
         Ok(match rows.as_slice() {
             [] => PrefixResolution::None,
             [task] => PrefixResolution::One(TaskId::from_bytes(*task)),

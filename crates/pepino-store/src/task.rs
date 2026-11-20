@@ -132,8 +132,7 @@ impl Store {
         .bind(first)
         .bind(last)
         .fetch_all(&mut *self.connection.lock().await)
-        .await
-        .map_err(StoreError::database)?;
+        .await?;
         let mut tasks = BTreeMap::new();
         for row in rows {
             tasks

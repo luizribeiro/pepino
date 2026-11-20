@@ -36,8 +36,7 @@ pub(crate) async fn fold(
     .bind(hlc)
     .bind(matches!(envelope.event(), Event::TaskDeleted { .. }))
     .execute(&mut *connection)
-    .await
-    .map_err(StoreError::database)?;
+    .await?;
     Registers {
         connection,
         board,

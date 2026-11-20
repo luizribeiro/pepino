@@ -100,8 +100,7 @@ impl Decoded {
         .bind(self.classification())
         .bind(bytes)
         .execute(connection)
-        .await
-        .map_err(StoreError::database)?;
+        .await?;
         Ok(result.rows_affected() == 1)
     }
 
@@ -141,8 +140,7 @@ impl Decoded {
         .bind(self.author.map(|author| *author.as_bytes()))
         .bind(self.classification())
         .execute(connection)
-        .await
-        .map_err(StoreError::database)?;
+        .await?;
         Ok(())
     }
 }
@@ -156,20 +154,20 @@ impl Store {
     ) -> Result<AppendOutcome, StoreError> {
         let decoded = Decoded::new(bytes, id_source)?;
         let mut connection = self.connection.lock().await;
-        let mut tx = connection.begin().await.map_err(StoreError::database)?;
+        let mut tx = connection.begin().await?;
         let id = decoded.id;
         let outcome = if decoded.insert(&mut tx, board, bytes).await? {
             decoded.project(&mut tx, board).await?
         } else {
             AppendOutcome::Duplicate { id }
         };
-        tx.commit().await.map_err(StoreError::database)?;
+        tx.commit().await?;
         Ok(outcome)
     }
 
     pub async fn rebuild(&self, board: BoardId) -> Result<(), StoreError> {
         let mut connection = self.connection.lock().await;
-        let mut tx = connection.begin().await.map_err(StoreError::database)?;
+        let mut tx = connection.begin().await?;
         for delete in [
             "DELETE FROM event_task WHERE board = ?",
             "DELETE FROM task_state WHERE board = ?",
@@ -177,8 +175,7 @@ impl Store {
             sqlx::query(delete)
                 .bind(board.as_bytes().as_slice())
                 .execute(&mut *tx)
-                .await
-                .map_err(StoreError::database)?;
+                .await?;
         }
 
         // Every ID is a 32-byte blob, so an empty blob precedes the first page.
@@ -191,8 +188,7 @@ impl Store {
             .bind(board.as_bytes().as_slice())
             .bind(&after)
             .fetch_all(&mut *tx)
-            .await
-            .map_err(StoreError::database)?;
+            .await?;
             let Some((last, _)) = rows.last() else {
                 break;
             };
@@ -203,7 +199,8 @@ impl Store {
                 decoded.project(&mut tx, board).await?;
             }
         }
-        tx.commit().await.map_err(StoreError::database)
+        tx.commit().await?;
+        Ok(())
     }
 }
 

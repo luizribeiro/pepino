@@ -35,8 +35,7 @@ pub(crate) async fn index(
             .bind(envelope.hlc().to_key())
             .bind(envelope.id().as_bytes().as_slice())
             .execute(&mut *connection)
-            .await
-            .map_err(StoreError::database)?;
+            .await?;
     }
     Ok(())
 }
@@ -55,8 +54,7 @@ impl Store {
         .bind(board.as_bytes().as_slice())
         .bind(task.as_bytes().as_slice())
         .fetch_all(&mut *self.connection.lock().await)
-        .await
-        .map_err(StoreError::database)?;
+        .await?;
         Ok(rows
             .into_iter()
             .map(|row| EventRecord {

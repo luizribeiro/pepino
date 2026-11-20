@@ -161,7 +161,10 @@ async fn failed_register_write_rolls_back_the_log() {
     let bytes = envelope.encode().unwrap();
     assert!(matches!(
         store.append(board, &bytes, IdSource::Content).await,
-        Err(StoreError::Database(_))
+        Err(StoreError::Database {
+            kind: crate::DatabaseErrorKind::Constraint,
+            ..
+        })
     ));
     assert_eq!(store.latest_hlc(board).await.unwrap(), None);
     let tasks: i64 = sqlx::query_scalar("SELECT count(*) FROM task_state")
