@@ -1,3 +1,5 @@
+use std::{borrow::Borrow, collections::BTreeMap};
+
 use pepino_core::{
     IdentityId, TaskId,
     filter::{Assignee, Clause, Filter},
@@ -11,7 +13,21 @@ use super::{
 };
 
 /// Resolves decoded person text to candidate identities.
-pub type PersonResolver<'a> = dyn Fn(&str) -> Vec<IdentityId> + 'a;
+pub trait PersonResolver {
+    fn resolve(&self, text: &str) -> Vec<IdentityId>;
+}
+
+impl<F: Fn(&str) -> Vec<IdentityId>> PersonResolver for F {
+    fn resolve(&self, text: &str) -> Vec<IdentityId> {
+        self(text)
+    }
+}
+
+impl<K: Borrow<str> + Ord> PersonResolver for BTreeMap<K, Vec<IdentityId>> {
+    fn resolve(&self, text: &str) -> Vec<IdentityId> {
+        self.get(text).cloned().unwrap_or_default()
+    }
+}
 
 /// Looks up parsed saved filters by name, without the leading `@`.
 pub trait ViewResolver {
@@ -21,7 +37,7 @@ pub trait ViewResolver {
 /// The current identity and in-memory resolvers supplied by the caller.
 pub struct Context<'a> {
     pub me: Option<IdentityId>,
-    pub people: &'a PersonResolver<'a>,
+    pub people: &'a dyn PersonResolver,
     pub views: &'a dyn ViewResolver,
 }
 
@@ -167,7 +183,7 @@ fn resolve_person(
     let Assignee::Person(text) = assignee else {
         return context.me.ok_or(QueryErrorKind::MissingIdentity);
     };
-    let mut candidates = (context.people)(text);
+    let mut candidates = context.people.resolve(text);
     candidates.sort_unstable();
     candidates.dedup();
     match candidates.as_slice() {

@@ -143,3 +143,19 @@ fn views_expand_recursively_and_negate_the_entire_saved_filter() {
 fn board_terms_are_ignored_at_each_level_even_when_negated() {
     check("board:elsewhere -board:garden @local", &[0, 2, 7, 11]);
 }
+
+#[test]
+fn query_accepts_contact_maps() {
+    let filter = filter(r#"assignee:"Ana Maria" is:open"#);
+    let contacts = std::collections::BTreeMap::from([("Ana Maria", vec![super::ANA])]);
+    let mut query = query(&filter);
+    query.context.people = &contacts;
+    assert_eq!(
+        select(board(), &query)
+            .unwrap()
+            .iter()
+            .map(|task| task.id)
+            .collect::<Vec<_>>(),
+        [id(1), id(0)]
+    );
+}
