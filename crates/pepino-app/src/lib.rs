@@ -9,6 +9,7 @@
 mod app;
 mod batch;
 mod device_grant;
+mod device_grant_auth;
 mod device_install;
 mod device_request;
 mod device_update;
@@ -51,3 +52,5 @@ pub use wire::{PROTOCOL_VERSION, WireFormat, WireRequest, WireResponse, WireResu
 
 #[cfg(test)]
 extern crate self as pepino_app;
+
+pub use device_grant_auth::SignedGrant;

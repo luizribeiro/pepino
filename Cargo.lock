@@ -3356,6 +3356,7 @@ dependencies = [
  "pepino-store",
  "proptest",
  "serde",
+ "serde_bytes",
  "serde_json",
  "sqlx",
  "strsim",
