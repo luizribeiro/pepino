@@ -168,3 +168,37 @@ fn sync_drains_the_local_outbox_without_peers() {
     fixture.run(&["daemon", "stop"]);
     fixture.assert_stopped();
 }
+#[cfg(pepino_network_tests)]
+#[test]
+fn status_combines_daemon_activity_with_local_counts() {
+    let mut fixture = support::Fixture::new("");
+    assert!(
+        fixture
+            .run(&["status"])
+            .contains("offline (daemon not running)")
+    );
+    assert_eq!(
+        as_json(&fixture.run(&["status", "--json"]))["network"],
+        "offline"
+    );
+    fixture.run(&["add", "Install a rain barrel"]);
+    fixture.foreground();
+    fixture.run(&["sync"]);
+    let human = fixture.run(&["status"]);
+    assert!(
+        human.contains("network: 0 peers seen, 0 connected"),
+        "{human}"
+    );
+    assert!(human.contains("0 events waiting to be sent"), "{human}");
+    assert!(human.contains("Tasks: 1 open, 0 closed"), "{human}");
+    let status = as_json(&fixture.run(&["status", "--json"]));
+    let board = status["board"]["id"].as_str().unwrap();
+    let sync = &status["network"]["boards"][board];
+    assert_eq!(status["counts"]["events"], 1);
+    assert_eq!(sync["events_waiting"], 0);
+    assert!(chrono::DateTime::parse_from_rfc3339(sync["last_sent"].as_str().unwrap()).is_ok());
+    assert!(sync["last_received"].is_null());
+    fixture.run(&["daemon", "stop"]);
+    success(fixture.wait_foreground());
+    fixture.assert_stopped();
+}

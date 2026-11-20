@@ -61,12 +61,24 @@ impl CommandResult {
         response: Response,
         human: impl FnOnce(&Response, &RenderSettings) -> Result<String, CliError> + 'static,
     ) -> Result<Self, CliError> {
+        Self::app_document_with_json(context, response, human, |_| {})
+    }
+
+    pub fn app_document_with_json(
+        context: &Context<'_>,
+        response: Response,
+        human: impl FnOnce(&Response, &RenderSettings) -> Result<String, CliError> + 'static,
+        update: impl FnOnce(&mut Map<String, Value>) + 'static,
+    ) -> Result<Self, CliError> {
         let settings = context.render_settings()?;
         Ok(Self(
             Box::new(move |json, _, stdout| {
                 let result = if json {
                     match serde_json::to_value(response) {
-                        Ok(Value::Object(fields)) => write_json(fields, stdout),
+                        Ok(Value::Object(mut fields)) => {
+                            update(&mut fields);
+                            write_json(fields, stdout)
+                        }
                         Ok(_) => Err(io::Error::other("Expected an app response object.")),
                         Err(error) => Err(error.into()),
                     }
