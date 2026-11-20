@@ -1,3 +1,4 @@
+pub mod config;
 pub mod error;
 pub mod flags;
 pub mod help_tree;

@@ -979,12 +979,15 @@ dependencies = [
 name = "ppn"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "clap",
+ "hex",
  "humantime",
  "nix",
  "serde",
  "serde_json",
  "thiserror",
+ "url",
 ]
 
 [[package]]
