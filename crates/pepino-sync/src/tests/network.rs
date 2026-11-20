@@ -257,8 +257,9 @@ async fn the_running_engine_enrolls_a_device_on_every_board_idempotently() {
         .push(json!({"id": workshop_id, "name": "Workshop"}));
     std::fs::write(path, local.to_string()).unwrap();
     let live = owner.start().await;
+    let peer_dir = dir.path().join("ferrum");
     let peer = pepino_app::App::request_device(
-        &dir.path().join("ferrum"),
+        &peer_dir,
         pepino_app::OpenOptions {
             device_name: Some("Ferrum".into()),
             ..Default::default()
@@ -272,12 +273,14 @@ async fn the_running_engine_enrolls_a_device_on_every_board_idempotently() {
         .await
         .unwrap();
     assert_eq!(local.local_state().devices()[&peer.id], "Ferrum");
-    live.stop().await;
-    let node = pepino_node::Node::spawn(owner.settings.clone())
-        .await
-        .unwrap();
-    for id in [owner.board(), workshop_id] {
-        let board = node.open_board(id).await.unwrap();
+    let mut settings = owner.settings.clone();
+    settings.credentials =
+        pepino_node::DeviceCredentials::load(peer_dir.join("credentials.cbor")).unwrap();
+    settings.database_path = peer_dir.join("node.sqlite");
+    let node = pepino_node::Node::spawn(settings).await.unwrap();
+    let first = node.open_board(owner.board()).await.unwrap();
+    let second = node.open_board(workshop_id).await.unwrap();
+    for board in [&first, &second] {
         board.wait_until_joined(fixture::WAIT).await.unwrap();
         assert!(
             board
@@ -286,9 +289,11 @@ async fn the_running_engine_enrolls_a_device_on_every_board_idempotently() {
                 .unwrap()
                 .contains(&(peer.id, pepino_node::Role::Manage))
         );
-        board.close().await.unwrap();
     }
+    first.close().await.unwrap();
+    second.close().await.unwrap();
     node.shutdown().await.unwrap();
+    live.stop().await;
 }
 
 #[tokio::test]
