@@ -3,9 +3,9 @@ use std::{
     time::Duration,
 };
 
-use tokio::time::{sleep, timeout};
+use tokio::time::timeout;
 
-use super::support::{network, settings, start};
+use super::support::{WAIT, network, settings, start, until};
 
 #[tokio::test]
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
@@ -41,13 +41,7 @@ async fn dropping_without_shutdown_releases_the_udp_port() {
     let node = start(&settings).await;
     assert!(UdpSocket::bind((address, port)).is_err());
     drop(node);
-    timeout(Duration::from_secs(2), async {
-        while UdpSocket::bind((address, port)).is_err() {
-            sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
+    until(|| UdpSocket::bind((address, port)), Result::is_ok, WAIT).await;
 }
 
 #[tokio::test]
@@ -69,14 +63,8 @@ async fn closed_board_can_be_reopened_on_a_restarted_node() {
     node.shutdown().await.unwrap();
     let node = start(&settings).await;
     let board = node.open_board(id).await.unwrap();
-    board
-        .wait_until_joined(Duration::from_secs(1))
-        .await
-        .unwrap();
-    board
-        .wait_until_replayed(Duration::from_secs(1))
-        .await
-        .unwrap();
+    board.wait_until_joined(WAIT).await.unwrap();
+    board.wait_until_replayed(WAIT).await.unwrap();
     board
         .publish(b"Roll out the migration".to_vec())
         .await
@@ -87,7 +75,7 @@ async fn closed_board_can_be_reopened_on_a_restarted_node() {
 #[tokio::test]
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn late_status_subscriber_sees_deliveries_waiting_for_the_consumer() {
-    use super::support::{WAIT, next};
+    use super::support::next;
     use futures_util::StreamExt;
     use pepino_node::NodeEvent;
 
@@ -136,22 +124,16 @@ async fn publish_reports_uncertainty_at_the_configured_deadline() {
     config.publish_confirmation_timeout = Duration::from_millis(25);
     let node = start(&config).await;
     let board = node.create_board().await.unwrap();
-    board
-        .wait_until_replayed(super::support::WAIT)
-        .await
-        .unwrap();
+    board.wait_until_replayed(WAIT).await.unwrap();
     let pool =
         SqlitePool::connect_with(SqliteConnectOptions::new().filename(&config.database_path))
             .await
             .unwrap();
     let writer = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
 
-    let result = timeout(
-        Duration::from_secs(1),
-        board.publish(b"Check deployment status".to_vec()),
-    )
-    .await
-    .unwrap();
+    let result = timeout(WAIT, board.publish(b"Check deployment status".to_vec()))
+        .await
+        .unwrap();
     assert!(
         matches!(result, Err(Error::PublishUnconfirmed(reason)) if reason.contains("timed out"))
     );

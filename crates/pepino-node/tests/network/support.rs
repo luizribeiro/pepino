@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     net::Ipv4Addr,
     path::{Path, PathBuf},
     time::Duration,
@@ -9,9 +10,29 @@ use pepino_core::{DeviceId, EventId};
 use pepino_node::{
     BoardEvent, BoardEvents, BoardHandle, DeviceCredentials, Node, NodeSettings, Role,
 };
-use tokio::time::timeout;
+use tokio::time::{Instant, sleep, timeout};
 
 pub const WAIT: Duration = Duration::from_secs(60);
+
+pub async fn until<T: Debug>(
+    mut observe: impl FnMut() -> T,
+    condition: impl Fn(&T) -> bool,
+    timeout: Duration,
+) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let observed = observe();
+        if condition(&observed) {
+            return;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "condition timed out after {timeout:?}. Last observation: {observed:?}"
+        );
+        sleep(remaining.min(Duration::from_millis(25))).await;
+    }
+}
 
 pub fn fixture_dir() -> tempfile::TempDir {
     #[cfg(target_os = "linux")]
@@ -42,7 +63,7 @@ pub fn settings(network: &str, dir: PathBuf) -> NodeSettings {
 pub async fn start(settings: &NodeSettings) -> Node {
     timeout(WAIT, Node::spawn(settings.clone()))
         .await
-        .unwrap()
+        .expect("node startup timed out")
         .unwrap()
 }
 
@@ -59,8 +80,8 @@ pub async fn enroll(owner: &BoardHandle, device: &Node, role: Role) -> BoardHand
 pub async fn next(events: &mut BoardEvents) -> BoardEvent {
     timeout(WAIT, events.next())
         .await
-        .unwrap()
-        .unwrap()
+        .expect("board event timed out")
+        .expect("board event stream ended")
         .unwrap()
 }
 

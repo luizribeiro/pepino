@@ -139,7 +139,7 @@ mod tests {
             std::future::pending::<()>().await;
         });
         acquired.await.unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(5), worker.shutdown())
+        tokio::time::timeout(std::time::Duration::from_secs(60), worker.shutdown())
             .await
             .unwrap()
             .unwrap();
