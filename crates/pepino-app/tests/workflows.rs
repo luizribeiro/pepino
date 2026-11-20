@@ -416,7 +416,7 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
     let (_, _, tasks, _) = write(
         &mut app,
         json!({
-            "op":"add_task", "title":"Install the latch", "blocked_by":[&blocker]
+            "op":"add_task", "title":"Install the latch", "parent":&blocker, "blocked_by":[&blocker]
         }),
     )
     .await;
@@ -428,13 +428,27 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
         .clone();
     assert!(get(&mut app, &child).await.blocked);
 
-    let (changed, created, tasks, edges) =
-        write(&mut app, json!({"op":"delete","task":&blocker[..12]})).await;
-    assert_eq!(edges.len(), 1);
-    assert_eq!(edges[0].to, child);
-    assert!(!edges[0].effective);
+    let response = handle(&mut app, json!({"op":"delete","task":&blocker[..12]}))
+        .await
+        .unwrap();
+    let Response::Write {
+        changed,
+        created,
+        tasks,
+        edges,
+        top_level,
+        unblocked,
+        ..
+    } = response
+    else {
+        panic!("expected a write")
+    };
+    assert_eq!(edges.len(), 2);
+    assert!(edges.iter().all(|edge| !edge.effective));
     assert!(changed);
     assert_eq!(created, None);
+    assert_eq!(top_level[0].id, child);
+    assert_eq!(unblocked[0].id, child);
     let remaining = get(&mut app, &child).await;
     assert_eq!(tasks, std::slice::from_ref(&remaining.summary));
     assert!(remaining.blocked_by.is_empty() && remaining.ready);
@@ -463,7 +477,7 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
         .events(app.local_state().board_id, blocker.parse().unwrap())
         .await
         .unwrap();
-    assert_eq!(history.len(), 4);
+    assert_eq!(history.len(), 6);
     assert!(
         store
             .edges(app.local_state().board_id, child.parse().unwrap())

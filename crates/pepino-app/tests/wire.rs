@@ -74,6 +74,8 @@ fn errors_and_write_responses_have_stable_tags() {
         created: Some("97ad".repeat(16)),
         tasks: Vec::new(),
         activated: Vec::new(),
+        top_level: Vec::new(),
+        unblocked: Vec::new(),
         edges: Vec::new(),
     };
     let json = serde_json::to_value(&response).unwrap();
@@ -109,6 +111,8 @@ fn versioned_messages_have_a_shared_json_and_cbor_codec() {
         created: None,
         tasks: Vec::new(),
         activated: Vec::new(),
+        top_level: Vec::new(),
+        unblocked: Vec::new(),
         edges: Vec::new(),
     }));
     let error = WireResponse::new(Err(AppError::NotFound {

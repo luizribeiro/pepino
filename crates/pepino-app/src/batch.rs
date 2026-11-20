@@ -206,6 +206,21 @@ impl App {
                 deleted.push(project_summary(task)?);
             }
         }
+        let (top_level, unblocked) = deletion_impact(
+            before,
+            view.edge_records(),
+            &affected
+                .into_iter()
+                .filter(|id| before.task(*id).is_some() && view.task(*id).is_none())
+                .collect(),
+        );
+        let summarize = |ids: Vec<TaskId>| {
+            ids.into_iter()
+                .filter_map(|id| view.task(id))
+                .map(project_summary)
+                .collect::<Result<Vec<_>, _>>()
+        };
+        let (top_level, unblocked) = (summarize(top_level)?, summarize(unblocked)?);
         let names = self.local.task_names(tasks.iter().chain(&deleted));
         Ok(Response::Write {
             targets,
@@ -216,8 +231,50 @@ impl App {
             tasks,
             edges,
             activated: activated_edges(before, view)?,
+            top_level,
+            unblocked,
         })
     }
+}
+
+pub(super) fn deletion_impact(
+    before: &BoardView,
+    remaining_edges: &[pepino_store::EdgeRecord],
+    deleted: &BTreeSet<TaskId>,
+) -> (Vec<TaskId>, Vec<TaskId>) {
+    if deleted.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let mut has_parent = BTreeSet::new();
+    let mut blocked = BTreeSet::new();
+    for edge in remaining_edges.iter().filter(|edge| edge.is_effective()) {
+        match edge.kind {
+            EdgeKind::Parent => {
+                has_parent.insert(edge.from);
+            }
+            EdgeKind::Blocks
+                if before
+                    .task(edge.from)
+                    .is_some_and(|task| task.status.is_open()) =>
+            {
+                blocked.insert(edge.to);
+            }
+            _ => {}
+        }
+    }
+    let mut top_level = Vec::new();
+    let mut unblocked = Vec::new();
+    for task in before.iter().filter(|task| !deleted.contains(&task.id)) {
+        if task.parent.is_some_and(|parent| deleted.contains(&parent))
+            && !has_parent.contains(&task.id)
+        {
+            top_level.push(task.id);
+        }
+        if task.blocked && !blocked.contains(&task.id) {
+            unblocked.push(task.id);
+        }
+    }
+    (top_level, unblocked)
 }
 
 fn activated_edges(before: &BoardView, after: &BoardView) -> Result<Vec<EdgeEffect>, AppError> {
