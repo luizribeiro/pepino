@@ -4,38 +4,40 @@ use super::{Clause, Filter, Term, Value};
 
 impl fmt::Display for Filter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        joined(f, self.terms(), " ", write_term)
+        joined(f, self.terms(), " ", |f, term| write!(f, "{term}"))
     }
 }
 
-fn write_term(f: &mut fmt::Formatter<'_>, term: &Term) -> fmt::Result {
-    if term.negated {
-        f.write_char('-')?;
-    }
-    match &term.clause {
-        Clause::Text(text) => atom(f, text),
-        Clause::View(name) => {
-            f.write_char('@')?;
-            atom(f, name)
+impl fmt::Display for Term {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.negated {
+            f.write_char('-')?;
         }
-        Clause::Is(states) => {
-            f.write_str("is:")?;
-            joined(f, states, ",", |f, state| f.write_str(state.as_str()))
-        }
-        Clause::Has(fields) => {
-            f.write_str("has:")?;
-            joined(f, fields, ",", |f, field| atom(f, field))
-        }
-        Clause::Match { key, alternatives } => {
-            atom(f, key)?;
-            f.write_char(':')?;
-            joined(f, alternatives, ",", |f, comparison| {
-                f.write_str(comparison.operator.symbol())?;
-                match &comparison.value {
-                    Value::Text(value) => atom(f, value),
-                    Value::Date(date) => write!(f, "{date}"),
-                }
-            })
+        match &self.clause {
+            Clause::Text(text) => atom(f, text),
+            Clause::View(name) => {
+                f.write_char('@')?;
+                atom(f, name)
+            }
+            Clause::Is(states) => {
+                f.write_str("is:")?;
+                joined(f, states, ",", |f, state| f.write_str(state.as_str()))
+            }
+            Clause::Has(fields) => {
+                f.write_str("has:")?;
+                joined(f, fields, ",", |f, field| atom(f, field))
+            }
+            Clause::Match { key, alternatives } => {
+                atom(f, key)?;
+                f.write_char(':')?;
+                joined(f, alternatives, ",", |f, comparison| {
+                    f.write_str(comparison.operator.symbol())?;
+                    match &comparison.value {
+                        Value::Text(value) => atom(f, value),
+                        Value::Date(date) => write!(f, "{date}"),
+                    }
+                })
+            }
         }
     }
 }
@@ -65,6 +67,10 @@ fn atom(f: &mut fmt::Formatter<'_>, value: &str) -> fmt::Result {
 
     f.write_char('"')?;
     for ch in value.chars() {
+        if ch.is_whitespace() {
+            write!(f, r"\u{{{:x}}}", u32::from(ch))?;
+            continue;
+        }
         if matches!(ch, '"' | '\\') {
             f.write_char('\\')?;
         }

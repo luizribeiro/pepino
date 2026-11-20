@@ -16,7 +16,7 @@ use super::{
 /// assert_eq!(parse_argv(&argv, today)?, filter);
 /// assert_eq!(
 ///     filter.to_string(),
-///     r#"tag:garden due:<2026-11-27 "fix the fence""#,
+///     r#"tag:garden due:<2026-11-27 "fix\u{20}the\u{20}fence""#,
 /// );
 /// # Ok::<(), pepino_core::filter::ParseError>(())
 /// ```
