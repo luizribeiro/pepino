@@ -23,6 +23,9 @@ pub(crate) fn parse_date(value: &str, today: Date) -> Result<Option<Date>, &'sta
     {
         return Ok(Some(date));
     }
+    if calendar_year_out_of_range(value) {
+        return Err(RANGE);
+    }
     let today = NaiveDate::from(today);
     let Some(days) = relative_days(value, today) else {
         return Ok(None);
@@ -60,9 +63,37 @@ pub(crate) fn digits(value: &str) -> bool {
     !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+fn calendar_year_out_of_range(value: &str) -> bool {
+    let Some(((year, month), day)) = value
+        .rsplit_once('-')
+        .and_then(|(ym, day)| Some((ym.rsplit_once('-')?, day)))
+    else {
+        return false;
+    };
+    let year_digits = year.strip_prefix(['+', '-']).unwrap_or(year);
+    let in_range = |part: &str, max| {
+        part.len() == 2 && digits(part) && part.parse::<u8>().is_ok_and(|n| (1..=max).contains(&n))
+    };
+    year_digits.len() >= 4
+        && digits(year_digits)
+        && (year_digits.len() == 4 || year.starts_with(['+', '-']))
+        && in_range(month, 12)
+        && in_range(day, 31)
+        && !year
+            .parse::<i32>()
+            .is_ok_and(|year| (NaiveDate::MIN.year()..=NaiveDate::MAX.year()).contains(&year))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn distinguishes_out_of_range_calendar_years_from_plain_text() {
+        let today = "2026-11-20".parse().unwrap();
+        assert_eq!(parse_date("+999999-01-01", today), Err(RANGE));
+        assert_eq!(parse_date("+999999-13-01", today), Ok(None));
+    }
 
     #[test]
     fn resolves_the_filters_calendar_forms() {
