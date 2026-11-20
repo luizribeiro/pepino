@@ -55,6 +55,10 @@ fn assign_reports_an_unknown_person_at_the_reference() {
         .unwrap();
     let error = task_error(output, 2, "invalid_input");
     assert_eq!(error["field"], "assignees[0]");
+    assert_eq!(
+        error["hint"],
+        "Use `me`, a display name, or an identity ID or prefix."
+    );
     assert!(
         error["message"]
             .as_str()

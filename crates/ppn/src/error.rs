@@ -298,7 +298,7 @@ fn input_hint(field: &str, reason: &str) -> Option<&'static str> {
     if field.starts_with("tags[") {
         Some("Use a tag matching [a-z][a-z0-9_./-]* with at most 64 bytes.")
     } else if field.starts_with("assignees[") {
-        Some("Use `me` or a full identity ID.")
+        Some("Use `me`, a display name, or an identity ID or prefix.")
     } else if reason.starts_with("invalid task reference ") {
         Some("Use an id shown by `ppn ls`, at least 4 hex digits.")
     } else {
