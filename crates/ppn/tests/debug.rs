@@ -51,21 +51,10 @@ fn noninteractive_confirmation_requires_yes() {
 #[cfg(unix)]
 #[test]
 fn confirmation_accepts_yes_and_no_from_a_terminal() {
-    use nix::pty::openpty;
-    use std::{fs::File, io::Write, process::Stdio};
-
     for (answer, confirmed) in [(b"y\n", true), (b"n\n", false)] {
-        let pty = openpty(None, None).unwrap();
-        let mut terminal = File::from(pty.master);
-        let child = ppn()
-            .args(["debug", "confirm", "--json"])
-            .stdin(File::from(pty.slave))
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        terminal.write_all(answer).unwrap();
-        let output = child.wait_with_output().unwrap();
+        let mut command = ppn();
+        command.args(["debug", "confirm", "--json"]);
+        let output = task_terminal(command, Some(answer));
         assert!(output.status.success(), "{output:?}");
         assert_eq!(output.stderr, b"Archive the release board? [y/N] ");
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();

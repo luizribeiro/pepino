@@ -55,31 +55,58 @@ pub fn assert_json_error(
 
 #[cfg(unix)]
 pub fn tty_output(args: &[&str], no_color: Option<&str>) -> Vec<u8> {
-    use nix::{errno::Errno, pty::openpty};
-    use std::{fs::File, io::Read, process::Stdio};
-
-    let pty = openpty(None, None).unwrap();
     let mut command = ppn();
-    command
-        .args(args)
-        .env("TERM", "xterm")
-        .stdout(File::from(pty.slave))
-        .stderr(Stdio::piped());
+    command.args(args);
     if let Some(value) = no_color {
         command.env("NO_COLOR", value);
     }
-    let child = command.spawn().unwrap();
+    let output = task_terminal(command, None);
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    output.stdout
+}
+
+#[cfg(unix)]
+pub fn task_terminal(mut command: Command, input: Option<&[u8]>) -> Output {
+    use nix::{
+        errno::Errno,
+        pty::openpty,
+        sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr},
+    };
+    use std::{
+        fs::File,
+        io::{Read, Write},
+        process::Stdio,
+    };
+
+    let pty = openpty(None, None).unwrap();
+    let slave = File::from(pty.slave);
+    let mut terminal = File::from(pty.master);
+    if input.is_some() {
+        let mut settings = tcgetattr(&slave).unwrap();
+        settings.local_flags.remove(LocalFlags::ECHO);
+        tcsetattr(&slave, SetArg::TCSANOW, &settings).unwrap();
+        command.stdin(slave.try_clone().unwrap());
+    }
+    let child = command
+        .env("TERM", "xterm")
+        .stdout(slave)
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
     drop(command);
 
+    if let Some(input) = input {
+        terminal.write_all(input).unwrap();
+    }
     let mut stdout = Vec::new();
-    if let Err(error) = File::from(pty.master).read_to_end(&mut stdout) {
+    if let Err(error) = terminal.read_to_end(&mut stdout) {
         // Linux reports EIO when the last slave descriptor closes.
         assert_eq!(error.raw_os_error(), Some(Errno::EIO as i32));
     }
-    let output = child.wait_with_output().unwrap();
-    assert!(output.status.success(), "{output:?}");
-    assert!(output.stderr.is_empty(), "{output:?}");
-    stdout
+    let mut output = child.wait_with_output().unwrap();
+    output.stdout = stdout;
+    output
 }
 
 pub struct ConfigSandbox {
