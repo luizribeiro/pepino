@@ -102,27 +102,3 @@ fn validate_name(name: &str) -> Result<(), AppError> {
         Err(invalid("name", "expected [a-z][a-z0-9_-]* within 64 bytes"))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{Request, WriteRequest};
-
-    #[tokio::test]
-    async fn saving_a_view_persists_its_canonical_filter() {
-        let directory = tempfile::tempdir().unwrap();
-        let now = 1_795_144_800_000;
-        let mut app = App::open(directory.path(), now).await.unwrap();
-        let request = Request::Write(WriteRequest::SaveView {
-            name: "weekend".into(),
-            filter: FilterInput::Text("due:tomorrow tag:hardware".into()),
-            today: "2026-11-20".parse().unwrap(),
-        });
-        app.handle(request, now).await.unwrap();
-        let disk = crate::LocalState::load(directory.path()).unwrap();
-        assert_eq!(
-            disk.saved_views.iter().next(),
-            Some(("weekend", "due:2026-11-21 tag:hardware")),
-        );
-    }
-}

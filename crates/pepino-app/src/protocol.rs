@@ -3,10 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::views::SavedView;
 use crate::{
     Date, EdgeKind, EventRecord, FieldValue, FilterDiagnostic, FilterInput, Hlc, IdentityRecord,
-    NamedRecord, Status, StatusCounts,
+    NamedRecord, SavedView, Status, StatusCounts,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

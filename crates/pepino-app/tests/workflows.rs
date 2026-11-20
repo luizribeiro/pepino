@@ -815,23 +815,42 @@ async fn saved_views_migrate_v1_state_and_survive_concurrent_opens() {
         "board_name":"Greenhouse"
     });
     std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
-    let _app = App::open(directory.path(), NOW).await.unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
     legacy["version"] = json!(2);
     legacy["saved_views"] = json!({});
     assert_eq!(
         serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),
         legacy
     );
-}
-
-#[tokio::test]
-async fn listing_views_starts_empty() {
-    let directory = tempfile::tempdir().unwrap();
-    let mut app = App::open(directory.path(), NOW).await.unwrap();
     read_golden(
         &mut app,
         json!({"op":"list_views"}),
         json!({"ok":{"kind":"views","views":[]}}),
+    )
+    .await;
+    let mut peer = App::open(directory.path(), NOW).await.unwrap();
+    let latch = json!({"name":"latch","filter":"due:2026-11-21 tag:hardware"});
+    read_golden(&mut app, json!({"op":"save_view","name":"latch","filter":["due:tomorrow","tag:hardware"],"today":"2026-11-20"}), json!({"ok":{"kind":"view_saved","view":latch,"replaced":false}})).await;
+    let weekend = json!({"name":"weekend","filter":"@latch is:open"});
+    read_golden(
+        &mut peer,
+        json!({"op":"save_view","name":"weekend","filter":"@latch is:open","today":"2026-11-20"}),
+        json!({"ok":{"kind":"view_saved","view":weekend,"replaced":false}}),
+    )
+    .await;
+    let latch = json!({"name":"latch","filter":"tag:hinges"});
+    read_golden(
+        &mut app,
+        json!({"op":"save_view","name":"latch","filter":"tag:hinges","today":"2026-11-20"}),
+        json!({"ok":{"kind":"view_saved","view":latch,"replaced":true}}),
+    )
+    .await;
+    drop(app);
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    read_golden(
+        &mut app,
+        json!({"op":"list_views"}),
+        json!({"ok":{"kind":"views","views":[latch,weekend]}}),
     )
     .await;
 }
