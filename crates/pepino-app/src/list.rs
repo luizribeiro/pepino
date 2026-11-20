@@ -7,7 +7,7 @@ use pepino_core::{
 use pepino_store::query::{self, Context, Query, QueryError, QueryErrorKind, Sort};
 
 use crate::app::{invalid, store_error};
-use crate::projection::project;
+use crate::projection::project_summary;
 use crate::state::storage;
 use crate::{App, AppError, Date, FilterDiagnostic, FilterInput, MissingReference, Response};
 
@@ -74,7 +74,7 @@ impl App {
             let tasks = matching
                 .into_iter()
                 .take(limit.unwrap_or(total))
-                .map(|task| project(task, view.comments(task.id)))
+                .map(project_summary)
                 .collect::<Result<_, _>>()?;
             (tasks, total)
         } else {

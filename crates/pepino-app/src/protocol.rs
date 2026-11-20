@@ -160,7 +160,7 @@ pub enum Response {
         views: Vec<SavedView>,
     },
     Tasks {
-        tasks: Vec<TaskRecord>,
+        tasks: Vec<TaskSummary>,
         total: usize,
         filter: String,
         sort: String,
