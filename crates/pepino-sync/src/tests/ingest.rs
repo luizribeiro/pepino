@@ -285,3 +285,41 @@ async fn stream_errors_back_off_and_keep_the_board_non_idle_until_repoll() {
         _ = async { tokio::join!(observe, seq); } => (),
     }
 }
+
+#[tokio::test]
+async fn retries_ack_without_appending_again() {
+    use super::stub::Receipt;
+    use pepino_core::EventId;
+
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([74; 32]);
+    let device = DeviceId::from_bytes([75; 32]);
+    let app = directory::prepare(dir.path(), board, device).await;
+    let node = Arc::new(Stub::new(device));
+    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    let ack = Receipt::new();
+    node.deliver_operation(
+        board,
+        EventId::from_bytes([76; 32]),
+        device,
+        vec![0x82, 2, 0xf6],
+        ack.clone().with_failures(2),
+    );
+    super::publish::until(&engine, |s| {
+        s.boards[&board]
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("test acknowledgement failure"))
+    })
+    .await;
+    assert_eq!(
+        app.store().statistics(board).await.unwrap().unknown_version,
+        1
+    );
+    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+    assert!(ack.is_acked());
+    assert_eq!(app.store().statistics(board).await.unwrap().total, 1);
+    engine.shutdown().await.unwrap();
+}

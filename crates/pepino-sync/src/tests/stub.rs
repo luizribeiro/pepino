@@ -1,6 +1,6 @@
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 
 use futures_util::{StreamExt, stream};
@@ -61,9 +61,30 @@ pub(super) struct Board {
     status: Arc<Mutex<NodeStatus>>,
 }
 
+#[derive(Clone)]
 pub(super) struct Receipt {
     done: watch::Sender<bool>,
     before_ack: Option<watch::Sender<bool>>,
+    failures: Arc<AtomicUsize>,
+}
+
+impl Receipt {
+    pub(super) fn new() -> Self {
+        Self {
+            done: watch::channel(false).0,
+            before_ack: None,
+            failures: Arc::default(),
+        }
+    }
+
+    pub(super) fn with_failures(mut self, count: usize) -> Self {
+        self.failures = Arc::new(AtomicUsize::new(count));
+        self
+    }
+
+    pub(super) fn is_acked(&self) -> bool {
+        *self.done.borrow()
+    }
 }
 
 impl Stub {
@@ -128,7 +149,21 @@ impl Stub {
         bytes: Vec<u8>,
         before_ack: Option<watch::Sender<bool>>,
     ) -> watch::Receiver<bool> {
-        let (ack, received) = watch::channel(false);
+        let mut receipt = Receipt::new();
+        receipt.before_ack = before_ack;
+        let received = receipt.done.subscribe();
+        self.deliver_operation(id, EventId::from_bytes([27; 32]), signer, bytes, receipt);
+        received
+    }
+
+    pub(super) fn deliver_operation(
+        &self,
+        id: BoardId,
+        operation: EventId,
+        signer: DeviceId,
+        bytes: Vec<u8>,
+        ack: Receipt,
+    ) {
         pending(&self.status, &self.signals, id, true);
         self.queue
             .lock()
@@ -136,17 +171,13 @@ impl Stub {
             .as_ref()
             .unwrap()
             .send(Delivery {
-                operation: EventId::from_bytes([27; 32]),
+                operation,
                 signer,
                 bytes,
-                ack: Receipt {
-                    done: ack,
-                    before_ack,
-                },
+                ack,
             })
             .ok()
             .unwrap();
-        received
     }
 }
 
@@ -175,6 +206,15 @@ impl Acknowledgement for Receipt {
             started.send_replace(true);
             std::future::pending::<()>().await;
         }
+        if self
+            .failures
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(Error::Worker("test acknowledgement failure".into()));
+        }
         self.done.send_replace(true);
         Ok(())
     }
@@ -189,9 +229,9 @@ impl TransportBoard for Board {
         let status = self.status.clone();
         let signals = self.signals.clone();
         Ok(UnboundedReceiverStream::new(rx)
-            .map(move |delivery| {
+            .filter_map(move |delivery| {
                 pending(&status, &signals, id, false);
-                Ok(delivery)
+                futures_util::future::ready((!delivery.ack.is_acked()).then_some(Ok(delivery)))
             })
             .boxed())
     }
