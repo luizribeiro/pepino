@@ -20,15 +20,15 @@ fn log_renders_task_and_board_history_with_versioned_json() {
     assert_eq!(events[0]["id"], task);
     assert_eq!(events[1]["change"]["action"], "commented");
 
+    let status = as_json(&sandbox.run(&["status", "--json"]));
+    let name = status["identity"]["display_name"].as_str().unwrap();
+    let device = status["device"]["name"].as_str().unwrap();
     let stamps: Vec<_> = events
         .iter()
         .map(|event| {
             let clock = chrono::DateTime::parse_from_rfc3339(event["hlc"]["utc"].as_str().unwrap())
                 .unwrap();
-            let name = json["names"][event["author"].as_str().unwrap()]
-                .as_str()
-                .unwrap();
-            format!("{}  {name}", clock.format("%d %b %Y %T"))
+            format!("{}  {name}", clock.format("%d %b %Y %H:%M"))
         })
         .collect();
     let human = success(
@@ -42,16 +42,35 @@ fn log_renders_task_and_board_history_with_versioned_json() {
     assert_eq!(
         human,
         format!(
-            "{}  Created Hang the greenhouse thermometer\n{}  Commented “Thermometer reading 0”\n",
+            "{}  Hang the greenhouse thermometer: created\n{}  Hang the greenhouse thermometer: commented “Thermometer reading 0”\n",
             stamps[0], stamps[1]
         )
     );
+
+    assert!(
+        sandbox
+            .run(&["log", &task, "--verbose"])
+            .contains(&format!("{name} ({device})"))
+    );
+    sandbox.run(&["edit", &task, "--due", "2026-11-23", "--tag", "urgent"]);
+    let readable = sandbox.run(&["log", "--all"]);
+    assert!(readable.contains(&format!(
+        "Order stainless fittings: parent set to {} Renovate the greenhouse",
+        &project.parent[..6]
+    )));
+    assert!(readable.contains("Hang the greenhouse thermometer: due set to 2026-11-23"));
+    assert!(readable.contains("Hang the greenhouse thermometer: tag #urgent added"));
 
     let board = as_json(&sandbox.run(&["log", "--json"]));
     assert_eq!(board["kind"], "log");
     assert_eq!(board["events"][0]["id"], project.parent);
     assert_eq!(
-        board["events"].as_array().unwrap().last().unwrap(),
+        board["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|event| event["id"] == events[1]["id"])
+            .unwrap(),
         &events[1]
     );
     let output = sandbox

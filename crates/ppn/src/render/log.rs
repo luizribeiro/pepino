@@ -1,39 +1,55 @@
-use std::collections::BTreeMap;
-
-use pepino_app::{EventClassification, EventRecord};
-use ppn::render::{Dates, assignee_label, single_line};
+use pepino_app::{EventClassification, EventDetail, EventRecord};
+use ppn::render::{Dates, ShortIds};
 use ppn::response::Log;
 
-pub(super) fn history(log: Log<'_>, dates: Dates<'_>) -> String {
+pub(super) fn history(
+    log: Log<'_>,
+    dates: Dates<'_>,
+    author: impl Fn(Option<&str>) -> String,
+) -> String {
     let (applied, mut skipped): (Vec<_>, Vec<_>) = log
         .events
         .iter()
         .partition(|event| event.classification == EventClassification::Applied);
     skipped.extend(log.unordered);
-    let mut rows: Vec<_> = applied
-        .into_iter()
-        .map(|event| event_row(event, log.names, dates))
-        .collect();
+    let ids = ShortIds::new(
+        log.titles.keys().map(String::as_str).chain(
+            log.events
+                .iter()
+                .chain(log.unordered)
+                .filter_map(|event| match &event.change.detail {
+                    EventDetail::Assignee { who, .. } => Some(who.as_str()),
+                    _ => None,
+                }),
+        ),
+    );
+    let row = |event| event_row(event, &log, dates, &ids, &author);
+    let mut rows: Vec<_> = applied.into_iter().map(row).collect();
     if !skipped.is_empty() {
         rows.push("Unordered or skipped events".into());
         rows.extend(skipped.into_iter().map(|event| {
-            let row = event_row(event, log.names, dates);
+            let row = row(event);
             format!("{row} [{}]", classification(event.classification))
         }));
     }
     rows.join("\n")
 }
 
-fn event_row(event: &EventRecord, names: &BTreeMap<String, String>, dates: Dates<'_>) -> String {
+fn event_row(
+    event: &EventRecord,
+    log: &Log<'_>,
+    dates: Dates<'_>,
+    ids: &ShortIds<'_>,
+    author: &impl Fn(Option<&str>) -> String,
+) -> String {
     let date = event.hlc.map_or_else(
         || "unknown time".into(),
         |clock| dates.local_date_time(clock),
     );
-    let author = event
-        .author
-        .as_deref()
-        .map_or_else(|| "unknown author".into(), |id| assignee_label(id, names));
-    let summary = single_line(&event.change.summary);
+    let author = author(event.author.as_deref());
+    let summary = event
+        .change
+        .summary_with(log.titles, log.names, |id| ids.get(id).to_owned());
     format!("{date}  {author}  {summary}")
 }
 
@@ -60,12 +76,12 @@ mod tests {
         let timestamp =
             json!({"wall_ms":1_795_149_900_000_u64,"counter":1,"utc":"2026-11-20T04:45:00.000Z"});
         let response: Response = serde_json::from_value(json!({
-            "kind": "log", "titles": {}, "names": {"678abc": "Garden laptop"},
+            "kind": "log", "titles": {"741abc": "Repair the latch"}, "names": {"678abc": "Garden laptop"},
             "events": [
                 {"id":"100abc","author":"678abc","hlc":timestamp,"classification":"unknown_event",
                  "kind":"reminder_added","change":{"type":"skipped","tasks":[],"summary":"Skipped event"}},
                 {"id":"101abc","author":"678abc","hlc":timestamp,"classification":"applied",
-                 "kind":"tag_added","change":{"type":"tag","task":"741abc","tag":"hardware","summary":"Added tag hardware"}}
+                 "kind":"tag_added","change":{"type":"tag","task":"741abc","action":"added","tag":"hardware","summary":"Added tag hardware"}}
             ],
             "unordered": [
                 {"id":"103abc","author":null,"hlc":null,"classification":"unknown_version",
@@ -81,8 +97,12 @@ mod tests {
             format: "%d %b %Y",
         };
         assert_eq!(
-            history(response.log().unwrap(), dates),
-            "19 Nov 2026 23:45:00  Garden laptop  Added tag hardware\nUnordered or skipped events\n19 Nov 2026 23:45:00  Garden laptop  Skipped event [unknown_event]\nunknown time  unknown author  Skipped event [unknown_version]"
+            history(response.log().unwrap(), dates, |id| if id.is_some() {
+                "Ada".into()
+            } else {
+                "unknown person".into()
+            }),
+            "19 Nov 2026 23:45  Ada  Repair the latch: tag #hardware added\nUnordered or skipped events\n19 Nov 2026 23:45  Ada  Skipped event [unknown_event]\nunknown time  unknown person  Skipped event [unknown_version]"
         );
     }
 }

@@ -38,7 +38,7 @@ impl Dates<'_> {
     }
 
     pub fn local_date_time(self, clock: Hlc) -> String {
-        self.local_stamp(clock, &format!("{} %T", self.format))
+        self.local_stamp(clock, &format!("{} %H:%M", self.format))
     }
 
     fn local_stamp(self, clock: Hlc, format: &str) -> String {
@@ -112,7 +112,7 @@ mod tests {
             counter: 2,
         };
         assert_eq!(dates.local_date(clock), "19/11/2026");
-        assert_eq!(dates.local_date_time(clock), "19/11/2026 23:45:00");
+        assert_eq!(dates.local_date_time(clock), "19/11/2026 23:45");
         assert_eq!(
             dates.relative_time(clock, &Terminal::fixed(None, false)),
             "19/11/2026"
