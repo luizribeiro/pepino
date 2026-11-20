@@ -116,3 +116,21 @@ fn sort_lists_round_trip_with_descending_markers() {
         assert!(invalid.parse::<Sort>().is_err(), "{invalid}");
     }
 }
+
+#[test]
+fn title_order_uses_unicode_folding_then_raw_title_and_id() {
+    let mut lower = board().task(id(0)).unwrap().clone();
+    lower.title = "straße gate".into();
+    let mut upper = board().task(id(1)).unwrap().clone();
+    upper.title = "STRAẞE GATE".into();
+    let mut same = board().task(id(2)).unwrap().clone();
+    same.title.clone_from(&upper.title);
+    let mut mixed = board().task(id(3)).unwrap().clone();
+    mixed.title = "Tighten hinges".into();
+    let mut tasks = [&mixed, &lower, &same, &upper];
+    let expected_ids = |tasks: [&pepino_store::TaskRecord; 4]| tasks.map(|task| task.id);
+    Sort::By(vec![(Title, Ascending)]).sort(&mut tasks);
+    assert_eq!(expected_ids(tasks), [same.id, upper.id, lower.id, mixed.id]);
+    Sort::By(vec![(Title, Descending)]).sort(&mut tasks);
+    assert_eq!(expected_ids(tasks), [mixed.id, lower.id, same.id, upper.id]);
+}

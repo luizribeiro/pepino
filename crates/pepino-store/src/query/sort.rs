@@ -5,6 +5,8 @@ use thiserror::Error;
 
 use crate::TaskRecord;
 
+use super::predicates::folded_chars;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SortKey {
     Created,
@@ -145,7 +147,11 @@ impl SortKey {
             Self::Status => {
                 direction.apply(status_rank(left.status).cmp(&status_rank(right.status)))
             }
-            Self::Title => direction.apply(left.title.cmp(&right.title)),
+            Self::Title => direction.apply(
+                folded_chars(&left.title)
+                    .cmp(folded_chars(&right.title))
+                    .then_with(|| left.title.cmp(&right.title)),
+            ),
         }
     }
 }

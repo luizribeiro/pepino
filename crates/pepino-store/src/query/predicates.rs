@@ -71,8 +71,12 @@ fn test(order: Ordering, operator: Operator) -> bool {
 }
 
 pub(super) fn fold(text: &str) -> String {
+    folded_chars(text).collect()
+}
+
+pub(super) fn folded_chars(text: &str) -> impl Iterator<Item = char> + '_ {
     let mapper = CaseMapper::new();
-    text.chars().map(|ch| mapper.simple_fold(ch)).collect()
+    text.chars().map(move |ch| mapper.simple_fold(ch))
 }
 
 pub(super) fn folded_text(view: &BoardView, task: &TaskRecord) -> Vec<String> {
