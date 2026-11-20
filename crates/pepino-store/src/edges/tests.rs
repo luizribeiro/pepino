@@ -530,3 +530,25 @@ async fn siblings_follow_creation_even_when_ids_sort_in_reverse() {
         [greenhouse, older, younger]
     );
 }
+
+#[tokio::test]
+async fn removing_a_parent_can_activate_an_older_candidate() {
+    let (store, [greenhouse, door, _, frame]) = setup().await;
+    add(&store, 11, 1, frame, EdgeKind::Parent, greenhouse).await;
+    add(&store, 12, 2, frame, EdgeKind::Parent, door).await;
+    let view = store.board(BOARD).await.unwrap();
+    assert_eq!(
+        view.edge_records()[0].exclusion,
+        Some(EdgeExclusion::NewerParent)
+    );
+    assert_eq!(
+        view.edges_after_removing(&[door].into()),
+        [EdgeRecord {
+            from: frame,
+            kind: EdgeKind::Parent,
+            to: greenhouse,
+            exclusion: None
+        }]
+    );
+    assert_eq!(view.task(frame).unwrap().parent, Some(door));
+}

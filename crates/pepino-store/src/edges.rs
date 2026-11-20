@@ -80,14 +80,10 @@ pub(crate) struct ProjectedEdge {
 }
 
 pub(crate) fn project(rows: &[EdgeRow]) -> Result<Vec<ProjectedEdge>, StoreError> {
-    let mut newest_parent = HashMap::new();
     let mut edges = Vec::with_capacity(rows.len());
     for row in rows {
         let from = TaskId::from_bytes(row.task);
         let (kind, to) = edge_key::decode(row.member)?;
-        if kind == EdgeKind::Parent {
-            newest_parent.insert(from, edges.len());
-        }
         edges.push(ProjectedEdge {
             record: EdgeRecord {
                 from,
@@ -98,11 +94,21 @@ pub(crate) fn project(rows: &[EdgeRow]) -> Result<Vec<ProjectedEdge>, StoreError
             blocker_open: row.source_is_open()?,
         });
     }
+    fold_records(edges.iter_mut().map(|edge| &mut edge.record).collect());
+    Ok(edges)
+}
+
+pub(crate) fn fold_records(edges: Vec<&mut EdgeRecord>) {
+    let newest_parent: HashMap<_, _> = edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| edge.kind == EdgeKind::Parent)
+        .map(|(index, edge)| (edge.from, index))
+        .collect();
     let mut parents = Parents::default();
     let mut blocks = Blocks::default();
     for (index, edge) in edges
-        .iter_mut()
-        .map(|edge| &mut edge.record)
+        .into_iter()
         .enumerate()
         .filter(|(_, edge)| edge.is_effective())
     {
@@ -115,7 +121,6 @@ pub(crate) fn project(rows: &[EdgeRow]) -> Result<Vec<ProjectedEdge>, StoreError
             EdgeKind::Relates => {}
         }
     }
-    Ok(edges)
 }
 
 #[derive(Default)]

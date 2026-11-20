@@ -5,8 +5,8 @@ use pepino_core::{BoardId, TaskId};
 use sqlx::Connection;
 
 use crate::{
-    BoardKey, CommentRecord, Dependencies, EdgeRecord, PrefixResolution, Store, StoreError,
-    SubtreeEntry, TaskRecord, comment, edges, task,
+    BoardKey, CommentRecord, Dependencies, EdgeExclusion, EdgeRecord, PrefixResolution, Store,
+    StoreError, SubtreeEntry, TaskRecord, comment, edges, task,
 };
 
 /// An owned snapshot of a board's live tasks, present edges, and optional comments.
@@ -50,6 +50,28 @@ impl BoardView {
 
     pub(crate) fn ids_in_range(&self, first: TaskId, last: TaskId) -> impl Iterator<Item = TaskId> {
         self.by_id.range(first..=last).map(|(&id, _)| id)
+    }
+
+    pub fn edge_records(&self) -> &[EdgeRecord] {
+        &self.edges
+    }
+
+    /// Folds the edges that would remain after removing the indicated tasks and their edges.
+    pub fn edges_after_removing(&self, tasks: &BTreeSet<TaskId>) -> Vec<EdgeRecord> {
+        let mut edges: Vec<_> = self
+            .edges
+            .iter()
+            .copied()
+            .filter(|edge| !tasks.contains(&edge.from) && !tasks.contains(&edge.to))
+            .map(|mut edge| {
+                edge.exclusion = edge
+                    .exclusion
+                    .filter(|reason| *reason == EdgeExclusion::MissingEndpoint);
+                edge
+            })
+            .collect();
+        edges::fold_records(edges.iter_mut().collect());
+        edges
     }
 
     /// Lists present edges touching either endpoint in ascending register write order.
