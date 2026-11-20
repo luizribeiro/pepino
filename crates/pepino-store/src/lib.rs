@@ -50,6 +50,16 @@ pub struct Store {
 }
 
 impl Store {
+    /// Identifies this event database across restarts.
+    pub async fn instance_id(&self) -> Result<[u8; 16], StoreError> {
+        self.read(async |db| {
+            sqlx::query_scalar("SELECT id FROM store_instance")
+                .fetch_one(db)
+                .await
+        })
+        .await
+    }
+
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         Self::open_file(path.as_ref(), FOLD_VERSION, true).await
     }
@@ -148,6 +158,29 @@ mod tests {
             .await
             .unwrap();
         assert_eq!((rows, foreign_keys), (0, 1));
+    }
+
+    #[tokio::test]
+    async fn store_instance_follows_the_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pepino.sqlite");
+        let original = Store::open(&path)
+            .await
+            .unwrap()
+            .instance_id()
+            .await
+            .unwrap();
+        assert_eq!(
+            Store::open_existing(&path)
+                .await
+                .unwrap()
+                .instance_id()
+                .await
+                .unwrap(),
+            original
+        );
+        let fresh = Store::open(dir.path().join("fresh.sqlite")).await.unwrap();
+        assert_ne!(fresh.instance_id().await.unwrap(), original);
     }
 
     #[tokio::test]
