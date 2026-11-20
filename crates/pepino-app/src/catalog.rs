@@ -24,6 +24,8 @@ pub(crate) struct CatalogState {
     pub(crate) identity: crate::identity::IdentityCatalog,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) observed_catalog_removal: Option<crate::Revocation>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(crate) readmission_replays: BTreeSet<BoardId>,
 }
 
 impl CatalogState {

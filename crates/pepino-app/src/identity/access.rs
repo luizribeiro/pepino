@@ -5,6 +5,10 @@ use crate::{App, AppError, LocalState};
 use super::record::Revocation;
 
 impl LocalState {
+    pub fn needs_readmission_replay(&self, board: pepino_core::BoardId) -> bool {
+        self.catalog.readmission_replays.contains(&board)
+    }
+
     pub fn device_revocation(&self) -> Option<&Revocation> {
         self.catalog
             .identity
@@ -36,6 +40,21 @@ impl LocalState {
 }
 
 impl App {
+    pub async fn record_readmission_replay(
+        &self,
+        board: pepino_core::BoardId,
+        needed: bool,
+    ) -> Result<(), AppError> {
+        self.update_local(move |local| {
+            if needed {
+                local.catalog.readmission_replays.insert(board);
+            } else {
+                local.catalog.readmission_replays.remove(&board);
+            }
+        })
+        .await
+    }
+
     pub async fn clear_catalog_removal(&self) -> Result<(), AppError> {
         self.update_local(|local| local.catalog.observed_catalog_removal = None)
             .await
@@ -98,8 +117,11 @@ async fn an_authenticated_catalog_removal_is_retained_across_restart() {
     let by = pepino_core::DeviceId::from_bytes([62; 32]);
     let at = DateTime::from_timestamp(1795145000, 0).unwrap();
     app.observe_catalog_removal(by, at).await.unwrap();
+    let board = app.local_state().catalog_board();
+    app.record_readmission_replay(board, true).await.unwrap();
     drop(app);
     let local = LocalState::load(dir.path()).unwrap();
+    assert!(local.needs_readmission_replay(board));
     assert!(
         matches!(local.check_device_write(), Err(AppError::DeviceRevoked { by: signer, at: time, .. }) if signer == by && time == at)
     );
