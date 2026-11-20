@@ -2,7 +2,7 @@ use pepino_core::{
     BoardId, Clock, Date, DeviceId, Envelope, Event, FieldName, FieldValue, Hlc, IdentityId,
     InitialFields, Status,
 };
-use pepino_store::{IdSource, Store, TaskRecord};
+use pepino_store::{Store, TaskRecord};
 
 #[tokio::test]
 async fn creation_merges_with_retained_registers_by_clock() {
@@ -60,14 +60,14 @@ async fn creation_merges_with_retained_registers_by_clock() {
         )
         .unwrap();
         store
-            .append(board, &edit.encode().unwrap(), IdSource::Content)
+            .append(board, &edit.encode().unwrap(), None)
             .await
             .unwrap();
     }
     assert_eq!(store.task(board, task).await.unwrap(), None);
     assert!(store.tasks(board).await.unwrap().is_empty());
     store
-        .append(board, &creation.encode().unwrap(), IdSource::Content)
+        .append(board, &creation.encode().unwrap(), None)
         .await
         .unwrap();
     let expected = TaskRecord {
@@ -139,7 +139,7 @@ async fn lists_tasks_by_full_creation_clock_then_id() {
         .unwrap();
         expected.push((hlc, creation.created_task().unwrap()));
         store
-            .append(board, &creation.encode().unwrap(), IdSource::Content)
+            .append(board, &creation.encode().unwrap(), None)
             .await
             .unwrap();
     }

@@ -70,14 +70,14 @@ async fn retains_each_skipped_classification_and_exact_bytes() {
         ciborium::into_writer(&value, &mut raw).unwrap();
         let id = Envelope::decode(&raw).unwrap().id();
         assert_eq!(
-            store.append(board, &raw, IdSource::Content).await.unwrap(),
+            store.append(board, &raw, None).await.unwrap(),
             AppendOutcome::Skipped {
                 id,
                 reason: expected
             }
         );
         assert_eq!(
-            store.append(board, &raw, IdSource::Content).await.unwrap(),
+            store.append(board, &raw, None).await.unwrap(),
             AppendOutcome::Duplicate { id }
         );
 
@@ -99,10 +99,7 @@ async fn retains_each_skipped_classification_and_exact_bytes() {
             )
         );
     }
-    store
-        .append(board, &bytes, IdSource::Content)
-        .await
-        .unwrap();
+    store.append(board, &bytes, None).await.unwrap();
     assert_eq!(
         store.statistics(board).await.unwrap(),
         crate::BoardStatistics {
@@ -134,36 +131,25 @@ async fn duplicates_are_board_scoped_and_corrupt_bytes_are_rejected() {
     let bytes = original.encode().unwrap();
     let id = original.id();
     assert_eq!(
-        store
-            .append(board, &bytes, IdSource::Content)
-            .await
-            .unwrap(),
+        store.append(board, &bytes, None).await.unwrap(),
         AppendOutcome::Applied {
             id,
             task: TaskId(id)
         }
     );
     assert_eq!(
-        store
-            .append(board, &bytes, IdSource::Content)
-            .await
-            .unwrap(),
+        store.append(board, &bytes, None).await.unwrap(),
         AppendOutcome::Duplicate { id }
     );
     assert_eq!(
-        store
-            .append(other, &bytes, IdSource::Content)
-            .await
-            .unwrap(),
+        store.append(other, &bytes, None).await.unwrap(),
         AppendOutcome::Applied {
             id,
             task: TaskId(id)
         }
     );
     assert!(matches!(
-        store
-            .append(board, &bytes[..bytes.len() - 1], IdSource::Content)
-            .await,
+        store.append(board, &bytes[..bytes.len() - 1], None).await,
         Err(StoreError::Decode(_))
     ));
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM event_log")
@@ -182,10 +168,7 @@ async fn rebuild_redecodes_skips_and_retains_content_ids() {
     let bytes = original.encode().unwrap();
     let id = original.id();
     for board in [board, other] {
-        store
-            .append(board, &bytes, IdSource::Content)
-            .await
-            .unwrap();
+        store.append(board, &bytes, None).await.unwrap();
     }
 
     // Model an earlier decoder that stored this frame without recognizing the event.
@@ -198,10 +181,7 @@ async fn rebuild_redecodes_skips_and_retains_content_ids() {
     .await
     .unwrap();
     let future = [0x82, 2, 0xf6];
-    let outcome = store
-        .append(board, &future, IdSource::Content)
-        .await
-        .unwrap();
+    let outcome = store.append(board, &future, None).await.unwrap();
     assert!(matches!(
         outcome,
         AppendOutcome::Skipped {
@@ -234,10 +214,7 @@ async fn rebuild_failure_leaves_the_current_view_intact() {
     let board = BoardId::from_bytes([19; 32]);
     let original = creation();
     let bytes = original.encode().unwrap();
-    store
-        .append(board, &bytes, IdSource::Content)
-        .await
-        .unwrap();
+    store.append(board, &bytes, None).await.unwrap();
     let task = original.created_task().unwrap();
     let before = store.tasks(board).await.unwrap();
     let history = store.events(board, task).await.unwrap();
@@ -299,21 +276,12 @@ async fn reopening_projects_legacy_edges_on_every_board() {
     let fresh = Store::open_in_memory().await.unwrap();
     for board in boards {
         for store in [&older, &fresh] {
-            store
-                .append(board, &bytes, IdSource::Content)
-                .await
-                .unwrap();
+            store.append(board, &bytes, None).await.unwrap();
             if board == boards[0] {
-                store
-                    .append(board, &parent_bytes, IdSource::Content)
-                    .await
-                    .unwrap();
+                store.append(board, &parent_bytes, None).await.unwrap();
             }
         }
-        fresh
-            .append(board, &edge_bytes, IdSource::Content)
-            .await
-            .unwrap();
+        fresh.append(board, &edge_bytes, None).await.unwrap();
         {
             let mut connection = older.connection.lock().await;
             assert!(
@@ -370,7 +338,7 @@ async fn file_reads_see_the_committed_view_during_rebuild() {
     let envelope = creation();
     let task = envelope.created_task().unwrap();
     store
-        .append(board, &envelope.encode().unwrap(), IdSource::Content)
+        .append(board, &envelope.encode().unwrap(), None)
         .await
         .unwrap();
 
@@ -419,8 +387,7 @@ async fn batch_reports_each_outcome_in_order() {
     let create_bytes = envelope.encode().unwrap();
     let tag_bytes = tag.encode().unwrap();
     let future = [0x82, 2, 0xf6];
-    let events = [&create_bytes[..], &future, &create_bytes, &tag_bytes]
-        .map(|bytes| (bytes, IdSource::Content));
+    let events = [&create_bytes[..], &future, &create_bytes, &tag_bytes].map(|bytes| (bytes, None));
     assert_eq!(
         store.append_batch(board, &events).await.unwrap(),
         [
@@ -466,7 +433,7 @@ async fn batch_rolls_back_on_later_decode_or_projection_failure() {
     .await
     .unwrap();
     for second in [&[0xff][..], &tag_bytes] {
-        let events = [&create_bytes[..], second].map(|bytes| (bytes, IdSource::Content));
+        let events = [&create_bytes[..], second].map(|bytes| (bytes, None));
         let error = store.append_batch(board, &events).await.unwrap_err();
         if second == tag_bytes {
             assert!(error.to_string().contains("injected history failure"));
@@ -529,10 +496,7 @@ async fn file_reader_cannot_observe_a_partial_batch() {
             });
     }
 
-    let events = [
-        (&bytes[..], IdSource::Content),
-        (&tag[..], IdSource::Content),
-    ];
+    let events = [(&bytes[..], None), (&tag[..], None)];
     let (written, during) = tokio::join!(store.append_batch(board, &events), async {
         tokio::time::timeout(Duration::from_secs(5), reached)
             .await
@@ -581,10 +545,7 @@ async fn upgrading_a_file_reindexes_skips_without_replaying_them_as_applied() {
     bytes[offset..offset + "comment_added".len()].copy_from_slice(b"reminder_sent");
     let store = Store::open_file(&path, 2, true).await.unwrap();
     assert!(matches!(
-        store
-            .append(board, &bytes, IdSource::Content)
-            .await
-            .unwrap(),
+        store.append(board, &bytes, None).await.unwrap(),
         AppendOutcome::Skipped { .. }
     ));
     let mut connection = store.connection.lock().await;
@@ -638,10 +599,7 @@ async fn requiring_an_effective_edge_rolls_back_the_entire_batch() {
     .unwrap();
     let task = task.encode().unwrap();
     let edge = edge.encode().unwrap();
-    let events = [
-        (task.as_slice(), IdSource::Content),
-        (edge.as_slice(), IdSource::Content),
-    ];
+    let events = [(task.as_slice(), None), (edge.as_slice(), None)];
     assert!(matches!(
         store
             .append_batch_requiring_edges(board, &events, &[(from, EdgeKind::Blocks, to)])

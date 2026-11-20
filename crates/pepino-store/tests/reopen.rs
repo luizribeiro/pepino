@@ -1,5 +1,5 @@
 use pepino_core::{BoardId, DeviceId, EdgeKind, Envelope, Event, Hlc, InitialFields};
-use pepino_store::{AppendOutcome, EdgeExclusion, IdSource, PrefixResolution, Store};
+use pepino_store::{AppendOutcome, EdgeExclusion, PrefixResolution, Store};
 
 #[tokio::test]
 async fn file_reopen_preserves_the_view_clock_and_log() {
@@ -62,23 +62,20 @@ async fn file_reopen_preserves_the_view_clock_and_log() {
     let (view, comments, history) = {
         let store = Store::open(&path).await.unwrap();
         store
-            .append(board, &blocks.encode().unwrap(), IdSource::Content)
+            .append(board, &blocks.encode().unwrap(), None)
             .await
             .unwrap();
         assert_eq!(
             store.edges(board, follow_up).await.unwrap()[0].exclusion,
             Some(EdgeExclusion::MissingEndpoint)
         );
+        store.append(board, &creation_bytes, None).await.unwrap();
         store
-            .append(board, &creation_bytes, IdSource::Content)
+            .append(board, &comment.encode().unwrap(), None)
             .await
             .unwrap();
         store
-            .append(board, &comment.encode().unwrap(), IdSource::Content)
-            .await
-            .unwrap();
-        store
-            .append(board, &sweeping.encode().unwrap(), IdSource::Content)
+            .append(board, &sweeping.encode().unwrap(), None)
             .await
             .unwrap();
         let view = store.board(board).await.unwrap();
@@ -107,10 +104,7 @@ async fn file_reopen_preserves_the_view_clock_and_log() {
         PrefixResolution::One(task)
     );
     assert_eq!(
-        reopened
-            .append(board, &creation_bytes, IdSource::Content)
-            .await
-            .unwrap(),
+        reopened.append(board, &creation_bytes, None).await.unwrap(),
         AppendOutcome::Duplicate { id: creation.id() }
     );
 }
