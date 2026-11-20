@@ -29,15 +29,19 @@ impl Store {
         let last: TaskId = format!("{hex_prefix:f<64}")
             .parse()
             .map_err(|_| StoreError::InvalidPrefix)?;
-        let rows = sqlx::query_as::<_, ([u8; 32], i64)>(
-            "SELECT task, count(*) OVER () FROM visible_tasks
-             WHERE board = ? AND task BETWEEN ? AND ? ORDER BY task LIMIT 10",
-        )
-        .bind(board.as_bytes().as_slice())
-        .bind(first.as_bytes().as_slice())
-        .bind(last.as_bytes().as_slice())
-        .fetch_all(&mut *self.connection.lock().await)
-        .await?;
+        let rows = self
+            .read(async |connection| {
+                sqlx::query_as::<_, ([u8; 32], i64)>(
+                    "SELECT task, count(*) OVER () FROM visible_tasks
+                     WHERE board = ? AND task BETWEEN ? AND ? ORDER BY task LIMIT 10",
+                )
+                .bind(board.as_bytes().as_slice())
+                .bind(first.as_bytes().as_slice())
+                .bind(last.as_bytes().as_slice())
+                .fetch_all(connection)
+                .await
+            })
+            .await?;
         Ok(match rows.as_slice() {
             [] => PrefixResolution::None,
             [(task, _)] => PrefixResolution::One(TaskId::from_bytes(*task)),

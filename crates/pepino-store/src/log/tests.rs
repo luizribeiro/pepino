@@ -263,3 +263,39 @@ async fn reopening_upgrades_every_boards_projection() {
         .unwrap();
     assert_eq!(current, version);
 }
+
+#[tokio::test]
+async fn file_reads_see_the_committed_view_during_rebuild() {
+    use std::time::Duration;
+
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::open(directory.path().join("pepino.sqlite"))
+        .await
+        .unwrap();
+    let board = BoardId::from_bytes([19; 32]);
+    let envelope = creation();
+    let task = envelope.created_task().unwrap();
+    store
+        .append(board, &envelope.encode().unwrap(), IdSource::Content)
+        .await
+        .unwrap();
+
+    let mut writer = store.connection.lock().await;
+    sqlx::query("DELETE FROM task_state")
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    let mut tx = writer.begin().await.unwrap();
+    rebuild(&mut tx, board).await.unwrap();
+
+    let visible = tokio::time::timeout(Duration::from_secs(2), store.task(board, task))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(visible, None);
+    tx.commit().await.unwrap();
+    assert_eq!(
+        store.task(board, task).await.unwrap().unwrap().title,
+        "Replace the greenhouse latch"
+    );
+}

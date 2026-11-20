@@ -10,9 +10,9 @@ use std::path::Path;
 
 use pepino_core::{BoardId, Hlc};
 use sqlx::{
-    Connection, SqliteConnection,
+    Connection, SqliteConnection, SqlitePool,
     migrate::Migrator,
-    sqlite::{SqliteConnectOptions, SqliteJournalMode},
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
 };
 use tokio::sync::Mutex;
 
@@ -29,6 +29,7 @@ static MIGRATOR: Migrator = sqlx::migrate!();
 
 pub struct Store {
     connection: Mutex<SqliteConnection>,
+    readers: Option<SqlitePool>,
 }
 
 impl Store {
@@ -37,37 +38,75 @@ impl Store {
     }
 
     async fn open_file(path: &Path, version: i64) -> Result<Self, StoreError> {
+        let path = std::path::absolute(path).map_err(sqlx::Error::Io)?;
         let options = SqliteConnectOptions::new()
             .filename(path)
+            .foreign_keys(true);
+        let writer = options
+            .clone()
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal);
-        Self::connect(options, version).await
+        let connection = Self::connect(writer, version).await?;
+        let readers = SqlitePoolOptions::new()
+            .max_connections(3)
+            .connect_with(options.read_only(true))
+            .await?;
+        Ok(Self {
+            connection: Mutex::new(connection),
+            readers: Some(readers),
+        })
     }
 
     pub async fn open_in_memory() -> Result<Self, StoreError> {
-        Self::connect(SqliteConnectOptions::new().in_memory(true), FOLD_VERSION).await
+        let options = SqliteConnectOptions::new()
+            .in_memory(true)
+            .foreign_keys(true);
+        let connection = Self::connect(options, FOLD_VERSION).await?;
+        Ok(Self {
+            connection: Mutex::new(connection),
+            readers: None,
+        })
+    }
+
+    async fn read<T>(
+        &self,
+        read: impl AsyncFnOnce(&mut SqliteConnection) -> Result<T, sqlx::Error>,
+    ) -> Result<T, StoreError> {
+        let result = if let Some(readers) = &self.readers {
+            let mut connection = readers.acquire().await?;
+            read(&mut connection).await
+        } else {
+            let mut connection = self.connection.lock().await;
+            read(&mut connection).await
+        };
+        Ok(result?)
     }
 
     pub async fn latest_hlc(&self, board: BoardId) -> Result<Option<Hlc>, StoreError> {
-        let key = sqlx::query_scalar::<_, [u8; 12]>(
-            "SELECT hlc FROM event_log WHERE board = ? AND hlc IS NOT NULL
-             ORDER BY hlc DESC LIMIT 1",
-        )
-        .bind(board.as_bytes().as_slice())
-        .fetch_optional(&mut *self.connection.lock().await)
-        .await?;
+        let key = self
+            .read(async |connection| {
+                sqlx::query_scalar::<_, [u8; 12]>(
+                    "SELECT hlc FROM event_log WHERE board = ? AND hlc IS NOT NULL
+                     ORDER BY hlc DESC LIMIT 1",
+                )
+                .bind(board.as_bytes().as_slice())
+                .fetch_optional(connection)
+                .await
+            })
+            .await?;
         Ok(key.map(Hlc::from_key))
     }
 
-    async fn connect(options: SqliteConnectOptions, version: i64) -> Result<Self, StoreError> {
-        let mut connection = SqliteConnection::connect_with(&options.foreign_keys(true)).await?;
+    async fn connect(
+        options: SqliteConnectOptions,
+        version: i64,
+    ) -> Result<SqliteConnection, StoreError> {
+        let mut connection = SqliteConnection::connect_with(&options).await?;
         let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
         MIGRATOR.run(&mut *tx).await?;
         fold::upgrade(&mut tx, version).await?;
         tx.commit().await?;
-        Ok(Self {
-            connection: Mutex::new(connection),
-        })
+        Ok(connection)
     }
 }
 

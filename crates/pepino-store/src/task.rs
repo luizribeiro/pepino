@@ -125,17 +125,21 @@ impl Store {
         first: [u8; 32],
         last: [u8; 32],
     ) -> Result<Vec<TaskRecord>, StoreError> {
-        let rows = sqlx::query_as::<_, TaskRow>(
-            "SELECT s.task, s.created, s.updated, s.author, r.kind, r.member, r.value
-             FROM visible_tasks s JOIN task_register r USING (board, task)
-             WHERE s.board = ? AND s.task BETWEEN ? AND ?
-             AND r.kind IN ('field', 'tag', 'assignee') AND r.value IS NOT NULL",
-        )
-        .bind(board.as_bytes().as_slice())
-        .bind(first)
-        .bind(last)
-        .fetch_all(&mut *self.connection.lock().await)
-        .await?;
+        let rows = self
+            .read(async |connection| {
+                sqlx::query_as::<_, TaskRow>(
+                    "SELECT s.task, s.created, s.updated, s.author, r.kind, r.member, r.value
+                     FROM visible_tasks s JOIN task_register r USING (board, task)
+                     WHERE s.board = ? AND s.task BETWEEN ? AND ?
+                     AND r.kind IN ('field', 'tag', 'assignee') AND r.value IS NOT NULL",
+                )
+                .bind(board.as_bytes().as_slice())
+                .bind(first)
+                .bind(last)
+                .fetch_all(connection)
+                .await
+            })
+            .await?;
         let mut tasks = BTreeMap::new();
         for row in rows {
             tasks

@@ -46,15 +46,19 @@ impl Store {
         board: BoardId,
         task: TaskId,
     ) -> Result<Vec<EventRecord>, StoreError> {
-        let rows = sqlx::query_as::<_, EventRow>(
-            "SELECT t.id, e.author, t.hlc, e.bytes FROM event_task t
-             JOIN event_log e USING (board, id)
-             WHERE t.board = ? AND t.task = ? ORDER BY t.hlc, t.id",
-        )
-        .bind(board.as_bytes().as_slice())
-        .bind(task.as_bytes().as_slice())
-        .fetch_all(&mut *self.connection.lock().await)
-        .await?;
+        let rows = self
+            .read(async |connection| {
+                sqlx::query_as::<_, EventRow>(
+                    "SELECT t.id, e.author, t.hlc, e.bytes FROM event_task t
+                     JOIN event_log e USING (board, id)
+                     WHERE t.board = ? AND t.task = ? ORDER BY t.hlc, t.id",
+                )
+                .bind(board.as_bytes().as_slice())
+                .bind(task.as_bytes().as_slice())
+                .fetch_all(connection)
+                .await
+            })
+            .await?;
         Ok(rows
             .into_iter()
             .map(|row| EventRecord {
