@@ -37,6 +37,7 @@ pub struct EventChange {
     pub detail: EventDetail,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<EventAction>,
+    pub summary: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -50,6 +51,20 @@ pub enum EventAction {
     Created,
     Deleted,
     Commented,
+}
+
+impl EventAction {
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Added => "Added",
+            Self::Removed => "Removed",
+            Self::Set => "Set",
+            Self::Unset => "Unset",
+            Self::Created => "Created",
+            Self::Deleted => "Deleted",
+            Self::Commented => "Commented",
+        }
+    }
 }
 
 impl From<&Event> for EventAction {
@@ -193,16 +208,51 @@ impl TryFrom<HistoryEvent> for EventRecord {
                 },
             ),
         };
+        let summary = one_line(&detail.summary(action));
         Ok(Self {
             id: decoded.id().to_string(),
             author: decoded.author().map(|id| id.to_string()),
             hlc: decoded.hlc().map(Into::into),
             classification: record.classification.into(),
             kind: kind.into(),
-            change: EventChange { detail, action },
+            change: EventChange {
+                detail,
+                action,
+                summary,
+            },
             reason,
         })
     }
+}
+
+impl EventDetail {
+    fn summary(&self, action: Option<EventAction>) -> String {
+        let Some(action) = action else {
+            return "Skipped event".into();
+        };
+        let verb = action.verb();
+        match self {
+            Self::Creation { title, .. } => format!("{verb} {title}"),
+            Self::Field { field, .. } => format!("{verb} {field}"),
+            Self::Tag { tag, .. } => format!("{verb} tag {tag}"),
+            Self::Assignee { who, .. } => format!("{verb} assignee {who}"),
+            Self::Edge { kind, to, .. } => format!(
+                "{verb} {} edge to {to}",
+                match kind {
+                    EdgeKind::Parent => "parent",
+                    EdgeKind::Blocks => "blocks",
+                    EdgeKind::Relates => "relates",
+                }
+            ),
+            Self::Comment { text, .. } => format!("{verb} “{text}”"),
+            Self::Deletion { .. } => format!("{verb} task"),
+            Self::Skipped { .. } => "Skipped event".into(),
+        }
+    }
+}
+
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 impl TryFrom<(EventId, Event)> for EventDetail {
