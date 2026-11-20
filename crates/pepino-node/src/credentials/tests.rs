@@ -42,3 +42,20 @@ fn corrupt_or_wrong_version_credentials_are_preserved() {
     ));
     assert_eq!(fs::read(&path).unwrap(), b"interrupted credential write");
 }
+
+#[test]
+fn removes_interrupted_creation_after_install_or_before_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("device.cbor");
+    let stale = dir.path().join("device.cbor.pepino-tmp");
+    let other = dir.path().join("peer.cbor.pepino-tmp");
+    fs::write(&stale, b"partial credential write").unwrap();
+    fs::write(&other, b"other credential path").unwrap();
+    let installed = DeviceCredentials::load_or_create(&path).unwrap();
+    assert!(!stale.exists());
+    fs::hard_link(&path, &stale).unwrap();
+    let loaded = DeviceCredentials::load_or_create(&path).unwrap();
+    assert_eq!(installed.device_id(), loaded.device_id());
+    assert!(!stale.exists());
+    assert!(other.exists());
+}

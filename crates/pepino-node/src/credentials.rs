@@ -1,4 +1,4 @@
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
     fs,
     io::{self, Write},
@@ -26,24 +26,40 @@ struct CredentialFile {
 impl DeviceCredentials {
     pub fn load_or_create(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let dir = fs::File::open(parent).map_err(Error::CredentialIo)?;
+        dir.lock().map_err(Error::CredentialIo)?;
+        let mut temporary = path.as_os_str().to_os_string();
+        temporary.push(".pepino-tmp");
+        let temporary = std::path::PathBuf::from(temporary);
+        match fs::remove_file(&temporary) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => {
+                return Err(Error::CredentialIo(error));
+            }
+            _ => (),
+        }
         match fs::read(path) {
             Ok(bytes) => return decode(&bytes),
             Err(error) if error.kind() == io::ErrorKind::NotFound => (),
             Err(error) => return Err(Error::CredentialIo(error)),
         }
 
-        let parent = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        let mut file = tempfile::NamedTempFile::new_in(parent).map_err(Error::CredentialIo)?;
+        let file = fs::File::options()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+            .map_err(Error::CredentialIo)?;
+        let temporary =
+            tempfile::TempPath::try_from_path(temporary).map_err(Error::CredentialIo)?;
+        let mut file = tempfile::NamedTempFile::from_parts(file, temporary);
         let credentials = CredentialFile {
             version: VERSION,
             keys: Credentials::generate(),
         };
-        file.as_file()
-            .set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(Error::CredentialIo)?;
         ciborium::into_writer(&credentials, &mut file)
             .map_err(|error| Error::InvalidCredentials(error.to_string()))?;
         file.flush()
@@ -51,9 +67,7 @@ impl DeviceCredentials {
             .map_err(Error::CredentialIo)?;
         match file.persist_noclobber(path) {
             Ok(_) => {
-                fs::File::open(parent)
-                    .and_then(|dir| dir.sync_all())
-                    .map_err(Error::CredentialIo)?;
+                dir.sync_all().map_err(Error::CredentialIo)?;
                 Ok(Self(credentials.keys))
             }
             Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
