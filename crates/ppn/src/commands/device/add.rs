@@ -131,6 +131,7 @@ pub(super) fn run(
     let code = Kind::Grant.encode(&signed).map_err(invalid_code)?;
     let note = format!("{notice}\nThis grant code is secret. It contains your board IDs.");
     Ok(CommandResult::document(GrantCode {
+        kind: "device_grant",
         code,
         fingerprint,
         id: recipient,
@@ -138,7 +139,7 @@ pub(super) fn run(
     .with_human_note(Some(note)))
 }
 
-fn confirm(
+pub(crate) fn confirm(
     context: &Context<'_>,
     expected: Option<&str>,
     actual: &str,
@@ -160,16 +161,17 @@ fn confirm(
     if !context.confirm(notice)? {
         return Err(CliError::new(
             ErrorKind::ConfirmationRequired,
-            "Device addition cancelled.",
+            "Invitation cancelled.",
         ));
     }
     Ok(())
 }
 
-struct GrantCode {
-    code: String,
-    fingerprint: String,
-    id: DeviceId,
+pub(crate) struct GrantCode {
+    pub(crate) kind: &'static str,
+    pub(crate) code: String,
+    pub(crate) fingerprint: String,
+    pub(crate) id: DeviceId,
 }
 
 impl Render for GrantCode {
@@ -179,7 +181,7 @@ impl Render for GrantCode {
 
     fn json_fields(self) -> Map<String, Value> {
         Map::from_iter([
-            ("kind".into(), json!("device_grant")),
+            ("kind".into(), json!(self.kind)),
             ("grant".into(), json!({"code": self.code, "secret": true})),
             ("fingerprint".into(), json!(self.fingerprint)),
             ("device_id".into(), json!(self.id)),

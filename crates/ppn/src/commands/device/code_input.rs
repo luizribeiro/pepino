@@ -13,7 +13,7 @@ use ppn::{
 };
 
 #[derive(clap::Args)]
-pub(super) struct CodeInput {
+pub(crate) struct CodeInput {
     /// Read the secret code from stdin (use - or omit), or supply a code visible in ps.
     #[arg(value_name = "CODE")]
     code: Option<String>,
@@ -23,7 +23,7 @@ pub(super) struct CodeInput {
 }
 
 impl CodeInput {
-    pub(super) fn read(self, context: &Context<'_>) -> Result<String, CliError> {
+    pub(crate) fn read(self, context: &Context<'_>) -> Result<String, CliError> {
         let source = self.code.as_deref();
         if self.from_file.is_none()
             && matches!(source, None | Some("-"))

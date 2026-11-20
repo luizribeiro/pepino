@@ -1,3 +1,4 @@
+mod invite;
 mod request;
 use std::path::Path;
 
@@ -22,6 +23,18 @@ pub struct Args {
 
 #[derive(clap::Subcommand)]
 enum Operation {
+    /// Grant one person board access and print a secret grant.
+    #[command(after_help = example_help(&["ppn board invite - --board House --role write --fingerprint FP < request.txt"]))]
+    Invite {
+        #[command(flatten)]
+        input: super::device::code_input::CodeInput,
+        /// Confirm the fingerprint shown by the requester.
+        #[arg(long, value_name = "FP")]
+        fingerprint: Option<String>,
+        /// Role to grant on the selected board.
+        #[arg(long, value_enum, default_value = "write")]
+        role: InviteRole,
+    },
     /// Print a secret request and a fingerprint for the inviter.
     #[command(after_help = example_help(&["ppn board request --name 'Garden tablet'", "ppn board request --json"]))]
     Request {
@@ -58,11 +71,31 @@ enum Operation {
     },
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum InviteRole {
+    Read,
+    Write,
+    Manage,
+}
+
+impl From<InviteRole> for pepino_app::BoardRole {
+    fn from(role: InviteRole) -> Self {
+        match role {
+            InviteRole::Read => Self::Read,
+            InviteRole::Write => Self::Write,
+            InviteRole::Manage => Self::Manage,
+        }
+    }
+}
+
 impl Args {
     pub(crate) fn writes(&self) -> bool {
         matches!(
             self.operation,
-            Operation::Use { .. } | Operation::New { .. } | Operation::Rename { .. }
+            Operation::Invite { .. }
+                | Operation::Use { .. }
+                | Operation::New { .. }
+                | Operation::Rename { .. }
         )
     }
 }
@@ -73,13 +106,30 @@ pub fn run(
     config_path: Option<&Path>,
     allow_start: bool,
 ) -> Result<CommandResult, CliError> {
-    if let Operation::Request { name } = args.operation {
-        return request::run(context, name, config_path, allow_start);
-    }
+    let operation = match args.operation {
+        Operation::Request { name } => {
+            return request::run(context, name, config_path, allow_start);
+        }
+        Operation::Invite {
+            input,
+            role,
+            fingerprint,
+        } => {
+            return invite::run(
+                context,
+                &input.read(context)?,
+                role.into(),
+                fingerprint.as_deref(),
+                config_path,
+                allow_start,
+            );
+        }
+        operation => operation,
+    };
     let mut client = AppClient::open(context)?;
-    let using = matches!(args.operation, Operation::Use { .. });
-    let (response, show_selection) = match args.operation {
-        Operation::Request { .. } => unreachable!(),
+    let using = matches!(operation, Operation::Use { .. });
+    let (response, show_selection) = match operation {
+        Operation::Request { .. } | Operation::Invite { .. } => unreachable!(),
         Operation::Ls => (client.call(Request::Read(ReadRequest::BoardList))?, true),
         Operation::Show { reference: board } => (
             client.call(Request::Read(ReadRequest::BoardShow { board }))?,

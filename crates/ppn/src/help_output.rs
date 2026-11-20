@@ -38,6 +38,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "board_request",
             "request Secret board request code\nfingerprint Fingerprint to confirm with the invitee\ndevice_id Requesting device ID\nexpires_at Request expiry in UTC\nsecret True for secret code output",
         ),
+        "board invite" => (
+            "board_grant",
+            "grant Secret board grant code\nfingerprint Confirmed request fingerprint\ndevice_id Invited device ID",
+        ),
         "board ls" => (
             "boards",
             "boards Known boards with current marker, counts, membership and sync activity\nselected_board Board selected for this invocation and its source",

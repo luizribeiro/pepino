@@ -1,5 +1,5 @@
-mod add;
-mod code_input;
+pub(crate) mod add;
+pub(crate) mod code_input;
 pub(crate) mod join;
 mod leave;
 mod ls;
