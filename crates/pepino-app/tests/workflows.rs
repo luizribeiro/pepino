@@ -773,8 +773,10 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
             .unwrap(),
         pepino_store::AppendOutcome::Skipped { .. }
     ));
-    let events = json!([
+    let unordered = json!([
         {"id":future_id.to_string(),"author":null,"hlc":null,"kind":"unknown","classification":"unknown_version","change":{"type":"skipped","version":2,"tasks":[]}},
+    ]);
+    let events = json!([
         {"id":task,"author":author,"hlc":task_record.created,"kind":"task_created","classification":"applied","change":{"type":"creation","title":"Replace the greenhouse latch","fields":{"description":null,"status":"todo","due":null,"priority":null,"tags":[],"assignees":[],"fields":{}}}},
         {"id":comment.id,"author":author,"hlc":comment.hlc,"kind":"comment_added","classification":"applied","change":{"type":"comment","task":task,"text":"Bring stainless screws"}},
         {"id":skip_id.to_string(),"author":author,"hlc":comment.hlc,"kind":"reminder_added","classification":"unknown_event","change":{"type":"skipped","tasks":[task]}}
@@ -782,19 +784,19 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
     read_golden(
         &mut app,
         json!({"op":"log","task":null,"limit":null}),
-        json!({"ok":{"kind":"log","events":events}}),
+        json!({"ok":{"kind":"log","unordered":unordered,"events":events}}),
     )
     .await;
     read_golden(
         &mut app,
         json!({"op":"log","task":null,"limit":0}),
-        json!({"ok":{"kind":"log","events":[]}}),
+        json!({"ok":{"kind":"log","unordered":unordered,"events":[]}}),
     )
     .await;
     read_golden(
         &mut app,
         json!({"op":"log","task":task,"limit":2}),
-        json!({"ok":{"kind":"log","events":&events.as_array().unwrap()[2..]}}),
+        json!({"ok":{"kind":"log","unordered":[],"events":&events.as_array().unwrap()[1..]}}),
     )
     .await;
     read_golden(
@@ -1088,7 +1090,7 @@ async fn history_describes_invalid_events_and_preserves_unknown_value_targets() 
         ));
     }
     let wire_clock = pepino_app::Hlc::from(hlc);
-    read_golden(&mut app, json!({"op":"log","task":app_task,"limit":2}), json!({"ok":{"kind":"log","events":[
+    read_golden(&mut app, json!({"op":"log","task":app_task,"limit":2}), json!({"ok":{"kind":"log","unordered":[],"events":[
         {"id":invalid.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"invalid","kind":"tag_added","reason":"invalid tag \"Hardware\"","change":{"type":"tag","task":app_task,"tag":"Hardware"}},
         {"id":unknown.to_string(),"author":peer.to_string(),"hlc":wire_clock,"classification":"unknown_value","kind":"task_field_set","change":{"type":"skipped","tasks":[app_task]}}
     ]}})).await;

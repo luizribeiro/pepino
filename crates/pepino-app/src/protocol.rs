@@ -147,6 +147,7 @@ pub enum Response {
     },
     Log {
         events: Vec<EventRecord>,
+        unordered: Vec<EventRecord>,
     },
     ViewSaved {
         view: SavedView,
