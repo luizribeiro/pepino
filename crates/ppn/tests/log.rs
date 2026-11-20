@@ -77,3 +77,31 @@ fn add_comments(data: &std::path::Path, task: &str, count: usize) {
         }
     });
 }
+
+#[test]
+fn log_selects_the_newest_fifty_events_by_default() {
+    let (sandbox, data) = task_sandbox();
+    let project = small_project(&sandbox);
+    add_comments(&data, &project.parent, 51);
+
+    let json = as_json(&sandbox.run(&["log", &project.parent, "--json"]));
+    let rows = json["events"].as_array().unwrap();
+    assert_eq!(rows.len(), 50);
+    assert_eq!(rows[0]["change"]["text"], "Thermometer reading 1");
+    assert_eq!(rows[49]["change"]["text"], "Thermometer reading 50");
+
+    let limited = as_json(&sandbox.run(&["log", "--limit", "1", "--json"]));
+    assert_eq!(limited["events"], serde_json::json!([rows[49]]));
+    let all = as_json(&sandbox.run(&["log", &project.parent, "--all", "--limit", "1", "--json"]));
+    assert_eq!(all["events"][0]["id"], project.parent);
+    assert_eq!(all["events"][3]["change"]["text"], "Thermometer reading 0");
+    assert_eq!(all["events"].as_array().unwrap().last().unwrap(), &rows[49]);
+
+    assert_eq!(sandbox.run(&["log", "--limit", "0"]), "");
+    let output = sandbox
+        .command()
+        .args(["log", "--limit", "lots", "--json"])
+        .output()
+        .unwrap();
+    task_error(output, 2, "usage");
+}
