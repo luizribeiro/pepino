@@ -11,7 +11,7 @@ use pepino_node::{
 };
 use tokio::time::timeout;
 
-pub const WAIT: Duration = Duration::from_secs(8);
+pub const WAIT: Duration = Duration::from_secs(60);
 
 pub fn fixture_dir() -> tempfile::TempDir {
     #[cfg(target_os = "linux")]

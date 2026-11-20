@@ -86,8 +86,13 @@ async fn scenario(actions: Vec<(u8, u8)>) -> Result<(), TestCaseError> {
             8 if devices[who].engine.is_some() => {
                 devices[who].drain().await;
                 let lock = devices[who].lock_store();
+                let acknowledged = wire.acknowledged(who).count();
                 if wire.send(who, &devices[who].node, 1 - who, 1, 0) {
-                    wait_busy(&devices[who], board).await;
+                    super::publish::until(devices[who].engine.as_ref().unwrap(), |status| {
+                        status.boards[&board].ingest_pending
+                    })
+                    .await;
+                    prop_assert_eq!(wire.acknowledged(who).count(), acknowledged);
                     assert_safe(&wire, &devices, board).await?;
                 }
                 drop(lock);
@@ -215,7 +220,9 @@ async fn seed_publications(
 
     let third = write_event(&mut devices[1], "Check the seed inventory").await;
     devices[1]
-        .start_with(|node| node.fail_next_publish(PublishFault::Unconfirmed))
+        .start_with_lock_timeout(std::time::Duration::ZERO, |node| {
+            node.fail_next_publish(PublishFault::Unconfirmed)
+        })
         .await;
     devices[1].drain().await;
     prop_assert_eq!(

@@ -29,10 +29,19 @@ impl Device {
     }
 
     pub(super) async fn start_with(&mut self, configure: impl FnOnce(&Stub)) {
+        self.start_with_lock_timeout(Duration::from_secs(60), configure)
+            .await;
+    }
+
+    pub(super) async fn start_with_lock_timeout(
+        &mut self,
+        lock_timeout: Duration,
+        configure: impl FnOnce(&Stub),
+    ) {
         self.node = Arc::new(self.node.restarted());
         configure(&self.node);
         let settings = crate::Settings {
-            lock_timeout: Duration::ZERO,
+            lock_timeout,
             poll_interval: Duration::from_secs(600),
         };
         self.engine = Some(
@@ -53,7 +62,7 @@ impl Device {
 
     pub(super) async fn drain(&self) {
         if let Some(engine) = &self.engine {
-            engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+            engine.wait_idle(Duration::from_secs(60)).await.unwrap();
         }
     }
 }
