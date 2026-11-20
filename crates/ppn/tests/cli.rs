@@ -1095,3 +1095,60 @@ fn show_renders_the_protocol_task_and_configured_due_date() {
         json!({"schema":1,"kind":"task","task":task,"edges":[]})
     );
 }
+
+fn task_stdin(sandbox: &ConfigSandbox, args: &[&str], input: &str) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = sandbox
+        .command()
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn add_reads_title_or_description_from_stdin() {
+    let (sandbox, _) = task_sandbox();
+    let title = success(task_stdin(
+        &sandbox,
+        &["add", "-"],
+        "Inspect the roof latch\r\n",
+    ));
+    assert!(title.ends_with("  Inspect the roof latch\n"));
+    let description = "Install the larger hinge.\nReuse the existing screws.\n";
+    let write = as_json(&success(task_stdin(
+        &sandbox,
+        &[
+            "add",
+            "Install the larger hinge",
+            "--description",
+            "-",
+            "--json",
+        ],
+        description,
+    )));
+    assert_eq!(write["tasks"][0]["description"], description);
+    let collision = sandbox
+        .command()
+        .args(["add", "-", "--description", "-", "--json"])
+        .output()
+        .unwrap();
+    let error = assert_json_error(collision, 2, "usage");
+    assert!(
+        error["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("--from-file")
+    );
+}
