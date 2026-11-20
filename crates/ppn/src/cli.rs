@@ -272,29 +272,34 @@ fn check_sandbox_paths(env: &Env, config: &config::Config) -> Result<(), CliErro
     Ok(())
 }
 
+fn writes_tasks(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Add(_)
+            | Command::Edit(_)
+            | Command::Start(_)
+            | Command::Reopen(_)
+            | Command::Done(_)
+            | Command::Cancel(_)
+            | Command::Rm(_)
+            | Command::Tag(_)
+            | Command::Untag(_)
+            | Command::Assign(_)
+            | Command::Unassign(_)
+            | Command::Comment(_)
+            | Command::Link(_)
+            | Command::Unlink(_)
+    )
+}
+
 fn writes_identity(command: &Command) -> bool {
     match command {
-        Command::Init(_)
-        | Command::Add(_)
-        | Command::Edit(_)
-        | Command::Start(_)
-        | Command::Reopen(_)
-        | Command::Done(_)
-        | Command::Cancel(_)
-        | Command::Rm(_)
-        | Command::Tag(_)
-        | Command::Untag(_)
-        | Command::Assign(_)
-        | Command::Unassign(_)
-        | Command::Comment(_)
-        | Command::Link(_)
-        | Command::Unlink(_)
-        | Command::Sync(_) => true,
+        Command::Init(_) | Command::Sync(_) => true,
         Command::Board(args) => args.writes(),
         Command::Device(args) => args.writes(),
         Command::Identity(args) => args.writes(),
         Command::View(args) => args.writes(),
-        _ => false,
+        _ => writes_tasks(command),
     }
 }
 
@@ -321,6 +326,13 @@ fn dispatch(
         let data = context.config()?.config.data_dir.value.as_path();
         if let Ok(local) = pepino_app::LocalState::load(data) {
             local.check_device_write()?;
+            if cli.command.as_ref().is_some_and(writes_tasks) {
+                let board = match context.board_override()? {
+                    Some((reference, source)) => local.resolve_board(reference, source)?,
+                    None => local.current_board(),
+                };
+                local.check_board_write(board)?;
+            }
         }
     }
     match cli.command {
