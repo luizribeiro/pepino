@@ -382,6 +382,34 @@ fn noninteractive_confirmation_requires_yes() {
     assert_eq!(json, serde_json::json!({"schema": 1, "confirmed": true}));
 }
 
+#[cfg(unix)]
+#[test]
+fn confirmation_accepts_yes_and_no_from_a_terminal() {
+    use nix::pty::openpty;
+    use std::{fs::File, io::Write, process::Stdio};
+
+    for (answer, confirmed) in [(b"y\n", true), (b"n\n", false)] {
+        let pty = openpty(None, None).unwrap();
+        let mut terminal = File::from(pty.master);
+        let child = ppn()
+            .args(["debug", "confirm", "--json"])
+            .stdin(File::from(pty.slave))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        terminal.write_all(answer).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(output.stderr, b"Archive the release board? [y/N] ");
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({"schema": 1, "confirmed": confirmed})
+        );
+    }
+}
+
 #[test]
 fn reads_text_from_an_argument_stdin_or_a_file() {
     use std::io::Write;
