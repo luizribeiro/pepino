@@ -24,3 +24,7 @@ pub use relations::{edge_reason, link_description, task_relations};
 mod detail_fields;
 
 pub use detail_fields::task_fields;
+
+mod detail;
+
+pub use detail::task_detail;
