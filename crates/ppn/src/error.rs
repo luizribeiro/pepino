@@ -112,6 +112,13 @@ impl CliError {
         self
     }
 
+    pub(crate) fn with_task_argument(mut self, argument: &str) -> Self {
+        if self.kind == ErrorKind::Conflict && self.details.get("task") != Some(&argument.into()) {
+            self.message = format!("Task argument {argument:?}: {}", self.message);
+        }
+        self
+    }
+
     pub fn usage(error: clap::Error) -> Self {
         let rendered = error.to_string();
         let rendered = rendered.trim();

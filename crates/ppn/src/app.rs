@@ -1,7 +1,8 @@
-use pepino_app::{App, Date, OpenOptions, Request, Response};
+use pepino_app::{App, Date, OpenOptions, ReadRequest, Request, Response, TaskSummary};
 use tokio::runtime::{Builder, Runtime};
 
 use crate::error::{CliError, ErrorKind};
+use crate::response::ResponseExt;
 use crate::terminal::Context;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,6 +48,19 @@ impl AppClient {
             .block_on(self.app.handle(request, self.now_ms))
             .map_err(Into::into)
     }
+
+    pub fn task(&mut self, reference: &str) -> Result<TaskSummary, CliError> {
+        let response = self
+            .call(Request::Read(ReadRequest::GetTask {
+                task: reference.into(),
+            }))
+            .map_err(|error| error.with_task_argument(reference))?;
+        Ok(response.task()?.task.summary.clone())
+    }
+
+    pub fn resolve_tasks(&mut self, references: Vec<String>) -> Result<Vec<TaskSummary>, CliError> {
+        references.iter().map(|task| self.task(task)).collect()
+    }
 }
 
 #[cfg(test)]
@@ -54,7 +68,7 @@ mod tests {
     use super::*;
     use crate::config::{Config, LoadedConfig, Platform, PlatformDirs};
     use crate::terminal::{Color, Terminal};
-    use pepino_app::ReadRequest;
+    use pepino_app::WriteRequest;
 
     #[test]
     fn opens_the_configured_board_with_the_injected_clock() {
@@ -88,5 +102,26 @@ mod tests {
         };
         assert_eq!(std::path::Path::new(&data_dir), directory);
         assert_eq!(counts.open, 0);
+
+        let created = client
+            .call(Request::Write(crate::write_args::new_task(
+                "Inspect greenhouse hinges".into(),
+            )))
+            .unwrap();
+        let id = created.write().unwrap().created.as_ref().unwrap();
+        let prefix = id[..8].to_uppercase();
+        let resolved = client.resolve_tasks(vec![prefix.clone()]).unwrap();
+        assert_eq!(resolved[0].id, *id);
+        let missing = client
+            .resolve_tasks(vec![prefix.clone(), "deadbeef".into()])
+            .unwrap_err();
+        assert_eq!(missing.kind(), ErrorKind::NotFound);
+        assert!(missing.to_string().contains("deadbeef"));
+        client
+            .call(Request::Write(WriteRequest::Delete { task: id.clone() }))
+            .unwrap();
+        let deleted = client.task(&prefix).unwrap_err();
+        assert_eq!(deleted.kind(), ErrorKind::Conflict);
+        assert!(deleted.to_string().contains(&prefix));
     }
 }
