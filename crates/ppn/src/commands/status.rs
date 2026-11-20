@@ -56,24 +56,36 @@ fn document(
     mut client: AppClient,
     network: Option<Network>,
 ) -> Result<CommandResult, CliError> {
+    let response = client.call(Request::Read(ReadRequest::Status))?;
     let local = client.local_state();
     let boards = local
         .boards()
         .iter()
         .map(|board| {
-            let state = network
-                .as_ref()
-                .and_then(|network| network.board_joins.get(&board.id).copied())
-                .unwrap_or_else(|| local.board_join_state(board.id));
-            (board.clone(), state)
+            let (state, sync) = super::board::board_activity(
+                board.id,
+                local.board_join_state(board.id),
+                network.as_ref(),
+            );
+            (board.clone(), state, sync)
         })
         .collect::<Vec<_>>();
     let membership_rows = boards
         .iter()
-        .map(|(board, state)| format!("{}: {}", single_line(&board.name), membership(*state)))
+        .map(|(board, state, sync)| {
+            format!(
+                "{}: {} ({})",
+                single_line(&board.name),
+                membership(*state),
+                sync.replace('_', " ")
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n  ");
-    let response = client.call(Request::Read(ReadRequest::Status))?;
+    let (selected, source) = client.selected_board()?;
+    let selected_line =
+        super::board::selection_line(&selected.name, &selected.id.to_string(), source);
+    let selected = serde_json::json!({"id":selected.id, "name":selected.name, "source":source});
     let settings = context.render_settings()?;
     let human_network = network
         .as_ref()
@@ -97,7 +109,7 @@ fn document(
                 .as_deref()
                 .unwrap_or("offline (daemon not running)");
             Ok(format!(
-                "Identity: {} ({})\nDevice: {} (node ID {})\nBoard: {} ({})\nMembership:\n  {membership_rows}\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}",
+                "Identity: {} ({})\nDevice: {} (node ID {})\nBoard: {} ({})\n{selected_line}\nMembership:\n  {membership_rows}\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}",
                 single_line(&identity.display_name),
                 short_id(&identity.id),
                 single_line(&device.name),
@@ -119,10 +131,11 @@ fn document(
             ))
         },
         move |fields| {
-            let boards = boards.into_iter().map(|(board, state)| {
-                serde_json::json!({"id": board.id, "name": board.name, "membership": state})
+            let boards = boards.into_iter().map(|(board, state, sync)| {
+                serde_json::json!({"id": board.id, "name": board.name, "membership": state, "sync": sync})
             }).collect::<Vec<_>>();
             fields.insert("boards".into(), serde_json::json!(boards));
+            fields.insert("selected_board".into(), selected);
             if let Some(network) = network {
                 fields.insert("network".into(), serde_json::json!(network));
             }
