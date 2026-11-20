@@ -22,6 +22,7 @@ pub struct Args {
 }
 
 pub fn run(context: &Context<'_>, input: Args, json: bool) -> Result<CommandResult, CliError> {
+    let mut client = AppClient::open(context)?;
     let Args { title, args } = input;
     let from_stdin = title == "-";
     if from_stdin && args.fields.description.reads_stdin() {
@@ -38,6 +39,6 @@ pub fn run(context: &Context<'_>, input: Args, json: bool) -> Result<CommandResu
         new_task(input)
     };
     let request = args.apply_to_add(request, context.time.today)?;
-    let response = AppClient::open(context)?.call(Request::Write(request))?;
+    let response = client.call(Request::Write(request))?;
     write_document(context, response, "Created")
 }

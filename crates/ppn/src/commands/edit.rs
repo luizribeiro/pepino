@@ -30,12 +30,12 @@ pub struct Args {
 }
 
 pub fn run(context: &Context<'_>, args: Args, json: bool) -> Result<CommandResult, CliError> {
+    let mut client = AppClient::open(context)?;
     let changes = args.fields.changes(context.time.today)?;
     if changes.is_empty() && args.membership.is_empty() {
-        return edit_interactively(context, &args.task, json);
+        return edit_interactively(context, &mut client, &args.task, json);
     }
 
-    let mut client = AppClient::open(context)?;
     let task = client.task(&args.task)?.id;
     let mut requests = args.membership.requests(&task);
     if !changes.is_empty() {
@@ -58,19 +58,19 @@ fn apply(
 
 fn edit_interactively(
     context: &Context<'_>,
+    client: &mut AppClient,
     reference: &str,
     json: bool,
 ) -> Result<CommandResult, CliError> {
     if !(context.terminal.stdin_is_tty && context.terminal.stdout_is_tty) {
         return Err(flags_required());
     }
-    let mut client = AppClient::open(context)?;
     let task = client.task(reference)?;
     let before = Form::from(&task);
     let mut after = edit_text(&before.render(), json, |text| {
         before.parse(text, context.time.today)
     })?;
-    after.resolve_assignees(&mut client)?;
+    after.resolve_assignees(client)?;
     let mut requests = after.membership_from(&before).requests(&task.id);
     requests.insert(
         0,
@@ -79,7 +79,7 @@ fn edit_interactively(
             changes: after.changes_from(before)?,
         },
     );
-    apply(context, &mut client, requests)
+    apply(context, client, requests)
 }
 
 #[cfg_attr(test, derive(Deserialize))]

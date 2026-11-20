@@ -33,8 +33,8 @@ pub fn run(
         from_file,
     }: Args,
 ) -> Result<CommandResult, CliError> {
+    let mut client = AppClient::open(context)?;
     let text = read_task_text(text, from_file.as_deref())?;
-    let response =
-        AppClient::open(context)?.call(Request::Write(WriteRequest::Comment { task, text }))?;
+    let response = client.call(Request::Write(WriteRequest::Comment { task, text }))?;
     write_document(context, response, "Commented on")
 }

@@ -37,6 +37,14 @@ fn task_commands_require_init_and_do_not_create_local_state() {
         &["ls", "--json"][..],
         &["add", "Order hinges", "--json"],
         &["status", "--json"],
+        &["edit", "deadbeef", "--json"],
+        &[
+            "comment",
+            "deadbeef",
+            "--from-file",
+            "missing-comment.txt",
+            "--json",
+        ],
     ] {
         let error = task_error(
             sandbox.command().args(args).output().unwrap(),
