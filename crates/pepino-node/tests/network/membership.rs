@@ -7,7 +7,9 @@ use p2panda::{
 };
 use p2panda_store::{SqliteStore, operations::OperationStore};
 use pepino_core::{DeviceId, EventId};
-use pepino_node::{Error, MemberState, MembershipChange, MembershipEvent, MembershipEvents, Role};
+use pepino_node::{
+    Error, MemberState, MembershipChange, MembershipEvent, MembershipEvents, OpenBoardOptions, Role,
+};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tokio::time::timeout;
 
@@ -177,6 +179,70 @@ async fn read_only_member_still_receives_and_promoted_member_can_enroll() {
     );
 
     d.shutdown().await.unwrap();
+    c.shutdown().await.unwrap();
+    b.shutdown().await.unwrap();
+    a.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn a_readmitted_device_can_resume_and_replay() {
+    let dir = fixture_dir();
+    let network = network(dir.path());
+    let a = start(&settings(&network, dir.path().join("alice"))).await;
+    let b = start(&settings(&network, dir.path().join("ben"))).await;
+    let c_settings = settings(&network, dir.path().join("chloe"));
+    let c = start(&c_settings).await;
+    let alice = a.create_board().await.unwrap();
+    let mut ben = enroll(&alice, &b, Role::Write).await;
+    let mut chloe = enroll(&alice, &c, Role::Read).await;
+    let mut changes = chloe.membership_events();
+    let mut events = chloe.events().unwrap();
+    alice.remove_member(c.device_id(), false).await.unwrap();
+    assert!(matches!(
+        timeout(WAIT, events.next()).await.unwrap(),
+        Some(Err(Error::Removed))
+    ));
+    assert!(events.next().await.is_none());
+    observe(&mut changes, c.device_id(), MemberState::Removed).await;
+
+    let gap = alice.publish(REVIEW.to_vec()).await.unwrap();
+    expect(&mut ben.events().unwrap(), &[(gap, a.device_id(), REVIEW)]).await;
+    alice
+        .add_member(&c.member_info().await.unwrap(), Role::Read)
+        .await
+        .unwrap();
+    let restored = observe(&mut changes, c.device_id(), MemberState::Member(Role::Read)).await;
+    assert_eq!(
+        restored.change,
+        Some((a.device_id(), MembershipChange::Added))
+    );
+    let mut resumed = chloe.events().unwrap();
+    let after = alice.publish(DONE.to_vec()).await.unwrap();
+    timeout(WAIT, async {
+        loop {
+            let event = resumed.next().await.unwrap().unwrap();
+            if event.id == after {
+                assert_eq!(event.bytes, DONE);
+                break;
+            }
+            assert_eq!((event.id, event.bytes.as_slice()), (gap, REVIEW));
+        }
+    })
+    .await
+    .unwrap();
+
+    c.shutdown().await.unwrap();
+    let c = start(&c_settings).await;
+    let mut chloe = c
+        .open_board_with(alice.id(), OpenBoardOptions { from_start: true })
+        .await
+        .unwrap();
+    expect(
+        &mut chloe.events().unwrap(),
+        &[(gap, a.device_id(), REVIEW), (after, a.device_id(), DONE)],
+    )
+    .await;
     c.shutdown().await.unwrap();
     b.shutdown().await.unwrap();
     a.shutdown().await.unwrap();
