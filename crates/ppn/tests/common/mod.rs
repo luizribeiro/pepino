@@ -167,6 +167,31 @@ pub fn create_task(sandbox: &ConfigSandbox, title: &str, flags: &[&str]) -> Stri
         .to_owned()
 }
 
+pub struct Project {
+    pub parent: String,
+    pub blocker: String,
+    pub downstream: String,
+}
+
+pub fn small_project(sandbox: &ConfigSandbox) -> Project {
+    let parent = create_task(sandbox, "Renovate the greenhouse", &["--tag", "garden"]);
+    let blocker = create_task(
+        sandbox,
+        "Order stainless fittings",
+        &["--tag", "hardware", "--parent", &parent],
+    );
+    let downstream = create_task(
+        sandbox,
+        "Test the new latch",
+        &["--parent", &parent, "--blocked-by", &blocker],
+    );
+    Project {
+        parent,
+        blocker,
+        downstream,
+    }
+}
+
 pub fn task_error(output: Output, status: i32, code: &str) -> Value {
     assert_eq!(output.status.code(), Some(status), "{output:?}");
     assert!(output.stdout.is_empty(), "{output:?}");

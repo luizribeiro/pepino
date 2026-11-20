@@ -84,9 +84,11 @@ fn add_accepts_protocol_fields_on_json_stdin() {
 #[test]
 fn task_flags_round_trip_through_add_show_and_status() {
     let (sandbox, _) = task_sandbox();
-    let parent = create_task(&sandbox, "Renovate the greenhouse", &[]);
-    let blocker = create_task(&sandbox, "Order stainless fittings", &[]);
-    let downstream = create_task(&sandbox, "Test the new latch", &[]);
+    let Project {
+        parent,
+        blocker,
+        downstream,
+    } = small_project(&sandbox);
     let description = "Use stainless hardware.\nReuse the right hinge.";
     let file = sandbox.home.path().join("description.txt");
     std::fs::write(&file, description).unwrap();
