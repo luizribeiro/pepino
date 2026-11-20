@@ -12,6 +12,7 @@ use crate::{
 /// A running transport node. Await [`Node::shutdown`] before opening its data directory again.
 /// Dropping the node initiates background shutdown and keeps the directory locked until it ends.
 pub struct Node {
+    instance_id: [u8; 16],
     pub(crate) inner: Arc<p2panda::Node>,
     pub(crate) worker: Worker,
     pub(crate) acks: AckStore,
@@ -33,6 +34,7 @@ impl Node {
                 p2panda_store::sqlite::run_pending_migrations(&pool)
                     .await
                     .map_err(Error::storage)?;
+                let instance_id = database_instance_id(&pool).await?;
                 let acks = AckStore::create(pool.clone()).await?;
                 let inner = builder
                     .database_pool(pool.clone())
@@ -48,10 +50,10 @@ impl Node {
                         peer_session(&broadcaster, &mut peers, event);
                     }
                 });
-                Ok((Arc::new(inner), acks, status))
+                Ok((Arc::new(inner), acks, status, instance_id))
             })
             .await;
-        let (inner, acks, status) = match started {
+        let (inner, acks, status, instance_id) = match started {
             Ok(started) => started,
             Err(error) => {
                 worker.shutdown().await?;
@@ -59,6 +61,7 @@ impl Node {
             }
         };
         Ok(Self {
+            instance_id,
             inner,
             worker,
             acks,
@@ -66,6 +69,11 @@ impl Node {
             status,
             publish_confirmation_timeout,
         })
+    }
+
+    /// Identifies this replication database across restarts.
+    pub fn instance_id(&self) -> [u8; 16] {
+        self.instance_id
     }
 
     pub fn device_id(&self) -> DeviceId {
@@ -86,6 +94,23 @@ impl Node {
         drop(inner);
         worker.shutdown().await
     }
+}
+
+async fn database_instance_id(pool: &sqlx::SqlitePool) -> Result<[u8; 16], Error> {
+    sqlx::raw_sql(
+        "CREATE TABLE IF NOT EXISTS pepino_instance (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            id BLOB NOT NULL CHECK (length(id) = 16)
+        ) STRICT;
+        INSERT OR IGNORE INTO pepino_instance VALUES (1, randomblob(16));",
+    )
+    .execute(pool)
+    .await
+    .map_err(Error::storage)?;
+    sqlx::query_scalar("SELECT id FROM pepino_instance")
+        .fetch_one(pool)
+        .await
+        .map_err(Error::storage)
 }
 
 async fn open_database(path: &std::path::Path) -> Result<sqlx::SqlitePool, Error> {
@@ -178,6 +203,21 @@ mod tests {
         }
         reopened.close().await;
         pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn node_instance_follows_the_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.sqlite");
+        let pool = open_database(&path).await.unwrap();
+        let original = database_instance_id(&pool).await.unwrap();
+        pool.close().await;
+        let pool = open_database(&path).await.unwrap();
+        assert_eq!(database_instance_id(&pool).await.unwrap(), original);
+        pool.close().await;
+        std::fs::remove_file(&path).unwrap();
+        let pool = open_database(&path).await.unwrap();
+        assert_ne!(database_instance_id(&pool).await.unwrap(), original);
     }
 
     #[tokio::test]
