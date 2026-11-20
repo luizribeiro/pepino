@@ -77,6 +77,19 @@ impl<T: Transport> BoardWorkers<T> {
         mut board: T::Board,
     ) -> Result<(), Error> {
         let stream = board.deliveries()?;
+        if local.catalog_board() == id
+            && let Some(membership) = board.membership_events()
+        {
+            let mut stopping = self.stopping.clone();
+            let app = self.app.clone();
+            self.workers.spawn(async move {
+                tokio::select! {
+                    _ = stopping.changed() => (),
+                    _ = crate::removal_notice::observe(&app, membership) => (),
+                }
+                Ok(())
+            });
+        }
         let board = Arc::new(board);
         self.handles.insert(id, Arc::downgrade(&board));
         self.changes.send_modify(|status| {

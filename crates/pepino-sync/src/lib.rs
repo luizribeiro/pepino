@@ -6,6 +6,7 @@ mod inbox;
 mod join_progress;
 mod outbox;
 mod publication;
+mod removal_notice;
 mod retry;
 mod revoke;
 mod status;

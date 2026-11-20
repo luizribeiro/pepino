@@ -32,6 +32,10 @@ pub trait TransportBoard: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Option<BTreeSet<DeviceId>>, Error>> + Send {
         async { Ok(None) }
     }
+    fn membership_events(&self) -> Option<pepino_node::MembershipEvents> {
+        None
+    }
+
     fn manages(&self, _device: DeviceId) -> impl Future<Output = bool> + Send {
         async { false }
     }
@@ -124,6 +128,10 @@ impl TransportBoard for BoardHandle {
             }
         }
         Ok(Some(ids))
+    }
+
+    fn membership_events(&self) -> Option<pepino_node::MembershipEvents> {
+        Some(BoardHandle::membership_events(self))
     }
 
     async fn manages(&self, device: DeviceId) -> bool {
