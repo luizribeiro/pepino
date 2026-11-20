@@ -1,4 +1,5 @@
 use std::fs::{File, OpenOptions as FileOptions, TryLockError};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -42,10 +43,10 @@ impl App {
         let runtime = tokio::runtime::Handle::current();
         // Store startup borrows its migration connection through a non-Send future.
         let store = worker("open store", move || {
-            runtime.block_on(Store::open(database))
+            create_database_file(&database)?;
+            runtime.block_on(Store::open(database)).map_err(store_error)
         })
-        .await?
-        .map_err(store_error)?;
+        .await??;
         let hlc = store
             .latest_hlc(local.board_id)
             .await
@@ -88,6 +89,21 @@ impl App {
                 self.commit_batch(&board, batch).await
             }
         }
+    }
+}
+
+fn create_database_file(path: &Path) -> Result<(), AppError> {
+    let mut options = FileOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(path) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(io_error("create database file", error)),
     }
 }
 

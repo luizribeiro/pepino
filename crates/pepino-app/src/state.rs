@@ -93,7 +93,14 @@ impl LocalState {
 }
 
 fn save(directory: &Path, path: &Path, state: LocalState) -> io::Result<LocalState> {
-    fs::create_dir_all(directory)?;
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(directory)?;
     let mut file = tempfile::NamedTempFile::new_in(directory)?;
     #[cfg(unix)]
     {

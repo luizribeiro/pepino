@@ -28,3 +28,24 @@ async fn get_distinguishes_invalid_and_missing_references_on_a_new_board() {
     }
     assert!(directory.path().join("pepino.sqlite").is_file());
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn creates_private_data_directory_and_database_files() {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("greenhouse");
+    let _app = App::open(&path, 1_795_144_800_000).await.unwrap();
+    let mode = |file: &std::path::Path| fs::metadata(file).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&path), 0o700);
+    for file in [
+        "local.json",
+        "pepino.sqlite",
+        "pepino.sqlite-wal",
+        "pepino.sqlite-shm",
+    ] {
+        assert_eq!(mode(&path.join(file)), 0o600, "{file}");
+    }
+}
