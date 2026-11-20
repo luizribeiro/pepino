@@ -6,6 +6,7 @@ use clap::{
     ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand, error::ErrorKind,
     parser::ValueSource,
 };
+use ppn::app::InvocationTime;
 use ppn::config::{self, Env, Flags, Platform, PlatformDirs};
 use ppn::error::CliError;
 use ppn::flags::{Globals, json_from_env, json_on_command_line};
@@ -70,6 +71,7 @@ pub fn run() -> ExitCode {
         args: env::args_os().collect(),
         dirs: PlatformDirs::from_env(platform, &env, env::home_dir, env::current_dir),
         env,
+        time: invocation_time(chrono::Local::now()),
         read: |path| fs::read_to_string(path),
         exists: Path::try_exists,
     };
@@ -77,9 +79,17 @@ pub fn run() -> ExitCode {
     finish(result, json, &terminal)
 }
 
+fn invocation_time(time: chrono::DateTime<impl chrono::TimeZone>) -> InvocationTime {
+    InvocationTime {
+        now_ms: time.timestamp_millis().try_into().unwrap_or(0),
+        today: time.date_naive().into(),
+    }
+}
+
 struct ProcessInputs {
     args: Vec<OsString>,
     env: Env,
+    time: InvocationTime,
     dirs: PlatformDirs,
     read: fn(&Path) -> io::Result<String>,
     exists: fn(&Path) -> io::Result<bool>,
@@ -153,6 +163,7 @@ impl ProcessInputs {
             Terminal::detect(globals.color, &self.env),
             globals.yes,
             globals.timeout,
+            self.time,
             move || config::load(&flags, &self.env, self.read, &self.dirs),
         )
     }
@@ -245,6 +256,9 @@ mod tests {
         ProcessInputs {
             args: args.iter().map(OsString::from).collect(),
             env: Env::new(),
+            time: invocation_time(
+                chrono::DateTime::parse_from_rfc3339("2026-11-19T23:45:00-05:00").unwrap(),
+            ),
             dirs: PlatformDirs::from_env(
                 Platform::Linux,
                 &Env::new(),
@@ -334,6 +348,8 @@ mod tests {
         let inputs = inputs(&args);
         let context = inputs.context(&cli.globals, true);
         assert_eq!(context.timeout, Some(std::time::Duration::from_secs(5)));
+        assert_eq!(context.time.today.to_string(), "2026-11-19");
+        assert_eq!(context.time.now_ms, 1_795_149_900_000);
         assert!(context.yes);
         assert!(!context.terminal.color);
 

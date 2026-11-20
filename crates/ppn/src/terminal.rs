@@ -6,6 +6,7 @@ use std::time::Duration;
 use clap::ValueEnum;
 use serde::Serialize;
 
+use crate::app::InvocationTime;
 use crate::config::{Env, LoadedConfig};
 use crate::error::{CliError, ErrorKind};
 
@@ -49,6 +50,7 @@ pub struct Context<'a> {
     load_config: Box<dyn Fn() -> Result<LoadedConfig, CliError> + 'a>,
     pub yes: bool,
     pub timeout: Option<Duration>,
+    pub time: InvocationTime,
 }
 
 impl<'a> Context<'a> {
@@ -56,6 +58,7 @@ impl<'a> Context<'a> {
         terminal: Terminal,
         yes: bool,
         timeout: Option<Duration>,
+        time: InvocationTime,
         load_config: impl Fn() -> Result<LoadedConfig, CliError> + 'a,
     ) -> Self {
         Self {
@@ -64,6 +67,7 @@ impl<'a> Context<'a> {
             load_config: Box::new(load_config),
             yes,
             timeout,
+            time,
         }
     }
 
@@ -122,6 +126,10 @@ mod tests {
             Terminal::detect(Color::Never, &Env::new()),
             false,
             None,
+            InvocationTime {
+                now_ms: 0,
+                today: "2026-11-20".parse().unwrap(),
+            },
             || {
                 attempts.set(attempts.get() + 1);
                 Err(CliError::new(
