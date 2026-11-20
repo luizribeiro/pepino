@@ -18,3 +18,5 @@ thiserror = "2"
 p2panda-store.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
+futures-util.workspace = true
+tokio-stream = { version = "0.1", features = ["sync"] }

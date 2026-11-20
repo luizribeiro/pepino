@@ -3,6 +3,8 @@ mod ack;
 #[cfg(test)]
 mod board_lease;
 mod credentials;
+#[cfg(test)]
+mod events;
 mod node;
 #[cfg(test)]
 mod receipt;
@@ -16,6 +18,18 @@ pub use settings::{BootstrapNode, MdnsMode, NodeSettings};
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    #[error("processing board operation {id}: {details}")]
+    Processing {
+        id: pepino_core::EventId,
+        details: String,
+    },
+    #[error("decoding board operation {id}: {details}")]
+    Decode {
+        id: pepino_core::EventId,
+        details: String,
+    },
+    #[error("replaying board operations: {0}")]
+    Replay(String),
     #[error("board {0} is already open")]
     BoardOpen(pepino_core::BoardId),
     #[error("restart the node before reopening board {0}")]
