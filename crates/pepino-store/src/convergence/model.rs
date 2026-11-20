@@ -239,3 +239,44 @@ proptest! {
         })?;
     }
 }
+
+#[test]
+fn generated_histories_cover_all_exclusion_reasons_and_cycle_rotations() {
+    const CASES: usize = 128;
+    let mut runner = proptest::test_runner::TestRunner::deterministic();
+    let reasons = [
+        EdgeExclusion::MissingEndpoint,
+        EdgeExclusion::NewerParent,
+        EdgeExclusion::Cycle,
+    ];
+    let mut reason_cases = [0; 3];
+    let mut rotations = [0; 3];
+    let strategy = histories();
+    for _ in 0..CASES {
+        use proptest::strategy::ValueTree;
+
+        let history = History::new(strategy.new_tree(&mut runner).unwrap().current());
+        let edges = reference(&history, BOARD).edges;
+        for (reason, count) in reasons.into_iter().zip(&mut reason_cases) {
+            *count += usize::from(edges.iter().any(|edge| edge.exclusion == Some(reason)));
+        }
+        for (index, count) in rotations.iter_mut().enumerate() {
+            let from = history.tasks[index];
+            let to = history.tasks[(index + 1) % 3];
+            *count += usize::from(edges.iter().any(|edge| {
+                edge.kind == EdgeKind::Blocks
+                    && edge.from == from
+                    && edge.to == to
+                    && edge.exclusion == Some(EdgeExclusion::Cycle)
+            }));
+        }
+    }
+    assert!(
+        reason_cases.iter().all(|&count| count >= CASES * 3 / 4),
+        "cases by exclusion reason: {reason_cases:?}"
+    );
+    assert!(
+        rotations.iter().all(|&count| count >= CASES / 10),
+        "cases by excluded edge of the generated blocks cycle: {rotations:?}"
+    );
+}

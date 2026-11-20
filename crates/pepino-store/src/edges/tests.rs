@@ -441,3 +441,35 @@ async fn loads_long_chains_in_adversarial_register_order() {
         .collect();
     assert_eq!(excluded, [EdgeExclusion::Cycle; 2]);
 }
+
+proptest::proptest! {
+    #[test]
+    fn a_simple_cycle_rejects_its_newest_edge(
+        writes in proptest::array::uniform3((0..8u8, 1..8u32)),
+    ) {
+        use super::{EdgeRow, edge_key, project};
+
+        for kind in [EdgeKind::Parent, EdgeKind::Blocks] {
+            let mut ring = Vec::new();
+            for (index, (author, counter)) in writes.into_iter().enumerate() {
+                let from = TaskId::from_bytes([index as u8 + 1; 32]);
+                let to = TaskId::from_bytes([((index + 1) % 3) as u8 + 1; 32]);
+                let envelope = Envelope::new(
+                    DeviceId::from_bytes([51 + author; 32]),
+                    Hlc { wall_ms: 1_795_144_800_000, counter },
+                    Event::EdgeAdded { from, kind, to },
+                ).unwrap();
+                ring.push((envelope.order_key(), EdgeRow {
+                    task: *from.as_bytes(),
+                    member: edge_key::member(kind, to).unwrap(),
+                    live: true,
+                    source_status: None,
+                }));
+            }
+            ring.sort_unstable_by_key(|(key, _)| *key);
+            let rows: Vec<_> = ring.into_iter().map(|(_, row)| row).collect();
+            let exclusions: Vec<_> = project(&rows).unwrap().into_iter().map(|edge| edge.exclusion).collect();
+            proptest::prop_assert_eq!(exclusions, [None, None, Some(EdgeExclusion::Cycle)]);
+        }
+    }
+}

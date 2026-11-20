@@ -24,15 +24,17 @@ pub(super) fn histories() -> impl Strategy<Value = HistoryInput> {
             (0..=5usize, 0..=5usize, 0..8usize, 0..3usize, any::<bool>()),
             12..28,
         ),
+        prop::array::uniform5((0..8usize, 8..24u64)),
     )
 }
 
 type Change = (usize, usize, usize, usize);
 type EdgeChange = (usize, usize, usize, usize, bool);
-type HistoryInput = (usize, Vec<Change>, Vec<EdgeChange>);
+type CycleWrites = [(usize, u64); 5];
+type HistoryInput = (usize, Vec<Change>, Vec<EdgeChange>, CycleWrites);
 
 impl History {
-    pub(super) fn new((count, changes, edges): HistoryInput) -> Self {
+    pub(super) fn new((count, changes, edges, cycle): HistoryInput) -> Self {
         let mut history = Self {
             tasks: Vec::new(),
             events: Vec::new(),
@@ -102,7 +104,13 @@ impl History {
                 0 => set(
                     task,
                     "status",
-                    FieldValue::Status([Status::Todo, Status::Doing, Status::Done][variant]),
+                    FieldValue::Status(
+                        [
+                            Status::Todo,
+                            Status::Doing,
+                            [Status::Done, Status::Cancelled][author % 2],
+                        ][variant],
+                    ),
                 ),
                 1 => set(task, "description", FieldValue::Unset),
                 2 => set(
@@ -144,12 +152,12 @@ impl History {
             };
             history.add(author, 2 + (index % 4) as u64, event);
         }
-        history.add_edges(edges);
+        history.add_edges(edges, cycle);
         history.add_skipped();
         history
     }
 
-    fn add_edges(&mut self, changes: Vec<EdgeChange>) {
+    fn add_edges(&mut self, changes: Vec<EdgeChange>, cycle: CycleWrites) {
         let kinds = [EdgeKind::Parent, EdgeKind::Blocks, EdgeKind::Relates];
         let count = self.tasks.len();
         for (index, (from, offset, author, kind, present)) in changes.into_iter().enumerate() {
@@ -176,24 +184,33 @@ impl History {
             },
         );
         self.events.rotate_right(1);
-        for (author, (kind, from, to)) in [
-            (EdgeKind::Parent, gate, rail),
+        self.add(
+            0,
+            7,
+            Event::EdgeAdded {
+                from: gate,
+                kind: EdgeKind::Parent,
+                to: rail,
+            },
+        );
+        for ((author, tick), (kind, from, to)) in cycle.into_iter().zip([
             (EdgeKind::Parent, gate, boiler),
             (EdgeKind::Parent, boiler, gate),
             (EdgeKind::Blocks, gate, boiler),
             (EdgeKind::Blocks, boiler, rail),
             (EdgeKind::Blocks, rail, gate),
-            (EdgeKind::Relates, keys, gate),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            self.add(
-                author,
-                7 + author as u64,
-                Event::EdgeAdded { from, kind, to },
-            );
+        ]) {
+            self.add(author, tick, Event::EdgeAdded { from, kind, to });
         }
+        self.add(
+            6,
+            13,
+            Event::EdgeAdded {
+                from: keys,
+                kind: EdgeKind::Relates,
+                to: gate,
+            },
+        );
         self.add(7, 14, Event::TaskDeleted { task: keys });
     }
 
