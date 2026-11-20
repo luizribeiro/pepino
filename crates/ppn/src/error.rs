@@ -13,6 +13,7 @@ pub enum ErrorKind {
     PermissionDenied,
     DaemonUnreachable,
     ConfirmationRequired,
+    InvalidConfig,
 }
 
 impl ErrorKind {
@@ -29,12 +30,13 @@ impl ErrorKind {
             Self::PermissionDenied => "The operation is not permitted.",
             Self::DaemonUnreachable => "The daemon or network could not be reached.",
             Self::ConfirmationRequired => "The operation needs explicit confirmation.",
+            Self::InvalidConfig => "Configuration could not be read or is invalid.",
         }
     }
 
     pub const fn status(self) -> u8 {
         match self {
-            Self::Failure | Self::ConfirmationRequired => 1,
+            Self::Failure | Self::ConfirmationRequired | Self::InvalidConfig => 1,
             Self::Usage => 2,
             Self::NotFound => 3,
             Self::AmbiguousId => 4,
@@ -52,6 +54,7 @@ impl ErrorKind {
             Self::PermissionDenied => "permission_denied",
             Self::DaemonUnreachable => "daemon_unreachable",
             Self::ConfirmationRequired => "confirmation_required",
+            Self::InvalidConfig => "invalid_config",
         }
     }
 }
