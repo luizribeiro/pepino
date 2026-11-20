@@ -1,14 +1,15 @@
-use pepino_store::BoardView;
+use pepino_store::{BoardView, Dependency};
 
 use crate::app::store_error;
 use crate::projection::{edge_effect, project, resolve};
-use crate::{App, AppError, ReadRequest, Response, TreeNode};
+use crate::{App, AppError, DependencyRecord, ReadRequest, Response, TreeNode};
 
 impl App {
     pub(super) async fn read(&mut self, request: ReadRequest) -> Result<Response, AppError> {
         match request {
             ReadRequest::GetTask { task } => self.get_task(&task).await,
             ReadRequest::Tree { task } => self.tree(task.as_deref()).await,
+            ReadRequest::Deps { task } => self.deps(&task).await,
         }
     }
 
@@ -33,6 +34,7 @@ impl App {
             edges,
         })
     }
+
     async fn tree(&self, reference: Option<&str>) -> Result<Response, AppError> {
         let board = self
             .store
@@ -61,5 +63,34 @@ impl App {
             })
             .collect::<Result<_, AppError>>()?;
         Ok(Response::Tree { nodes })
+    }
+
+    async fn deps(&self, reference: &str) -> Result<Response, AppError> {
+        let board = self
+            .store
+            .board_with_comments(self.local.board_id)
+            .await
+            .map_err(store_error)?;
+        let task = resolve(&board, "task", reference)?;
+        let deps = board.dependencies(task.id);
+        let project_deps = |entries: Vec<Dependency>| {
+            entries
+                .into_iter()
+                .map(|entry| {
+                    let task = board
+                        .task(entry.task)
+                        .expect("dependency belongs to the snapshot");
+                    Ok(DependencyRecord {
+                        distance: entry.distance,
+                        task: project(task, board.comments(task.id))?,
+                    })
+                })
+                .collect::<Result<_, AppError>>()
+        };
+        Ok(Response::Deps {
+            task: Box::new(project(task, board.comments(task.id))?),
+            blockers: project_deps(deps.blocked_by)?,
+            dependents: project_deps(deps.blocks)?,
+        })
     }
 }

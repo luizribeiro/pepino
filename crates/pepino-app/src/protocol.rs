@@ -19,6 +19,7 @@ pub enum Request {
 pub enum ReadRequest {
     GetTask { task: String },
     Tree { task: Option<String> },
+    Deps { task: String },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -102,11 +103,22 @@ pub enum Response {
     Tree {
         nodes: Vec<TreeNode>,
     },
+    Deps {
+        task: Box<TaskRecord>,
+        blockers: Vec<DependencyRecord>,
+        dependents: Vec<DependencyRecord>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TreeNode {
     pub depth: usize,
+    pub task: TaskRecord,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DependencyRecord {
+    pub distance: usize,
     pub task: TaskRecord,
 }
 

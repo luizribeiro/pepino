@@ -652,4 +652,28 @@ async fn graph_reads_render_the_project_forest_and_transitive_dependencies() {
         json!({"ok":{"kind":"tree","nodes":nodes}}),
     )
     .await;
+    read_golden(
+        &mut app,
+        json!({"op":"deps","task":test}),
+        json!({"ok":{"kind":"deps","task":test_record,"blockers":[
+        {"distance":1,"task":install_record},{"distance":2,"task":order_record}
+    ],"dependents":[]}}),
+    )
+    .await;
+    read_golden(
+        &mut app,
+        json!({"op":"deps","task":order}),
+        json!({"ok":{"kind":"deps","task":order_record,"blockers":[],"dependents":[
+            {"distance":1,"task":install_record},{"distance":2,"task":test_record}
+        ]}}),
+    )
+    .await;
+    for op in ["tree", "deps"] {
+        read_golden(
+            &mut app,
+            json!({"op":op,"task":"0000"}),
+            json!({"error":{"kind":"not_found","field":"task","task":"0000"}}),
+        )
+        .await;
+    }
 }

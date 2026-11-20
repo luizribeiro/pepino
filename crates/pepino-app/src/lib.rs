@@ -22,8 +22,8 @@ pub use hlc::Hlc;
 pub use state::{LocalState, OpenOptions};
 
 pub use protocol::{
-    AppError, AppErrorKind, CommentRecord, EdgeEffect, EdgeExclusionReason, ReadRequest, Request,
-    Response, TaskRecord, TreeNode, WriteRequest,
+    AppError, AppErrorKind, CommentRecord, DependencyRecord, EdgeEffect, EdgeExclusionReason,
+    ReadRequest, Request, Response, TaskRecord, TreeNode, WriteRequest,
 };
 
 pub use values::{Date, EdgeKind, FieldValue, InvalidDate, Status};
