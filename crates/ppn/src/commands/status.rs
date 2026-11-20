@@ -6,7 +6,7 @@ use ppn::help_tree::example_help;
 use ppn::output::CommandResult;
 use ppn::render::{short_id, single_line};
 use ppn::response::{ResponseExt, Status};
-use ppn::terminal::Context;
+use ppn::terminal::{Context, RenderSettings};
 
 #[derive(clap::Args)]
 /// Show local identity, board, task counts, and sync activity.
@@ -74,7 +74,10 @@ fn document(
         .collect::<Vec<_>>()
         .join("\n  ");
     let response = client.call(Request::Read(ReadRequest::Status))?;
-    let human_network = network.as_ref().map(describe_network);
+    let settings = context.render_settings()?;
+    let human_network = network
+        .as_ref()
+        .map(|network| describe_network(network, &settings));
     CommandResult::app_document_with_json(
         context,
         response,
@@ -127,7 +130,7 @@ fn document(
     )
 }
 
-fn describe_network(network: &Network) -> String {
+fn describe_network(network: &Network, settings: &RenderSettings) -> String {
     use std::fmt::Write;
 
     let mut text = format!(
@@ -140,7 +143,10 @@ fn describe_network(network: &Network) -> String {
             .events_waiting
             .map_or_else(|| "unknown".into(), |count| count.to_string());
         let time = |time: Option<chrono::DateTime<chrono::Utc>>| {
-            time.map_or_else(|| "none".into(), |time| time.to_rfc3339())
+            time.map_or_else(
+                || "none".into(),
+                |time| settings.dates().timestamp(time, &settings.terminal),
+            )
         };
         let error = board
             .last_error

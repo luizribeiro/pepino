@@ -49,13 +49,16 @@ pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
             }
         })
         .collect();
-    Ok(CommandResult::document(Devices(devices)))
+    Ok(CommandResult::document(Devices(
+        devices,
+        context.render_settings()?,
+    )))
 }
 
-struct Devices(Vec<Device>);
+struct Devices(Vec<Device>, ppn::terminal::RenderSettings);
 
 impl Render for Devices {
-    fn human(&self, _: &Terminal) -> String {
+    fn human(&self, terminal: &Terminal) -> String {
         self.0
             .iter()
             .map(|device| {
@@ -69,7 +72,10 @@ impl Render for Devices {
                     text.push_str(" · this device");
                 }
                 if let Some(time) = device.last_seen {
-                    text.push_str(&format!(" · last seen {}", time.to_rfc3339()));
+                    text.push_str(&format!(
+                        " · last seen {}",
+                        self.1.dates().timestamp(time, terminal)
+                    ));
                 }
                 text
             })

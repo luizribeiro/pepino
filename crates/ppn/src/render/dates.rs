@@ -50,6 +50,26 @@ impl Dates<'_> {
         }
     }
 
+    pub fn timestamp(self, time: DateTime<chrono::Utc>, terminal: &Terminal) -> String {
+        if terminal.stdout_is_tty
+            && let Ok(wall_ms) = u64::try_from(time.timestamp_millis())
+            && let Some(age) = self.time.now_ms.checked_sub(wall_ms)
+            && age < 24 * 60 * 60 * 1000
+        {
+            return self.relative_time(
+                Hlc {
+                    wall_ms,
+                    counter: 0,
+                },
+                terminal,
+            );
+        }
+        format_calendar(
+            time.with_timezone(&self.time.offset),
+            &format!("{} %H:%M", self.format),
+        )
+    }
+
     pub fn local_date(self, clock: Hlc) -> String {
         self.local_stamp(clock, self.format)
     }
@@ -143,5 +163,14 @@ mod tests {
             "tomorrow"
         );
         assert_eq!(dates.due(due, &Terminal::fixed(None, false)), "21/11/2026");
+        let stamp = wall_time(clock.wall_ms).unwrap();
+        assert_eq!(
+            dates.timestamp(stamp, &Terminal::fixed(None, false)),
+            "19/11/2026 23:45"
+        );
+        assert_eq!(
+            dates.timestamp(stamp, &Terminal::fixed(Some(80), false)),
+            "2 hours ago"
+        );
     }
 }
