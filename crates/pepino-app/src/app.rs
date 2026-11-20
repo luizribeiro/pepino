@@ -265,6 +265,12 @@ impl App {
         let creating = matches!(&request, Request::Write(WriteRequest::AddTask { .. }));
         let result = match request {
             Request::Read(request) => self.read(request).await,
+            Request::Write(WriteRequest::IdentityRename { name }) => {
+                self.rename_identity(&name, guard).await
+            }
+            Request::Write(WriteRequest::DeviceRename { device, name }) => {
+                self.rename_device(device.as_deref(), &name, guard).await
+            }
             Request::Write(WriteRequest::BoardRename { board, name }) => {
                 self.board_rename(&board, &name, guard).await
             }

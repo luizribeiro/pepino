@@ -90,7 +90,9 @@ impl App {
         request: WriteRequest,
     ) -> Result<(), AppError> {
         match request {
-            WriteRequest::BoardUse { .. }
+            WriteRequest::IdentityRename { .. }
+            | WriteRequest::DeviceRename { .. }
+            | WriteRequest::BoardUse { .. }
             | WriteRequest::BoardRename { .. }
             | WriteRequest::SaveView { .. }
             | WriteRequest::DeleteView { .. }

@@ -61,6 +61,13 @@ pub enum ReadRequest {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 #[non_exhaustive]
 pub enum WriteRequest {
+    IdentityRename {
+        name: String,
+    },
+    DeviceRename {
+        device: Option<String>,
+        name: String,
+    },
     AddTask {
         title: String,
         description: Option<String>,
@@ -214,6 +221,9 @@ pub enum Response {
     },
     Identity {
         identity: IdentityRecord,
+    },
+    RosterDevice {
+        device: crate::RosterDevice,
     },
     Status {
         identity: Box<IdentityRecord>,

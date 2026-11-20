@@ -10,3 +10,4 @@ pub use record::{RosterDevice, RosterState};
 mod admission;
 mod lookup;
 mod migration;
+mod rename;
