@@ -9,8 +9,8 @@ use tokio::time::{Instant, sleep};
 
 use crate::state::{io_error, storage};
 use crate::{
-    AppError, ConflictReference, LocalState, MissingReference, OpenOptions, ReadRequest, Request,
-    Response, TaskChange, WriteRequest,
+    AppError, ConflictReference, LocalState, MissingReference, OpenOptions, Request, Response,
+    WriteRequest,
 };
 
 const DATABASE: &str = "pepino.sqlite";
@@ -123,15 +123,7 @@ impl App {
         let guard = lock(&self.directory, self.lock_timeout).await?;
         let deleted_conflicts = matches!(
             &request,
-            Request::Write(
-                WriteRequest::AddTask { .. }
-                    | WriteRequest::Link { .. }
-                    | WriteRequest::Delete { .. }
-                    | WriteRequest::ApplyToTasks {
-                        change: TaskChange::Delete,
-                        ..
-                    }
-            ) | Request::Read(ReadRequest::PreviewDelete { .. })
+            Request::Write(WriteRequest::AddTask { .. } | WriteRequest::Link { .. })
         );
         let result = match request {
             Request::Read(request) => self.read(request).await,

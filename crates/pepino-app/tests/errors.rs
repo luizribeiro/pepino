@@ -199,19 +199,23 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
             }
         );
     }
-    let request = json!({"op":"get_task","task":"abcd"});
-    assert_eq!(
-        app.handle(serde_json::from_value(request).unwrap(), NOW)
-            .await
-            .unwrap_err(),
-        AppError::NotFound {
-            field: "task".into(),
-            reference: pepino_app::MissingReference::DeletedTask {
-                task: "abcd".into(),
-                title: None,
+    for request in [
+        json!({"op":"get_task","task":"abcd"}),
+        json!({"op":"delete","task":"abcd"}),
+    ] {
+        assert_eq!(
+            app.handle(serde_json::from_value(request).unwrap(), NOW)
+                .await
+                .unwrap_err(),
+            AppError::NotFound {
+                field: "task".into(),
+                reference: pepino_app::MissingReference::DeletedTask {
+                    task: "abcd".into(),
+                    title: None,
+                },
             },
-        },
-    );
+        );
+    }
     assert_eq!(store.latest_hlc(board).await.unwrap(), before);
 }
 
