@@ -134,6 +134,66 @@ async fn lock_wait_expires_with_a_retryable_busy_error() {
 }
 
 #[tokio::test]
+async fn simultaneous_view_saves_preserve_both_definitions() {
+    use std::sync::Arc;
+
+    use pepino_app::{FilterInput, Response, SavedView, WriteRequest};
+    use tokio::sync::Barrier;
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut reader = App::open(directory.path(), NOW).await.unwrap();
+    let start = Arc::new(Barrier::new(2));
+    let mut workers = Vec::new();
+    for (name, filter) in [
+        ("hardware", "tag:hardware"),
+        ("winter", "is:open due:tomorrow"),
+    ] {
+        let mut app = App::open(directory.path(), NOW).await.unwrap();
+        let start = start.clone();
+        workers.push(tokio::spawn(async move {
+            start.wait().await;
+            app.handle(
+                Request::Write(WriteRequest::SaveView {
+                    name: name.into(),
+                    filter: FilterInput::Text(filter.into()),
+                    today: "2026-11-20".parse().unwrap(),
+                }),
+                NOW,
+            )
+            .await
+            .unwrap()
+        }));
+    }
+    for finished in workers {
+        assert!(matches!(
+            finished.await.unwrap(),
+            Response::ViewSaved {
+                replaced: false,
+                ..
+            }
+        ));
+    }
+    assert_eq!(
+        reader
+            .handle(Request::Read(ReadRequest::ListViews), NOW)
+            .await
+            .unwrap(),
+        Response::Views {
+            views: vec![
+                SavedView {
+                    name: "hardware".into(),
+                    filter: "tag:hardware".into()
+                },
+                SavedView {
+                    name: "winter".into(),
+                    filter: "is:open due:2026-11-21".into()
+                },
+            ],
+        }
+    );
+}
+
+#[tokio::test]
 async fn local_state_replacement_preserves_the_directory_lock() {
     use pepino_app::OpenOptions;
     use std::{fs::File, time::Duration};
