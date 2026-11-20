@@ -10,3 +10,7 @@ devenv.local.nix
 
 # pre-commit
 .pre-commit-config.yaml
+
+# Keep saved Proptest seeds in version control.
+!**/proptest-regressions/
+!**/proptest-regressions/**
