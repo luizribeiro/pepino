@@ -1,4 +1,6 @@
-use pepino_core::DecodeError;
+use pepino_core::{DecodeError, TaskId};
+
+use crate::EdgeExclusion;
 use sqlx::migrate::MigrateError;
 use thiserror::Error;
 
@@ -6,6 +8,12 @@ use thiserror::Error;
 pub enum StoreError {
     #[error("expected a prefix of 4 to 64 hexadecimal digits")]
     InvalidPrefix,
+    #[error("edge from {from} to {to} is ineffective: {reason:?}")]
+    IneffectiveEdge {
+        from: TaskId,
+        to: TaskId,
+        reason: Option<EdgeExclusion>,
+    },
     #[error("invalid event bytes: {0}")]
     Decode(#[from] DecodeError),
     #[error("invalid task view value: {0}")]

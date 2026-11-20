@@ -604,3 +604,44 @@ async fn upgrading_a_file_reindexes_skips_without_replaying_them_as_applied() {
     drop(connection);
     assert!(reopened.events(board, task).await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn requiring_an_effective_edge_rolls_back_the_entire_batch() {
+    let store = Store::open_in_memory().await.unwrap();
+    let board = BoardId::from_bytes([19; 32]);
+    let task = creation();
+    let from = TaskId(task.id());
+    let to = TaskId::from_bytes([33; 32]);
+    let edge = Envelope::new(
+        task.author(),
+        Hlc {
+            counter: 4,
+            ..task.hlc()
+        },
+        Event::EdgeAdded {
+            from,
+            kind: EdgeKind::Blocks,
+            to,
+        },
+    )
+    .unwrap();
+    let task = task.encode().unwrap();
+    let edge = edge.encode().unwrap();
+    let events = [
+        (task.as_slice(), IdSource::Content),
+        (edge.as_slice(), IdSource::Content),
+    ];
+    assert!(matches!(
+        store
+            .append_batch_requiring_edges(board, &events, &[(from, EdgeKind::Blocks, to)])
+            .await,
+        Err(StoreError::IneffectiveEdge {
+            reason: Some(crate::EdgeExclusion::MissingEndpoint),
+            ..
+        })
+    ));
+    assert_eq!(store.statistics(board).await.unwrap().total, 0);
+    assert!(store.board(board).await.unwrap().tasks().is_empty());
+    store.append_batch(board, &events).await.unwrap();
+    assert_eq!(store.statistics(board).await.unwrap().total, 2);
+}

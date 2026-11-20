@@ -1,9 +1,10 @@
 use pepino_core::{
-    BoardId, DecodeOutcome, DeviceId, Envelope, EventId, Hlc, InvalidEvent, TaskId, UnknownValue,
+    BoardId, DecodeOutcome, DeviceId, EdgeKind, Envelope, EventId, Hlc, InvalidEvent, TaskId,
+    UnknownValue,
 };
 use sqlx::{Connection, SqliteConnection};
 
-use crate::{BoardKey, Store, StoreError, fold, history};
+use crate::{BoardKey, Store, StoreError, edges, fold, history};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IdSource {
@@ -175,6 +176,16 @@ impl Store {
         board: BoardId,
         events: &[(&[u8], IdSource)],
     ) -> Result<Vec<AppendOutcome>, StoreError> {
+        self.append_batch_requiring_edges(board, events, &[]).await
+    }
+
+    /// Appends events only if all required edges are effective in the resulting graph.
+    pub async fn append_batch_requiring_edges(
+        &self,
+        board: BoardId,
+        events: &[(&[u8], IdSource)],
+        required: &[(TaskId, EdgeKind, TaskId)],
+    ) -> Result<Vec<AppendOutcome>, StoreError> {
         if events.is_empty() {
             return Ok(Vec::new());
         }
@@ -189,6 +200,23 @@ impl Store {
                 AppendOutcome::Duplicate { id: decoded.id }
             };
             outcomes.push(outcome);
+        }
+        if !required.is_empty() {
+            let projected = edges::project(&edges::edge_rows(&mut tx, board).await?)?;
+            for &(from, kind, to) in required {
+                let edge = projected
+                    .iter()
+                    .map(|edge| edge.record)
+                    .find(|edge| (edge.from, edge.kind, edge.to) == (from, kind, to));
+                if !edge.is_some_and(|edge| edge.is_effective()) {
+                    tx.rollback().await?;
+                    return Err(StoreError::IneffectiveEdge {
+                        from,
+                        to,
+                        reason: edge.and_then(|edge| edge.exclusion),
+                    });
+                }
+            }
         }
         tx.commit().await?;
         Ok(outcomes)
