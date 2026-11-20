@@ -131,7 +131,7 @@ async fn database_instance_id(pool: &sqlx::SqlitePool) -> Result<[u8; 16], Error
         .map_err(Error::storage)
 }
 
-async fn open_database(path: &std::path::Path) -> Result<sqlx::SqlitePool, Error> {
+pub(crate) async fn open_database(path: &std::path::Path) -> Result<sqlx::SqlitePool, Error> {
     let mut file = std::fs::OpenOptions::new();
     file.write(true).create(true).truncate(false);
     #[cfg(unix)]

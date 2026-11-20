@@ -4,6 +4,7 @@ use std::{
     path::Path,
     sync::{Arc, OnceLock},
     thread,
+    time::Duration,
 };
 
 use sqlx::SqlitePool;
@@ -15,11 +16,14 @@ use tokio::{
 
 use crate::Error;
 
+const WRITER_LIMIT: Duration = Duration::from_secs(2);
+const SHUTDOWN_LIMIT: Duration = Duration::from_secs(6);
+
 pub(crate) struct Worker {
     pub(crate) handle: Handle,
     pub(crate) pool: Arc<OnceLock<SqlitePool>>,
     stop: oneshot::Sender<()>,
-    done: oneshot::Receiver<()>,
+    done: oneshot::Receiver<Result<(), Error>>,
 }
 
 impl Worker {
@@ -60,18 +64,16 @@ impl Worker {
                     .as_ref()
                     .map(|(runtime, _)| runtime.handle().clone())
                     .map_err(ToString::to_string);
-                if ready_tx.send(handle).is_ok()
+                let result = if ready_tx.send(handle).is_ok()
                     && let Ok((runtime, cleanup)) = runtimes
                 {
                     let _ = runtime.block_on(stop_rx);
-                    // Live storage tasks can hold pooled connections while waiting for work.
-                    drop(runtime);
-                    if let Some(pool) = worker_pool.get() {
-                        cleanup.block_on(pool.close());
-                    }
-                }
+                    stop_runtime(runtime, cleanup, worker_pool.get())
+                } else {
+                    Ok(())
+                };
                 drop(lock);
-                let _ = done_tx.send(());
+                let _ = done_tx.send(result);
             })
             .map_err(|error| Error::Worker(error.to_string()))?;
         let handle = ready
@@ -98,8 +100,42 @@ impl Worker {
 
     pub(crate) async fn shutdown(self) -> Result<(), Error> {
         let _ = self.stop.send(());
-        self.done.await.map_err(|_| Error::Closed)
+        tokio::time::timeout(SHUTDOWN_LIMIT, self.done)
+            .await
+            .map_err(|_| {
+                Error::Worker("timed out stopping network tasks or closing node.sqlite".into())
+            })?
+            .map_err(|_| Error::Worker("network worker exited during shutdown".into()))?
     }
+}
+
+fn stop_runtime(
+    runtime: tokio::runtime::Runtime,
+    cleanup: tokio::runtime::Runtime,
+    pool: Option<&SqlitePool>,
+) -> Result<(), Error> {
+    let Some(pool) = pool else {
+        drop(runtime);
+        return Ok(());
+    };
+    // p2panda 0.8.1 rolls back cancelled transactions in a spawned task.
+    // Hold SQLite's writer lock while cancelling runtime tasks so none can orphan a writer.
+    let writer = cleanup.block_on(async {
+        tokio::time::timeout(WRITER_LIMIT, pool.begin_with("BEGIN IMMEDIATE"))
+            .await
+            .map_err(|_| Error::Storage("timed out waiting for the node database writer".into()))?
+            .map_err(Error::storage)
+    });
+    drop(runtime);
+    cleanup.block_on(async {
+        let close = pool.close();
+        let result = match writer {
+            Ok(writer) => writer.rollback().await.map_err(Error::storage),
+            Err(error) => Err(error),
+        };
+        close.await;
+        result
+    })
 }
 
 #[cfg(test)]
@@ -149,6 +185,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn shutdown_waits_for_a_slow_upstream_transaction_to_commit() {
+        use p2panda_store::{SqliteStore, Transaction};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.sqlite");
+        let worker = Worker::start(&path).await.unwrap();
+        let pool = crate::node::open_database(&path).await.unwrap();
+        worker.pool.set(pool.clone()).unwrap();
+        let store = SqliteStore::from_pool(pool.clone());
+        let (written, ready) = oneshot::channel();
+        let (release, finish) = oneshot::channel();
+        let writing = worker.handle.spawn(async move {
+            let permit = store.begin().await.unwrap();
+            store
+                .tx(async |tx| {
+                    sqlx::query("CREATE TABLE greenhouse_inspections (title TEXT NOT NULL)")
+                        .execute(&mut **tx)
+                        .await?;
+                    Ok(())
+                })
+                .await
+                .unwrap();
+            written.send(()).unwrap();
+            finish.await.unwrap();
+            store.commit(permit).await.unwrap();
+        });
+        ready.await.unwrap();
+        let shutdown = worker.shutdown();
+        tokio::pin!(shutdown);
+        assert!(futures_util::poll!(&mut shutdown).is_pending());
+        release.send(()).unwrap();
+        shutdown.await.unwrap();
+        writing.await.unwrap();
+        let reopened = crate::node::open_database(&path).await.unwrap();
+        let table: String =
+            sqlx::query_scalar("SELECT name FROM sqlite_schema WHERE type = 'table'")
+                .fetch_one(&reopened)
+                .await
+                .unwrap();
+        assert_eq!(table, "greenhouse_inspections");
+    }
+
+    #[tokio::test]
     async fn holds_directory_lock_during_background_shutdown() {
         let dir = tempfile::tempdir().unwrap();
         let database = dir.path().join("node.sqlite");
@@ -167,7 +246,7 @@ mod tests {
             Err(Error::DirectoryInUse(_))
         ));
         release.send(()).unwrap();
-        done.await.unwrap();
+        done.await.unwrap().unwrap();
         Worker::start(&database)
             .await
             .unwrap()
