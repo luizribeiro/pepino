@@ -483,7 +483,7 @@ fn field_path(object: &str, field: &str) -> String {
 
 #[cfg(test)]
 #[path = "../tests/support/template.rs"]
-mod fixture;
+pub(super) mod fixture;
 
 #[cfg(test)]
 mod tests {

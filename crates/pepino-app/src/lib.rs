@@ -11,6 +11,7 @@ mod batch;
 mod device_grant;
 mod device_install;
 mod device_request;
+mod device_update;
 mod filter;
 mod hlc;
 mod initialize;

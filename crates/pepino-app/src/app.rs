@@ -28,7 +28,7 @@ pub struct App {
     pub(super) local: LocalState,
     pub(super) directory: PathBuf,
     pub(super) credentials_file: PathBuf,
-    lock_timeout: Duration,
+    pub(super) lock_timeout: Duration,
     pub(super) clock: Clock,
 }
 
