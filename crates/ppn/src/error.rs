@@ -334,6 +334,26 @@ impl From<AppError> for CliError {
                     .map_or_else(String::new, |title| format!(" {title:?}"));
                 diagnostic.message = format!("Task {task}{title} was deleted");
             }
+            AppError::NotFound {
+                reference:
+                    pepino_app::MissingReference::TaskOnOtherBoards {
+                        task,
+                        alternate_boards,
+                    },
+                ..
+            } => {
+                diagnostic.message = format!("No task matches {task} on the selected board");
+                diagnostic.hint = Some(format!(
+                    "Use --board to select {}.",
+                    board_candidates(alternate_boards)
+                ));
+            }
+            AppError::NotFound {
+                field,
+                reference: reference @ pepino_app::MissingReference::Board(_),
+            } if matches!(field.as_str(), "--board" | "PPN_BOARD") => {
+                diagnostic.message = format!("{reference} from {field} was not found");
+            }
             AppError::AmbiguousBoard {
                 board,
                 field,
@@ -385,8 +405,10 @@ impl From<AppError> for CliError {
         }
         if let Ok(Value::Object(mut details)) = serde_json::to_value(error) {
             details.remove("kind");
-            if let Some(Value::Object(task)) = details.remove("deleted_task") {
-                details.extend(task);
+            for key in ["deleted_task", "task_on_other_boards"] {
+                if let Some(Value::Object(task)) = details.remove(key) {
+                    details.extend(task);
+                }
             }
             if let Some(Value::String(hint)) = details.remove("hint") {
                 diagnostic.hint = Some(if hint == "Use list_views to see available saved views" {

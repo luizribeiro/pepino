@@ -240,6 +240,13 @@ impl App {
             &request,
             Request::Write(WriteRequest::AddTask { .. } | WriteRequest::Link { .. })
         );
+        let relation = match &request {
+            Request::Write(
+                WriteRequest::Link { from, to, .. } | WriteRequest::Unlink { from, to, .. },
+            ) => Some((from.clone(), to.clone())),
+            _ => None,
+        };
+        let creating = matches!(&request, Request::Write(WriteRequest::AddTask { .. }));
         let result = match request {
             Request::Read(request) => self.read(request).await,
             Request::Write(WriteRequest::SaveView { name, filter }) => {
@@ -261,6 +268,10 @@ impl App {
             }
         };
         match result {
+            Err(AppError::NotFound {
+                field,
+                reference: MissingReference::Task(task),
+            }) => Err(self.missing_task(field, task, relation, creating).await?),
             Err(AppError::Conflict {
                 field,
                 reference: ConflictReference::Task { task, .. },

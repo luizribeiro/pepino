@@ -417,6 +417,10 @@ pub enum AppError {
 #[non_exhaustive]
 pub enum MissingReference {
     Task(String),
+    TaskOnOtherBoards {
+        task: String,
+        alternate_boards: Vec<crate::LocalBoard>,
+    },
     DeletedTask {
         task: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -439,7 +443,7 @@ impl MissingReference {
 impl std::fmt::Display for MissingReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Task(task) => write!(f, "task {task}"),
+            Self::Task(task) | Self::TaskOnOtherBoards { task, .. } => write!(f, "task {task}"),
             Self::DeletedTask {
                 task,
                 title: Some(title),
