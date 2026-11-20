@@ -194,8 +194,8 @@ settings! {
         relay_urls: Vec<RelayUrl> = list("PPN_RELAY_URLS", "Comma-separated HTTPS URLs.",
             DEFAULT_RELAY_URLS.iter().map(|url| url.parse()).collect());
         mdns: bool = boolean("PPN_MDNS", "true, false, 1, or 0.", Ok(true));
-        data_dir: AbsolutePath = path("PPN_DATA_DIR", "Absolute path or a path beginning with ~.", dirs.data_dir());
-        credentials_file: AbsolutePath = path("PPN_CREDENTIALS_FILE", "Absolute path or a path beginning with ~.",
+        data_dir: AbsolutePath = path("PPN_DATA_DIR", "Absolute path, ~, or a path beginning with ~/.", dirs.data_dir());
+        credentials_file: AbsolutePath = path("PPN_CREDENTIALS_FILE", "Absolute path, ~, or a path beginning with ~/.",
             Ok(data_dir.value.join("credentials.cbor")));
         trusted_devices: Vec<NodeId> = list("PPN_TRUSTED_DEVICES", "Comma-separated 64-digit hex node IDs.", Ok(Vec::new()));
         bootstrap_nodes: Vec<BootstrapNode> = bootstrap_list("PPN_BOOTSTRAP_NODES",

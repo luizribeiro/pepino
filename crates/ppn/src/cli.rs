@@ -42,7 +42,7 @@ enum Command {
         path: Vec<String>,
     },
     /// Inspect ppn configuration.
-    #[command(disable_help_subcommand = true, after_help = example_help(&["ppn config show --json"]))]
+    #[command(disable_help_subcommand = true, after_help = config_command::help_footer())]
     Config {
         #[command(subcommand)]
         command: config_command::Command,

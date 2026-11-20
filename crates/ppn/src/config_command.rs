@@ -29,6 +29,33 @@ pub enum Command {
     },
 }
 
+pub fn help_footer() -> String {
+    let variables: Vec<_> = config::environment_variables().collect();
+    let variable_width = variables
+        .iter()
+        .map(|entry| entry.variable.len())
+        .max()
+        .unwrap_or(0);
+    let key_width = variables
+        .iter()
+        .map(|entry| entry.key.len())
+        .max()
+        .unwrap_or(0);
+    let rows: String = variables
+        .iter()
+        .map(|entry| {
+            format!(
+                "  {:<variable_width$}  {:<key_width$}  {}\n",
+                entry.variable, entry.key, entry.value
+            )
+        })
+        .collect();
+    format!(
+        "{}\n\nConfiguration environment variables (empty values are unset):\n{rows}",
+        example_help(&["ppn config show --json"]),
+    )
+}
+
 pub fn show(context: &Context<'_>, key: Option<&str>) -> Result<CommandResult, CliError> {
     let loaded = context.config()?;
     let mut values = loaded.config.values();

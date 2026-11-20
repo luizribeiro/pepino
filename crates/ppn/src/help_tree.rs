@@ -29,7 +29,7 @@ pub fn command_fields(command: &Command) -> Map<String, Value> {
         .get_about()
         .map(ToString::to_string)
         .unwrap_or_default();
-    Map::from_iter(
+    let mut fields = Map::from_iter(
         [
             ("name", command.get_name().into()),
             ("summary", summary.into()),
@@ -39,7 +39,12 @@ pub fn command_fields(command: &Command) -> Map<String, Value> {
             ("commands", children.into()),
         ]
         .map(|(key, value)| (key.into(), value)),
-    )
+    );
+    if command.get_name() == "config" {
+        let variables: Vec<_> = crate::config::environment_variables().collect();
+        fields.insert("environment".into(), json!(variables));
+    }
+    fields
 }
 
 pub fn examples(command: &Command) -> Vec<String> {

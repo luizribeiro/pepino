@@ -980,3 +980,26 @@ fn explicit_config_check_accepts_an_unset_or_relative_home() {
         assert_eq!(as_json(&success(output))["valid"], true);
     }
 }
+
+#[test]
+fn config_help_lists_environment_variables_from_the_settings_table() {
+    let help = run_ppn(&["config", "--help"]);
+    assert!(help.contains("empty values are unset"));
+    let document = as_json(&run_ppn(&["help", "config", "--json"]));
+    let entries = document["environment"].as_array().unwrap();
+    for entry in entries {
+        assert!(help.contains(entry["variable"].as_str().unwrap()));
+        assert!(help.contains(entry["value"].as_str().unwrap()));
+    }
+    let bootstrap = entries
+        .iter()
+        .find(|entry| entry["variable"] == "PPN_BOOTSTRAP_NODES")
+        .unwrap();
+    assert_eq!(bootstrap["key"], "bootstrap_nodes");
+    assert!(
+        bootstrap["value"]
+            .as_str()
+            .unwrap()
+            .contains("node_id=https://relay.example")
+    );
+}
