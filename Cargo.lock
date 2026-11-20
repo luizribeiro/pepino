@@ -3351,6 +3351,7 @@ dependencies = [
  "ciborium",
  "getrandom 0.4.3",
  "pepino-core",
+ "pepino-node",
  "pepino-store",
  "proptest",
  "serde",

@@ -11,6 +11,7 @@ tokio = { version = "1", features = ["rt", "time"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 ciborium = "0.2"
 getrandom = "0.4"
+pepino-node = { path = "../pepino-node" }
 pepino-core = { path = "../pepino-core" }
 pepino-store = { path = "../pepino-store" }
 serde = { version = "1", features = ["derive"] }

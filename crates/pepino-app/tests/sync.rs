@@ -1,3 +1,6 @@
+#[path = "support/template.rs"]
+mod fixture;
+
 use pepino_app::{App, Response, TaskRecord, TaskSummary};
 use pepino_core::BoardId;
 use pepino_store::{EventRecord, Store};
@@ -53,10 +56,11 @@ async fn receive(store: &Store, board: BoardId, events: &[EventRecord]) {
 async fn exchange(order: [u8; 8]) -> ([TaskRecord; 2], [TaskRecord; 2]) {
     let left_dir = sync_directory();
     let right_dir = sync_directory();
-    let mut left = App::init(left_dir.path(), NOW + 3 * 86_400_000)
+    let mut left = fixture::open(left_dir.path(), NOW + 3 * 86_400_000)
         .await
         .unwrap();
-    let mut right = App::init(right_dir.path(), NOW).await.unwrap();
+    fixture::copy_peer(right_dir.path());
+    let mut right = App::open(right_dir.path(), NOW).await.unwrap();
     let left_store = Store::open(left_dir.path().join("pepino.sqlite"))
         .await
         .unwrap();
@@ -151,7 +155,7 @@ proptest! {
 #[tokio::test]
 async fn unlink_reports_activation_of_a_dormant_remote_blocker() {
     let directory = sync_directory();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let hinges = create(
         &mut app,
         json!({"op":"add_task","title":"Order hinges"}),
@@ -207,7 +211,7 @@ async fn unlink_reports_activation_of_a_dormant_remote_blocker() {
 #[tokio::test]
 async fn deleting_a_live_task_cleans_up_edges_to_already_deleted_batch_targets() {
     let directory = sync_directory();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let bench = create(
         &mut app,
         json!({"op":"add_task","title":"Repair the greenhouse bench"}),
@@ -268,7 +272,7 @@ async fn deletion_reports_roots_created_when_older_parent_edges_activate() {
     use pepino_core::{Clock, DeviceId, EdgeKind, Envelope, Event};
 
     let directory = sync_directory();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut app = fixture::open(directory.path(), NOW).await.unwrap();
     let mut tasks = Vec::new();
     for title in [
         "Clear the old bed",

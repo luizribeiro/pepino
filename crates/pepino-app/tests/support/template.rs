@@ -3,6 +3,9 @@
 use std::{fs, path::Path, sync::OnceLock};
 
 use pepino_app::{App, AppError, OpenOptions};
+use pepino_core::{BoardId, IdentityId};
+use pepino_node::DeviceCredentials;
+use pepino_store::Store;
 use serde_json::{Value, json};
 use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 use tempfile::TempDir;
@@ -43,6 +46,21 @@ pub fn set_names(directory: &Path, options: &OpenOptions) {
     fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
 }
 
+pub fn copy_peer(directory: &Path) {
+    static PEER: OnceLock<TempDir> = OnceLock::new();
+    let peer = PEER.get_or_init(|| {
+        let dir = tempfile::tempdir().unwrap();
+        let board = state(template())["board_id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        on_runtime(|runtime| runtime.block_on(store_fixture(dir.path(), board)));
+        dir
+    });
+    copy_from(peer.path(), directory);
+}
+
 fn state(directory: &Path) -> Value {
     serde_json::from_slice(&fs::read(directory.join("local.json")).unwrap()).unwrap()
 }
@@ -54,8 +72,12 @@ fn template() -> &'static Path {
             let dir = tempfile::tempdir().unwrap();
             on_runtime(|runtime| {
                 runtime.block_on(async {
-                    drop(App::init(dir.path(), NOW).await.unwrap());
-                    checkpoint(dir.path()).await;
+                    if cfg!(pepino_network_tests) {
+                        drop(App::init(dir.path(), NOW).await.unwrap());
+                        checkpoint(dir.path()).await;
+                    } else {
+                        store_fixture(dir.path(), BoardId::from_bytes([73; 32])).await;
+                    }
                 })
             });
             dir
@@ -77,6 +99,42 @@ fn on_runtime(work: impl FnOnce(tokio::runtime::Runtime) + Send) {
             .join()
             .unwrap()
     })
+}
+
+async fn store_fixture(directory: &Path, board: BoardId) {
+    let credentials =
+        DeviceCredentials::load_or_create(directory.join("credentials.cbor")).unwrap();
+    let device = credentials.device_id();
+    let identity = IdentityId::from_bytes(*device.as_bytes());
+    let database = directory.join("pepino.sqlite");
+    let store = Store::open(&database).await.unwrap();
+    store.bind_local(board, identity, device).await.unwrap();
+    drop(store);
+    checkpoint(directory).await;
+    fs::write(
+        directory.join("local.json"),
+        serde_json::to_vec(&json!({
+            "version": 2,
+            "device_id": device,
+            "identity_id": identity,
+            "display_name": "Ada Gardener",
+            "device_name": "Garden laptop",
+            "board_id": board,
+            "board_name": "Personal",
+            "saved_views": {},
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            directory.join("local.json"),
+            fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+    }
 }
 
 async fn checkpoint(directory: &Path) {
