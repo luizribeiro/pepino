@@ -9,7 +9,7 @@ fn ls_renders_filtered_rows_through_a_pipe() {
     assert_eq!(
         sandbox.run(&["ls", "tag:hardware"]),
         format!(
-            "{}  Order stainless fittings  todo #hardware\n",
+            "{} todo  Order stainless fittings  #hardware\n",
             &project.blocker[..6]
         )
     );
@@ -74,7 +74,7 @@ fn ls_sorts_and_limits_before_rendering() {
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
         format!(
-            "{}  Renovate the greenhouse  todo #garden\n",
+            "{} todo  Renovate the greenhouse  #garden\n",
             &project.parent[..6]
         )
     );
@@ -189,7 +189,7 @@ fn ls_renders_the_app_display_name_for_assignees() {
     assert_eq!(
         human,
         format!(
-            "{}  Inspect the greenhouse hinges  todo #hardware @{name}\n",
+            "{} todo  Inspect the greenhouse hinges  #hardware @{name}\n",
             &assigned[..6]
         )
     );
@@ -276,4 +276,39 @@ fn ls_applies_status_terms_in_nested_saved_views() {
     assert_eq!(result["total"], 1);
     assert_eq!(result["constrains_status"], true);
     assert_eq!(listing(&sandbox, &["-is:blocked"])["total"], 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn ls_aligns_status_title_and_metadata_on_a_terminal() {
+    let (sandbox, _) = task_sandbox();
+    create_task(
+        &sandbox,
+        "Call the plumber",
+        &["--due", "2026-11-20", "--priority", "3"],
+    );
+    create_task(
+        &sandbox,
+        "Check the shutoff valve",
+        &["--status", "doing", "--priority", "4"],
+    );
+    let piped = sandbox.run(&["ls", "--sort", "title"]);
+    assert!(
+        piped
+            .lines()
+            .next()
+            .unwrap()
+            .ends_with("todo  Call the plumber  due:2026-11-20 p3")
+    );
+    let mut command = sandbox.command();
+    command.args(["ls", "--sort", "title", "--color", "never"]);
+    let output = common::success(common::task_terminal(command, Some(b"")));
+    let rows: Vec<_> = output.lines().collect();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].find("todo"), rows[1].find("doing"));
+    assert_eq!(
+        rows[0].find("Call the plumber"),
+        rows[1].find("Check the shutoff valve")
+    );
+    assert_eq!(rows[0].find("due:"), rows[1].find("p4"));
 }

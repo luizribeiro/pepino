@@ -3,7 +3,7 @@ use ppn::app::AppClient;
 use ppn::error::CliError;
 use ppn::help_tree::example_help;
 use ppn::output::{CommandResult, Warning};
-use ppn::render::{ShortIds, task_row};
+use ppn::render::TaskRows;
 use ppn::response::ResponseExt;
 use ppn::terminal::Context;
 use serde_json::{Map, json};
@@ -87,19 +87,16 @@ pub fn run(context: &Context<'_>, mut args: Args) -> Result<CommandResult, CliEr
     Ok(
         CommandResult::app_document(context, response, |response, settings| {
             let result = response.tasks()?;
-            let ids = ShortIds::new(result.tasks.iter().map(|task| task.id.as_str()));
+            let rows = TaskRows::new(
+                result.tasks.iter(),
+                result.names,
+                settings.dates(),
+                &settings.terminal,
+            );
             Ok(result
                 .tasks
                 .iter()
-                .map(|task| {
-                    task_row(
-                        task,
-                        &ids,
-                        result.names,
-                        settings.dates(),
-                        &settings.terminal,
-                    )
-                })
+                .map(|task| rows.row(task, "", ""))
                 .collect::<Vec<_>>()
                 .join("\n"))
         })?

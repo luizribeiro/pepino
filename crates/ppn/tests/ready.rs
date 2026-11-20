@@ -9,7 +9,7 @@ fn ready_lists_unblocked_tasks_with_the_same_filters_as_ls() {
     assert_eq!(
         sandbox.run(&["ready", "tag:hardware"]),
         format!(
-            "{}  Order stainless fittings  todo #hardware\n",
+            "{} todo  Order stainless fittings  #hardware\n",
             &project.blocker[..6]
         )
     );
