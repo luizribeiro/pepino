@@ -320,6 +320,7 @@ pub struct CommentRecord {
 pub enum AppErrorKind {
     NotFound,
     NotInitialized,
+    DeviceRequestPending,
     IncompatibleLocalState,
     PermissionDenied,
     AmbiguousId,
@@ -336,6 +337,7 @@ impl AppErrorKind {
         match self {
             Self::NotFound => "not_found",
             Self::NotInitialized => "not_initialized",
+            Self::DeviceRequestPending => "device_request_pending",
             Self::IncompatibleLocalState => "incompatible_local_state",
             Self::PermissionDenied => "permission_denied",
             Self::AmbiguousId => "ambiguous_id",
@@ -383,6 +385,8 @@ pub enum AppError {
     },
     #[error("{directory} is not initialized; run ppn init")]
     NotInitialized { directory: String },
+    #[error("Device request pending: run `ppn device join`")]
+    DeviceRequestPending,
     #[error(
         "local state version {version} in {directory} cannot be upgraded because its device and board IDs are not real keys and spaces. Move the directory aside and run ppn init."
     )]
@@ -489,6 +493,7 @@ impl AppError {
         match self {
             Self::NotFound { .. } => AppErrorKind::NotFound,
             Self::NotInitialized { .. } => AppErrorKind::NotInitialized,
+            Self::DeviceRequestPending => AppErrorKind::DeviceRequestPending,
             Self::IncompatibleLocalState { .. } => AppErrorKind::IncompatibleLocalState,
             Self::PermissionDenied { .. } => AppErrorKind::PermissionDenied,
             Self::AmbiguousId { .. } => AppErrorKind::AmbiguousId,

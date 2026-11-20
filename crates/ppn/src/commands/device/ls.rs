@@ -1,4 +1,4 @@
-use pepino_app::{BoardJoinState, DeviceRequest};
+use pepino_app::BoardJoinState;
 use pepino_core::DeviceId;
 use ppn::{
     app::AppClient,
@@ -19,21 +19,7 @@ struct Device {
 }
 
 pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
-    let app = match AppClient::open(context) {
-        Ok(app) => app,
-        Err(error) if error.kind() == ErrorKind::NotInitialized => {
-            let (directory, _) = local_options(context, None)?;
-            let request = DeviceRequest::load(directory)?.ok_or(error)?;
-            return Ok(CommandResult::document(Devices(vec![Device {
-                id: request.id,
-                name: request.name,
-                this_device: true,
-                state: "pending",
-                last_seen: None,
-            }])));
-        }
-        Err(error) => return Err(error),
-    };
+    let app = AppClient::open(context)?;
     let local = app.local_state();
     let path = socket_path(&context.config()?.config);
     let status = (Client { path }).status().ok().flatten();

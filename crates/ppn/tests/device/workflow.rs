@@ -64,10 +64,11 @@ fn linked_devices_share_tasks_and_late_members_get_history() {
     let titanium = Host::owner(&network);
     let ferrum = Host::new(&network);
     let request = ferrum.request("tablet");
-    assert_eq!(
-        ferrum.json(&["device", "ls"])["devices"][0]["state"],
-        "pending"
-    );
+    for args in [["device", "ls"], ["init", "--json"], ["status", "--json"]] {
+        let output = ferrum.output(&args);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Device request pending"));
+    }
     let result = ferrum.json(&["device", "request"]);
     let fingerprint = result["fingerprint"].as_str().unwrap();
     task_error(
