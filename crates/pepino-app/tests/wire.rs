@@ -67,6 +67,7 @@ fn errors_and_write_responses_have_stable_tags() {
         round_trip(&error);
     }
     let response = Response::Write {
+        targets: vec![],
         deleted: vec![],
         names: Default::default(),
         changed: true,
@@ -100,6 +101,7 @@ fn versioned_messages_have_a_shared_json_and_cbor_codec() {
         task: "97ad".into(),
     }));
     let ok = WireResponse::new(Ok(Response::Write {
+        targets: vec![],
         deleted: vec![],
         names: Default::default(),
         changed: false,

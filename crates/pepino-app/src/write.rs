@@ -183,7 +183,7 @@ fn set_fields(
     current: &TaskRecord,
     changes: BTreeMap<String, crate::FieldValue>,
 ) -> Result<(), AppError> {
-    batch.affected.insert(current.id);
+    batch.targets.insert(current.id);
     for (name, value) in changes {
         let path = field_path("changes", &name);
         let value = match value {
@@ -244,7 +244,7 @@ fn set_tags(
     present: bool,
 ) -> Result<(), AppError> {
     let task = current.id;
-    batch.affected.insert(task);
+    batch.targets.insert(task);
     let mut indexed = BTreeMap::new();
     for (index, tag) in tags.into_iter().enumerate() {
         indexed.entry(tag).or_insert(index);
@@ -268,7 +268,7 @@ fn set_assignees(
     present: bool,
 ) -> Result<(), AppError> {
     let task = current.id;
-    batch.affected.insert(task);
+    batch.targets.insert(task);
     for who in assignees {
         let event = if present {
             Event::AssigneeAdded { task, who }

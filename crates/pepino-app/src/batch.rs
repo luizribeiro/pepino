@@ -11,7 +11,7 @@ use crate::state::storage;
 use crate::{App, AppError, EdgeEffect, Response};
 
 pub(super) struct Batch {
-    pub(super) affected: BTreeSet<TaskId>,
+    pub(super) targets: BTreeSet<TaskId>,
     events: Vec<Envelope>,
     clock: Clock,
     author: DeviceId,
@@ -31,7 +31,7 @@ impl Batch {
             event
                 .validate()
                 .map_err(|error| invalid_event(field, error))?;
-            self.affected.extend(event.referenced_tasks());
+            self.targets.extend(event.referenced_tasks());
         }
         Ok(())
     }
@@ -45,8 +45,8 @@ impl Batch {
             NewEnvelopeError::InvalidEvent(error) => invalid_event(field, error),
             NewEnvelopeError::Encode(error) => storage("encode event", error, false),
         })?;
-        self.affected.extend(envelope.created_task());
-        self.affected.extend(envelope.event().referenced_tasks());
+        self.targets.extend(envelope.created_task());
+        self.targets.extend(envelope.event().referenced_tasks());
         let id = envelope.id();
         self.events.push(envelope);
         Ok(id)
@@ -79,7 +79,7 @@ impl App {
             .max(stored)
             .map_or_else(Clock::new, Clock::from_hlc);
         Ok(Batch {
-            affected: BTreeSet::new(),
+            targets: BTreeSet::new(),
             events: Vec::new(),
             clock,
             author: self.local.device_id,
@@ -90,10 +90,10 @@ impl App {
     pub(super) async fn commit_batch(
         &mut self,
         before: &BoardView,
-        mut batch: Batch,
+        batch: Batch,
     ) -> Result<Response, AppError> {
         if batch.events.is_empty() {
-            return self.write_response(before, before, false, None, batch.affected, Vec::new());
+            return self.write_response(before, before, false, None, batch.targets, Vec::new());
         }
         let encoded = batch
             .events
@@ -124,7 +124,7 @@ impl App {
             })
             .collect();
         if applied.is_empty() {
-            return self.write_response(before, before, false, None, batch.affected, Vec::new());
+            return self.write_response(before, before, false, None, batch.targets, Vec::new());
         }
 
         let after = self
@@ -132,19 +132,13 @@ impl App {
             .board(self.local.board_id)
             .await
             .map_err(|error| committed_error(store_error(error)))?;
-        batch.affected.extend(
-            after
-                .iter()
-                .filter(|task| before.task(task.id) != Some(*task))
-                .map(|task| task.id),
-        );
         let created = applied.iter().find_map(|event| event.created_task());
         let edges = applied
             .iter()
             .filter_map(|event| edge_effect(&after, event.event()).transpose())
             .collect::<Result<Vec<_>, _>>()
             .map_err(committed_error)?;
-        self.write_response(before, &after, true, created, batch.affected, edges)
+        self.write_response(before, &after, true, created, batch.targets, edges)
             .map_err(committed_error)
     }
 
@@ -154,9 +148,21 @@ impl App {
         view: &BoardView,
         changed: bool,
         created: Option<TaskId>,
-        affected: BTreeSet<TaskId>,
+        targets: BTreeSet<TaskId>,
         edges: Vec<EdgeEffect>,
     ) -> Result<Response, AppError> {
+        let mut affected = targets.clone();
+        if changed {
+            affected.extend(
+                view.iter()
+                    .filter(|task| before.task(task.id) != Some(*task))
+                    .map(|task| task.id),
+            );
+        }
+        let targets = match created {
+            Some(id) => vec![id.to_string()],
+            None => targets.into_iter().map(|id| id.to_string()).collect(),
+        };
         let mut tasks = Vec::new();
         let mut deleted = Vec::new();
         for id in &affected {
@@ -168,6 +174,7 @@ impl App {
         }
         let names = self.local.task_names(tasks.iter().chain(&deleted));
         Ok(Response::Write {
+            targets,
             names,
             deleted,
             changed,

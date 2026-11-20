@@ -192,7 +192,17 @@ async fn edit_fields_completes_work_and_clears_optional_values() {
             "status":{"type":"status","value":"done"}, "estimate":{"type":"integer","value":1}
         }
     });
-    let (changed, created, tasks, _) = write(&mut app, edit.clone()).await;
+    let Response::Write {
+        changed,
+        created,
+        tasks,
+        targets,
+        ..
+    } = handle(&mut app, edit.clone()).await.unwrap()
+    else {
+        panic!("expected write response");
+    };
+    assert_eq!(targets, std::slice::from_ref(&id));
     assert!(changed && tasks.iter().any(|task| task.id == child));
     assert_eq!(created, None);
     let done = get(&mut app, &id).await;
