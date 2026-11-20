@@ -156,3 +156,27 @@ fn edit_clears_optional_fields_and_unassigns() {
     assert_eq!(edited["fields"], serde_json::json!({}));
     assert_eq!(edited["assignees"], serde_json::json!([]));
 }
+
+#[cfg(unix)]
+#[test]
+fn edit_opens_editor_on_a_terminal_and_writes_the_form_difference() {
+    let (sandbox, _) = task_sandbox();
+    let p = small_project(&sandbox);
+    let script = sandbox.home.path().join("edit task.sh");
+    std::fs::write(
+        &script,
+        r#"sed 's/Renovate the greenhouse/Rebuild the greenhouse/' "$1" > "$1.edited"
+    mv "$1.edited" "$1"
+"#,
+    )
+    .unwrap();
+    let mut command = sandbox.command();
+    command
+        .args(["edit", &p.parent[..8], "--json"])
+        .env_remove("VISUAL")
+        .env("EDITOR", format!("sh '{}'", script.display()));
+    let json = as_json(&success(task_terminal(command, Some(b""))));
+    assert_write(&json, true);
+    let task = show_task(&sandbox, &p.parent);
+    assert_eq!(task["title"], "Rebuild the greenhouse");
+}
