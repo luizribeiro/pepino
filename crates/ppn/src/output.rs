@@ -1,10 +1,11 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
+use pepino_app::Response;
 use serde_json::{Map, Value, json};
 
 use crate::error::{CliError, ErrorKind};
-use crate::terminal::Terminal;
+use crate::terminal::{Color, Terminal};
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -27,18 +28,29 @@ impl CommandResult {
     ) -> Self {
         Self(Box::new(move |json, terminal, stdout| {
             for row in rows {
-                match write_row(row?, json, terminal, stdout).and_then(|()| stdout.flush()) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == io::ErrorKind::BrokenPipe => return Ok(()),
-                    Err(error) => {
-                        return Err(CliError::new(
-                            ErrorKind::Failure,
-                            format!("Could not write output: {error}"),
-                        ));
-                    }
+                if !flush_output(write_row(row?, json, terminal, stdout), stdout)? {
+                    break;
                 }
             }
             Ok(())
+        }))
+    }
+    pub fn app_document(
+        response: Response,
+        color: Color,
+        human: impl FnOnce(&Response, &Terminal) -> Result<String, CliError> + 'static,
+    ) -> Self {
+        Self(Box::new(move |json, terminal, stdout| {
+            let result = if json {
+                match serde_json::to_value(response) {
+                    Ok(Value::Object(fields)) => write_json(fields, stdout),
+                    Ok(_) => Err(io::Error::other("Expected an app response object.")),
+                    Err(error) => Err(error.into()),
+                }
+            } else {
+                write_text(&human(&response, &terminal.task_output(color))?, stdout)
+            };
+            flush_output(result, stdout).map(|_| ())
         }))
     }
 }
@@ -54,6 +66,17 @@ pub fn finish(
     }
 }
 
+fn flush_output(result: io::Result<()>, stdout: &mut dyn Write) -> Result<bool, CliError> {
+    match result.and_then(|()| stdout.flush()) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(false),
+        Err(error) => Err(CliError::new(
+            ErrorKind::Failure,
+            format!("Could not write output: {error}"),
+        )),
+    }
+}
+
 fn write_row(
     value: impl Render,
     json: bool,
@@ -61,17 +84,23 @@ fn write_row(
     stdout: &mut dyn Write,
 ) -> io::Result<()> {
     if json {
-        let mut object = value.json_fields();
-        debug_assert!(
-            !object.contains_key("schema"),
-            "The output layer owns the schema field"
-        );
-        object.insert("schema".into(), json!(SCHEMA_VERSION));
-        serde_json::to_writer(&mut *stdout, &object)?;
-        return writeln!(stdout);
+        write_json(value.json_fields(), stdout)
+    } else {
+        write_text(&value.human(terminal), stdout)
     }
+}
 
-    let text = value.human(terminal);
+fn write_json(mut object: Map<String, Value>, stdout: &mut dyn Write) -> io::Result<()> {
+    debug_assert!(
+        !object.contains_key("schema"),
+        "The output layer owns the schema field"
+    );
+    object.insert("schema".into(), json!(SCHEMA_VERSION));
+    serde_json::to_writer(&mut *stdout, &object)?;
+    writeln!(stdout)
+}
+
+fn write_text(text: &str, stdout: &mut dyn Write) -> io::Result<()> {
     stdout.write_all(text.as_bytes())?;
     if !text.ends_with('\n') {
         writeln!(stdout)?;
@@ -96,6 +125,21 @@ mod tests {
         fn json_fields(self) -> Map<String, Value> {
             Map::from_iter([("title".into(), json!(self.title))])
         }
+    }
+
+    #[test]
+    fn outputs_the_protocol_object_with_only_the_schema_added() {
+        let fixture = json!({"kind":"tasks","tasks":[],"total":0,"filter":"due:tomorrow",
+            "sort":"due","resolved_dates":{"tomorrow":"2026-11-21"}});
+        let response = serde_json::from_value(fixture.clone()).unwrap();
+        let output = CommandResult::app_document(response, Color::Never, |_, _| {
+            panic!("JSON rendered as text")
+        });
+        let mut stdout = Vec::new();
+        (output.0)(true, &Terminal::fixed(None, false), &mut stdout).unwrap();
+        let mut expected = fixture;
+        expected["schema"] = json!(1);
+        assert_eq!(serde_json::from_slice::<Value>(&stdout).unwrap(), expected);
     }
 
     #[test]
