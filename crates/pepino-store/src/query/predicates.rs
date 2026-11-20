@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use icu_casemap::CaseMapper;
 use pepino_core::{
     Date, FieldValue, Hlc,
-    filter::{Comparison, CustomValue, Operator, PresenceField, State},
+    filter::{Comparison, Operator, PresenceField, State},
 };
 
 use crate::{BoardView, TaskRecord};
@@ -48,12 +48,12 @@ pub(super) fn utc_days(hlc: Hlc, alternatives: &[Comparison<Date>]) -> bool {
     })
 }
 
-pub(super) fn custom(actual: &FieldValue, alternatives: &[Comparison<CustomValue>]) -> bool {
+pub(super) fn custom(actual: &FieldValue, alternatives: &[Comparison<FieldValue>]) -> bool {
     alternatives.iter().any(|alternative| {
         let ordering = match (actual, &alternative.value) {
-            (FieldValue::Integer(left), CustomValue::Integer(right)) => left.cmp(right),
-            (FieldValue::Date(left), CustomValue::Date(right)) => left.cmp(right),
-            (FieldValue::Text(left), CustomValue::Text(right)) => left.cmp(right),
+            (FieldValue::Integer(left), FieldValue::Integer(right)) => left.cmp(right),
+            (FieldValue::Date(left), FieldValue::Date(right)) => left.cmp(right),
+            (FieldValue::Text(left), FieldValue::Text(right)) => left.cmp(right),
             _ => return false,
         };
         test(ordering, alternative.operator)

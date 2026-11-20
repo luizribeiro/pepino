@@ -1,8 +1,8 @@
 use std::{borrow::Borrow, collections::BTreeMap, fmt, rc::Rc};
 
 use pepino_core::{
-    Date, IdentityId, TaskId,
-    filter::{Assignee, Clause, Comparison, DateOperand, Filter, Term},
+    Date, FieldValue, IdentityId, TaskId,
+    filter::{Assignee, Clause, Comparison, CustomValue, DateOperand, Filter, Term},
 };
 
 use crate::{BoardView, PrefixResolution, TaskRecord};
@@ -261,28 +261,51 @@ fn prepare_clause(
         }
         Clause::Priority(values) => Box::new(move |task| compare(task.priority, &values)),
         Clause::Due(values) => {
-            let values = operands.dates(values)?;
+            let values = resolve_comparisons(values, |value| operands.date(&value))?;
             Box::new(move |task| compare(task.due, &values))
         }
         Clause::Created(values) => {
-            let values = operands.dates(values)?;
+            let values = resolve_comparisons(values, |value| operands.date(&value))?;
             Box::new(move |task| utc_days(task.created, &values))
         }
         Clause::Updated(values) => {
-            let values = operands.dates(values)?;
+            let values = resolve_comparisons(values, |value| operands.date(&value))?;
             Box::new(move |task| utc_days(task.updated, &values))
         }
         Clause::Custom {
             field,
             alternatives,
-        } => Box::new(move |task| {
-            task.custom
-                .get(&field)
-                .is_some_and(|value| custom(value, &alternatives))
-        }),
+        } => {
+            let alternatives = resolve_comparisons(alternatives, |value| {
+                Ok(match value {
+                    CustomValue::Integer(value) => FieldValue::Integer(value),
+                    CustomValue::Text(value) => FieldValue::Text(value),
+                    CustomValue::Date(value) => FieldValue::Date(value),
+                })
+            })?;
+            Box::new(move |task| {
+                task.custom
+                    .get(&field)
+                    .is_some_and(|value| custom(value, &alternatives))
+            })
+        }
+
         Clause::Board(_) | Clause::View(_) | Clause::Text(_) => return Ok(None),
     };
     Ok(Some(predicate))
+}
+
+fn resolve_comparisons<T, U>(
+    values: Vec<Comparison<T>>,
+    mut resolve: impl FnMut(T) -> Result<U, QueryErrorKind>,
+) -> Result<Vec<Comparison<U>>, QueryErrorKind> {
+    values
+        .into_iter()
+        .map(|Comparison { operator, value }| {
+            let value = resolve(value)?;
+            Ok(Comparison { operator, value })
+        })
+        .collect()
 }
 
 fn resolve_person(
@@ -336,19 +359,6 @@ impl<'a> Operands<'a> {
             prefixes: BTreeMap::new(),
             dates: BTreeMap::new(),
         }
-    }
-
-    fn dates(
-        &mut self,
-        values: Vec<Comparison<DateOperand>>,
-    ) -> Result<Vec<Comparison<Date>>, QueryErrorKind> {
-        values
-            .into_iter()
-            .map(|Comparison { operator, value }| {
-                let value = self.date(&value)?;
-                Ok(Comparison { operator, value })
-            })
-            .collect()
     }
 
     fn date(&mut self, operand: &DateOperand) -> Result<Date, QueryErrorKind> {
