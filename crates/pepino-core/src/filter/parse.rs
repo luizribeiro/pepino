@@ -1,3 +1,5 @@
+use crate::field::valid_name;
+
 use super::{
     Clause, Comparison, Date, ErrorKind, Filter, Operator, ParseError, Position, State, Term,
     Value, date, lex,
@@ -57,9 +59,7 @@ fn parse_term(raw: &str, position: Position, today: Date) -> Result<Term, ParseE
 
 fn parse_clause(body: &str, today: Date) -> Located<Clause> {
     if let Some(name) = body.strip_prefix('@') {
-        return decode_required(name, ErrorKind::EmptyView)
-            .map(Clause::View)
-            .map_err(|failure| shifted(failure, 1));
+        return parse_view(name).map_err(|failure| shifted(failure, 1));
     }
     if let Some((key, values)) = lex::split_once(body, ':') {
         let key = decode_required(key, ErrorKind::EmptyKey)?;
@@ -67,6 +67,15 @@ fn parse_clause(body: &str, today: Date) -> Located<Clause> {
             .map_err(|failure| shifted(failure, body.len() - values.len()));
     }
     decode_required(body, ErrorKind::EmptyTerm).map(Clause::Text)
+}
+
+fn parse_view(raw: &str) -> Located<Clause> {
+    let name = decode_required(raw, ErrorKind::EmptyView)?;
+    if name.len() <= 64 && valid_name(&name, b"") {
+        Ok(Clause::View(name))
+    } else {
+        Err((0, ErrorKind::InvalidView { name }))
+    }
 }
 
 fn parse_keyed(key: String, raw: &str, today: Date) -> Located<Clause> {

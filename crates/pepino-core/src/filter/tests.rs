@@ -14,7 +14,7 @@ fn parse_argv<S: AsRef<str>>(argv: &[S]) -> Result<Filter, ParseError> {
 
 #[test]
 fn mixed_filter_has_one_canonical_spelling() {
-    let input = r#" tag:garden  status:todo assignee:me due:<fri -tag:someday "fix the fence" -@"Weekend backlog" -has:parent is:blocked,ready effort:">threshold",>=5 "#;
+    let input = r#" tag:garden  status:todo assignee:me due:<fri -tag:someday "fix the fence" -@weekend-backlog -has:parent is:blocked,ready effort:">threshold",>=5 "#;
     let argv = [
         "tag:garden",
         "status:todo",
@@ -22,12 +22,12 @@ fn mixed_filter_has_one_canonical_spelling() {
         "due:<fri",
         "-tag:someday",
         "fix the fence",
-        "-@Weekend backlog",
+        "-@weekend-backlog",
         "-has:parent",
         "is:blocked,ready",
         r#"effort:">threshold",>=5"#,
     ];
-    let expected = r#"tag:garden status:todo assignee:me due:<2026-11-20 -tag:someday "fix\u{20}the\u{20}fence" -@"Weekend\u{20}backlog" -has:parent is:blocked,ready effort:">threshold",>=5"#;
+    let expected = r#"tag:garden status:todo assignee:me due:<2026-11-20 -tag:someday "fix\u{20}the\u{20}fence" -@weekend-backlog -has:parent is:blocked,ready effort:">threshold",>=5"#;
     let filter = parse(input).unwrap();
     assert_eq!(parse_argv(&argv).unwrap(), filter);
     assert_eq!(filter.to_string(), expected);
@@ -153,17 +153,41 @@ fn calendar_dates_are_typed_and_validated() {
 
 #[test]
 fn saved_view_references_stay_symbolic() {
-    let filter = parse(r#"@weekend -@"garden backlog" "@supplier""#).unwrap();
+    let filter = parse(r#"@weekend -@garden-backlog "@supplier""#).unwrap();
     assert_eq!(filter.terms()[0].clause, Clause::View("weekend".into()));
     assert_eq!(
         filter.terms()[1],
         Term {
             negated: true,
-            clause: Clause::View("garden backlog".into())
+            clause: Clause::View("garden-backlog".into())
         },
     );
     assert_eq!(filter.terms()[2].clause, Clause::Text("@supplier".into()));
     assert_eq!(parse(r#"-@"""#).unwrap_err().kind, ErrorKind::EmptyView);
+}
+
+#[test]
+fn view_names_are_validated() {
+    let invalid = r#"@"Weekend backlog""#;
+    for error in [
+        parse(invalid).unwrap_err(),
+        parse_argv(&[invalid]).unwrap_err(),
+    ] {
+        assert_eq!(
+            error.kind,
+            ErrorKind::InvalidView {
+                name: "Weekend backlog".into()
+            }
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("View names cannot contain spaces")
+        );
+    }
+    assert_eq!(parse("@").unwrap_err().kind, ErrorKind::EmptyView);
+    assert!(parse(&format!("@{}", "a".repeat(64))).is_ok());
+    assert!(parse(&format!("@{}", "a".repeat(65))).is_err());
 }
 
 #[test]

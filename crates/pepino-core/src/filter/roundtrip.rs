@@ -54,7 +54,7 @@ fn clause() -> impl Strategy<Value = Clause> {
     ];
     prop_oneof![
         atom().prop_map(Clause::Text),
-        atom().prop_map(Clause::View),
+        "[a-z][a-z0-9_-]{0,63}".prop_map(Clause::View),
         vec(states, 1..4).prop_map(Clause::Is),
         vec(presence, 1..4).prop_map(Clause::Has),
         matching(custom_key, (operator(), atom().prop_map(Value::Text))),

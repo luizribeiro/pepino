@@ -34,6 +34,10 @@ pub enum ErrorKind {
     EmptyTerm,
     #[error("empty view reference; supply a saved view name after '@'")]
     EmptyView,
+    #[error(
+        "invalid saved view name {name:?}. View names cannot contain spaces and must match [a-z][a-z0-9_-]* within 64 bytes"
+    )]
+    InvalidView { name: String },
     #[error("empty key; supply a field name before ':'")]
     EmptyKey,
     #[error("empty value; supply a value for each alternative")]
