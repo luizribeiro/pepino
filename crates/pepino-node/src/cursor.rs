@@ -69,6 +69,45 @@ impl Position {
             .log_height(&self.author, &self.log)
             .is_some_and(|seq| *seq >= self.seq)
     }
+    pub(crate) async fn compact(
+        self,
+        db: &mut SqliteConnection,
+        board: BoardId,
+        cursor: &mut BoardCursor,
+    ) -> Result<(), Error> {
+        let start = cursor
+            .log_height(&self.author, &self.log)
+            .map_or(0, |seq| i64::from(*seq) + 1);
+        let end: Option<u32> = sqlx::query_scalar(
+            "WITH RECURSIVE prefix(seq) AS (
+                SELECT seq FROM pepino_ack_position WHERE board = ?1 AND author = ?2 AND log = ?3 AND seq = ?4
+                UNION ALL
+                SELECT ack.seq FROM pepino_ack_position ack JOIN prefix ON ack.seq = prefix.seq + 1
+                WHERE ack.board = ?1 AND ack.author = ?2 AND ack.log = ?3
+            )
+            SELECT MAX(seq) FROM prefix",
+        )
+        .bind(board.as_bytes().as_slice())
+        .bind(self.author.as_bytes().as_slice())
+        .bind(self.log.as_bytes().as_slice())
+        .bind(start)
+        .fetch_one(&mut *db)
+        .await
+        .map_err(Error::storage)?;
+        if let Some(end) = end {
+            cursor.advance(self.author, self.log, end);
+            save(db, cursor).await?;
+            sqlx::query("DELETE FROM pepino_ack_position WHERE board = ? AND author = ? AND log = ? AND seq <= ?")
+                .bind(board.as_bytes().as_slice())
+                .bind(self.author.as_bytes().as_slice())
+                .bind(self.log.as_bytes().as_slice())
+                .bind(end)
+                .execute(db)
+                .await
+                .map_err(Error::storage)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -103,5 +142,42 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
         reset(&mut conn, board).await.unwrap();
         assert!(!position.covered(&load(&mut conn, board).await.unwrap()));
+    }
+
+    #[tokio::test]
+    async fn compaction_stops_at_the_first_gap() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        p2panda_store::sqlite::run_pending_migrations(&pool)
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query(
+            "CREATE TABLE pepino_ack_position (board BLOB, author BLOB, log BLOB, seq INTEGER)",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        let board = BoardId::from_bytes([31; 32]);
+        let position = Position {
+            author: p2panda::Credentials::generate().verifying_key(),
+            log: LogId::digest(b"maintenance operations"),
+            seq: 4,
+        };
+        sqlx::query("INSERT INTO pepino_ack_position VALUES (?1, ?2, ?3, 0), (?1, ?2, ?3, 1), (?1, ?2, ?3, 4)")
+            .bind(board.as_bytes().as_slice())
+            .bind(position.author.as_bytes().as_slice())
+            .bind(position.log.as_bytes().as_slice())
+            .execute(&mut *conn).await.unwrap();
+        let mut cursor = load(&mut conn, board).await.unwrap();
+        position
+            .compact(&mut conn, board, &mut cursor)
+            .await
+            .unwrap();
+        assert_eq!(cursor.log_height(&position.author, &position.log), Some(&1));
+        let pending: Vec<u32> = sqlx::query_scalar("SELECT seq FROM pepino_ack_position")
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap();
+        assert_eq!(pending, [4]);
     }
 }
