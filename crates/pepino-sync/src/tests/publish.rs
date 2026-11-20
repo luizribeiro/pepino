@@ -330,3 +330,34 @@ async fn retries_a_failed_outbox_read_without_a_nudge_or_periodic_scan() {
     assert_eq!(node.published().len(), 1);
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_publication_waits_for_board_startup_without_recording_a_failure() {
+    use super::stub::PublishFault;
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([76; 32]);
+    let local = DeviceId::from_bytes([77; 32]);
+    let mut app = directory::prepare(dir.path(), board, local).await;
+    directory::write(
+        &mut app,
+        json!({"op":"add_task","title":"Clean the greenhouse gutters"}),
+    )
+    .await;
+    let node = Arc::new(Stub::new(local));
+    node.fail_next_publish(PublishFault::Replaying);
+    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    until(&engine, Status::is_idle).await;
+    assert_eq!(engine.status().boards[&board].published, 1);
+    node.fail_next_publish(PublishFault::Joining);
+    directory::write(
+        &mut app,
+        json!({"op":"add_task","title":"Fix the greenhouse latch"}),
+    )
+    .await;
+    engine.nudge();
+    until(&engine, |status| status.boards[&board].published == 2).await;
+    assert!(engine.status().boards[&board].last_error.is_none());
+    engine.shutdown().await.unwrap();
+}

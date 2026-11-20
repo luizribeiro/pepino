@@ -41,6 +41,8 @@ pub enum Error {
     JoinTimeout,
     #[error("the operation was not submitted: {0}")]
     PublishNotSubmitted(String),
+    #[error("local replay is running")]
+    ReplayInProgress,
     #[error("the operation was submitted or may have been submitted, without confirmation: {0}")]
     PublishUnconfirmed(String),
     #[error("this device has not joined the board")]

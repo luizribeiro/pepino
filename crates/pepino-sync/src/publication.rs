@@ -17,6 +17,9 @@ pub(crate) async fn publish(
     let operation = loop {
         match board.publish(event.bytes.clone()).await {
             Ok(operation) => break operation,
+            Err(pepino_node::Error::ReplayInProgress | pepino_node::Error::NotJoined) => {
+                retry.wait().await
+            }
             Err(error) => {
                 record_error(status, id, format!("publish {}: {error}", event.id));
                 retry.wait().await;

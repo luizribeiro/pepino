@@ -25,6 +25,8 @@ struct Publisher {
 #[derive(Clone, Copy)]
 pub(super) enum PublishFault {
     NotSubmitted,
+    Replaying,
+    Joining,
     Unconfirmed,
 }
 
@@ -253,6 +255,12 @@ impl TransportBoard for Board {
 
     async fn publish(&self, bytes: Vec<u8>) -> Result<EventId, Error> {
         let fault = self.publisher.next_fault.lock().unwrap().take();
+        if matches!(fault, Some(PublishFault::Replaying)) {
+            return Err(Error::ReplayInProgress);
+        }
+        if matches!(fault, Some(PublishFault::Joining)) {
+            return Err(Error::NotJoined);
+        }
         if self.publisher.reject.load(Ordering::Relaxed)
             || matches!(fault, Some(PublishFault::NotSubmitted))
         {

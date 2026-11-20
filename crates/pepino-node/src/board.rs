@@ -268,15 +268,16 @@ impl BoardHandle {
     /// Retrying may create a second operation. The application store deduplicates
     /// identical payloads by their content-derived event ID.
     ///
-    /// A local replay in progress yields `PublishNotSubmitted` immediately.
+    /// A local replay in progress yields [`Error::ReplayInProgress`] immediately.
     /// Use [`Self::wait_until_replayed`] to wait for the board to become writable.
     pub async fn publish(&self, bytes: Vec<u8>) -> Result<EventId, Error> {
         if *self.replaying.borrow() {
-            return Err(Error::PublishNotSubmitted("local replay is running".into()));
+            return Err(Error::ReplayInProgress);
         }
-        let space = self
-            .space()
-            .map_err(|error| Error::PublishNotSubmitted(error.to_string()))?;
+        let space = self.space().map_err(|error| match error {
+            Error::NotJoined => error,
+            other => Error::PublishNotSubmitted(other.to_string()),
+        })?;
         let (message, receipt) = self.receipts.track(bytes);
         let limit = self.confirmation_timeout;
         let (started, mut state) = oneshot::channel();
