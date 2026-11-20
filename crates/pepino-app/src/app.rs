@@ -93,7 +93,7 @@ impl App {
         let state_dir = directory.clone();
         let existing = worker("open local state", move || {
             if exists(&state_dir.join(crate::state::FILE_NAME))? {
-                let local = LocalState::load(&state_dir)?;
+                let local = LocalState::load_migrating(&state_dir)?;
                 missing_pair(&state_dir, initialize)?;
                 Ok::<_, AppError>(Some(local))
             } else {

@@ -30,7 +30,7 @@ pub use log::{
     EventAction, EventChange, EventClassification, EventDetail, EventRecord, InitialTaskFields,
 };
 pub use pepino_core::filter::keyword_groups as filter_keyword_groups;
-pub use state::{LocalState, OpenOptions};
+pub use state::{LocalBoard, LocalState, OpenOptions};
 pub use status::{IdentityRecord, NamedRecord, NetworkStatus, SkippedCounts, StatusCounts};
 
 pub use protocol::{

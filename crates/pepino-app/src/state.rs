@@ -10,7 +10,7 @@ use crate::AppError;
 use crate::app::invalid;
 use crate::views::SavedViews;
 
-const VERSION: u32 = 3;
+pub(super) const VERSION: u32 = 4;
 pub(super) const FILE_NAME: &str = "local.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -42,18 +42,27 @@ pub struct LocalState {
     pub identity_id: IdentityId,
     pub display_name: String,
     pub device_name: String,
-    pub board_id: BoardId,
-    pub board_name: String,
+    pub(super) boards: Vec<LocalBoard>,
     pub(crate) saved_views: SavedViews,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LocalBoard {
+    pub id: BoardId,
+    pub name: String,
 }
 
 impl LocalState {
     pub fn board_id(&self) -> BoardId {
-        self.board_id
+        self.boards[0].id
     }
 
     pub fn board_name(&self) -> &str {
-        &self.board_name
+        &self.boards[0].name
+    }
+
+    pub fn boards(&self) -> &[LocalBoard] {
+        &self.boards
     }
 
     pub(super) fn task_names<'a>(
@@ -102,14 +111,29 @@ impl LocalState {
             identity_id: IdentityId::from_bytes(random_id()?),
             display_name,
             device_name,
-            board_id,
-            board_name,
+            boards: vec![LocalBoard {
+                id: board_id,
+                name: board_name,
+            }],
             saved_views: SavedViews::default(),
         })
     }
 
     pub(crate) fn load(directory: &Path) -> Result<Self, AppError> {
         Self::read(&directory.join(FILE_NAME))
+    }
+
+    pub(super) fn load_migrating(directory: &Path) -> Result<Self, AppError> {
+        let path = directory.join(FILE_NAME);
+        let bytes =
+            fs::read(&path).map_err(|error| path_io_error(&path, "read local state", error))?;
+        let local = Self::decode(&bytes, &path)?;
+        if serde_json::from_slice::<serde_json::Value>(&bytes)
+            .is_ok_and(|value| value["version"] == 3)
+        {
+            local.write(&path)?;
+        }
+        Ok(local)
     }
 
     pub(super) fn read(path: &Path) -> Result<Self, AppError> {
@@ -146,17 +170,40 @@ impl LocalState {
             version: u64,
         }
 
-        let Version { version } = serde_json::from_slice(bytes)
-            .map_err(|error| storage("decode local state", error, false))?;
+        let decode_error = |error| storage("decode local state", error, false);
+        let mut value: serde_json::Value = serde_json::from_slice(bytes).map_err(decode_error)?;
+        let Version { version } = serde_json::from_value(value.clone()).map_err(decode_error)?;
         match version {
-            1 | 2 => Err(AppError::IncompatibleLocalState {
-                version,
-                directory: path.parent().unwrap_or(path).display().to_string(),
-            }),
-            version if version == u64::from(VERSION) => serde_json::from_slice(bytes)
-                .map_err(|error| storage("decode local state", error, false)),
-            version => Err(storage("unsupported local state version", version, false)),
+            1 | 2 => {
+                return Err(AppError::IncompatibleLocalState {
+                    version,
+                    directory: path.parent().unwrap_or(path).display().to_string(),
+                });
+            }
+            3 => {
+                let fields = value
+                    .as_object_mut()
+                    .ok_or_else(|| storage("decode local state", "expected an object", false))?;
+                let id = fields.remove("board_id");
+                let name = fields.remove("board_name");
+                fields.insert(
+                    "boards".into(),
+                    serde_json::json!([{ "id": id, "name": name }]),
+                );
+                fields.insert("version".into(), VERSION.into());
+            }
+            version if version == u64::from(VERSION) => (),
+            version => return Err(storage("unsupported local state version", version, false)),
         }
+        let local: Self = serde_json::from_value(value).map_err(decode_error)?;
+        if local.boards.is_empty() {
+            return Err(storage(
+                "decode local state",
+                "missing current board",
+                false,
+            ));
+        }
+        Ok(local)
     }
 }
 
@@ -301,6 +348,28 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[test]
+    fn migrates_v3_with_its_board_and_saved_views() {
+        use serde_json::json;
+        let fields = json!({
+            "version": 3,
+            "board_id": BoardId::from_bytes([12; 32]),
+            "board_name": "Greenhouse",
+            "device_id": DeviceId::from_bytes([34; 32]),
+            "device_name": "Garden laptop",
+            "identity_id": IdentityId::from_bytes([56; 32]),
+            "display_name": "Ada",
+            "saved_views": {"watering": "tag:watering"},
+        });
+        let state =
+            LocalState::decode(fields.to_string().as_bytes(), Path::new(FILE_NAME)).unwrap();
+        assert_eq!(state.board_name(), "Greenhouse");
+        let saved = serde_json::to_value(state).unwrap();
+        assert_eq!(saved["version"], 4);
+        assert_eq!(saved["boards"][0]["id"], fields["board_id"]);
+        assert_eq!(saved["saved_views"], fields["saved_views"]);
     }
 
     #[test]

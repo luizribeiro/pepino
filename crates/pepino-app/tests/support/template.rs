@@ -37,10 +37,16 @@ pub fn set_names(directory: &Path, options: &OpenOptions) {
     for (key, value) in [
         ("display_name", &options.display_name),
         ("device_name", &options.device_name),
-        ("board_name", &options.board_name),
     ] {
         if let Some(value) = value {
             state[key] = json!(value);
+        }
+    }
+    if let Some(name) = &options.board_name {
+        if state["version"] == 3 {
+            state["board_name"] = json!(name);
+        } else {
+            state["boards"][0]["name"] = json!(name);
         }
     }
     fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
@@ -50,11 +56,16 @@ pub fn copy_peer(directory: &Path) {
     static PEER: OnceLock<TempDir> = OnceLock::new();
     let peer = PEER.get_or_init(|| {
         let dir = tempfile::tempdir().unwrap();
-        let board = state(template())["board_id"]
-            .as_str()
-            .unwrap()
-            .parse()
-            .unwrap();
+        let state = state(template());
+        let board = if state["version"] == 3 {
+            &state["board_id"]
+        } else {
+            &state["boards"][0]["id"]
+        }
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
         on_runtime(|runtime| runtime.block_on(store_fixture(dir.path(), board)));
         dir
     });
