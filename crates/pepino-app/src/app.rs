@@ -171,6 +171,17 @@ impl App {
         Ok(self.store.append(board, bytes, Some(signer)).await?)
     }
 
+    /// Retain an undecodable delivery under the local request lock.
+    pub async fn record_undecodable(
+        &self,
+        board: BoardId,
+        signer: DeviceId,
+        bytes: &[u8],
+    ) -> Result<(), SyncStoreError> {
+        let _guard = lock(&self.directory, self.lock_timeout).await?;
+        Ok(self.store.record_undecodable(board, signer, bytes).await?)
+    }
+
     /// Persist a publication receipt under the directory lock after publishing.
     pub async fn record_publication(
         &self,

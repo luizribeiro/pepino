@@ -7,7 +7,7 @@ use super::{directory, stub::Stub};
 use crate::SyncEngine;
 
 #[tokio::test]
-async fn malformed_payloads_are_acknowledged_and_ingest_continues() {
+async fn malformed_payloads_are_retained_before_acknowledging_and_ingest_continues() {
     let dir = tempfile::tempdir().unwrap();
     let board = BoardId::from_bytes([15; 32]);
     let local = DeviceId::from_bytes([16; 32]);
@@ -31,20 +31,24 @@ async fn malformed_payloads_are_acknowledged_and_ingest_continues() {
         .events
         .remove(0)
         .bytes;
-    for mut receipt in [
-        node.deliver(board, peer, vec![0xff]),
-        node.deliver(board, peer, bytes),
-    ] {
+    let malformed = vec![0xff];
+    for (payload, total) in [(malformed.clone(), 1), (bytes, 2)] {
+        let mut receipt = node.deliver(board, peer, payload);
         tokio::time::timeout(Duration::from_secs(5), receipt.wait_for(|done| *done))
             .await
             .unwrap()
             .unwrap();
+        let stats = app.store().statistics(board).await.unwrap();
+        assert_eq!((stats.total, stats.undecodable), (total, 1));
+        assert_eq!(
+            app.store().undecodable(board).await.unwrap(),
+            [(peer, malformed.clone())]
+        );
     }
     assert_eq!(
         app.store().tasks(board).await.unwrap()[0].title,
         "Install rain barrel"
     );
-    assert_eq!(app.store().statistics(board).await.unwrap().total, 1);
     assert!(
         engine.status().boards[&board]
             .last_error

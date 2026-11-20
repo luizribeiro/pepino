@@ -78,7 +78,20 @@ async fn ingest<A>(
                     board,
                     format!("decode operation {}: {error}", delivery.operation),
                 );
-                return;
+                match app
+                    .record_undecodable(board, delivery.signer, &delivery.bytes)
+                    .await
+                {
+                    Ok(()) => return,
+                    Err(error) => record_error(
+                        status,
+                        board,
+                        format!(
+                            "retain undecodable operation {}: {error}",
+                            delivery.operation
+                        ),
+                    ),
+                }
             }
             Err(error) => {
                 record_error(
@@ -86,8 +99,8 @@ async fn ingest<A>(
                     board,
                     format!("store operation {}: {error}", delivery.operation),
                 );
-                retry.wait().await;
             }
         }
+        retry.wait().await;
     }
 }
