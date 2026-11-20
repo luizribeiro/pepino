@@ -74,6 +74,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "device_revoke",
             "device_id Full revoked device ID\nname Device name\nconfirmed Whether revocation was confirmed\nboards Per-board removal outcomes",
         ),
+        "device leave" => (
+            "device_leave",
+            "device_id Full ID of the retiring device\nrequested_at Request time in UTC or null\npending Whether retirement is pending\ndaemon_notified Whether the local daemon was notified\ndata_dir Local data directory to wipe\ncredentials_file Local credentials file to wipe",
+        ),
         "device rename" => (
             "roster_device",
             "device Renamed device with its ID, name, state and admission metadata",

@@ -1,6 +1,7 @@
 mod add;
 mod code_input;
 mod join;
+mod leave;
 mod ls;
 mod rename;
 mod revoke;
@@ -44,6 +45,10 @@ enum Action {
         #[arg(value_name = "DEVICE")]
         device: String,
     },
+
+    /// Request retirement of the device running this command.
+    #[command(after_help = example_help(&["ppn device leave", "ppn device leave --yes --json"]))]
+    Leave,
 
     /// Rename this device or another device in the identity.
     #[command(override_usage = "ppn device rename [OPTIONS] [DEVICE] <NAME>", after_help = example_help(&["ppn device rename Titanium", "ppn device rename Ferrum 'Garden tablet'"]))]
@@ -90,7 +95,11 @@ impl Args {
     pub(crate) fn requires_identity(&self) -> bool {
         matches!(
             self.action,
-            Action::Ls | Action::Add { .. } | Action::Rename { .. } | Action::Revoke { .. }
+            Action::Ls
+                | Action::Add { .. }
+                | Action::Rename { .. }
+                | Action::Revoke { .. }
+                | Action::Leave
         )
     }
 }
@@ -103,6 +112,7 @@ pub fn run(
 ) -> Result<CommandResult, CliError> {
     match args.action {
         Action::Ls => ls::run(context),
+        Action::Leave => leave::run(context, selection, allow_start),
         Action::Revoke { device } => revoke::run(context, &device),
         Action::Rename {
             device_or_name,

@@ -290,3 +290,21 @@ fn revoke_guards_the_current_device_and_confirms_another_device() {
             .contains("daemon or board unavailable")
     );
 }
+
+#[test]
+fn leaving_the_last_active_device_fails_before_confirmation() {
+    let (sandbox, _) = uninitialized_task_sandbox();
+    sandbox.run(&["init", "--name", "Ada Gardener"]);
+    let output = sandbox
+        .command()
+        .args(["device", "leave", "--json"])
+        .output()
+        .unwrap();
+    let result = task_error(output, 2, "invalid_input");
+    assert!(
+        result["message"]
+            .as_str()
+            .unwrap()
+            .contains("last active device")
+    );
+}
