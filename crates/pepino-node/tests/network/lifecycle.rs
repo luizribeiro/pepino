@@ -1,8 +1,10 @@
 use std::{
-    net::{Ipv4Addr, UdpSocket},
+    net::{Ipv4Addr, SocketAddr, UdpSocket},
     time::Duration,
 };
 
+use pepino_node::Node;
+use tempfile::TempDir;
 use tokio::time::timeout;
 
 use super::support::{WAIT, network, settings, start, until};
@@ -10,38 +12,38 @@ use super::support::{WAIT, network, settings, start, until};
 #[tokio::test]
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn shutdown_releases_the_udp_port_with_a_board_still_open() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut settings = settings(&network(dir.path()), dir.path().join("alice"));
-    let address = Ipv4Addr::LOCALHOST;
-    let port = UdpSocket::bind((address, 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    settings.bind_port = Some(port);
-    let node = start(&settings).await;
+    let (_dir, node, address) = node_with_udp_port().await;
     let _board = node.create_board().await.unwrap();
-    assert!(UdpSocket::bind((address, port)).is_err());
     node.shutdown().await.unwrap();
-    assert!(UdpSocket::bind((address, port)).is_ok());
+    wait_for_udp_port(address).await;
 }
 
 #[tokio::test]
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn dropping_without_shutdown_releases_the_udp_port() {
+    let (_dir, node, address) = node_with_udp_port().await;
+    drop(node);
+    wait_for_udp_port(address).await;
+}
+
+async fn node_with_udp_port() -> (TempDir, Node, SocketAddr) {
     let dir = tempfile::tempdir().unwrap();
     let mut settings = settings(&network(dir.path()), dir.path().join("alice"));
-    let address = Ipv4Addr::LOCALHOST;
-    let port = UdpSocket::bind((address, 0))
+    let address = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
         .unwrap()
         .local_addr()
-        .unwrap()
-        .port();
-    settings.bind_port = Some(port);
+        .unwrap();
+    settings.bind_port = Some(address.port());
     let node = start(&settings).await;
-    assert!(UdpSocket::bind((address, port)).is_err());
-    drop(node);
-    let bind = async || UdpSocket::bind((address, port));
+    assert_eq!(
+        UdpSocket::bind(address).unwrap_err().kind(),
+        std::io::ErrorKind::AddrInUse
+    );
+    (dir, node, address)
+}
+
+async fn wait_for_udp_port(address: SocketAddr) {
+    let bind = async || UdpSocket::bind(address);
     let _socket = until(bind, Result::is_ok, WAIT).await;
 }
 
