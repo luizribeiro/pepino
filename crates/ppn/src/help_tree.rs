@@ -7,6 +7,12 @@ use clap::{Arg, ArgAction, Command};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
+const EXAMPLES_HEADER: &str = "Examples:";
+
+pub fn example_help(examples: &[&str]) -> String {
+    format!("{EXAMPLES_HEADER}\n  {}", examples.join("\n  "))
+}
+
 pub fn command_fields(command: &Command) -> Map<String, Value> {
     let (arguments, flags): (Vec<_>, Vec<_>) = command
         .get_arguments()
@@ -44,7 +50,7 @@ pub fn examples(command: &Command) -> Vec<String> {
         .map(ToString::to_string)
         .unwrap_or_default()
         .lines()
-        .skip_while(|line| line.trim() != "Examples:")
+        .skip_while(|line| line.trim() != EXAMPLES_HEADER)
         .skip(1)
         .skip_while(|line| line.trim().is_empty())
         .take_while(|line| line.starts_with(char::is_whitespace) && !line.trim().is_empty())
@@ -153,6 +159,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn example_footer_round_trips_into_help_metadata() {
+        let invocations = ["ppn archive releases", "ppn archive releases --yes"];
+        let footer = example_help(&invocations);
+        assert_eq!(
+            footer,
+            "Examples:\n  ppn archive releases\n  ppn archive releases --yes"
+        );
+        let command = Command::new("archive").after_help(footer);
+        assert_eq!(examples(&command), invocations);
+    }
+
+    #[test]
     fn reflects_positionals_and_skips_hidden_subcommands() {
         let mut command = Command::new("ppn")
             .disable_help_subcommand(true)
@@ -172,7 +190,10 @@ mod tests {
                             .default_value("30")
                             .env("PPN_ARCHIVE_AGE"),
                     )
-                    .after_help("Examples:\n  ppn archive releases\n\nNotes:\n  Unpin it first."),
+                    .after_help(format!(
+                        "{}\n\nNotes:\n  Unpin it first.",
+                        example_help(&["ppn archive releases"])
+                    )),
             );
         command.build();
         let tree = Value::Object(command_fields(&command));

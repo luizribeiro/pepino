@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use ppn::error::{CliError, ErrorKind};
+use ppn::help_tree::example_help;
 use ppn::input::read_text;
 use ppn::output::{CommandResult, Render};
 use ppn::terminal::{Context, Terminal};
@@ -9,17 +10,17 @@ use serde_json::{Map, Value, json};
 #[derive(clap::Subcommand)]
 pub enum Command {
     /// Return a simulated CLI error.
-    #[command(after_help = "Examples:\n  ppn debug fail not_found --json")]
+    #[command(after_help = example_help(&["ppn debug fail not_found --json"]))]
     Fail {
         /// Stable error code to simulate.
         #[arg(value_enum)]
         code: ErrorKind,
     },
     /// Exercise confirmation handling.
-    #[command(after_help = "Examples:\n  ppn debug confirm --yes")]
+    #[command(after_help = example_help(&["ppn debug confirm --yes"]))]
     Confirm,
     /// Read text from the command line, stdin, or a file.
-    #[command(after_help = "Examples:\n  ppn debug input --from-file release-notes.txt")]
+    #[command(after_help = example_help(&["ppn debug input --from-file release-notes.txt"]))]
     Input {
         /// Text or - to read stdin.
         #[arg(value_name = "TEXT")]

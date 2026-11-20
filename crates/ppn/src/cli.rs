@@ -4,6 +4,7 @@ use std::{env, process::ExitCode};
 use clap::{ColorChoice, CommandFactory, Parser, Subcommand, error::ErrorKind};
 use ppn::error::CliError;
 use ppn::flags::{Globals, color_on_early_exit, json_from_env, json_on_command_line};
+use ppn::help_tree::example_help;
 use ppn::output::finish;
 use ppn::terminal::Context;
 
@@ -15,7 +16,7 @@ use crate::{debug, help, version};
     disable_help_subcommand = true,
     color = ColorChoice::Never,
     about = "An experimental local-first, peer-to-peer task manager",
-    after_help = "Examples:\n  ppn version\n  ppn help --json"
+    after_help = example_help(&["ppn version", "ppn help --json"])
 )]
 struct Cli {
     #[command(flatten)]
@@ -27,10 +28,10 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Print the installed ppn version.
-    #[command(after_help = "Examples:\n  ppn version --json")]
+    #[command(after_help = example_help(&["ppn version --json"]))]
     Version,
     /// Show help for ppn.
-    #[command(after_help = "Examples:\n  ppn help --json")]
+    #[command(after_help = example_help(&["ppn help --json"]))]
     Help {
         /// Command and optional subcommands to describe.
         path: Vec<String>,
@@ -39,7 +40,7 @@ enum Command {
     #[command(
         hide = true,
         disable_help_subcommand = true,
-        after_help = "Examples:\n  ppn debug fail not_found"
+        after_help = example_help(&["ppn debug fail not_found"])
     )]
     Debug {
         #[command(subcommand)]
