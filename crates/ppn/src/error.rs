@@ -184,6 +184,12 @@ impl From<AppError> for CliError {
             AppError::AmbiguousId { .. } => {
                 diagnostic.hint = Some("Use a longer task ID.".into());
             }
+            AppError::Conflict {
+                reference: pepino_app::ConflictReference::View { .. },
+                ..
+            } => {
+                diagnostic.hint = Some("Pass `--force` to remove the referenced view.".into());
+            }
             AppError::InvalidInput {
                 field,
                 reason,
@@ -270,6 +276,31 @@ mod tests {
         assert!(String::from_utf8(stderr).unwrap().ends_with(
             "  term \"tag:\"\n  at argument 1, byte 4\nhint: Run `ppn ls --help` for filter examples.\n"
         ));
+    }
+
+    #[test]
+    fn a_saved_view_conflict_preserves_referrers_and_suggests_force() {
+        let error = AppError::Conflict {
+            field: "name".into(),
+            reference: pepino_app::ConflictReference::View {
+                view: "weekend".into(),
+                referenced_by: vec!["maintenance".into()],
+            },
+        };
+        let mut stderr = Vec::new();
+        assert_eq!(
+            CliError::from(error).report(true, &mut stderr),
+            ExitCode::from(1)
+        );
+        let diagnostic: Value = serde_json::from_slice(&stderr).unwrap();
+        assert_eq!(
+            diagnostic["error"]["referenced_by"],
+            serde_json::json!(["maintenance"])
+        );
+        assert_eq!(
+            diagnostic["error"]["hint"],
+            "Pass `--force` to remove the referenced view."
+        );
     }
 
     #[test]
