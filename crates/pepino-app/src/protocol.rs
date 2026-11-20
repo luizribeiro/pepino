@@ -160,6 +160,7 @@ pub enum AppErrorKind {
     Busy,
     Storage,
     UnsupportedVersion,
+    WriteCommitted,
 }
 
 impl AppErrorKind {
@@ -172,6 +173,7 @@ impl AppErrorKind {
             Self::Busy => "busy",
             Self::Storage => "storage",
             Self::UnsupportedVersion => "unsupported_version",
+            Self::WriteCommitted => "write_committed",
         }
     }
 }
@@ -199,6 +201,8 @@ pub enum AppError {
     Storage { retryable: bool, reason: String },
     #[error("protocol version {requested} is unsupported (supported version {supported})")]
     UnsupportedVersion { requested: u32, supported: u32 },
+    #[error("write was committed: {reason}")]
+    WriteCommitted { reason: String },
 }
 
 impl AppError {
@@ -222,6 +226,7 @@ impl AppError {
             Self::Busy => AppErrorKind::Busy,
             Self::Storage { .. } => AppErrorKind::Storage,
             Self::UnsupportedVersion { .. } => AppErrorKind::UnsupportedVersion,
+            Self::WriteCommitted { .. } => AppErrorKind::WriteCommitted,
         }
     }
 }

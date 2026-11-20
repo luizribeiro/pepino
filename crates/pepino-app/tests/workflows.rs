@@ -526,3 +526,45 @@ async fn a_failed_edge_projection_does_not_leave_a_task_or_advance_the_log() {
     assert_eq!(store.tasks(board).await.unwrap().len(), 2);
     assert_eq!(get(&mut app, &parent).await.children.len(), 1);
 }
+
+#[tokio::test]
+async fn a_projection_failure_after_the_commit_reports_that_the_write_landed() {
+    use sqlx::{ConnectOptions, sqlite::SqliteConnectOptions};
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let id = add(&mut app, "Prepare the greenhouse for winter").await;
+    let database = directory.path().join("pepino.sqlite");
+    let mut connection = SqliteConnectOptions::new()
+        .filename(&database)
+        .connect()
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER corrupt_title AFTER INSERT ON task_register WHEN NEW.kind = 'comment'
+         BEGIN
+           UPDATE task_register SET value = x'00'
+           WHERE board = NEW.board AND task = NEW.task AND kind = 'field' AND member = x'7469746c65';
+         END",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+
+    let error = handle(
+        &mut app,
+        json!({"op":"comment","task":&id,"text":"The new latch arrived."}),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(&error, AppError::WriteCommitted { reason } if reason.contains("invalid task view value"))
+    );
+    assert!(!error.retryable());
+    let store = Store::open(&database).await.unwrap();
+    let history = store
+        .events(app.local_state().board_id, id.parse().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(history.len(), 2);
+}

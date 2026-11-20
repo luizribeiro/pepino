@@ -58,6 +58,7 @@ fn errors_and_write_responses_have_stable_tags() {
         json!({"kind":"busy"}),
         json!({"kind":"storage","retryable":true,"reason":"database is busy"}),
         json!({"kind":"unsupported_version","requested":2,"supported":1}),
+        json!({"kind":"write_committed","reason":"result projection failed"}),
     ] {
         let error = serde_json::from_value::<AppError>(fixture.clone()).unwrap();
         assert_eq!(serde_json::to_value(error.kind()).unwrap(), fixture["kind"]);

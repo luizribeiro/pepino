@@ -108,6 +108,11 @@ impl App {
             .append_batch(self.local.board_id, &writes)
             .await
             .map_err(store_error)?;
+        for event in &batch.events {
+            let hlc = event.hlc();
+            self.clock.observe(hlc, batch.now.max(hlc.wall_ms));
+        }
+        ensure_local_outcomes(&outcomes)?;
         let applied: Vec<_> = batch
             .events
             .iter()
@@ -116,20 +121,6 @@ impl App {
                 matches!(outcome, AppendOutcome::Applied { .. }).then_some(event)
             })
             .collect();
-        for event in &batch.events {
-            let hlc = event.hlc();
-            self.clock.observe(hlc, batch.now.max(hlc.wall_ms));
-        }
-        if outcomes
-            .iter()
-            .any(|outcome| matches!(outcome, AppendOutcome::Skipped { .. }))
-        {
-            return Err(storage(
-                "append event batch",
-                "store skipped a locally generated event",
-                false,
-            ));
-        }
         if applied.is_empty() {
             return self
                 .write_response(before, false, None, batch.affected, Vec::new())
@@ -140,7 +131,7 @@ impl App {
             .store
             .board(self.local.board_id)
             .await
-            .map_err(committed_error)?;
+            .map_err(|error| committed_error(store_error(error)))?;
         batch.affected.extend(
             after
                 .iter()
@@ -181,12 +172,22 @@ impl App {
     }
 }
 
+fn ensure_local_outcomes(outcomes: &[AppendOutcome]) -> Result<(), AppError> {
+    if outcomes
+        .iter()
+        .any(|outcome| matches!(outcome, AppendOutcome::Skipped { .. }))
+    {
+        return Err(committed_error(
+            "internal invariant violation: store skipped a locally generated event",
+        ));
+    }
+    Ok(())
+}
+
 fn committed_error(error: impl std::fmt::Display) -> AppError {
-    storage(
-        "write committed but could not read the result",
-        error,
-        false,
-    )
+    AppError::WriteCommitted {
+        reason: error.to_string(),
+    }
 }
 
 fn edge_effect(view: &BoardView, event: &Event) -> Result<Option<EdgeEffect>, AppError> {
@@ -213,4 +214,22 @@ fn edge_effect(view: &BoardView, event: &Event) -> Result<Option<EdgeEffect>, Ap
                 EdgeExclusion::Cycle => EdgeExclusionReason::Cycle,
             }),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_skipped_local_event_is_a_committed_invariant_violation() {
+        let error = ensure_local_outcomes(&[AppendOutcome::Skipped {
+            id: EventId::from_bytes([31; 32]),
+            reason: pepino_store::SkipReason::UnknownVersion(2),
+        }])
+        .unwrap_err();
+        assert!(
+            matches!(&error, AppError::WriteCommitted { reason } if reason.contains("internal invariant violation"))
+        );
+        assert!(!error.retryable());
+    }
 }
