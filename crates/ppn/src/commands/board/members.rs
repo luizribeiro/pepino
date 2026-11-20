@@ -43,8 +43,18 @@ pub(super) fn run(
     let authors = local.author_devices();
     let mut people = Vec::new();
     for person in local.board_people(board.id) {
-        let rows = devices(person.devices(), &members);
-        let role = role_name(members.get(&person.first_device));
+        let admitted = person.invited_by.map(|_| person.first_device);
+        let rows = devices(person.devices(), &members, admitted);
+        let role = person
+            .devices()
+            .filter(|device| admitted.is_none_or(|id| id == device.id))
+            .filter_map(|device| role_name(members.get(&device.id)))
+            .max_by_key(|role| match *role {
+                "manage" => 3,
+                "write" => 2,
+                "read" => 1,
+                _ => 0,
+            });
         let inviter = person.invited_by.and_then(|device| {
             let (identity, _) = authors.get(&device)?;
             Some(json!({"id": identity, "name": labels.get(identity), "device_id": device}))
@@ -58,7 +68,7 @@ pub(super) fn run(
             "role": local.shared_access(board.id).map_or("manage", |access| match access.role {
                 pepino_app::BoardRole::Read => "read", pepino_app::BoardRole::Write => "write", pepino_app::BoardRole::Manage => "manage",
             }),
-            "devices": devices(roster.values(), &members), "invited_at": null, "invited_by": null}));
+            "devices": devices(roster.values(), &members, None), "invited_at": null, "invited_by": null}));
     }
     Ok(CommandResult::document(Members {
         board: board.name.clone(),
@@ -78,9 +88,10 @@ fn role_name(state: Option<&MemberState>) -> Option<&'static str> {
 fn devices<'a>(
     roster: impl Iterator<Item = &'a pepino_app::RosterDevice>,
     members: &MemberStates,
+    admitted: Option<pepino_core::DeviceId>,
 ) -> Vec<Value> {
     roster.map(|device| {
-        let state = members.get(&device.id);
+        let state = members.get(&device.id).filter(|_| admitted.is_none_or(|id| id == device.id));
         let membership = match state {
             Some(MemberState::Member(_)) => "member",
             Some(MemberState::Removed) => "removed",

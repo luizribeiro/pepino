@@ -57,6 +57,9 @@ impl LocalState {
             .flat_map(|person| {
                 person
                     .devices()
+                    .filter(|device| {
+                        person.invited_by.is_none() || device.id == person.first_device
+                    })
                     .map(|device| (device.id, (person.id, device.name.clone())))
             })
             .collect();
