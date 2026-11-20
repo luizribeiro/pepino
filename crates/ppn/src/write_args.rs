@@ -24,8 +24,11 @@ pub struct CustomArgs {
 }
 
 impl CustomArgs {
-    pub fn changes(self, today: Date) -> Result<BTreeMap<String, FieldValue>, CliError> {
-        let mut fields = BTreeMap::new();
+    pub(super) fn apply(
+        self,
+        today: Date,
+        fields: &mut BTreeMap<String, FieldValue>,
+    ) -> Result<(), CliError> {
         for entry in self.set {
             let invalid = |reason| {
                 CliError::new(
@@ -39,10 +42,13 @@ impl CustomArgs {
                 .split_once('=')
                 .filter(|(key, _)| !key.is_empty())
                 .ok_or_else(|| invalid("expected KEY=VALUE"))?;
+            if matches!(key, "title" | "description" | "status" | "due" | "priority") {
+                return Err(invalid("use the dedicated field option"));
+            }
             fields.insert(key.to_owned(), infer(value, today).map_err(invalid)?);
         }
         fields.extend(self.unset.into_iter().map(|key| (key, FieldValue::Unset)));
-        Ok(fields)
+        Ok(())
     }
 }
 
@@ -86,7 +92,8 @@ mod tests {
 
     #[test]
     fn infers_custom_operands_and_applies_unsets() {
-        let fields = CustomArgs {
+        let mut fields = BTreeMap::new();
+        CustomArgs {
             set: [
                 "estimate=-03",
                 "arrival=tomorrow",
@@ -98,7 +105,7 @@ mod tests {
             .into(),
             unset: vec!["old".into()],
         }
-        .changes("2026-11-20".parse().unwrap())
+        .apply("2026-11-20".parse().unwrap(), &mut fields)
         .unwrap();
         assert_eq!(fields["estimate"], FieldValue::Integer(-3));
         assert_eq!(

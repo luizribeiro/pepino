@@ -1,9 +1,11 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use clap::{Args, ValueEnum};
-use pepino_app::Status;
+use pepino_app::{Date, FieldValue, Status};
 
 use super::{AddMembershipArgs, CustomArgs};
+use crate::date::resolve_date;
 use crate::error::CliError;
 use crate::input::read_text;
 
@@ -32,6 +34,26 @@ pub struct AddFieldArgs {
     pub custom: CustomArgs,
     #[command(flatten)]
     pub description: DescriptionArgs,
+}
+
+impl AddFieldArgs {
+    pub(super) fn changes(self, today: Date) -> Result<BTreeMap<String, FieldValue>, CliError> {
+        let mut fields = BTreeMap::new();
+        if let Some(due) = self.due {
+            fields.insert("due".into(), FieldValue::Date(resolve_date(&due, today)?));
+        }
+        if let Some(description) = self.description.read()? {
+            fields.insert("description".into(), FieldValue::Text(description));
+        }
+        if let Some(priority) = self.priority {
+            fields.insert("priority".into(), FieldValue::Integer(priority));
+        }
+        if let Some(status) = self.status {
+            fields.insert("status".into(), FieldValue::Status(status.into()));
+        }
+        self.custom.apply(today, &mut fields)?;
+        Ok(fields)
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]

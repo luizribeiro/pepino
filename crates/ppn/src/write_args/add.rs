@@ -1,7 +1,6 @@
-use pepino_app::{Date, Status, WriteRequest};
+use pepino_app::{Date, FieldValue, Status, WriteRequest};
 
 use super::TaskWriteArgs;
-use crate::date::resolve_date;
 use crate::error::{CliError, ErrorKind};
 
 pub fn new_task(title: String) -> WriteRequest {
@@ -42,19 +41,29 @@ impl TaskWriteArgs {
                 "Expected an add_task request.",
             ));
         };
-        if let Some(value) = self.fields.due {
-            *due = Some(resolve_date(&value, today)?);
+        for (key, value) in self.fields.changes(today)? {
+            match (key.as_str(), value) {
+                ("due", FieldValue::Date(value)) => *due = Some(value),
+                ("description", FieldValue::Text(value)) => *description = Some(value),
+                ("priority", FieldValue::Integer(value)) => *priority = Some(value),
+                ("status", FieldValue::Status(value)) => *status = value,
+                ("due", FieldValue::Unset) => *due = None,
+                ("description", FieldValue::Unset) => *description = None,
+                ("priority", FieldValue::Unset) => *priority = None,
+                ("title" | "status", FieldValue::Unset) => {
+                    return Err(CliError::new(
+                        ErrorKind::InvalidInput,
+                        format!("The {key} field cannot be cleared."),
+                    )
+                    .with_field(key));
+                }
+                (_, value) => {
+                    fields.insert(key, value);
+                }
+            }
         }
-        if let Some(value) = self.fields.description.read()? {
-            *description = Some(value);
-        }
-        if let Some(value) = self.fields.status {
-            *status = value.into();
-        }
-        *priority = self.fields.priority.or(*priority);
         tags.extend(self.membership.tags);
         assignees.extend(self.membership.assignees);
-        fields.extend(self.fields.custom.changes(today)?);
         self.relations.apply(&mut request);
         Ok(request)
     }
