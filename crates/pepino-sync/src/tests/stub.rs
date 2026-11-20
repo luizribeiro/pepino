@@ -48,7 +48,10 @@ pub(super) struct Board {
     status: Arc<Mutex<NodeStatus>>,
 }
 
-pub(super) struct Receipt(watch::Sender<bool>);
+pub(super) struct Receipt {
+    done: watch::Sender<bool>,
+    before_ack: Option<watch::Sender<bool>>,
+}
 
 impl Stub {
     pub(super) fn reject(&self, reject: bool) {
@@ -65,6 +68,26 @@ impl Stub {
         signer: DeviceId,
         bytes: Vec<u8>,
     ) -> watch::Receiver<bool> {
+        self.enqueue(id, signer, bytes, None)
+    }
+
+    pub(super) fn pause_before_ack(
+        &self,
+        id: BoardId,
+        signer: DeviceId,
+        bytes: Vec<u8>,
+    ) -> (watch::Receiver<bool>, watch::Receiver<bool>) {
+        let (started, attempting) = watch::channel(false);
+        (attempting, self.enqueue(id, signer, bytes, Some(started)))
+    }
+
+    fn enqueue(
+        &self,
+        id: BoardId,
+        signer: DeviceId,
+        bytes: Vec<u8>,
+        before_ack: Option<watch::Sender<bool>>,
+    ) -> watch::Receiver<bool> {
         let (ack, received) = watch::channel(false);
         pending(&self.status, &self.signals, id, true);
         self.queue
@@ -76,7 +99,10 @@ impl Stub {
                 operation: EventId::from_bytes([27; 32]),
                 signer,
                 bytes,
-                ack: Receipt(ack),
+                ack: Receipt {
+                    done: ack,
+                    before_ack,
+                },
             })
             .ok()
             .unwrap();
@@ -105,7 +131,11 @@ fn pending(
 
 impl Acknowledgement for Receipt {
     async fn ack(&self) -> Result<(), Error> {
-        self.0.send_replace(true);
+        if let Some(started) = &self.before_ack {
+            started.send_replace(true);
+            std::future::pending::<()>().await;
+        }
+        self.done.send_replace(true);
         Ok(())
     }
 }

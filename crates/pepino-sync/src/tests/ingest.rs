@@ -109,3 +109,65 @@ async fn waits_for_the_local_lock_before_acknowledging() {
     );
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_crash_after_commit_redelivers_as_a_duplicate() {
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([44; 32]);
+    let local = DeviceId::from_bytes([45; 32]);
+    let peer = DeviceId::from_bytes([46; 32]);
+    let app = directory::prepare(dir.path(), board, local).await;
+    let mut remote = directory::prepare(&dir.path().join("peer"), board, peer).await;
+    directory::write(
+        &mut remote,
+        json!({"op":"add_task","title":"Repair the awning"}),
+    )
+    .await;
+    let bytes = remote
+        .store()
+        .outbox(board, peer, 1.try_into().unwrap())
+        .await
+        .unwrap()
+        .events
+        .remove(0)
+        .bytes;
+    let node = Arc::new(Stub::new(local));
+    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    let (mut attempting, receipt) = node.pause_before_ack(board, peer, bytes.clone());
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        attempting.wait_for(|started| *started),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(!*receipt.borrow());
+    let before = app.store().board_with_comments(board).await.unwrap();
+    assert_eq!(before.tasks()[0].title, "Repair the awning");
+    assert!(matches!(
+        engine.wait_idle(Duration::from_millis(20)).await,
+        Err(crate::Error::Timeout)
+    ));
+    drop(engine);
+
+    let restarted = Arc::new(Stub::new(local));
+    let engine = SyncEngine::start(Default::default(), restarted.clone(), dir.path())
+        .await
+        .unwrap();
+    let mut redelivered = restarted.deliver(board, peer, bytes);
+    tokio::time::timeout(Duration::from_secs(5), redelivered.wait_for(|done| *done))
+        .await
+        .unwrap()
+        .unwrap();
+    engine.wait_idle(Duration::from_secs(5)).await.unwrap();
+    assert_eq!(
+        app.store().board_with_comments(board).await.unwrap(),
+        before
+    );
+    assert_eq!(app.store().statistics(board).await.unwrap().total, 1);
+    assert_eq!(engine.status().boards[&board].last_ingested, None);
+    assert!(restarted.published().is_empty());
+    engine.shutdown().await.unwrap();
+}
