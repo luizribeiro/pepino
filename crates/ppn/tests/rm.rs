@@ -150,3 +150,24 @@ fn rm_leaves_other_tasks_live_when_one_is_deleted_at_the_prompt() {
     )));
     assert_eq!(show_task(&sandbox, &project.parent)["id"], project.parent);
 }
+
+#[test]
+fn rm_removes_edges_between_batch_targets_once() {
+    let (sandbox, _) = task_sandbox();
+    let p = small_project(&sandbox);
+    let json = as_json(&sandbox.run(&["rm", &p.parent, &p.downstream, "--yes", "--json"]));
+    let edges = json["edges"].as_array().unwrap();
+    assert_eq!(edges.len(), 3);
+    assert_eq!(
+        edges
+            .iter()
+            .filter(|edge| edge["kind"] == "parent" && edge["from"] == p.downstream)
+            .count(),
+        1
+    );
+    assert!(edges.iter().all(|edge| edge["effective"] == false));
+    assert_eq!(
+        show_task(&sandbox, &p.blocker)["parent"],
+        serde_json::Value::Null
+    );
+}

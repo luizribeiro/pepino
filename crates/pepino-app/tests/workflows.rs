@@ -428,8 +428,11 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
         .clone();
     assert!(get(&mut app, &child).await.blocked);
 
-    let (changed, created, tasks, _) =
+    let (changed, created, tasks, edges) =
         write(&mut app, json!({"op":"delete","task":&blocker[..12]})).await;
+    assert_eq!(edges.len(), 1);
+    assert_eq!(edges[0].to, child);
+    assert!(!edges[0].effective);
     assert!(changed);
     assert_eq!(created, None);
     let remaining = get(&mut app, &child).await;
@@ -460,11 +463,7 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
         .events(app.local_state().board_id, blocker.parse().unwrap())
         .await
         .unwrap();
-    assert_eq!(history.len(), 3);
-    let cleanup = json!({"op":"unlink","from":&blocker[..12],"kind":"blocks","to":&child});
-    let (changed, _, _, edges) = write(&mut app, cleanup).await;
-    assert!(changed);
-    assert!(!edges[0].effective);
+    assert_eq!(history.len(), 4);
     assert!(
         store
             .edges(app.local_state().board_id, child.parse().unwrap())

@@ -37,7 +37,7 @@ impl App {
                     set_fields(&mut batch, current, changes.clone())?
                 }
                 TaskChange::Delete => {
-                    batch.push(Event::TaskDeleted { task: current.id }, &field)?;
+                    delete_task(&view, &mut batch, current.id, &field, &seen)?;
                 }
             }
             order.push(current.id.to_string());
@@ -178,7 +178,7 @@ impl App {
             }
             WriteRequest::Delete { task } => {
                 let task = resolve(view, "task", &task)?.id;
-                batch.push(Event::TaskDeleted { task }, "task")?;
+                delete_task(view, batch, task, "task", &BTreeSet::new())?;
             }
         }
         Ok(())
@@ -248,6 +248,28 @@ impl App {
             })
             .collect()
     }
+}
+
+fn delete_task(
+    view: &BoardView,
+    batch: &mut Batch,
+    task: TaskId,
+    field: &str,
+    seen: &BTreeSet<TaskId>,
+) -> Result<(), AppError> {
+    for edge in view.edges(task) {
+        let (from, kind, to) = (edge.from, edge.kind, edge.to);
+        let peer = if from == task { to } else { from };
+        if !seen.contains(&peer) {
+            let direct_target = batch.targets.contains(&peer);
+            batch.push(Event::EdgeRemoved { from, kind, to }, field)?;
+            if !direct_target {
+                batch.targets.remove(&peer);
+            }
+        }
+    }
+    batch.push(Event::TaskDeleted { task }, field)?;
+    Ok(())
 }
 
 fn set_fields(
