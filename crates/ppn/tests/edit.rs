@@ -303,4 +303,17 @@ fn edit_can_set_remove_and_leave_the_parent_unchanged() {
     let human = sandbox.run(&["edit", &child, "--parent", &parent[..8]]);
     assert!(human.starts_with("Edited "));
     assert_eq!(show_task(&sandbox, &child)["parent"], parent);
+    let cleared = as_json(&sandbox.run(&["edit", &child, "--no-parent", "--json"]));
+    assert_write(&cleared, true);
+    assert!(show_task(&sandbox, &child)["parent"].is_null());
+    assert_write(
+        &as_json(&sandbox.run(&["edit", &child, "--no-parent", "--json"])),
+        false,
+    );
+    let conflicting = sandbox
+        .command()
+        .args(["edit", &child, "--no-parent", "--parent", &parent, "--json"])
+        .output()
+        .unwrap();
+    task_error(conflicting, 2, "usage");
 }

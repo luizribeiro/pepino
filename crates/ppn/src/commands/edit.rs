@@ -44,7 +44,7 @@ pub fn run(context: &Context<'_>, args: Args, json: bool) -> Result<CommandResul
     let response = client.call(Request::Read(ReadRequest::GetTask { task: args.task }))?;
     let detail = response.task()?;
     let task = &detail.task.summary;
-    let relations = args.relations.changes(task);
+    let relations = args.relations.changes(task, detail.edges);
     let mut requests = args.membership.requests(&task.id);
     if !changes.is_empty() || (requests.is_empty() && relations.is_empty()) {
         requests.insert(

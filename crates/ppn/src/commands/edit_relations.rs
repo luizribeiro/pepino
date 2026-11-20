@@ -1,20 +1,23 @@
-use pepino_app::{EdgeKind, Request, Response, TaskSummary, WriteRequest};
+use pepino_app::{EdgeEffect, EdgeKind, Request, Response, TaskSummary, WriteRequest};
 use ppn::{app::AppClient, error::CliError};
 
 #[derive(clap::Args)]
 #[group(skip)]
 pub(super) struct Args {
     /// Set the parent task by ID or prefix.
-    #[arg(long, value_name = "TASK")]
+    #[arg(long, value_name = "TASK", conflicts_with = "no_parent")]
     parent: Option<String>,
+    /// Remove the task's parent.
+    #[arg(long)]
+    no_parent: bool,
 }
 
 impl Args {
     pub(super) fn is_empty(&self) -> bool {
-        self.parent.is_none()
+        self.parent.is_none() && !self.no_parent
     }
 
-    pub(super) fn changes(self, task: &TaskSummary) -> Vec<Change> {
+    pub(super) fn changes(self, task: &TaskSummary, edges: &[EdgeEffect]) -> Vec<Change> {
         if let Some(parent) = self.parent {
             return vec![Change::new(
                 &task.id,
@@ -25,7 +28,25 @@ impl Args {
                 false,
             )];
         }
-        vec![]
+        if !self.no_parent {
+            return vec![];
+        }
+        edges
+            .iter()
+            .filter(|edge| !edge.effective && edge.kind == EdgeKind::Parent && edge.from == task.id)
+            .map(|edge| &edge.to)
+            .chain(task.parent.iter())
+            .map(|parent| {
+                Change::new(
+                    &task.id,
+                    parent.clone(),
+                    EdgeKind::Parent,
+                    false,
+                    "--no-parent",
+                    false,
+                )
+            })
+            .collect()
     }
 }
 
