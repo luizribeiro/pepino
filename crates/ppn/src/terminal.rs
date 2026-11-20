@@ -143,11 +143,15 @@ impl<'a> Context<'a> {
     }
 
     pub fn confirm(&self, prompt: &str) -> Result<bool, CliError> {
+        self.confirm_with_refusal(prompt, prompt)
+    }
+
+    pub fn confirm_with_refusal(&self, prompt: &str, refusal: &str) -> Result<bool, CliError> {
         if self.yes {
             return Ok(true);
         }
         if !self.terminal.stdin_is_tty {
-            return Err(CliError::new(ErrorKind::ConfirmationRequired, prompt)
+            return Err(CliError::new(ErrorKind::ConfirmationRequired, refusal)
                 .with_hint("Pass --yes to confirm."));
         }
 

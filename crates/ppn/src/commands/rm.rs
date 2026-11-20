@@ -30,8 +30,12 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
         .iter()
         .map(|task| single_line(&task.title))
         .collect::<Vec<_>>();
-    let prompt = format!("Permanently delete these tasks?\n  {}", titles.join("\n  "));
-    if !context.confirm(&prompt)? {
+    let titles = titles.join("\n  ");
+    let prompt = format!("Permanently delete these tasks?\n  {titles}");
+    let count = tasks.len();
+    let noun = if count == 1 { "task" } else { "tasks" };
+    let refusal = format!("Refusing to delete {count} {noun} without confirmation\n  {titles}");
+    if !context.confirm_with_refusal(&prompt, &refusal)? {
         let response = Response::Write {
             changed: false,
             created: None,

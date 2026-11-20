@@ -16,6 +16,17 @@ fn rm_requires_yes_through_a_pipe_and_reports_permanent_deletion() {
         "confirmation_required",
     );
     assert_eq!(error["hint"], "Pass --yes to confirm.");
+    assert_eq!(
+        error["message"],
+        "Refusing to delete 1 task without confirmation\n  Renovate the greenhouse"
+    );
+    let output = sandbox
+        .command()
+        .args(["rm", task, &project.blocker])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.stderr, b"error: Refusing to delete 2 tasks without confirmation\n  Renovate the greenhouse\n  Order stainless fittings\nhint: Pass --yes to confirm.\n");
     assert_eq!(show_task(&sandbox, task)["id"], project.parent);
 
     let json = as_json(&sandbox.run(&["rm", task, &project.parent, "--yes", "--json"]));
