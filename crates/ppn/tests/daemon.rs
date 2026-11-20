@@ -61,6 +61,14 @@ mod network {
                 .unwrap()
                 .contains("already running")
         );
+        let loser = fixture
+            .command()
+            .env("PPN_INTERNAL_DETACH", "1")
+            .args(["daemon", "run"])
+            .output()
+            .unwrap();
+        assert!(loser.status.success());
+        assert!(loser.stderr.is_empty());
         let reply = fixture.raw(&json!({"v":2,"request":{"op":"next_operation"}}));
         assert_eq!(reply["result"]["code"], "unsupported_version");
         let stopped = as_json(&fixture.run(&["daemon", "stop", "--json"]));
@@ -286,4 +294,17 @@ fn disabling_autostart_in_config_also_prevents_write_notifications() {
     success(output);
     fixture.assert_stopped();
     assert!(!fixture.data.join("daemon.log").exists());
+}
+
+#[cfg(all(pepino_network_tests, target_os = "linux"))]
+#[test]
+fn detached_daemon_leaves_its_working_directory() {
+    let fixture = support::Fixture::new("");
+    let status = as_json(&fixture.run(&["daemon", "start", "--json"]));
+    let pid = status["pid"].as_u64().unwrap();
+    assert_eq!(
+        std::fs::read_link(format!("/proc/{pid}/cwd")).unwrap(),
+        std::path::Path::new("/")
+    );
+    fixture.run(&["daemon", "stop"]);
 }

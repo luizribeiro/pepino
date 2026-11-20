@@ -52,8 +52,12 @@ pub fn run(
     };
     let (action, status) = match args.action {
         Action::Run => {
-            process::detach().map_err(unreachable)?;
-            runtime::run(config, level)?;
+            let detached = process::detach().map_err(unreachable)?;
+            if let Err(error) = runtime::run(config, level)
+                && !(detached && error.kind() == ErrorKind::Busy)
+            {
+                return Err(error);
+            }
             ("stopped", None)
         }
         Action::Start => (

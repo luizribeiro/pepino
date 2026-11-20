@@ -50,11 +50,13 @@ pub fn spawn(config: &Config, selection: Option<&Path>, level: LogLevel) -> io::
     command.spawn()
 }
 
-pub fn detach() -> io::Result<()> {
-    if env::var_os(DETACH).as_deref() == Some("1".as_ref()) {
+pub fn detach() -> io::Result<bool> {
+    let detached = env::var_os(DETACH).as_deref() == Some("1".as_ref());
+    if detached {
         nix::unistd::setsid().map_err(io::Error::from)?;
+        env::set_current_dir("/")?;
     }
-    Ok(())
+    Ok(detached)
 }
 
 pub fn wait_started(
@@ -115,7 +117,7 @@ pub fn nudge_on_startup(client: &Client, mut child: Child) -> io::Result<()> {
         let result = client.nudge_with(remaining);
         match result {
             Err(error) if unavailable(&error) && !remaining.is_zero() => {
-                if child.try_wait()?.is_some() {
+                if child.try_wait()?.is_some_and(|status| !status.success()) {
                     return Err(io::Error::other(
                         "The daemon exited during startup. See daemon.log",
                     ));
