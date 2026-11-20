@@ -89,8 +89,8 @@ pub(crate) fn project(rows: &[EdgeRow]) -> Result<Vec<EdgeRecord>, StoreError> {
             exclusion: (!row.live).then_some(EdgeExclusion::MissingEndpoint),
         });
     }
-    let mut parents = Adjacency::new();
-    let mut blocks = Adjacency::new();
+    let mut parents = Parents::default();
+    let mut blocks = Blocks::default();
     for (index, edge) in edges
         .iter_mut()
         .enumerate()
@@ -100,29 +100,70 @@ pub(crate) fn project(rows: &[EdgeRow]) -> Result<Vec<EdgeRecord>, StoreError> {
             EdgeKind::Parent if newest_parent[&edge.from] != index => {
                 edge.exclusion = Some(EdgeExclusion::NewerParent);
             }
-            EdgeKind::Parent => add_if_acyclic(&mut parents, edge),
-            EdgeKind::Blocks => add_if_acyclic(&mut blocks, edge),
+            EdgeKind::Parent => parents.accept(edge),
+            EdgeKind::Blocks => blocks.accept(edge),
             _ => {}
         }
     }
     Ok(edges)
 }
 
-type Adjacency = HashMap<TaskId, Vec<TaskId>>;
+#[derive(Default)]
+struct Parents {
+    parent_of: HashMap<TaskId, TaskId>,
+    has_child: HashSet<TaskId>,
+}
 
-fn add_if_acyclic(accepted: &mut Adjacency, edge: &mut EdgeRecord) {
-    let mut seen = HashSet::new();
-    let mut pending = vec![edge.to];
-    while let Some(task) = pending.pop() {
-        if task == edge.from {
-            edge.exclusion = Some(EdgeExclusion::Cycle);
-            return;
+impl Parents {
+    fn accept(&mut self, edge: &mut EdgeRecord) {
+        if self.has_child.contains(&edge.from) {
+            let mut ancestor = Some(edge.to);
+            while let Some(task) = ancestor {
+                if task == edge.from {
+                    edge.exclusion = Some(EdgeExclusion::Cycle);
+                    return;
+                }
+                ancestor = self.parent_of.get(&task).copied();
+            }
         }
-        if seen.insert(task)
-            && let Some(next) = accepted.get(&task)
-        {
-            pending.extend(next);
+        self.parent_of.insert(edge.from, edge.to);
+        self.has_child.insert(edge.to);
+    }
+}
+
+#[derive(Default)]
+struct Blocks {
+    incoming: HashMap<TaskId, Vec<TaskId>>,
+    seen: HashSet<TaskId>,
+    pending: Vec<TaskId>,
+}
+
+impl Blocks {
+    fn accept(&mut self, edge: &mut EdgeRecord) {
+        if self.closes_cycle(edge.from, edge.to) {
+            edge.exclusion = Some(EdgeExclusion::Cycle);
+        } else {
+            self.incoming.entry(edge.to).or_default().push(edge.from);
         }
     }
-    accepted.entry(edge.from).or_default().push(edge.to);
+
+    fn closes_cycle(&mut self, from: TaskId, to: TaskId) -> bool {
+        let Some(incoming) = self.incoming.get(&from) else {
+            return false;
+        };
+        self.pending.clear();
+        self.seen.clear();
+        self.pending.extend(incoming);
+        while let Some(task) = self.pending.pop() {
+            if task == to {
+                return true;
+            }
+            if self.seen.insert(task)
+                && let Some(next) = self.incoming.get(&task)
+            {
+                self.pending.extend(next);
+            }
+        }
+        false
+    }
 }

@@ -364,3 +364,80 @@ async fn readiness_follows_status_and_live_blockers() {
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn loads_long_chains_in_adversarial_register_order() {
+    use std::time::{Duration, Instant};
+
+    let store = Store::open_in_memory().await.unwrap();
+    let mut tasks = Vec::new();
+    let write = async |counter, event| {
+        let envelope = Envelope::new(
+            DeviceId::from_bytes([51 + (counter % 3) as u8; 32]),
+            Hlc {
+                wall_ms: 1_795_144_800_000,
+                counter,
+            },
+            event,
+        )
+        .unwrap();
+        store
+            .append(BOARD, &envelope.encode().unwrap(), IdSource::Content)
+            .await
+            .unwrap();
+        envelope
+    };
+    for panel in 0..5000 {
+        let envelope = write(
+            0,
+            Event::TaskCreated {
+                title: format!("Inspect greenhouse panel {}", panel + 1),
+                fields: InitialFields::default(),
+            },
+        )
+        .await;
+        tasks.push(envelope.created_task().unwrap());
+    }
+    for kind in [EdgeKind::Parent, EdgeKind::Blocks] {
+        for (index, pair) in tasks.windows(2).rev().enumerate() {
+            write(
+                index as u32 + 1,
+                Event::EdgeAdded {
+                    from: pair[0],
+                    kind,
+                    to: pair[1],
+                },
+            )
+            .await;
+        }
+        write(
+            5000,
+            Event::EdgeAdded {
+                from: tasks[4999],
+                kind,
+                to: tasks[0],
+            },
+        )
+        .await;
+    }
+
+    let start = Instant::now();
+    let view = store.board(BOARD).await.unwrap();
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "loading a board with two 5,000-task chains took {elapsed:?}"
+    );
+    assert_eq!(view.tasks().len(), 5000);
+    assert_eq!(view.subtree(tasks[4999]).last().unwrap().depth, 4999);
+    assert_eq!(
+        view.dependencies(tasks[0]).blocks.last().unwrap().distance,
+        4999
+    );
+    let excluded: Vec<_> = view
+        .edges(tasks[0])
+        .into_iter()
+        .filter_map(|edge| edge.exclusion)
+        .collect();
+    assert_eq!(excluded, [EdgeExclusion::Cycle; 2]);
+}
