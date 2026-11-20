@@ -1,27 +1,22 @@
-use pepino_app::{ReadRequest, Request, Response};
+use pepino_app::{ReadRequest, Request};
 use ppn::app::AppClient;
-use ppn::error::{CliError, ErrorKind};
+use ppn::error::CliError;
 use ppn::output::CommandResult;
 use ppn::render::{short_id, single_line};
+use ppn::response::{ResponseExt, Status};
 use ppn::terminal::Context;
 
 pub fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
     let response = AppClient::open(context)?.call(Request::Read(ReadRequest::Status))?;
     CommandResult::app_document(context, response, |response, _| {
-        let Response::Status {
+        let Status {
             identity,
             device,
             board,
             data_dir,
             counts,
             protocol_version,
-        } = response
-        else {
-            return Err(CliError::new(
-                ErrorKind::Failure,
-                "Expected the app to return status.",
-            ));
-        };
+        } = response.status()?;
         let skipped = &counts.skipped;
         Ok(format!(
             "Identity: {} ({})\nDevice: {} ({})\nBoard: {} ({})\nData directory: {}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid\nProtocol: v{}",

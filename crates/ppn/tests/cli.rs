@@ -1092,7 +1092,8 @@ fn show_renders_the_protocol_task_and_configured_due_date() {
     assert!(human.contains("Due: 01 Dec 2026\n"));
     assert!(human.contains("Comments (0):\n"));
     let mut detail = as_json(&sandbox.run(&["show", id, "--json"]));
-    detail.as_object_mut().unwrap().remove("names");
+    let names = detail.as_object_mut().unwrap().remove("names").unwrap();
+    assert_eq!(names, write["names"]);
     let mut task = write["tasks"][0].clone();
     task["comments"] = json!([]);
     assert_eq!(
@@ -1290,7 +1291,8 @@ fn task_flags_round_trip_through_add_show_and_status() {
     let mut task = task.clone();
     task["comments"] = json!([]);
     let mut detail = as_json(&sandbox.run(&["show", id, "--json"]));
-    detail.as_object_mut().unwrap().remove("names");
+    let names = detail.as_object_mut().unwrap().remove("names").unwrap();
+    assert_eq!(names, write["names"]);
     assert_eq!(
         detail,
         json!({"schema":1,"kind":"task","task":task,"edges":[],

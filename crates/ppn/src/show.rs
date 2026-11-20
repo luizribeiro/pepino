@@ -1,31 +1,26 @@
-use pepino_app::{ReadRequest, Request, Response};
+use pepino_app::{ReadRequest, Request};
 use ppn::app::AppClient;
-use ppn::error::{CliError, ErrorKind};
+use ppn::error::CliError;
 use ppn::output::CommandResult;
 use ppn::render::task_detail;
+use ppn::response::{ResponseExt, Task};
 use ppn::terminal::Context;
 
 pub fn run(context: &Context<'_>, task: String) -> Result<CommandResult, CliError> {
     let response = AppClient::open(context)?.call(Request::Read(ReadRequest::GetTask { task }))?;
     CommandResult::app_document(context, response, |response, settings| {
-        let Response::Task {
+        let Task {
             task,
             edges,
             relation_titles,
-            assignee_names,
+            names,
             ..
-        } = response
-        else {
-            return Err(CliError::new(
-                ErrorKind::Failure,
-                "Expected the app to return task detail.",
-            ));
-        };
+        } = response.task()?;
         Ok(task_detail(
             task,
             edges,
             relation_titles,
-            assignee_names,
+            names,
             settings.dates(),
             &settings.terminal,
         ))
