@@ -38,7 +38,7 @@ pub use device_grant::{BoardJoinState, DeviceGrant, PeerHint};
 pub use device_request::DeviceRequest;
 pub use filter::{FilterDiagnostic, FilterInput, FilterPosition, FilterWarning};
 pub use hlc::Hlc;
-pub use identity::{Revocation, RosterDevice, RosterState};
+pub use identity::{IdentityCard, Revocation, RosterDevice, RosterState};
 pub use log::{
     EventAction, EventChange, EventClassification, EventDetail, EventRecord, InitialTaskFields,
 };

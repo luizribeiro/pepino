@@ -24,12 +24,17 @@ pub(crate) struct IdentityCatalog {
 }
 
 impl IdentityCatalog {
-    #[cfg(test)]
     pub(super) fn with_root(root: DeviceId) -> Self {
         Self {
             root: Some(root),
             ..Self::default()
         }
+    }
+
+    pub(super) fn name(&self) -> Option<&str> {
+        self.record
+            .as_ref()
+            .map(|record| record.display_name.as_str())
     }
 
     pub(crate) fn device(&self, id: DeviceId) -> Option<&super::record::RosterDevice> {

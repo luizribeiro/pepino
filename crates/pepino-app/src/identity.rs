@@ -1,3 +1,5 @@
+mod card;
+pub use card::IdentityCard;
 mod edit;
 mod fold;
 mod ledger;
