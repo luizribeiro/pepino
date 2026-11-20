@@ -54,6 +54,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "device_join",
             "joined Whether every board finished its first sync\nboards Per-board join states\nmessage Recovery guidance after timeout or null",
         ),
+        "device ls" => (
+            "devices",
+            "devices Device IDs, names, current-device marker, state and last seen time",
+        ),
         "view ls" => ("views", "views Saved filters ordered by name"),
         "view save" => (
             "view_saved",

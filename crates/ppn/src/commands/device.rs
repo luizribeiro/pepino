@@ -1,5 +1,6 @@
 mod add;
 mod join;
+mod ls;
 
 use std::path::Path;
 
@@ -27,6 +28,10 @@ pub struct Args {
 
 #[derive(Subcommand)]
 enum Action {
+    /// List this identity's devices and their membership status.
+    #[command(after_help = example_help(&["ppn device ls", "ppn device ls --json"]))]
+    Ls,
+
     /// Install a grant and wait for board membership and the first sync.
     #[command(after_help = example_help(&["ppn device join GRANT --timeout 45s"]))]
     Join {
@@ -60,6 +65,7 @@ pub fn run(
     allow_start: bool,
 ) -> Result<CommandResult, CliError> {
     match args.action {
+        Action::Ls => ls::run(context),
         Action::Join { grant } => join::run(context, &grant, selection),
         Action::Add { request, name } => add::run(context, &request, name, selection, allow_start),
         Action::Request { name } => {

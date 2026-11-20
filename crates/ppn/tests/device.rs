@@ -56,3 +56,30 @@ fn device_join_rejects_invalid_payloads_without_creating_state() {
     assert_json_error(output, 2, "invalid_input");
     assert!(!data.exists());
 }
+
+#[test]
+fn device_ls_reports_the_current_device_in_human_and_json_output() {
+    let (sandbox, _) = task_sandbox();
+    let result = as_json(&sandbox.run(&["device", "ls", "--json"]));
+    let devices = result["devices"].as_array().unwrap();
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0]["this_device"], true);
+    assert_eq!(devices[0]["state"], "joined");
+    assert!(devices[0]["last_seen"].is_null());
+    assert!(
+        sandbox
+            .run(&["device", "ls"])
+            .contains("joined · this device")
+    );
+
+    let (empty, _) = uninitialized_task_sandbox();
+    task_error(
+        empty
+            .command()
+            .args(["device", "ls", "--json"])
+            .output()
+            .unwrap(),
+        1,
+        "not_initialized",
+    );
+}
