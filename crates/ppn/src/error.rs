@@ -211,6 +211,7 @@ impl From<AppError> for CliError {
         let kind = match error.kind() {
             AppErrorKind::NotFound => ErrorKind::NotFound,
             AppErrorKind::NotInitialized => ErrorKind::NotInitialized,
+            AppErrorKind::PermissionDenied => ErrorKind::PermissionDenied,
             AppErrorKind::AmbiguousId => ErrorKind::AmbiguousId,
             AppErrorKind::InvalidInput => ErrorKind::InvalidInput,
             AppErrorKind::Conflict => ErrorKind::Conflict,

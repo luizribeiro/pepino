@@ -285,3 +285,23 @@ async fn opening_requires_both_local_files_and_a_matching_binding() {
     assert!(error.to_string().contains("pepino.sqlite exists without"));
     assert!(!local.exists());
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn app_reports_the_path_of_unreadable_local_state() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    let directory = tempfile::tempdir().unwrap();
+    App::init(directory.path(), NOW).await.unwrap();
+    let path = directory.path().join("local.json");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+    let result = App::open(directory.path(), NOW).await;
+    let os_can_read = fs::read(&path).is_ok();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    if !os_can_read {
+        assert!(
+            matches!(result, Err(AppError::PermissionDenied { path: denied, .. })
+            if denied == path.display().to_string())
+        );
+    }
+}

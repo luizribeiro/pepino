@@ -318,6 +318,7 @@ pub struct CommentRecord {
 pub enum AppErrorKind {
     NotFound,
     NotInitialized,
+    PermissionDenied,
     AmbiguousId,
     InvalidInput,
     Conflict,
@@ -332,6 +333,7 @@ impl AppErrorKind {
         match self {
             Self::NotFound => "not_found",
             Self::NotInitialized => "not_initialized",
+            Self::PermissionDenied => "permission_denied",
             Self::AmbiguousId => "ambiguous_id",
             Self::InvalidInput => "invalid_input",
             Self::Conflict => "conflict",
@@ -375,6 +377,8 @@ pub enum AppError {
     },
     #[error("{directory} is not initialized; run ppn init")]
     NotInitialized { directory: String },
+    #[error("permission denied for {path}: {reason}")]
+    PermissionDenied { path: String, reason: String },
     #[error("another pepino process holds the data directory")]
     Busy,
     #[error("storage error: {reason}")]
@@ -475,6 +479,7 @@ impl AppError {
         match self {
             Self::NotFound { .. } => AppErrorKind::NotFound,
             Self::NotInitialized { .. } => AppErrorKind::NotInitialized,
+            Self::PermissionDenied { .. } => AppErrorKind::PermissionDenied,
             Self::AmbiguousId { .. } => AppErrorKind::AmbiguousId,
             Self::InvalidInput { .. } => AppErrorKind::InvalidInput,
             Self::Conflict { .. } => AppErrorKind::Conflict,

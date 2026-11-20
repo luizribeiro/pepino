@@ -7,7 +7,7 @@ use pepino_core::{Clock, Hlc, TaskId};
 use pepino_store::{DatabaseErrorKind, Store, StoreError};
 use tokio::time::{Instant, sleep};
 
-use crate::state::{io_error, storage};
+use crate::state::{io_error, path_io_error, storage};
 use crate::{
     AppError, ConflictReference, LocalState, MissingReference, OpenOptions, Request, Response,
     WriteRequest,
@@ -88,14 +88,14 @@ impl App {
                 create_database_file(&database)?;
             }
             runtime
-                .block_on(Store::open_existing(database))
-                .map_err(store_error)
+                .block_on(Store::open_existing(&database))
+                .map_err(|error| store_error_at(&database, error))
         })
         .await??;
         store
             .bind_local(local.board_id, local.identity_id, local.device_id)
             .await
-            .map_err(store_error)?;
+            .map_err(|error| store_error_at(&directory.join(DATABASE), error))?;
         let state_dir = directory.clone();
         let local = worker("migrate local state", move || local.migrate(&state_dir)).await??;
         let hlc = store
@@ -180,7 +180,7 @@ fn exists(path: &Path) -> Result<bool, AppError> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(io_error(&format!("inspect {}", path.display()), error)),
+        Err(error) => Err(path_io_error(path, "inspect path", error)),
     }
 }
 
@@ -217,7 +217,7 @@ fn create_database_file(path: &Path) -> Result<(), AppError> {
     match options.open(path) {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-        Err(error) => Err(io_error("create database file", error)),
+        Err(error) => Err(path_io_error(path, "create database", error)),
     }
 }
 
@@ -240,10 +240,11 @@ async fn lock(directory: &Path, timeout: Duration) -> Result<File, AppError> {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        options.open(path)
+        options
+            .open(&path)
+            .map_err(|error| path_io_error(&path, "open data directory lock", error))
     })
-    .await?
-    .map_err(|error| io_error("open data directory lock", error))?;
+    .await??;
 
     let started = Instant::now();
     let mut delay = Duration::from_millis(1);
@@ -257,7 +258,13 @@ async fn lock(directory: &Path, timeout: Duration) -> Result<File, AppError> {
         match result {
             Ok(()) => return Ok(file),
             Err(TryLockError::WouldBlock) => {}
-            Err(TryLockError::Error(error)) => return Err(io_error("lock local state", error)),
+            Err(TryLockError::Error(error)) => {
+                return Err(path_io_error(
+                    &directory.join("local.lock"),
+                    "lock local state",
+                    error,
+                ));
+            }
         }
         let remaining = timeout.saturating_sub(started.elapsed());
         if remaining.is_zero() {
@@ -272,7 +279,22 @@ async fn lock(directory: &Path, timeout: Duration) -> Result<File, AppError> {
 }
 
 pub(super) fn store_error(error: StoreError) -> AppError {
+    store_error_at(Path::new(DATABASE), error)
+}
+
+fn store_error_at(path: &Path, error: StoreError) -> AppError {
     match error {
+        StoreError::Database {
+            kind: DatabaseErrorKind::PermissionDenied,
+            source,
+        }
+        | StoreError::Migration {
+            kind: DatabaseErrorKind::PermissionDenied,
+            source,
+        } => AppError::PermissionDenied {
+            path: path.display().to_string(),
+            reason: source.to_string(),
+        },
         StoreError::Database { kind, source } => storage(
             "database operation",
             source,

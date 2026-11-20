@@ -81,7 +81,7 @@ impl LocalState {
         match fs::read(&path) {
             Ok(bytes) => return Self::decode(&bytes),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(io_error("read local state", error)),
+            Err(error) => return Err(path_io_error(&path, "read local state", error)),
         }
         let display_name = match options.display_name {
             Some(name) => name,
@@ -116,12 +116,14 @@ impl LocalState {
             board_name,
             saved_views: SavedViews::default(),
         };
-        save(directory, &path, state).map_err(|error| io_error("save local state", error))
+        save(directory, &path, state)
+            .map_err(|error| path_io_error(&path, "save local state", error))
     }
 
     pub(crate) fn load(directory: &Path) -> Result<Self, AppError> {
-        let bytes = fs::read(directory.join(FILE_NAME))
-            .map_err(|error| io_error("read local state", error))?;
+        let path = directory.join(FILE_NAME);
+        let bytes =
+            fs::read(&path).map_err(|error| path_io_error(&path, "read local state", error))?;
         Self::decode(&bytes)
     }
 
@@ -135,7 +137,7 @@ impl LocalState {
 
     pub(super) fn prepare_directory(directory: &Path) -> Result<(), AppError> {
         create_directory(directory)
-            .map_err(|error| io_error(&format!("create {}", directory.display()), error))
+            .map_err(|error| path_io_error(directory, "create data directory", error))
     }
 
     pub(crate) fn replace(&self, directory: &Path) -> Result<(), AppError> {
@@ -145,7 +147,8 @@ impl LocalState {
                 .map_err(|error| error.error)?;
             sync_directory(directory)
         };
-        replace().map_err(|error| io_error("save local state", error))
+        replace()
+            .map_err(|error| path_io_error(&directory.join(FILE_NAME), "save local state", error))
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, AppError> {
@@ -229,6 +232,19 @@ pub(crate) fn storage(context: &str, error: impl std::fmt::Display, retryable: b
         reason: format!("{context}: {error}"),
         retryable,
     }
+}
+
+pub(crate) fn path_io_error(path: &Path, action: &str, error: io::Error) -> AppError {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem
+    ) {
+        return AppError::PermissionDenied {
+            path: path.display().to_string(),
+            reason: action.into(),
+        };
+    }
+    io_error(&format!("{action} {}", path.display()), error)
 }
 
 pub(crate) fn io_error(context: &str, error: io::Error) -> AppError {
