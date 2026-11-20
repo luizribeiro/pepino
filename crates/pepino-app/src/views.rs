@@ -69,11 +69,7 @@ impl SavedView {
 
 impl App {
     pub(super) async fn reload_state(&mut self) -> Result<(), AppError> {
-        let directory = self.directory.clone();
-        self.local = worker("reload local state", move || {
-            crate::LocalState::load(&directory)
-        })
-        .await??;
+        self.local = self.fresh_local_state().await?;
         Ok(())
     }
 
