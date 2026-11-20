@@ -1,3 +1,6 @@
+#[path = "cli_filter.rs"]
+pub(crate) mod filter;
+
 use crate::commands;
 use crate::commands::config as config_command;
 use crate::commands::debug;
@@ -114,7 +117,7 @@ fn execute(inputs: &ProcessInputs) -> (Result<CommandResult, CliError>, bool, Te
         }
     };
     let parsed = Cli::command()
-        .try_get_matches_from(args)
+        .try_get_matches_from(filter::escape_terms(args))
         .and_then(|mut matches| {
             let explicit_color = matches.value_source("color") == Some(ValueSource::CommandLine);
             Cli::from_arg_matches_mut(&mut matches).map(|cli| (cli, explicit_color))
@@ -228,7 +231,7 @@ fn help_flag_target<'a>(
     }
     // clap returns the rendered help without the command that produced it.
     let mut probe = mark_help_paths(definition.clone(), "");
-    match probe.try_get_matches_from_mut(args) {
+    match probe.try_get_matches_from_mut(filter::escape_terms(args)) {
         Err(error) if error.kind() == ErrorKind::DisplayHelp => {
             help::help_target(definition, error.render().to_string().split_whitespace())
         }

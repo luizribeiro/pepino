@@ -196,3 +196,49 @@ fn ls_renders_the_app_display_name_for_assignees() {
     let result = listing(&sandbox, &["assignee:me"]);
     assert_eq!(result["names"][me], name);
 }
+
+#[test]
+fn negated_terms_and_flags_can_be_interleaved() {
+    let (sandbox, _) = task_sandbox();
+    let project = small_project(&sandbox);
+    assert!(
+        sandbox
+            .run(&["ls", "tag:garden", "-is:blocked"])
+            .starts_with(&project.parent[..6])
+    );
+    let output = sandbox.run(&[
+        "ls",
+        "-tag:someday",
+        "--limit",
+        "5",
+        "-is:blocked",
+        "--json",
+    ]);
+    assert_eq!(as_json(&output)["total"], 2);
+    let output = sandbox.run(&[
+        "ls",
+        "--sort",
+        "-created",
+        "--all",
+        "-tag:someday",
+        "-h",
+        "--json",
+    ]);
+    assert_eq!(as_json(&output)["name"], "ls");
+    assert_eq!(
+        as_json(&sandbox.run(&["ready", "-tag:hardware", "--json"]))["total"],
+        1
+    );
+    let output = sandbox.run(&[
+        "view",
+        "save",
+        "weekend",
+        "-tag:someday",
+        "--json",
+        "-is:blocked",
+    ]);
+    assert_eq!(
+        as_json(&output)["view"]["filter"],
+        "-tag:someday -is:blocked"
+    );
+}

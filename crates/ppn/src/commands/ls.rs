@@ -11,12 +11,12 @@ use ppn::terminal::Context;
 #[command(about = "List tasks matching an optional filter.", after_help = example_help(&[
     "ppn ls tag:hardware",
     "ppn ls status:done assignee:me --sort created,-due",
-    "ppn ls 'due:<fri' -- -tag:someday",
+    "ppn ls 'due:<fri' -tag:someday",
     "ppn ls @weekend --limit 20 --json",
 ]))]
 pub struct Args {
-    /// Filter terms used to select tasks. Use -- before a term starting with a minus.
-    #[arg(value_name = "FILTER")]
+    /// Filter terms used to select tasks.
+    #[arg(value_name = "FILTER", value_parser = crate::cli::filter::unescape_term)]
     pub(super) filter: Vec<String>,
 
     /// Sort by comma-separated keys (created, updated, due, priority, status, title).

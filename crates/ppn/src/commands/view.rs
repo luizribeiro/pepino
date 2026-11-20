@@ -27,8 +27,8 @@ enum Action {
     Save {
         /// Name of the view to save.
         name: String,
-        /// Filter terms to save. Use -- before a term starting with a minus.
-        #[arg(required = true, value_name = "FILTER")]
+        /// Filter terms to save.
+        #[arg(required = true, value_name = "FILTER", value_parser = crate::cli::filter::unescape_term)]
         filter: Vec<String>,
     },
 
