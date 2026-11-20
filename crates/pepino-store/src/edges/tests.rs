@@ -1,4 +1,4 @@
-use crate::{Dependencies, Dependency, EdgeExclusion, EdgeRecord, IdSource, Store, SubtreeEntry};
+use crate::{Dependencies, Dependency, EdgeExclusion, EdgeRecord, Store, SubtreeEntry};
 use pepino_core::{
     BoardId, DeviceId, EdgeKind, Envelope, Event, FieldName, FieldValue, Hlc, InitialFields,
     Status, TaskId,
@@ -104,7 +104,7 @@ fn ordered_envelope(id_prefix: u8, tick: u32, event: Event) -> Envelope {
 async fn append(store: &Store, id: u8, tick: u32, event: Event) -> Envelope {
     let envelope = ordered_envelope(id, tick, event);
     store
-        .append(BOARD, &envelope.encode().unwrap(), IdSource::Content)
+        .append(BOARD, &envelope.encode().unwrap(), None)
         .await
         .unwrap();
     envelope
@@ -391,7 +391,7 @@ async fn loads_long_chains_in_adversarial_register_order() {
         )
         .unwrap();
         store
-            .append(BOARD, &envelope.encode().unwrap(), IdSource::Content)
+            .append(BOARD, &envelope.encode().unwrap(), None)
             .await
             .unwrap();
         envelope

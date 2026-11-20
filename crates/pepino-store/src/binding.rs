@@ -49,7 +49,6 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::IdSource;
 
     #[tokio::test]
     async fn binding_adopts_a_legacy_board_and_rejects_other_local_state() {
@@ -59,7 +58,7 @@ mod tests {
         let identity = IdentityId::from_bytes([41; 32]);
         let device = DeviceId::from_bytes([51; 32]);
         store
-            .append(board, &[0x82, 0x02, 0xf6], IdSource::Content)
+            .append(board, &[0x82, 0x02, 0xf6], None)
             .await
             .unwrap();
         assert!(matches!(

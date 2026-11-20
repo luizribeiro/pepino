@@ -1,7 +1,7 @@
 use pepino_core::{DeviceId, Hlc, InitialFields};
 
 use super::*;
-use crate::{IdSource, Store};
+use crate::Store;
 
 #[tokio::test]
 async fn only_creation_makes_a_task_visible_and_deletion_is_permanent() {
@@ -51,7 +51,7 @@ async fn only_creation_makes_a_task_visible_and_deletion_is_permanent() {
         )
         .unwrap();
         store
-            .append(board, &envelope.encode().unwrap(), IdSource::Content)
+            .append(board, &envelope.encode().unwrap(), None)
             .await
             .unwrap();
         let visible: Option<([u8; 12], [u8; 12], [u8; 32])> = sqlx::query_as(
@@ -114,7 +114,7 @@ async fn field_register_uses_clock_then_id_and_keeps_unset() {
             expected = (value != FieldValue::Unset).then_some(value);
         }
         store
-            .append(board, &envelope.encode().unwrap(), IdSource::Content)
+            .append(board, &envelope.encode().unwrap(), None)
             .await
             .unwrap();
         let stored: Option<Vec<u8>> = sqlx::query_scalar(
@@ -158,7 +158,7 @@ async fn failed_register_write_rolls_back_the_log() {
     .unwrap();
     let bytes = envelope.encode().unwrap();
     assert!(matches!(
-        store.append(board, &bytes, IdSource::Content).await,
+        store.append(board, &bytes, None).await,
         Err(StoreError::Database {
             kind: crate::DatabaseErrorKind::Constraint,
             ..
@@ -219,7 +219,7 @@ async fn tag_and_assignee_registers_converge_in_reverse_arrival_order() {
     ] {
         let store = Store::open_in_memory().await.unwrap();
         for bytes in order {
-            store.append(board, bytes, IdSource::Content).await.unwrap();
+            store.append(board, bytes, None).await.unwrap();
         }
         let rows: Vec<(String, Vec<u8>, Option<Vec<u8>>)> = sqlx::query_as(
             "SELECT kind, member, value FROM task_register WHERE board = ? AND task = ?
@@ -262,7 +262,7 @@ async fn same_clock_comments_have_distinct_registers() {
         .unwrap();
         expected.push((*envelope.id().as_bytes(), text.as_bytes().to_vec()));
         store
-            .append(board, &envelope.encode().unwrap(), IdSource::Content)
+            .append(board, &envelope.encode().unwrap(), None)
             .await
             .unwrap();
     }

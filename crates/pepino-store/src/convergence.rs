@@ -8,7 +8,7 @@ use pepino_core::{BoardId, EventId, Hlc, TaskId};
 use proptest::prelude::*;
 use rand::{RngExt, SeedableRng, rngs::StdRng, seq::SliceRandom};
 
-use crate::{AppendOutcome, CommentRecord, EdgeRecord, EventRecord, IdSource, Store, TaskRecord};
+use crate::{AppendOutcome, CommentRecord, EdgeRecord, EventRecord, Store, TaskRecord};
 
 const BOARD: BoardId = BoardId::from_bytes([29; 32]);
 const OTHER: BoardId = BoardId::from_bytes([47; 32]);
@@ -47,10 +47,7 @@ impl History {
                 .into_iter()
                 .filter(|&board| on_board(board, index))
             {
-                let outcome = store
-                    .append(board, &event.bytes, IdSource::Content)
-                    .await
-                    .unwrap();
+                let outcome = store.append(board, &event.bytes, None).await.unwrap();
                 match outcome {
                     AppendOutcome::Applied { id, .. } => {
                         assert_eq!(id, event.id);
