@@ -1,4 +1,4 @@
-use pepino_core::{BoardId, DeviceId, Envelope, EventId, Hlc, TaskId};
+use pepino_core::{BoardId, DecodeOutcome, DeviceId, Envelope, Event, EventId, Hlc, TaskId};
 use sqlx::{FromRow, SqliteConnection};
 
 use crate::{BoardKey, Store, StoreError};
@@ -51,6 +51,63 @@ pub(crate) async fn index(
     Ok(())
 }
 
+mod metadata;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, sqlx::Type)]
+#[sqlx(rename_all = "snake_case")]
+pub enum EventClassification {
+    #[sqlx(rename = "known")]
+    Applied,
+    UnknownVersion,
+    UnknownEvent,
+    UnknownValue,
+    Invalid,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistoryEvent {
+    pub classification: EventClassification,
+    pub decoded: DecodeOutcome,
+    pub event: Option<Event>,
+    pub tasks: Vec<TaskId>,
+}
+
+#[allow(dead_code)]
+#[derive(FromRow)]
+struct StoredEvent {
+    id: [u8; 32],
+    classification: EventClassification,
+    bytes: Vec<u8>,
+}
+
+#[allow(dead_code)]
+impl StoredEvent {
+    fn decode(&self) -> Result<HistoryEvent, StoreError> {
+        let id = EventId::from_bytes(self.id);
+        let decoded = Envelope::decode_with_id(id, &self.bytes)?;
+        let (event, tasks) = match &decoded {
+            DecodeOutcome::Known(envelope) => (
+                Some(envelope.event().clone()),
+                envelope
+                    .created_task()
+                    .into_iter()
+                    .chain(envelope.event().referenced_tasks())
+                    .collect(),
+            ),
+            DecodeOutcome::UnknownEvent { .. }
+            | DecodeOutcome::UnknownValue { .. }
+            | DecodeOutcome::InvalidEvent { .. } => metadata::skipped(&self.bytes),
+            _ => (None, Vec::new()),
+        };
+        Ok(HistoryEvent {
+            classification: self.classification,
+            decoded,
+            event,
+            tasks,
+        })
+    }
+}
+
 impl Store {
     pub async fn events(
         &self,
@@ -82,5 +139,25 @@ impl Store {
                 }
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn future_envelope_has_no_indexable_metadata() {
+        let id = [51; 32];
+        let event = StoredEvent {
+            id,
+            classification: EventClassification::UnknownVersion,
+            bytes: vec![0x82, 2, 0xf6],
+        }
+        .decode()
+        .unwrap();
+        assert_eq!(event.decoded.id(), EventId::from_bytes(id));
+        assert!(event.tasks.is_empty());
+        assert!(event.event.is_none());
     }
 }
