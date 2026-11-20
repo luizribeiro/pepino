@@ -10,6 +10,7 @@ mod app;
 mod batch;
 mod board;
 mod board_access;
+mod board_grant;
 mod board_request;
 mod board_requests;
 mod catalog;
@@ -36,6 +37,7 @@ mod write;
 
 pub use app::{App, SyncStoreError};
 pub use board_access::{BoardRole, SharedAccess};
+pub use board_grant::BoardGrant;
 pub use board_request::BoardRequest;
 pub use board_requests::BoardInfo;
 pub use device_grant::{BoardJoinState, DeviceGrant, PeerHint};
