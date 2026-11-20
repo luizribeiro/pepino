@@ -5,6 +5,7 @@ use thiserror::Error;
 #[error("{}{term}: {kind}", view_location(.view_chain))]
 pub struct QueryError {
     pub term: String,
+    pub term_index: usize,
     pub kind: QueryErrorKind,
     /// Saved views entered before reaching the offending term, outermost first.
     pub view_chain: Vec<String>,

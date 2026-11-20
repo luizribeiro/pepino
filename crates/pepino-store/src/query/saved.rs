@@ -10,6 +10,8 @@ pub(super) struct Expanded<T> {
 
 use super::{QueryError, QueryErrorKind, ViewResolver};
 
+pub(super) type IndexedTerm<'a> = (usize, &'a Term);
+
 pub(super) struct SavedViews<'a, T> {
     resolver: &'a dyn ViewResolver,
     chain: Vec<String>,
@@ -25,9 +27,14 @@ impl<'a, T: Clone> SavedViews<'a, T> {
         }
     }
 
-    pub(super) fn error(&self, term: &Term, kind: QueryErrorKind) -> QueryError {
+    pub(super) fn error(
+        &self,
+        (term_index, term): IndexedTerm<'_>,
+        kind: QueryErrorKind,
+    ) -> QueryError {
         QueryError {
             term: term.to_string(),
+            term_index,
             kind,
             view_chain: self.chain.clone(),
         }
@@ -39,7 +46,7 @@ impl<'a, T: Clone> SavedViews<'a, T> {
 
     pub(super) fn expand(
         &mut self,
-        term: &Term,
+        term: IndexedTerm<'_>,
         name: &str,
         build: impl FnOnce(&mut Self, &Filter) -> Result<Expanded<T>, QueryError>,
     ) -> Result<Expanded<T>, QueryError> {
@@ -51,7 +58,7 @@ impl<'a, T: Clone> SavedViews<'a, T> {
                 expanded
             }
         };
-        if term.negated && expanded.has_boards {
+        if term.1.negated && expanded.has_boards {
             return Err(self.error(
                 term,
                 QueryErrorKind::NegatedViewWithBoards { name: name.into() },
@@ -62,7 +69,7 @@ impl<'a, T: Clone> SavedViews<'a, T> {
 
     fn build(
         &mut self,
-        term: &Term,
+        term: IndexedTerm<'_>,
         name: &str,
         build: impl FnOnce(&mut Self, &Filter) -> Result<Expanded<T>, QueryError>,
     ) -> Result<Expanded<T>, QueryError> {
@@ -86,9 +93,9 @@ impl<'a, T: Clone> SavedViews<'a, T> {
     }
 }
 
-pub(super) fn canonical_terms(filter: &Filter) -> Vec<&Term> {
-    let mut terms: Vec<_> = filter.terms().iter().collect();
-    terms.sort_by_cached_key(|term| term.to_string());
+pub(super) fn canonical_terms(filter: &Filter) -> Vec<IndexedTerm<'_>> {
+    let mut terms: Vec<_> = filter.terms().iter().enumerate().collect();
+    terms.sort_by_cached_key(|(_, term)| term.to_string());
     terms
 }
 
@@ -107,14 +114,14 @@ fn collect_boards(
     boards: &mut Vec<Term>,
 ) -> Result<Expanded<()>, QueryError> {
     let mut has_boards = false;
-    for term in canonical_terms(filter) {
+    for indexed @ (_, term) in canonical_terms(filter) {
         match &term.clause {
             Clause::Board(_) => {
                 boards.push(term.clone());
                 has_boards = true;
             }
             Clause::View(name) => {
-                let nested = saved.expand(term, name, |saved, filter| {
+                let nested = saved.expand(indexed, name, |saved, filter| {
                     collect_boards(filter, saved, boards)
                 })?;
                 has_boards |= nested.has_boards;

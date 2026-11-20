@@ -152,9 +152,19 @@ fn assert_permutations(
             query.context.me = None;
         }
         let view = board();
-        assert_eq!(&select(view, &query).unwrap_err(), expected);
+        let mut expected = expected.clone();
+        let source = expected
+            .view_chain
+            .last()
+            .map_or(&filter, |name| &saved[name.as_str()]);
+        expected.term_index = source
+            .terms()
+            .iter()
+            .position(|term| term.to_string() == expected.term)
+            .unwrap();
+        assert_eq!(select(view, &query).unwrap_err(), expected);
         assert_eq!(
-            &matches(view, &view.tasks()[0], &query).unwrap_err(),
+            matches(view, &view.tasks()[0], &query).unwrap_err(),
             expected
         );
         return;

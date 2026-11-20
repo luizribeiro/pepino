@@ -15,7 +15,17 @@ fn check(query: &Query<'_>, term: &str, kind: QueryErrorKind) {
 }
 
 fn check_chain(query: &Query<'_>, term: &str, kind: QueryErrorKind, chain: &[&str]) {
+    let saved = chain
+        .last()
+        .map(|name| query.context.views.resolve(name).unwrap());
+    let filter = saved.as_ref().unwrap_or(query.filter);
+    let term_index = filter
+        .terms()
+        .iter()
+        .position(|candidate| candidate.to_string() == term)
+        .unwrap();
     let expected = QueryError {
+        term_index,
         term: term.into(),
         kind,
         view_chain: chain.iter().map(|name| (*name).to_owned()).collect(),
@@ -65,6 +75,7 @@ fn unresolved_person_reports_decoded_text_and_canonical_term() {
         select(&empty, &query(&filter)),
         Err(QueryError {
             term: term.into(),
+            term_index: 1,
             kind,
             view_chain: vec![],
         })

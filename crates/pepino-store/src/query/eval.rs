@@ -180,7 +180,7 @@ fn prepare(
 ) -> Result<Expanded<Vec<Check>>, QueryError> {
     let mut predicates = Vec::new();
     let mut has_boards = false;
-    for term in canonical_terms(filter) {
+    for indexed @ (_, term) in canonical_terms(filter) {
         let predicate = match &term.clause {
             Clause::Board(_) => {
                 has_boards = true;
@@ -188,12 +188,12 @@ fn prepare(
             }
             Clause::Text(text) => {
                 if !operands.view.comments_loaded() {
-                    return Err(saved.error(term, QueryErrorKind::CommentsRequired));
+                    return Err(saved.error(indexed, QueryErrorKind::CommentsRequired));
                 }
                 CheckKind::Text(fold(text))
             }
             Clause::View(name) => {
-                let nested = saved.expand(term, name, |saved, nested| {
+                let nested = saved.expand(indexed, name, |saved, nested| {
                     let expanded = prepare(nested, operands, saved)?;
                     Ok(Expanded {
                         value: Rc::new(ViewChecks {
@@ -208,7 +208,7 @@ fn prepare(
             }
             clause => {
                 let Some(predicate) =
-                    prepare_clause(clause, operands).map_err(|kind| saved.error(term, kind))?
+                    prepare_clause(clause, operands).map_err(|kind| saved.error(indexed, kind))?
                 else {
                     continue;
                 };
