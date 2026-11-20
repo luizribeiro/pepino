@@ -161,6 +161,10 @@ impl Store {
     }
 
     /// Appends a batch atomically, returning an outcome per input in input order.
+    ///
+    /// The store holds its single writer connection for the entire batch. The
+    /// first SQL statement is a write, so deferred `BEGIN` acquires SQLite's
+    /// writer lock without upgrading a read snapshot.
     pub async fn append_batch(
         &self,
         board: BoardId,
