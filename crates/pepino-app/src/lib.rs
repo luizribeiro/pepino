@@ -10,6 +10,7 @@ mod app;
 mod batch;
 mod board;
 mod board_access;
+mod board_admission;
 mod board_grant;
 mod board_install;
 mod board_people;
@@ -39,6 +40,7 @@ mod write;
 
 pub use app::{App, SyncStoreError};
 pub use board_access::{BoardRole, SharedAccess};
+pub use board_admission::BoardAdmission;
 pub use board_grant::BoardGrant;
 pub use board_people::BoardPerson;
 pub use board_request::BoardRequest;
