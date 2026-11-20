@@ -295,6 +295,75 @@ impl EventDetail {
     }
 }
 
+impl EventChange {
+    pub fn summary_with(
+        &self,
+        titles: &BTreeMap<String, Option<String>>,
+        names: &BTreeMap<String, String>,
+        id_label: impl Fn(&str) -> String,
+    ) -> String {
+        let title = |task: &str| titles.get(task).and_then(Option::as_deref);
+        let subject = |task: &str| title(task).map_or_else(|| id_label(task), str::to_owned);
+        let added = self.action == Some(EventAction::Added);
+        let action = if added { "added" } else { "removed" };
+        let (task, description) = match &self.detail {
+            EventDetail::Creation { title, .. } => return one_line(&format!("{title}: created")),
+            EventDetail::Field { task, field, value } => {
+                let value = match value {
+                    FieldValue::Unset => {
+                        return one_line(&format!("{}: {field} unset", subject(task)));
+                    }
+                    FieldValue::Text(value) => value.clone(),
+                    FieldValue::Integer(value) => value.to_string(),
+                    FieldValue::Date(value) => value.to_string(),
+                    FieldValue::Status(status) => match status {
+                        Status::Todo => "todo",
+                        Status::Doing => "doing",
+                        Status::Done => "done",
+                        Status::Cancelled => "cancelled",
+                    }
+                    .into(),
+                };
+                (task, format!("{field} set to {value}"))
+            }
+            EventDetail::Tag { task, tag } => (task, format!("tag #{tag} {action}")),
+            EventDetail::Assignee { task, who } => {
+                let name = names.get(who).cloned().unwrap_or_else(|| id_label(who));
+                (task, format!("assignee {name} {action}"))
+            }
+            EventDetail::Edge { task, kind, to, .. } => {
+                let to = title(to)
+                    .map_or_else(|| id_label(to), |title| format!("{} {title}", id_label(to)));
+                let change = match (kind, added) {
+                    (EdgeKind::Parent, true) => "parent set to",
+                    (EdgeKind::Parent, false) => "parent removed",
+                    (EdgeKind::Blocks, true) => "now blocks",
+                    (EdgeKind::Blocks, false) => "no longer blocks",
+                    (EdgeKind::Relates, true) => "linked to",
+                    (EdgeKind::Relates, false) => "unlinked from",
+                };
+                (task, format!("{change} {to}"))
+            }
+            EventDetail::Comment { task, text } => (task, format!("commented “{text}”")),
+            EventDetail::Deletion { task } => (task, "deleted".into()),
+            EventDetail::Skipped { tasks, .. } => {
+                if tasks.is_empty() {
+                    return "Skipped event".into();
+                }
+                return one_line(&format!(
+                    "{}: skipped event",
+                    tasks
+                        .iter()
+                        .map(|task| subject(task))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        };
+        one_line(&format!("{}: {description}", subject(task)))
+    }
+}
+
 fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }

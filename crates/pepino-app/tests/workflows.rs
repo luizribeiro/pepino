@@ -1310,6 +1310,18 @@ async fn log_actions_distinguish_sets_unsets_and_presence_changes() {
         titles[&task].as_deref(),
         Some("Replace the greenhouse latch")
     );
+    assert_eq!(
+        events[1]
+            .change
+            .summary_with(&titles, &Default::default(), str::to_owned),
+        "Replace the greenhouse latch: priority set to 3"
+    );
+    assert_eq!(
+        events[3]
+            .change
+            .summary_with(&titles, &Default::default(), str::to_owned),
+        "Replace the greenhouse latch: tag #hardware added"
+    );
     use pepino_app::EventAction::*;
     assert_eq!(
         events
