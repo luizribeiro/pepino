@@ -137,3 +137,59 @@ proptest! {
         prop_assert_eq!(left, right);
     }
 }
+
+#[tokio::test]
+async fn unlink_reports_activation_of_a_dormant_remote_blocker() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let hinges = create(
+        &mut app,
+        json!({"op":"add_task","title":"Order hinges"}),
+        "Order hinges",
+    )
+    .await;
+    let door = create(
+        &mut app,
+        json!({"op":"add_task","title":"Fit the door","blocked_by":[&hinges.id]}),
+        "Fit the door",
+    )
+    .await;
+    let board = app.local_state().board_id;
+    let store = Store::open(directory.path().join("pepino.sqlite"))
+        .await
+        .unwrap();
+    let mut clock = pepino_core::Clock::from_hlc(store.latest_hlc(board).await.unwrap().unwrap());
+    let remote = pepino_core::Envelope::new(
+        pepino_core::DeviceId::from_bytes([42; 32]),
+        clock.tick(NOW).unwrap(),
+        pepino_core::Event::EdgeAdded {
+            from: door.id.parse().unwrap(),
+            kind: pepino_core::EdgeKind::Blocks,
+            to: hinges.id.parse().unwrap(),
+        },
+    )
+    .unwrap();
+    store
+        .append(board, &remote.encode().unwrap(), IdSource::Content)
+        .await
+        .unwrap();
+
+    let response = dispatch(
+        &mut app,
+        json!({"op":"unlink","from":hinges.id,"kind":"blocks","to":door.id}),
+    )
+    .await;
+    let Response::Write { activated, .. } = response else {
+        panic!("expected a write")
+    };
+    assert_eq!(
+        activated,
+        [pepino_app::EdgeEffect {
+            from: door.id,
+            kind: pepino_app::EdgeKind::Blocks,
+            to: hinges.id,
+            effective: true,
+            reason: None,
+        }]
+    );
+}

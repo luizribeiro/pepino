@@ -152,6 +152,8 @@ pub enum Response {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         deleted: Vec<TaskSummary>,
         edges: Vec<EdgeEffect>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        activated: Vec<EdgeEffect>,
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         names: BTreeMap<String, String>,
     },

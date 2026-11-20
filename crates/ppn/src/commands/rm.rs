@@ -42,6 +42,7 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
             targets: vec![],
             tasks: vec![],
             deleted: vec![],
+            activated: vec![],
             edges: vec![],
             names: Default::default(),
         };

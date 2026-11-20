@@ -215,8 +215,25 @@ impl App {
             created: created.map(|id| id.to_string()),
             tasks,
             edges,
+            activated: activated_edges(before, view)?,
         })
     }
+}
+
+fn activated_edges(before: &BoardView, after: &BoardView) -> Result<Vec<EdgeEffect>, AppError> {
+    let key = |edge: &pepino_store::EdgeRecord| (edge.from, edge.kind as u8, edge.to);
+    let dormant: std::collections::HashSet<_> = before
+        .edge_records()
+        .iter()
+        .filter(|edge| !edge.is_effective())
+        .map(key)
+        .collect();
+    after
+        .edge_records()
+        .iter()
+        .filter(|edge| edge.is_effective() && dormant.contains(&key(edge)))
+        .map(|edge| project_edge(edge.from, edge.kind, edge.to, Some(*edge)))
+        .collect()
 }
 
 fn ensure_local_outcomes(outcomes: &[AppendOutcome]) -> Result<(), AppError> {
