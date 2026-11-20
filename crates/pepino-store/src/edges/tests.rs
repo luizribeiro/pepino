@@ -1,7 +1,7 @@
 use crate::{Dependencies, Dependency, EdgeExclusion, EdgeRecord, IdSource, Store, SubtreeEntry};
 use pepino_core::{
-    BoardId, DeviceId, EdgeKind, Envelope, Event, EventId, FieldName, FieldValue, Hlc,
-    InitialFields, Status, TaskId,
+    BoardId, DeviceId, EdgeKind, Envelope, Event, FieldName, FieldValue, Hlc, InitialFields,
+    Status, TaskId,
 };
 
 const BOARD: BoardId = BoardId::from_bytes([29; 32]);
@@ -81,25 +81,33 @@ async fn subtree_lists_effective_descendants_in_stable_preorder() {
     );
 }
 
-async fn append(store: &Store, id: u8, tick: u32, event: Event) {
-    let envelope = Envelope::with_id(
-        EventId::from_bytes([id; 32]),
-        DeviceId::from_bytes([40 + id; 32]),
-        Hlc {
-            wall_ms: 1_795_144_800_000,
-            counter: tick,
-        },
-        event,
-    )
-    .unwrap();
+fn ordered_envelope(id_prefix: u8, tick: u32, event: Event) -> Envelope {
+    // Other graph fixtures refer to these events in first-byte hash order.
+    (0_u32..)
+        .map(|nonce| {
+            let mut author = [40 + id_prefix; 32];
+            author[..4].copy_from_slice(&nonce.to_le_bytes());
+            Envelope::new(
+                DeviceId::from_bytes(author),
+                Hlc {
+                    wall_ms: 1_795_144_800_000,
+                    counter: tick,
+                },
+                event.clone(),
+            )
+            .unwrap()
+        })
+        .find(|envelope| envelope.id().as_bytes()[0] == id_prefix)
+        .unwrap()
+}
+
+async fn append(store: &Store, id: u8, tick: u32, event: Event) -> Envelope {
+    let envelope = ordered_envelope(id, tick, event);
     store
-        .append(
-            BOARD,
-            &envelope.encode().unwrap(),
-            IdSource::Trusted(envelope.id()),
-        )
+        .append(BOARD, &envelope.encode().unwrap(), IdSource::Content)
         .await
         .unwrap();
+    envelope
 }
 
 async fn add(store: &Store, id: u8, tick: u32, from: TaskId, kind: EdgeKind, to: TaskId) {
@@ -114,8 +122,9 @@ async fn setup() -> (Store, [TaskId; 4]) {
         "Order brass hinges",
         "Paint the frame",
     ];
+    let mut ids = Vec::new();
     for (index, title) in titles.into_iter().enumerate() {
-        append(
+        let creation = append(
             &store,
             index as u8 + 1,
             0,
@@ -125,8 +134,9 @@ async fn setup() -> (Store, [TaskId; 4]) {
             },
         )
         .await;
+        ids.push(creation.created_task().unwrap());
     }
-    (store, [1, 2, 3, 4].map(|id| TaskId::from_bytes([id; 32])))
+    (store, ids.try_into().unwrap())
 }
 
 #[tokio::test]
@@ -174,7 +184,13 @@ async fn newest_parent_wins_even_when_its_target_is_deleted() {
 #[tokio::test]
 async fn newest_parent_with_a_missing_target_revives_when_created() {
     let (store, [greenhouse, _, _, frame]) = setup().await;
-    let shed = TaskId::from_bytes([5; 32]);
+    let creation = Event::TaskCreated {
+        title: "Weatherproof the garden shed".into(),
+        fields: InitialFields::default(),
+    };
+    let shed = ordered_envelope(5, 3, creation.clone())
+        .created_task()
+        .unwrap();
     add(&store, 11, 1, frame, EdgeKind::Parent, greenhouse).await;
     add(&store, 12, 2, frame, EdgeKind::Parent, shed).await;
 
@@ -186,16 +202,7 @@ async fn newest_parent_with_a_missing_target_revives_when_created() {
     assert_eq!(edges[0].exclusion, Some(EdgeExclusion::NewerParent));
     assert_eq!(edges[1].exclusion, Some(EdgeExclusion::MissingEndpoint));
 
-    append(
-        &store,
-        5,
-        3,
-        Event::TaskCreated {
-            title: "Weatherproof the garden shed".into(),
-            fields: InitialFields::default(),
-        },
-    )
-    .await;
+    append(&store, 5, 3, creation).await;
     assert_eq!(
         store.task(BOARD, frame).await.unwrap().unwrap().parent,
         Some(shed)
@@ -510,10 +517,9 @@ async fn blocker_with_no_status_register_leaves_its_dependents_ready() {
 #[tokio::test]
 async fn siblings_follow_creation_even_when_ids_sort_in_reverse() {
     let (store, [greenhouse, _, _, _]) = setup().await;
-    let older = TaskId::from_bytes([25; 32]);
-    let younger = TaskId::from_bytes([19; 32]);
+    let mut ids = Vec::new();
     for (id, tick, title) in [(19, 3, "Fit the draft seal"), (25, 1, "Clean the frame")] {
-        append(
+        let creation = append(
             &store,
             id,
             tick,
@@ -523,7 +529,9 @@ async fn siblings_follow_creation_even_when_ids_sort_in_reverse() {
             },
         )
         .await;
+        ids.push(creation.created_task().unwrap());
     }
+    let [younger, older] = ids.try_into().unwrap();
     add(&store, 28, 4, younger, EdgeKind::Parent, greenhouse).await;
     add(&store, 29, 5, older, EdgeKind::Parent, greenhouse).await;
     let nodes = store.subtree(BOARD, greenhouse).await.unwrap();
