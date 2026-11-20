@@ -55,6 +55,8 @@ fn field_updates_enforce_types_and_required_values() {
 #[test]
 fn creation_and_updates_share_domain_rules() {
     let task = TaskId(EventId::from_bytes([35; 32]));
+    let longest_tag = "garden".repeat(10) + "work";
+    let oversized_tag = longest_tag.clone() + "s";
     for (tag, valid) in [
         ("garden/tools.repair_2-done", true),
         ("tags", true),
@@ -62,6 +64,8 @@ fn creation_and_updates_share_domain_rules() {
         ("/garden", false),
         ("garden Tools", false),
         ("gardén", false),
+        (&longest_tag, true),
+        (&oversized_tag, false),
     ] {
         let expected = if valid {
             Ok(())
@@ -115,6 +119,56 @@ fn creation_and_updates_share_domain_rules() {
         },
     ] {
         assert_eq!(event.validate(), Err(InvalidEvent::SelfEdge(task)));
+    }
+}
+
+#[test]
+fn text_limits_apply_to_utf8_bytes_in_creation_and_updates() {
+    let task = TaskId::from_bytes([35; 32]);
+    for (kind, max_bytes) in [
+        ("title", 1024),
+        ("description", 64 * 1024),
+        ("field text", 64 * 1024),
+        ("comment", 64 * 1024),
+    ] {
+        let mut text = "é".repeat(max_bytes / 2);
+        for expected in [Ok(()), Err(InvalidEvent::TextTooLong { kind, max_bytes })] {
+            let mut title = "Repair the gate".into();
+            let mut fields = InitialFields::default();
+            let name = match kind {
+                "title" => {
+                    title = text.clone();
+                    "title"
+                }
+                "description" => {
+                    fields.description = Some(text.clone());
+                    "description"
+                }
+                "field text" => {
+                    let field = FieldName::new("notes").unwrap();
+                    fields.custom.insert(field, FieldValue::Text(text.clone()));
+                    "notes"
+                }
+                "comment" => {
+                    let event = Event::CommentAdded {
+                        task,
+                        text: text.clone(),
+                    };
+                    assert_eq!(event.validate(), expected);
+                    text.push('!');
+                    continue;
+                }
+                _ => unreachable!(),
+            };
+            assert_eq!(Event::TaskCreated { title, fields }.validate(), expected);
+            let event = Event::TaskFieldSet {
+                task,
+                field: FieldName::new(name).unwrap(),
+                value: FieldValue::Text(text.clone()),
+            };
+            assert_eq!(event.validate(), expected);
+            text.push('!');
+        }
     }
 }
 

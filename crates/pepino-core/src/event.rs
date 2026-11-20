@@ -8,6 +8,10 @@ use crate::{
     field::valid_name,
 };
 
+const MAX_TITLE_BYTES: usize = 1024;
+const MAX_TEXT_BYTES: usize = 64 * 1024;
+const MAX_TAG_BYTES: usize = 64;
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct InitialFields {
     pub description: Option<String>,
@@ -74,6 +78,11 @@ fn deserialize_custom_fields<'de, D: Deserializer<'de>>(
 pub enum InvalidEvent {
     #[error("task title is empty")]
     EmptyTitle,
+    #[error("{kind} exceeds the {max_bytes}-byte limit")]
+    TextTooLong {
+        kind: &'static str,
+        max_bytes: usize,
+    },
     #[error("invalid field name {field:?}: {reason}")]
     FieldName {
         field: String,
@@ -109,13 +118,19 @@ impl Event {
         match self {
             Self::TaskCreated { title, fields } => {
                 validate_title(title)?;
+                if let Some(description) = &fields.description {
+                    validate_length(description, "description", MAX_TEXT_BYTES)?;
+                }
                 for tag in &fields.tags {
                     validate_tag(tag)?;
                 }
-                for field in fields.custom.keys() {
+                for (field, value) in &fields.custom {
                     validate_field_name(field)?;
                     if !field.is_custom() {
                         return Err(InvalidEvent::BuiltInCustomField(field.clone()));
+                    }
+                    if let FieldValue::Text(text) = value {
+                        validate_length(text, "field text", MAX_TEXT_BYTES)?;
                     }
                 }
                 Ok(())
@@ -124,15 +139,22 @@ impl Event {
                 validate_field_name(field)?;
                 match (field.as_str(), value) {
                     ("title", FieldValue::Text(title)) => validate_title(title),
-                    ("description", FieldValue::Text(_) | FieldValue::Unset)
+                    ("description", FieldValue::Text(description)) => {
+                        validate_length(description, "description", MAX_TEXT_BYTES)
+                    }
+                    ("description", FieldValue::Unset)
                     | ("status", FieldValue::Status(_))
                     | ("due", FieldValue::Date(_) | FieldValue::Unset)
                     | ("priority", FieldValue::Integer(_) | FieldValue::Unset) => Ok(()),
+                    (_, FieldValue::Text(text)) if field.is_custom() => {
+                        validate_length(text, "field text", MAX_TEXT_BYTES)
+                    }
                     _ if field.is_custom() => Ok(()),
                     _ => Err(InvalidEvent::FieldType(field.clone())),
                 }
             }
             Self::TagAdded { tag, .. } | Self::TagRemoved { tag, .. } => validate_tag(tag),
+            Self::CommentAdded { text, .. } => validate_length(text, "comment", MAX_TEXT_BYTES),
             Self::EdgeAdded { from, to, .. } | Self::EdgeRemoved { from, to, .. } if from == to => {
                 Err(InvalidEvent::SelfEdge(*from))
             }
@@ -152,12 +174,19 @@ fn validate_title(title: &str) -> Result<(), InvalidEvent> {
     if title.is_empty() {
         return Err(InvalidEvent::EmptyTitle);
     }
-    Ok(())
+    validate_length(title, "title", MAX_TITLE_BYTES)
 }
 
 fn validate_tag(tag: &str) -> Result<(), InvalidEvent> {
-    if !valid_name(tag, b"./") {
+    if tag.len() > MAX_TAG_BYTES || !valid_name(tag, b"./") {
         return Err(InvalidEvent::Tag(tag.into()));
+    }
+    Ok(())
+}
+
+fn validate_length(text: &str, kind: &'static str, max_bytes: usize) -> Result<(), InvalidEvent> {
+    if text.len() > max_bytes {
+        return Err(InvalidEvent::TextTooLong { kind, max_bytes });
     }
     Ok(())
 }

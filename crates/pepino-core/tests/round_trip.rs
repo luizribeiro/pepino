@@ -1,8 +1,10 @@
 use pepino_core::*;
 use proptest::prelude::*;
 
-fn nonempty_text() -> impl Strategy<Value = String> {
-    any::<String>().prop_filter("non-empty title", |text| !text.is_empty())
+fn title() -> impl Strategy<Value = String> {
+    any::<String>().prop_filter("valid title length", |text| {
+        (1..=1024).contains(&text.len())
+    })
 }
 
 fn status() -> impl Strategy<Value = Status> {
@@ -30,7 +32,7 @@ fn field_value() -> impl Strategy<Value = FieldValue> {
 }
 
 fn tag() -> impl Strategy<Value = String> {
-    "[a-z][a-z0-9_./-]{0,80}"
+    "[a-z][a-z0-9_./-]{0,63}"
 }
 
 fn custom_name() -> impl Strategy<Value = FieldName> {
@@ -68,7 +70,7 @@ fn initial_fields() -> impl Strategy<Value = InitialFields> {
 
 fn settable_field() -> impl Strategy<Value = (FieldName, FieldValue)> {
     let builtin = prop_oneof![
-        nonempty_text().prop_map(|title| ("title", FieldValue::Text(title))),
+        title().prop_map(|title| ("title", FieldValue::Text(title))),
         any::<String>().prop_map(|text| ("description", FieldValue::Text(text))),
         status().prop_map(|status| ("status", FieldValue::Status(status))),
         date().prop_map(|date| ("due", FieldValue::Date(date))),
@@ -82,7 +84,7 @@ fn settable_field() -> impl Strategy<Value = (FieldName, FieldValue)> {
 
 fn events() -> impl Strategy<Value = [Event; 10]> {
     (
-        nonempty_text(),
+        title(),
         initial_fields(),
         settable_field(),
         tag(),
