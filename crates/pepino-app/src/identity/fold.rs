@@ -2,7 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use pepino_core::{DeviceId, EventId};
 
-use super::edit::{Change, Edit, SignedEdit};
+use super::{
+    edit::{Change, Edit, SignedEdit},
+    record::{Record, RosterState},
+};
 
 #[derive(Default)]
 pub(super) struct Fold<'a> {
@@ -15,7 +18,7 @@ pub(super) fn fold(entries: &BTreeMap<EventId, SignedEdit>, root: DeviceId) -> F
     let mut ordered: Vec<_> = entries.iter().collect();
     ordered.sort_unstable_by_key(|(id, signed)| (signed.edit.generation, **id));
     let mut view = Fold::default();
-    let mut accepted: BTreeMap<EventId, BTreeSet<DeviceId>> = BTreeMap::new();
+    let mut accepted: BTreeMap<EventId, BTreeSet<usize>> = BTreeMap::new();
     for (&id, signed) in ordered {
         let edit = &signed.edit;
         if edit
@@ -38,18 +41,26 @@ pub(super) fn fold(entries: &BTreeMap<EventId, SignedEdit>, root: DeviceId) -> F
         {
             continue;
         }
-        let mut active: BTreeSet<_> = edit
+        let mut ancestors: BTreeSet<_> = edit
             .parents
             .iter()
             .flat_map(|id| accepted[id].iter().copied())
             .collect();
+        let record = Record::fold(ancestors.iter().map(|&index| {
+            let ancestor = view.ordered[index];
+            (&ancestor.change, ancestor.writer)
+        }));
+        let active = |id| {
+            record
+                .as_ref()
+                .and_then(|record| record.devices.get(&id))
+                .is_some_and(|device| device.state == RosterState::Active)
+        };
         let authorized = match &edit.change {
             Change::Initialize { .. } => edit.writer == root && edit.parents.is_empty(),
-            Change::Add { device, .. } => active.contains(&edit.writer) && !active.contains(device),
-            Change::RenameDevice(device, _) => {
-                active.contains(&edit.writer) && active.contains(device)
-            }
-            Change::RenameIdentity(_) => active.contains(&edit.writer),
+            Change::Add { device, .. } => active(edit.writer) && !active(*device),
+            Change::RenameDevice(device, _) => active(edit.writer) && active(*device),
+            Change::RenameIdentity(_) => active(edit.writer),
         };
         let generation = edit
             .parents
@@ -61,16 +72,11 @@ pub(super) fn fold(entries: &BTreeMap<EventId, SignedEdit>, root: DeviceId) -> F
             view.rejected.insert(id);
             continue;
         }
-        if let Change::Initialize { .. } = edit.change {
-            active.insert(root);
-        }
-        if let Change::Add { device, .. } = edit.change {
-            active.insert(device);
-        }
         view.heads.retain(|head| !edit.parents.contains(head));
         view.heads.insert(id);
+        ancestors.insert(view.ordered.len());
         view.ordered.push(edit);
-        accepted.insert(id, active);
+        accepted.insert(id, ancestors);
     }
     view
 }
@@ -130,11 +136,17 @@ fn membership_is_checked_against_parents_even_after_a_later_admission() {
         (id(10), edit(root, 0, None, genesis)),
         (id(11), edit(peer, 1, Some(10), rename.clone())),
         (id(12), edit(root, 1, Some(10), add)),
-        (id(13), edit(peer, 2, Some(12), rename)),
+        (id(13), edit(peer, 2, Some(12), rename.clone())),
+        (id(14), edit(root, 1, Some(10), rename.clone())),
+        (id(15), {
+            let mut joined = edit(peer, 3, Some(13), rename);
+            joined.edit.parents.insert(id(14));
+            joined
+        }),
     ]
     .into();
     let view = fold(&entries, root);
     assert_eq!(view.rejected, [id(11)].into());
-    assert_eq!(view.heads, [id(13)].into());
-    assert_eq!(view.ordered.len(), 3);
+    assert_eq!(view.heads, [id(15)].into());
+    assert_eq!(view.ordered.len(), 5);
 }
