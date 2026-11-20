@@ -85,3 +85,31 @@ fn state_predicates_use_status_and_effective_blockers() {
     check("is:ready", &[1, 4, 7, 8, 9, 11, 12, 13]);
     check("is:blocked,closed", &[0, 2, 3, 5, 6, 10]);
 }
+
+#[test]
+fn presence_checks_every_field_including_empty_description_and_custom_values() {
+    check("has:due", &[0, 1, 2, 6, 7, 10, 11]);
+    check("has:parent", &[1, 6]);
+    check("has:assignee", &[0, 1, 2]);
+    check("has:priority", &[0, 1, 2, 4, 7, 8, 10, 11]);
+    check("has:tag", &[0, 1, 2, 4, 6, 7, 8, 11]);
+    check("has:description", &[0, 3]);
+    check("has:estimate", &[0, 1]);
+    check("has:budget", &[]);
+    check("has:parent,description", &[0, 1, 3, 6]);
+}
+
+#[test]
+fn custom_comparisons_respect_operand_type_and_lexical_case() {
+    check("estimate:>9", &[0]);
+    check(r#"estimate:"12""#, &[1]);
+    check(r#"estimate:12,"12""#, &[0, 1]);
+    check("inspection:>=2026-11-21", &[0]);
+    check("inspection:>2026-11-21", &[]);
+    check(r#"supplier:<"Beta""#, &[0]);
+    check("supplier:acme", &[]);
+    check("supplier:12", &[]);
+    check("estimate:2026-11-20", &[]);
+    check("budget:>0", &[]);
+    check("-estimate:>=0 has:estimate", &[1]);
+}

@@ -7,7 +7,7 @@ use crate::{BoardView, PrefixResolution, TaskRecord};
 
 use super::{
     QueryError, QueryErrorKind,
-    predicates::{compare, has, is, utc_days},
+    predicates::{compare, custom, has, is, utc_days},
 };
 
 /// Resolves decoded person text to candidate identities.
@@ -114,6 +114,14 @@ fn prepare_clause<'a>(
         Clause::Due(values) => Box::new(move |task| compare(task.due, values)),
         Clause::Created(values) => Box::new(move |task| utc_days(task.created, values)),
         Clause::Updated(values) => Box::new(move |task| utc_days(task.updated, values)),
+        Clause::Custom {
+            field,
+            alternatives,
+        } => Box::new(move |task| {
+            task.custom
+                .get(field)
+                .is_some_and(|value| custom(value, alternatives))
+        }),
         _ => return Ok(None),
     };
     Ok(Some(predicate))

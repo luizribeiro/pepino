@@ -3,8 +3,8 @@ use std::cmp::Ordering;
 use crate::TaskRecord;
 
 use pepino_core::{
-    Date, Hlc,
-    filter::{Comparison, Operator, PresenceField, State},
+    Date, FieldValue, Hlc,
+    filter::{Comparison, CustomValue, Operator, PresenceField, State},
 };
 pub(super) fn is(task: &TaskRecord, state: State) -> bool {
     match state {
@@ -43,6 +43,18 @@ pub(super) fn utc_days(hlc: Hlc, alternatives: &[Comparison<Date>]) -> bool {
             actual.cmp(&i64::from(alternative.value.to_epoch_days())),
             alternative.operator,
         )
+    })
+}
+
+pub(super) fn custom(actual: &FieldValue, alternatives: &[Comparison<CustomValue>]) -> bool {
+    alternatives.iter().any(|alternative| {
+        let ordering = match (actual, &alternative.value) {
+            (FieldValue::Integer(left), CustomValue::Integer(right)) => left.cmp(right),
+            (FieldValue::Date(left), CustomValue::Date(right)) => left.cmp(right),
+            (FieldValue::Text(left), CustomValue::Text(right)) => left.cmp(right),
+            _ => return false,
+        };
+        test(ordering, alternative.operator)
     })
 }
 
