@@ -377,26 +377,27 @@ fn wait_for_board_views(
     }
 }
 
-fn wait_for_locked_writer(client: &Client, board: pepino_core::BoardId, stage: &str) {
-    let key = board.to_string();
-    let _ = until(
-        || client.status(),
-        |status| {
-            status
-                .as_ref()
-                .ok()
-                .and_then(Option::as_ref)
-                .is_some_and(|status| {
-                    status
-                        .network
-                        .boards
-                        .get(&key)
-                        .and_then(|board| board.last_error.as_deref())
-                        .is_some_and(|error| {
-                            error.starts_with(stage) && error.contains("holds the data directory")
-                        })
-                })
+fn wait_for_spooled_task(rt: &tokio::runtime::Runtime, pair: &Pair, title: &str) {
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+
+    let path = pair.peer.path().join("board/node.sqlite");
+    let options = SqliteConnectOptions::new().filename(path).read_only(true);
+    let mut connection = rt
+        .block_on(SqliteConnection::connect_with(&options))
+        .unwrap();
+    until(
+        || {
+            rt.block_on(
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS (SELECT 1 FROM pepino_delivery WHERE board = ? AND instr(item, ?) > 0)",
+                )
+                .bind(pair.board.as_bytes().as_slice())
+                .bind(title.as_bytes())
+                .fetch_one(&mut connection),
+            )
+            .unwrap()
         },
+        |queued| *queued,
         WAIT,
     );
 }
@@ -428,7 +429,6 @@ fn recover_active_sync(signal: Signal) {
     let peer = Daemon::start(pair.peer.path(), &pair.network);
     pair.joined();
     let sender = pair.client(pair.owner.path());
-    let receiver = pair.client(pair.peer.path());
     write_tasks(&rt, pair.owner.path(), 0..1);
     sender.nudge().unwrap();
     wait_for_views(&rt, &pair, 1);
@@ -463,15 +463,16 @@ fn recover_active_sync(signal: Signal) {
 
     let lock = std::fs::File::open(pair.peer.path().join("board/local.lock")).unwrap();
     lock.lock().unwrap();
-    write_tasks(&rt, pair.owner.path(), 25..33);
+    // The node caches 64 deliveries in memory before leaving the rest in SQLite.
+    write_tasks(&rt, pair.owner.path(), 25..100);
     sender.nudge().unwrap();
-    wait_for_locked_writer(&receiver, pair.board, "store operation");
+    wait_for_spooled_task(&rt, &pair, "Inspect greenhouse vent 99");
     peer.interrupt(signal);
     let lock_until_exit = (signal == Signal::SIGKILL).then_some(lock);
     peer.wait_stopped(signal);
     drop(lock_until_exit);
     let peer = Daemon::start(pair.peer.path(), &pair.network);
-    wait_for_views(&rt, &pair, 33);
+    wait_for_views(&rt, &pair, 100);
     peer.stop(Signal::SIGTERM);
     owner.stop(Signal::SIGTERM);
     rt.block_on(verify_databases(&pair));
