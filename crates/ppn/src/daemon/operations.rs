@@ -38,6 +38,9 @@ pub(super) async fn operate(
         }
         Operation::AddMember { device, name } => match engine.add_member(device, name).await {
             Ok(()) => Outcome::MemberAdded,
+            Err(pepino_sync::Error::EnrollmentAccess { board }) => {
+                Outcome::MemberAccessDenied { board }
+            }
             Err(_) => Outcome::error(
                 "add_member_failed",
                 "Could not grant board membership. Check that this device has joined every board.",

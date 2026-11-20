@@ -48,6 +48,8 @@ pub enum Error {
     RestartRequired(#[from] BoardFailure),
     #[error("delivery stream ended: {0}")]
     DeliveryStream(String),
+    #[error("This device needs manage access to board {board:?} before adding a device.")]
+    EnrollmentAccess { board: String },
     #[error("sync did not become idle before the deadline")]
     Timeout,
     #[error("data directory belongs to device {local}, but the node is {node}")]
@@ -261,10 +263,37 @@ impl SyncEngine {
             }));
         }
         let _guard = self.membership.lock().await;
-        for handle in self.boards.values() {
-            let handle = handle.upgrade().ok_or(pepino_node::Error::Closed)?;
-            handle.wait_until_joined(Duration::from_secs(5)).await?;
-            handle.add_member(&member, Role::Manage).await?;
+        let owner = self.node.device_id();
+        let allowed =
+            futures_util::future::try_join_all(self.app.local_state().boards().iter().map(
+                |board| async move {
+                    let denied = || Error::EnrollmentAccess {
+                        board: board.name.clone(),
+                    };
+                    let handle = self
+                        .boards
+                        .get(&board.id)
+                        .and_then(Weak::upgrade)
+                        .ok_or_else(denied)?;
+                    handle
+                        .wait_until_joined(Duration::from_secs(5))
+                        .await
+                        .map_err(|_| denied())?;
+                    let role = handle
+                        .members()
+                        .await
+                        .map_err(|_| denied())?
+                        .into_iter()
+                        .find_map(|(id, role)| {
+                            (id == owner && role == Role::Manage).then_some(role)
+                        })
+                        .ok_or_else(denied)?;
+                    Ok::<_, Error>((board.name.as_str(), handle, role))
+                },
+            ))
+            .await?;
+        for (_, handle, role) in allowed {
+            handle.add_member(&member, role).await?;
         }
         self.app
             .remember_device(device.id, device.name, name)

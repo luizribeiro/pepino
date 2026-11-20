@@ -72,6 +72,9 @@ pub enum Outcome {
         network: Network,
     },
     MemberAdded,
+    MemberAccessDenied {
+        board: String,
+    },
     PeerHintRegistered,
     BoardJoinState {
         boards: BTreeMap<BoardId, BoardJoinState>,

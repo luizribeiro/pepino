@@ -260,3 +260,33 @@ async fn the_running_engine_enrolls_a_device_without_reopening_its_board() {
     assert_eq!(local.local_state().devices()[&peer.id], "Ferrum");
     live.stop().await;
 }
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn enrollment_checks_manage_access_before_changing_membership() {
+    let (dir, _, writer) = fixture::pair().await;
+    let candidate = pepino_app::App::request_device(
+        &dir.path().join("garden-tablet"),
+        pepino_app::OpenOptions::default(),
+    )
+    .await
+    .unwrap();
+    let live = writer.start().await;
+    let err = live
+        .engine
+        .add_member(candidate.clone(), None)
+        .await
+        .unwrap_err();
+    let board_name = writer.app.local_state().board_name();
+    assert!(matches!(err, crate::Error::EnrollmentAccess { board } if board == board_name));
+    let refreshed = pepino_app::App::open(dir.path().join("ben"), 0)
+        .await
+        .unwrap();
+    assert!(
+        !refreshed
+            .local_state()
+            .devices()
+            .contains_key(&candidate.id)
+    );
+    live.stop().await;
+}

@@ -79,6 +79,15 @@ pub(super) fn run(
             Duration::from_secs(20),
         )
         .map_err(unreachable)?;
+    if let Outcome::MemberAccessDenied { board } = &outcome {
+        return Err(CliError::new(
+            ErrorKind::PermissionDenied,
+            format!(
+                "This device needs manage access to board {:?} before adding a device.",
+                single_line(board)
+            ),
+        ));
+    }
     if !matches!(outcome, Outcome::MemberAdded) {
         return Err(unexpected_reply());
     }
