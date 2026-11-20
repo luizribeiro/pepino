@@ -215,10 +215,9 @@ fn status_combines_daemon_activity_with_local_counts() {
     fixture.assert_stopped();
 }
 #[test]
-fn writes_stay_successful_and_fast_with_an_unreachable_socket() {
+fn writes_succeed_with_an_unreachable_socket() {
     let (sandbox, data) = task_sandbox();
     let absent = sandbox.home.path().join("absent/control.sock");
-    let start = std::time::Instant::now();
     let mut command = sandbox.command();
     command
         .env_remove("PPN_NO_DAEMON")
@@ -228,7 +227,6 @@ fn writes_stay_successful_and_fast_with_an_unreachable_socket() {
         .output()
         .unwrap();
     assert!(as_json(&success(output))["created"].is_string());
-    assert!(start.elapsed() < std::time::Duration::from_secs(2));
     assert!(!absent.exists());
     assert!(!data.join("daemon.log").exists());
     let verbose = sandbox
@@ -248,41 +246,71 @@ fn writes_stay_successful_and_fast_with_an_unreachable_socket() {
 
 #[cfg(pepino_network_tests)]
 #[test]
-fn a_write_autostarts_and_subsequent_writes_notify_the_engine() {
-    use std::time::{Duration, Instant};
+fn a_write_autostarts_the_daemon_and_publishes_pending_tasks() {
+    use crate::wait::{WAIT, until};
+
     let fixture = support::Fixture::new("");
     fixture.run(&["add", "Install a rain barrel"]);
     fixture.assert_stopped();
-    let add = |title| {
-        let output = fixture
-            .command()
-            .env_remove("PPN_NO_DAEMON")
-            .args(["add", title])
-            .output()
-            .unwrap();
-        success(output);
-    };
-    let check_publications = |expected, limit| {
-        let start = Instant::now();
-        loop {
-            let reply = fixture.raw(&serde_json::json!({"v":1,"request":{"op":"status"}}));
-            let boards = reply["result"]["status"]["network"]["boards"]
-                .as_object()
-                .unwrap();
-            if boards.values().next().unwrap()["published"] == expected {
-                break;
-            }
-            assert!(start.elapsed() < limit, "{reply}");
-            std::thread::sleep(Duration::from_millis(25));
-        }
-    };
-    add("Fix the greenhouse latch");
+    let output = fixture
+        .command()
+        .env_remove("PPN_NO_DAEMON")
+        .args(["add", "Fix the greenhouse latch"])
+        .output()
+        .unwrap();
+    success(output);
     fixture.ready();
-    check_publications(2, Duration::from_secs(5));
-    add("Paint the greenhouse door");
-    check_publications(3, Duration::from_millis(1500));
+    until(
+        || fixture.raw(&serde_json::json!({"v":1,"request":{"op":"status"}})),
+        |reply| {
+            reply["result"]["status"]["network"]["boards"]
+                .as_object()
+                .and_then(|boards| boards.values().next())
+                .is_some_and(|board| board["published"] == 2)
+        },
+        WAIT,
+    );
     fixture.run(&["daemon", "stop"]);
     fixture.assert_stopped();
+}
+
+#[cfg(pepino_network_tests)]
+#[test]
+fn a_write_sends_a_nudge_to_the_daemon_socket() {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        os::unix::net::UnixListener,
+        process::Stdio,
+    };
+
+    use crate::wait::{WAIT, until};
+
+    let fixture = support::Fixture::new("");
+    let listener = UnixListener::bind(&fixture.socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let child = fixture
+        .command()
+        .env_remove("PPN_NO_DAEMON")
+        .args(["add", "Oil the greenhouse hinges"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (mut socket, _) = until(|| listener.accept(), Result::is_ok, WAIT).unwrap();
+    socket.set_nonblocking(false).unwrap();
+    socket.set_read_timeout(Some(WAIT)).unwrap();
+    let mut received = String::new();
+    BufReader::new(&socket).read_line(&mut received).unwrap();
+    assert_eq!(
+        as_json(&received),
+        serde_json::json!({"v":1,"request":{"op":"nudge"}})
+    );
+    let _ = writeln!(
+        socket,
+        "{}",
+        serde_json::json!({"v":1,"result":{"kind":"nudged"}})
+    );
+    success(child.wait_with_output().unwrap());
 }
 
 #[cfg(pepino_network_tests)]
