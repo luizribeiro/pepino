@@ -1492,3 +1492,24 @@ async fn deletion_returns_the_prior_record_for_write_rendering() {
     assert_eq!(names[&prior.author], app.local_state().device_name);
     assert_eq!(deleted, [prior]);
 }
+
+#[tokio::test]
+async fn task_validation_reports_the_offending_values() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    for (request, value) in [
+        (json!({"op":"get_task","task":"latch"}), "latch"),
+        (
+            json!({"op":"add_task","title":"Repair the latch","tags":["Hardware"]}),
+            "Hardware",
+        ),
+        (
+            json!({"op":"add_task","title":"Repair the latch","assignees":["Ada"]}),
+            "Ada",
+        ),
+    ] {
+        let error = handle(&mut app, request).await.unwrap_err();
+        assert_eq!(error.kind().code(), "invalid_input");
+        assert!(error.to_string().contains(&format!("{value:?}")));
+    }
+}

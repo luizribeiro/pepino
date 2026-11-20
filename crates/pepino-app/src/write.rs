@@ -169,7 +169,7 @@ impl App {
                     reference.parse().map_err(|_| {
                         invalid(
                             format!("assignees[{index}]"),
-                            "expected a full hexadecimal identity ID or me",
+                            format!("invalid assignee {reference:?}: expected a full hexadecimal identity ID or me"),
                         )
                     })
                 }
@@ -192,7 +192,8 @@ fn set_fields(
             }
             value => value.into(),
         };
-        let field = FieldName::new(&name).map_err(|error| invalid(&path, error))?;
+        let field =
+            FieldName::new(&name).map_err(|error| invalid(&path, format!("{name:?}: {error}")))?;
         let changed = current_value(current, &field) != value;
         batch.stage(
             Event::TaskFieldSet {
@@ -290,7 +291,8 @@ fn custom_fields(
         .into_iter()
         .map(|(name, value)| {
             let path = field_path("fields", &name);
-            let field = FieldName::new(&name).map_err(|error| invalid(&path, error))?;
+            let field = FieldName::new(&name)
+                .map_err(|error| invalid(&path, format!("{name:?}: {error}")))?;
             if !field.is_custom() {
                 return Err(invalid(path, "expected a custom field name"));
             }

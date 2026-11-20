@@ -58,7 +58,10 @@ pub(super) fn invalid_event(field: &str, error: InvalidEvent) -> AppError {
         InvalidEvent::FieldName { reason, .. } => invalid(field, reason),
         InvalidEvent::FieldType(_) => invalid(field, "incorrect value type for built-in field"),
         InvalidEvent::BuiltInCustomField(_) => invalid(field, "expected a custom field name"),
-        InvalidEvent::Tag(_) => invalid(field, "invalid tag name"),
+        InvalidEvent::Tag(tag) => invalid(
+            field,
+            format!("invalid tag {tag:?}: expected a lowercase tag of at most 64 bytes"),
+        ),
         error => invalid(field, error),
     }
 }

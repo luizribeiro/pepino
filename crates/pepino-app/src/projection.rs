@@ -53,7 +53,7 @@ pub(super) fn resolve_id(
         }),
         Err(StoreError::InvalidPrefix) => Err(invalid(
             field,
-            "expected a task reference of 4 to 64 hexadecimal digits",
+            format!("invalid task reference {reference:?}: expected 4 to 64 hexadecimal digits"),
         )),
         Err(error) => Err(store_error(error)),
     }
