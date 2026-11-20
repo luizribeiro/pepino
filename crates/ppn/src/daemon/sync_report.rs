@@ -10,11 +10,17 @@ use crate::{
 };
 use serde_json::{Map, Value, json};
 
-pub struct Summary(pub Network, pub BTreeMap<DeviceId, String>);
+#[derive(Default)]
+pub struct Summary {
+    pub network: Network,
+    pub devices: BTreeMap<DeviceId, String>,
+    pub last_sent: Option<String>,
+    pub last_received: Option<String>,
+}
 
 impl Summary {
     pub fn describe(&self) -> String {
-        let network = &self.0;
+        let network = &self.network;
         let published: u64 = network.boards.values().map(|board| board.published).sum();
         let received: u64 = network.boards.values().map(|board| board.received).sum();
         let pending: u64 = network
@@ -28,7 +34,7 @@ impl Summary {
             .map(|id| {
                 id.parse::<DeviceId>()
                     .ok()
-                    .and_then(|id| self.1.get(&id))
+                    .and_then(|id| self.devices.get(&id))
                     .map_or_else(|| short_id(id).to_owned(), |name| single_line(name))
             })
             .collect::<Vec<_>>();
@@ -45,6 +51,15 @@ impl Summary {
             text.push_str(&format!(".\n{pending} events waiting to be sent"));
         } else {
             text.push_str(&format!(": {}.", names.join(", ")));
+        }
+        for (label, time) in [
+            ("Last sent", &self.last_sent),
+            ("Last received", &self.last_received),
+        ] {
+            if let Some(time) = time {
+                use std::fmt::Write;
+                let _ = write!(text, "\n{label} {time}");
+            }
         }
         for state in network
             .board_joins
@@ -67,7 +82,7 @@ impl Render for Summary {
         Map::from_iter([
             ("kind".into(), json!("sync")),
             ("idle".into(), json!(true)),
-            ("network".into(), json!(self.0)),
+            ("network".into(), json!(self.network)),
         ])
     }
 }
@@ -75,7 +90,7 @@ impl Render for Summary {
 #[cfg(test)]
 #[test]
 fn an_idle_engine_with_no_peers_has_a_clear_summary() {
-    let summary = Summary(Network::default(), BTreeMap::new());
+    let summary = Summary::default();
     assert!(
         summary
             .describe()
@@ -96,9 +111,12 @@ fn reports_a_pending_join_even_when_the_outbox_is_idle() {
         ..Default::default()
     };
     assert!(
-        Summary(network, BTreeMap::new())
-            .describe()
-            .contains("waiting for first sync")
+        (Summary {
+            network,
+            ..Default::default()
+        })
+        .describe()
+        .contains("waiting for first sync")
     );
 }
 
@@ -110,7 +128,13 @@ fn names_peers_that_synced_even_after_transport_disconnects() {
         peers_synced: vec![peer.to_string()],
         ..Default::default()
     };
-    let summary = Summary(network, [(peer, "Ferrum tablet".into())].into());
+    let summary = Summary {
+        network,
+        devices: [(peer, "Ferrum tablet".into())].into(),
+        last_received: Some("just now".into()),
+        ..Default::default()
+    };
+    assert!(summary.describe().contains("Last received just now"));
     assert!(
         summary
             .describe()

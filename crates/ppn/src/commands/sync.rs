@@ -54,7 +54,24 @@ pub fn run(
     let devices = pepino_app::LocalState::load(config.data_dir.value.as_path())
         .map(|local| local.devices())
         .unwrap_or_default();
-    let summary = Summary(network, devices);
+    let settings = context.render_settings()?;
+    let describe_time = |time| settings.dates().timestamp(time, &settings.terminal);
+    let summary = Summary {
+        last_sent: network
+            .boards
+            .values()
+            .filter_map(|board| board.last_sent)
+            .max()
+            .map(describe_time),
+        last_received: network
+            .boards
+            .values()
+            .filter_map(|board| board.last_received)
+            .max()
+            .map(describe_time),
+        network,
+        devices,
+    };
     if !idle {
         return Err(CliError::new(
             ErrorKind::SyncTimeout,
