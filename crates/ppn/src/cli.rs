@@ -193,7 +193,7 @@ fn dispatch(
 ) -> Result<CommandResult, CliError> {
     match cli.command {
         Some(Command::Show(args)) => show::run(context, args),
-        Some(Command::Add(args)) => add::run(context, args, json),
+        Some(Command::Add(args)) => add::run(context, args),
         Some(Command::Status(args)) => status::run(context, args),
         Some(Command::Init(args)) => status::init(context, args),
         Some(Command::Version(args)) => Ok(version::run(context, args)),

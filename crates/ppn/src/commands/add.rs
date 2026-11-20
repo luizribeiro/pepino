@@ -1,8 +1,10 @@
+use std::path::PathBuf;
+
 use pepino_app::Request;
 use ppn::app::AppClient;
 use ppn::error::{CliError, ErrorKind};
 use ppn::help_tree::example_help;
-use ppn::input::read_text;
+use ppn::input::read_task_text;
 use ppn::output::CommandResult;
 use ppn::render::write_document;
 use ppn::terminal::Context;
@@ -15,28 +17,37 @@ use ppn::write_args::{TaskWriteArgs, new_task};
     "ppn add 'Order screws' --json",
 ]))]
 pub struct Args {
-    /// Task title. Use - for stdin text or, with --json, a JSON add_task object.
-    title: String,
+    /// Task title. Use - to read title text from stdin.
+    #[arg(required_unless_present = "from_json")]
+    title: Option<String>,
+    /// Read a task object from a file or - for stdin. See ppn help json.
+    #[arg(long, value_name = "FILE|-", conflicts_with = "title")]
+    from_json: Option<PathBuf>,
     #[command(flatten)]
     args: Box<TaskWriteArgs>,
 }
 
-pub fn run(context: &Context<'_>, input: Args, json: bool) -> Result<CommandResult, CliError> {
+pub fn run(context: &Context<'_>, input: Args) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
-    let Args { title, args } = input;
-    let from_stdin = title == "-";
+    let Args {
+        title,
+        from_json,
+        args,
+    } = input;
+    let from_stdin = title.as_deref() == Some("-")
+        || from_json
+            .as_deref()
+            .is_some_and(|path| path == std::path::Path::new("-"));
     if from_stdin && args.fields.description.reads_stdin() {
         return Err(CliError::new(
             ErrorKind::Usage,
-            "The title and description both use stdin.",
+            "The task input and description both use stdin.",
         )
         .with_hint("Pass the description as text or use --from-file."));
     }
-    let input = read_text(Some(title), None)?;
-    let request = if from_stdin {
-        crate::task_stdin::request(&input, json, context.time.today)?
-    } else {
-        new_task(input)
+    let request = match from_json {
+        Some(file) => crate::task_stdin::request(&file, context.time.today)?,
+        None => new_task(read_task_text(title, None)?),
     };
     let request = args.apply_to_add(request, context.time.today)?;
     let response = client.call(Request::Write(request))?;

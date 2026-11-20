@@ -61,11 +61,20 @@ fn add_reads_title_or_description_from_stdin() {
 }
 
 #[test]
-fn add_accepts_protocol_fields_on_json_stdin() {
+fn add_accepts_an_explicit_task_object_on_stdin() {
     let (sandbox, _) = task_sandbox();
     let result = task_stdin(
         &sandbox,
-        &["add", "-", "--json", "--priority", "2", "--tag", "spring"],
+        &[
+            "add",
+            "--from-json",
+            "-",
+            "--json",
+            "--priority",
+            "2",
+            "--tag",
+            "spring",
+        ],
         r#"{"title":"Repair the gate","description":"Check the packing slip.\r\n","status":"doing","due":"today","tags":["hardware"],"priority":1}"#,
     );
     let task = &as_json(&success(result))["tasks"][0];
@@ -83,12 +92,12 @@ fn add_accepts_protocol_fields_on_json_stdin() {
     assert_eq!(task["tags"], json!(["hardware", "spring"]));
     let malformed = task_stdin(
         &sandbox,
-        &["add", "--json", "-"],
+        &["add", "--json", "--from-json", "-"],
         r#"{"title":"Check the board","typo":true}"#,
     );
     assert_eq!(malformed.status.code(), Some(2));
     let error = serde_json::from_slice::<Value>(&malformed.stderr).unwrap();
-    assert_eq!(error["error"]["field"], "stdin");
+    assert_eq!(error["error"]["field"], "from_json");
     assert_eq!(error["error"]["code"], "invalid_input");
 }
 
@@ -421,7 +430,7 @@ fn add_clears_stdin_due_dates_with_unset() {
     let (sandbox, _) = task_sandbox();
     let output = task_stdin(
         &sandbox,
-        &["add", "-", "--unset", "due", "--json"],
+        &["add", "--from-json", "-", "--unset", "due", "--json"],
         r#"{"title":"Inspect the latch","due":"2026-12-01"}"#,
     );
     assert_eq!(as_json(&success(output))["tasks"][0]["due"], Value::Null);
@@ -453,4 +462,16 @@ fn add_rejects_empty_and_multiline_titles() {
             .run(&["add", "  Inspect the latch  "])
             .ends_with("  Inspect the latch\n")
     );
+}
+
+#[test]
+fn add_title_from_stdin_is_literal_even_in_json_mode() {
+    let (sandbox, _) = task_sandbox();
+    let literal = r#"{"title":"Order the replacement latch"}"#;
+    let output = task_stdin(&sandbox, &["add", "-", "--json"], literal);
+    assert_eq!(as_json(&success(output))["tasks"][0]["title"], literal);
+    let file = sandbox.home.path().join("task.json");
+    std::fs::write(&file, literal).unwrap();
+    let output = sandbox.run(&["add", "--from-json", file.to_str().unwrap()]);
+    assert!(output.ends_with("  Order the replacement latch\n"));
 }
