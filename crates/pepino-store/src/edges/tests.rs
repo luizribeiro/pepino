@@ -376,6 +376,16 @@ async fn readiness_follows_status_and_live_blockers() {
 
 #[tokio::test]
 async fn loads_long_chains_in_adversarial_register_order() {
+    check_chains_in_adversarial_register_order(48).await;
+}
+
+#[tokio::test]
+#[ignore = "writes and projects two 5,000-task chains to exercise graph traversal at scale"]
+async fn loads_long_chains_in_adversarial_register_order_at_scale() {
+    check_chains_in_adversarial_register_order(5_000).await;
+}
+
+async fn check_chains_in_adversarial_register_order(task_count: u32) {
     use std::time::Duration;
 
     let store = Store::open_in_memory().await.unwrap();
@@ -396,7 +406,7 @@ async fn loads_long_chains_in_adversarial_register_order() {
             .unwrap();
         envelope
     };
-    for panel in 0..5000 {
+    for panel in 0..task_count {
         let envelope = write(
             0,
             Event::TaskCreated {
@@ -407,6 +417,7 @@ async fn loads_long_chains_in_adversarial_register_order() {
         .await;
         tasks.push(envelope.created_task().unwrap());
     }
+    let last = tasks.len() - 1;
     for kind in [EdgeKind::Parent, EdgeKind::Blocks] {
         for (index, pair) in tasks.windows(2).rev().enumerate() {
             write(
@@ -420,9 +431,9 @@ async fn loads_long_chains_in_adversarial_register_order() {
             .await;
         }
         write(
-            5000,
+            task_count,
             Event::EdgeAdded {
-                from: tasks[4999],
+                from: tasks[last],
                 kind,
                 to: tasks[0],
             },
@@ -432,13 +443,13 @@ async fn loads_long_chains_in_adversarial_register_order() {
 
     let view = tokio::time::timeout(Duration::from_secs(60), store.board(BOARD))
         .await
-        .expect("loading two 5,000-task chains timed out")
+        .expect("loading the task chains timed out")
         .unwrap();
-    assert_eq!(view.tasks().len(), 5000);
-    assert_eq!(view.subtree(tasks[4999]).last().unwrap().depth, 4999);
+    assert_eq!(view.tasks().len(), task_count as usize);
+    assert_eq!(view.subtree(tasks[last]).last().unwrap().depth, last);
     assert_eq!(
         view.dependencies(tasks[0]).blocks.last().unwrap().distance,
-        4999
+        last
     );
     let excluded: Vec<_> = view
         .edges(tasks[0])
