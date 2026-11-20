@@ -82,7 +82,7 @@ struct ProcessInputs {
 fn execute(inputs: &ProcessInputs) -> (Result<CommandResult, CliError>, bool, Terminal) {
     let args = &inputs.args;
     let json_flag = json_on_command_line(args);
-    let json_env = match json_from_env() {
+    let json_env = match json_from_env(&inputs.env) {
         Ok(json) => json,
         Err(error) => {
             let context = inputs.context(&Globals::on_early_exit(args, json_flag), false);
@@ -98,7 +98,7 @@ fn execute(inputs: &ProcessInputs) -> (Result<CommandResult, CliError>, bool, Te
     match parsed {
         Ok((cli, explicit_color)) => {
             let context = inputs.context(&cli.globals, explicit_color);
-            let json = cli.globals.json;
+            let json = cli.globals.json || json_env;
             (dispatch(cli, &context, inputs), json, context.terminal)
         }
         Err(error) => {
@@ -145,7 +145,7 @@ impl ProcessInputs {
             color: explicit_color.then_some(globals.color),
         };
         Context::new(
-            Terminal::detect(globals.color),
+            Terminal::detect(globals.color, &self.env),
             globals.yes,
             globals.timeout,
             move || config::load(&flags, &self.env, self.read, &(self.dirs)(&self.env)?),

@@ -1,19 +1,19 @@
-use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Args, ValueEnum};
 
+use crate::config::Env;
 use crate::error::{CliError, ErrorKind};
 use crate::terminal::Color;
 
-const JSON_ENV: &str = "PPN_JSON";
+pub(crate) const JSON_ENV: &str = "PPN_JSON";
 
 #[derive(Args)]
 pub struct Globals {
-    /// Render output as JSON.
-    #[arg(long, global = true, env = JSON_ENV, value_parser = parse_json)]
+    /// Render output as JSON. PPN_JSON also enables this.
+    #[arg(long, global = true)]
     pub json: bool,
 
     /// Confirm without prompting.
@@ -53,10 +53,9 @@ fn parse_json(value: &str) -> Result<bool, &'static str> {
     }
 }
 
-pub fn json_from_env() -> Result<bool, CliError> {
-    let value = env::var_os(JSON_ENV).unwrap_or_default();
-    value
-        .to_str()
+pub fn json_from_env(env: &Env) -> Result<bool, CliError> {
+    env.get(OsStr::new(JSON_ENV))
+        .map_or(Some(""), |value| value.to_str())
         .ok_or("expected a UTF-8 value")
         .and_then(parse_json)
         .map_err(|error| CliError::new(ErrorKind::Usage, format!("Invalid {JSON_ENV}: {error}")))

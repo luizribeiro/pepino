@@ -104,8 +104,12 @@ mod tests {
             .into_iter()
             .map(|title| Ok(Task { title }));
         let mut stdout = Vec::new();
-        (CommandResult::stream(rows).0)(true, &Terminal::detect(Color::Never), &mut stdout)
-            .unwrap();
+        (CommandResult::stream(rows).0)(
+            true,
+            &Terminal::detect(Color::Never, &Default::default()),
+            &mut stdout,
+        )
+        .unwrap();
         assert_eq!(
             String::from_utf8(stdout).unwrap(),
             "{\"schema\":1,\"title\":\"Ship the release\"}\n{\"schema\":1,\"title\":\"Notify the mailing list\"}\n"
@@ -140,7 +144,12 @@ mod tests {
         };
         let command = CommandResult::stream([Ok(first), Err(interrupted), Ok(later)].into_iter());
         let mut stdout = Sink::default();
-        let error = (command.0)(true, &Terminal::detect(Color::Never), &mut stdout).unwrap_err();
+        let error = (command.0)(
+            true,
+            &Terminal::detect(Color::Never, &Default::default()),
+            &mut stdout,
+        )
+        .unwrap_err();
         assert_eq!(error.kind(), ErrorKind::DaemonUnreachable);
         assert_eq!(
             stdout.flushed,

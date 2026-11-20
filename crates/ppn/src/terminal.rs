@@ -1,12 +1,12 @@
 use std::cell::OnceCell;
-use std::env;
+use std::ffi::OsStr;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::time::Duration;
 
 use clap::ValueEnum;
 use serde::Serialize;
 
-use crate::config::LoadedConfig;
+use crate::config::{Env, LoadedConfig};
 use crate::error::{CliError, ErrorKind};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ValueEnum)]
@@ -26,11 +26,15 @@ pub struct Terminal {
 }
 
 impl Terminal {
-    pub fn detect(color: Color) -> Self {
+    pub fn detect(color: Color, env: &Env) -> Self {
         let stdout_is_tty = io::stdout().is_terminal();
         let stdin_is_tty = io::stdin().is_terminal();
-        let no_color = env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty());
-        let dumb = env::var_os("TERM").is_some_and(|value| value == "dumb");
+        let no_color = env
+            .get(OsStr::new("NO_COLOR"))
+            .is_some_and(|value| !value.is_empty());
+        let dumb = env
+            .get(OsStr::new("TERM"))
+            .is_some_and(|value| value == "dumb");
         Self {
             stdout_is_tty,
             stdin_is_tty,

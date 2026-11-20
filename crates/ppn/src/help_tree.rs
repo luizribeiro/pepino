@@ -135,9 +135,12 @@ impl From<&Arg> for ArgumentInfo {
             summary: argument_summary(arg),
             value_type,
             default,
-            env: arg
-                .get_env()
-                .map(|name| name.to_string_lossy().into_owned()),
+            env: if arg.is_global_set() && arg.get_id() == "json" {
+                Some(crate::flags::JSON_ENV.into())
+            } else {
+                arg.get_env()
+                    .map(|name| name.to_string_lossy().into_owned())
+            },
             choices,
             global: arg.is_global_set(),
             required: arg.is_required_set(),
