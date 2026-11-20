@@ -6,6 +6,7 @@ use crate::SyncCounts;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeStatus {
+    pub peers_seen: BTreeSet<DeviceId>,
     pub connected_peers: BTreeSet<DeviceId>,
     pub boards: BTreeMap<BoardId, BoardStatus>,
 }
@@ -74,7 +75,11 @@ mod tracking {
             let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             match &event {
                 NodeEvent::PeerConnected { peer } => {
+                    state.peers_seen.insert(*peer);
                     state.connected_peers.insert(*peer);
+                }
+                NodeEvent::PeerSeen { peer } => {
+                    state.peers_seen.insert(*peer);
                 }
                 NodeEvent::PeerDisconnected { peer } => {
                     state.connected_peers.remove(peer);

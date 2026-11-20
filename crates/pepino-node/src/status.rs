@@ -255,6 +255,8 @@ mod tests {
                 topic_sessions: 1,
             },
         );
+        assert!(tx.snapshot().connected_peers.is_empty());
+        assert_eq!(tx.snapshot().peers_seen, [device(remote)].into());
         assert_eq!(events.next().await.unwrap().unwrap(), peer);
         assert_eq!(
             events.next().await.unwrap().unwrap(),
