@@ -19,12 +19,19 @@ pub(crate) async fn run<T: Transport>(
         };
         let mut poll = tokio::time::interval(poll);
         let mut published = None;
+        let mut cards = Default::default();
         let mut revocations = crate::revoke::Repairs::default();
         loop {
             let generation = *nudges.borrow_and_update();
             let mut workers = boards.lock().await;
-            if let Err(error) =
-                reconcile(&mut workers, &mut published, &mut revocations, generation).await
+            if let Err(error) = reconcile(
+                &mut workers,
+                &mut published,
+                &mut cards,
+                &mut revocations,
+                generation,
+            )
+            .await
             {
                 crate::status::record_error(
                     &workers.changes,
@@ -56,6 +63,7 @@ struct Publication {
 async fn reconcile<T: Transport>(
     boards: &mut BoardWorkers<T>,
     published: &mut Option<Publication>,
+    cards: &mut crate::board_cards::Publications,
     revocations: &mut crate::revoke::Repairs,
     generation: u64,
 ) -> Result<(), Error> {
@@ -137,6 +145,7 @@ async fn reconcile<T: Transport>(
         local = crate::revoke::Repairs::complete_requests(boards, local).await;
     }
 
+    crate::board_cards::publish(boards, &local, &node_status, cards).await?;
     let catalog = local.catalog_board();
     if local.device_revocation().is_none()
         && local.devices().len() > 1
