@@ -34,6 +34,12 @@ pub async fn open_with_options(
 pub fn set_names(directory: &Path, options: &OpenOptions) {
     let path = directory.join("local.json");
     let mut state = state(directory);
+    if (options.display_name.is_some() || options.device_name.is_some())
+        && let Some(catalog) = state.get_mut("catalog").and_then(Value::as_object_mut)
+        && catalog.remove("identity").is_some()
+    {
+        state["version"] = 5.into();
+    }
     for (key, value) in [
         ("display_name", &options.display_name),
         ("device_name", &options.device_name),
