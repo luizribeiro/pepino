@@ -273,6 +273,10 @@ fn hex_ids(text: &str) -> impl Iterator<Item = (usize, &str)> {
         })
 }
 
+pub fn shorten_message_ids(text: &str) -> String {
+    display_ids(text, &ShortIds::new(hex_ids(text).map(|(_, id)| id)))
+}
+
 fn display_ids(text: &str, ids: &ShortIds<'_>) -> String {
     let mut rendered = String::with_capacity(text.len());
     let mut offset = 0;

@@ -1,7 +1,7 @@
 use pepino_app::{OpenOptions, ReadRequest, Request};
 use ppn::app::AppClient;
 use ppn::daemon::{address::socket_path, client::Client, network::membership, protocol::Network};
-use ppn::error::CliError;
+use ppn::error::{CliError, shorten_message_ids};
 use ppn::help_tree::example_help;
 use ppn::output::CommandResult;
 use ppn::render::{short_id, single_line};
@@ -153,17 +153,38 @@ fn describe_network(network: &Network, settings: &RenderSettings) -> String {
         } else {
             ""
         };
-        let error = board
-            .last_error
-            .as_deref()
-            .map_or_else(|| "none".into(), single_line);
+        let error = board.last_error.as_deref().map(describe_sync_error);
+        let error = error.as_deref().unwrap_or("None.");
         let _ = write!(
             text,
-            "\n  Board {}: {starting}{pending} events waiting to be sent, last sent {}, last received {}, last error {error}",
+            "\n  Board {}: {starting}{pending} events waiting to be sent, last sent {}, last received {}, Last error: {error}",
             short_id(id),
             time(board.last_sent),
             time(board.last_received)
         );
     }
     text
+}
+
+fn describe_sync_error(error: &str) -> String {
+    let (action, reason) = error.split_once(": ").unwrap_or((error, ""));
+    let action = shorten_message_ids(&single_line(action));
+    let reason = shorten_message_ids(&single_line(reason));
+    if reason.is_empty() {
+        format!("Sync failed: {}.", action.trim_end_matches('.'))
+    } else {
+        format!("Could not {action}: {}.", reason.trim_end_matches('.'))
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn human_sync_errors_use_short_ids_and_sentences() {
+    let id = "03".repeat(32);
+    let message = describe_sync_error(&format!("publish {id}: the operation was not submitted"));
+    assert_eq!(
+        message,
+        "Could not publish 030303: the operation was not submitted."
+    );
+    assert!(!message.contains(&id));
 }
