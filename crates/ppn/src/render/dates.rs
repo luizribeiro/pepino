@@ -1,7 +1,8 @@
 use std::fmt::Write;
 
 use chrono::{DateTime, NaiveDate, NaiveTime};
-use pepino_app::{Date, Hlc};
+use clap::builder::styling::AnsiColor;
+use pepino_app::{Date, Hlc, Status, TaskSummary};
 
 use crate::app::InvocationTime;
 use crate::terminal::Terminal;
@@ -31,6 +32,22 @@ impl Dates<'_> {
             }
         }
         self.calendar(date)
+    }
+
+    pub(super) fn highlight_due(
+        self,
+        task: &TaskSummary,
+        metadata: &mut [String],
+        terminal: &Terminal,
+        prefix: &str,
+    ) {
+        if terminal.stdout_is_tty
+            && matches!(task.status, Status::Todo | Status::Doing)
+            && task.due.is_some_and(|date| date < self.time.today)
+            && let Some(label) = metadata.iter_mut().find(|label| label.starts_with(prefix))
+        {
+            *label = terminal.paint(label, AnsiColor::Red);
+        }
     }
 
     pub fn local_date(self, clock: Hlc) -> String {

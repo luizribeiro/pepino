@@ -424,3 +424,39 @@ fn list_and_delete_are_visible_working_aliases() {
     let deleted = as_json(&sandbox.run(&["delete", &id, "--yes", "--json"]));
     assert_eq!(deleted["deleted"][0]["id"], id);
 }
+
+#[cfg(unix)]
+#[test]
+fn terminals_highlight_overdue_dates_and_distinguish_doing_from_todo() {
+    let (sandbox, _) = task_sandbox();
+    let id = create_task(
+        &sandbox,
+        "Repair the greenhouse latch",
+        &["--due", "yesterday", "--status", "doing"],
+    );
+    create_task(&sandbox, "Measure the shed door", &["--due", "tomorrow"]);
+    let pipe = sandbox.run(&["ls"]);
+    assert!(!pipe.contains('\x1b'));
+    let terminal = |args: &[&str]| {
+        let mut command = sandbox.command();
+        command.args(args);
+        let output = common::task_terminal(command, None);
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let listing = terminal(&["ls"]);
+    assert!(listing.contains("\x1b[31mdue:"), "{listing}");
+    assert!(listing.contains("\x1b[36mdoing\x1b[0m"));
+    assert!(listing.contains("\x1b[33mtodo\x1b[0m"));
+    assert!(terminal(&["show", &id]).contains("\x1b[31mdue "));
+    let forced_pipe = sandbox
+        .command()
+        .args(["ls", "--color", "always"])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8(forced_pipe.stdout)
+            .unwrap()
+            .contains("\x1b[31mdue")
+    );
+}

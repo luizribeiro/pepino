@@ -34,7 +34,8 @@ pub fn task_fields(
         output.push_str(&indented(description, ""));
         output.push('\n');
     }
-    let metadata = task_metadata(task, names, dates, terminal);
+    let mut metadata = task_metadata(task, names, dates, terminal);
+    dates.highlight_due(task, &mut metadata, terminal, "due ");
     if !metadata.is_empty() {
         let _ = writeln!(output, "{}", metadata.join("  "));
     }

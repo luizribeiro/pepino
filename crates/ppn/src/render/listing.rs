@@ -111,6 +111,8 @@ impl<'a> TaskRows<'a> {
             let extra = if metadata.is_empty() { "" } else { "  " };
             format!("{prefix}{id} {status}  {title}{extra}")
         };
+        self.dates
+            .highlight_due(task, &mut metadata, self.terminal, "due:");
         text.push_str(&metadata.join(" "));
         text.push_str(suffix);
         text
