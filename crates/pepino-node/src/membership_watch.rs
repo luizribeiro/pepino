@@ -14,11 +14,28 @@ use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError::
 
 use crate::{Error, MemberState, MemberStates, Role};
 
-pub type MembershipEvents = BoxStream<'static, Result<MemberStates, Error>>;
+pub type MembershipEvents = BoxStream<'static, Result<MembershipEvent, Error>>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum MembershipChange {
+    Created,
+    Added,
+    Removed,
+    RoleChanged,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MembershipEvent {
+    /// Actor and action for the upstream notification. The initial snapshot has no action.
+    pub change: Option<(DeviceId, MembershipChange)>,
+    /// Effective membership. An upstream notification can leave this list unchanged.
+    pub members: MemberStates,
+}
 
 pub(crate) struct MembershipMonitor {
     pub(crate) members: Arc<Mutex<MemberStates>>,
-    pub(crate) changes: broadcast::Sender<MemberStates>,
+    pub(crate) changes: broadcast::Sender<MembershipEvent>,
 }
 
 impl MembershipMonitor {
@@ -30,10 +47,16 @@ impl MembershipMonitor {
     }
 
     pub(crate) fn update(&self, members: &HashMap<MemberId, AccessLevel>, event: &SpaceEvent<()>) {
-        // Ejected carries a synthetic empty list, after a notification with the actual list.
-        if matches!(event, SpaceEvent::Ejected { .. }) {
-            return;
-        }
+        use MembershipChange::*;
+        let (group, change) = match event {
+            SpaceEvent::Created { groups_context, .. } => (groups_context, Created),
+            SpaceEvent::Added { groups_context, .. } => (groups_context, Added),
+            SpaceEvent::Removed { groups_context, .. } => (groups_context, Removed),
+            SpaceEvent::Promoted { groups_context, .. }
+            | SpaceEvent::Demoted { groups_context, .. } => (groups_context, RoleChanged),
+            // Ejected carries a synthetic empty list, after a notification with the actual list.
+            SpaceEvent::Ejected { .. } => return,
+        };
         let mut current = self.members.lock().unwrap_or_else(PoisonError::into_inner);
         for state in current.values_mut() {
             *state = MemberState::Removed;
@@ -42,7 +65,11 @@ impl MembershipMonitor {
             let device = DeviceId::from_bytes(*device.as_bytes());
             current.insert(device, MemberState::Member(Role::from_level(*level)));
         }
-        let _ = self.changes.send(current.clone());
+        let actor = DeviceId::from_bytes(*group.author.as_bytes());
+        let _ = self.changes.send(MembershipEvent {
+            change: Some((actor, change)),
+            members: current.clone(),
+        });
     }
 }
 
@@ -53,7 +80,10 @@ impl crate::BoardHandle {
             .membership
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let snapshot = stream::iter([Ok(members.clone())]);
+        let snapshot = stream::iter([Ok(MembershipEvent {
+            change: None,
+            members: members.clone(),
+        })]);
         let changes = self
             .membership_changes
             .upgrade()

@@ -19,7 +19,7 @@ use tokio::{
 };
 
 use crate::{
-    BoardEvent, BoardEvents, Error, MemberState, MemberStates, Node, NodeEvent,
+    BoardEvent, BoardEvents, Error, MemberState, MemberStates, MembershipEvent, Node, NodeEvent,
     ack::AckStore,
     board_lease::BoardLease,
     board_task::{BoardTask, JoinState},
@@ -52,7 +52,7 @@ pub struct BoardHandle {
     id: BoardId,
     pub(crate) node: Weak<p2panda::Node>,
     pub(crate) membership: Arc<std::sync::Mutex<MemberStates>>,
-    pub(crate) membership_changes: broadcast::WeakSender<MemberStates>,
+    pub(crate) membership_changes: broadcast::WeakSender<MembershipEvent>,
     pub(crate) membership_pool: sqlx::SqlitePool,
     pub(crate) membership_lock: Arc<Mutex<()>>,
     runtime: Handle,

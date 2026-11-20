@@ -10,7 +10,9 @@ mod scale;
 mod support;
 
 use futures_util::StreamExt;
-use pepino_node::{Error, MemberInfo, MemberState, NodeEvent, OpenBoardOptions, Role};
+use pepino_node::{
+    Error, MemberInfo, MemberState, MembershipChange, NodeEvent, OpenBoardOptions, Role,
+};
 use std::collections::BTreeSet;
 use support::*;
 use tokio::time::timeout;
@@ -61,19 +63,26 @@ async fn two_devices_exchange_events_and_a_late_member_gets_history() {
     ));
     let mut changes = board_a.membership_events();
     let snapshot = changes.next().await.unwrap().unwrap();
-    assert_eq!(snapshot[&a.device_id()], MemberState::Member(Role::Manage));
+    assert_eq!(snapshot.change, None);
+    assert_eq!(
+        snapshot.members[&a.device_id()],
+        MemberState::Member(Role::Manage)
+    );
     let mut board_b = enroll(&board_a, &b, Role::Write).await;
     let added = timeout(WAIT, async {
         loop {
             let event = changes.next().await.unwrap().unwrap();
-            if event.contains_key(&b.device_id()) {
+            if event.change == Some((a.device_id(), MembershipChange::Added)) {
                 break event;
             }
         }
     })
     .await
     .unwrap();
-    assert_eq!(added[&b.device_id()], MemberState::Member(Role::Write));
+    assert_eq!(
+        added.members[&b.device_id()],
+        MemberState::Member(Role::Write)
+    );
     let mut events_b = board_b.events().unwrap();
     assert!(matches!(
         board_b.add_member(&member, Role::Write).await,
