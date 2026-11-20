@@ -15,7 +15,16 @@ impl App {
                 limit,
                 today,
             } => {
-                self.list_tasks(&filter, sort.as_deref(), limit, today)
+                self.list_tasks(&filter, sort.as_deref(), limit, today, false)
+                    .await
+            }
+            ReadRequest::ListOpenTasks {
+                filter,
+                sort,
+                limit,
+                today,
+            } => {
+                self.list_tasks(&filter, sort.as_deref(), limit, today, true)
                     .await
             }
             ReadRequest::ListViews => self.list_views().await,

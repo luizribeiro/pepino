@@ -35,6 +35,12 @@ pub enum ReadRequest {
         limit: Option<usize>,
     },
     ListViews,
+    ListOpenTasks {
+        filter: FilterInput,
+        sort: Option<String>,
+        limit: Option<usize>,
+        today: Date,
+    },
     ListTasks {
         filter: FilterInput,
         sort: Option<String>,
@@ -187,6 +193,8 @@ pub enum Response {
         sort: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         warnings: Vec<FilterWarning>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        constrains_status: bool,
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         names: BTreeMap<String, String>,
     },

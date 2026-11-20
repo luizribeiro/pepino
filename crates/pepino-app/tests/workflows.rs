@@ -1544,3 +1544,41 @@ async fn replacing_a_parent_reports_the_newly_excluded_edge() {
     assert_eq!(get(&mut app, &latch).await.parent, Some(door.clone()));
     assert!(write(&mut app, link(&door)).await.3.is_empty());
 }
+
+#[tokio::test]
+async fn open_listing_respects_status_inside_nested_views() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    for request in [
+        json!({"op":"add_task","title":"Paint the shed","status":"done"}),
+        json!({"op":"add_task","title":"Repair the hinge"}),
+        json!({"op":"save_view","name":"finished","filter":"status:done"}),
+        json!({"op":"save_view","name":"nested","filter":"@finished"}),
+    ] {
+        handle(&mut app, request).await.unwrap();
+    }
+    for (filter, expected, explicit) in [
+        ("@nested", "Paint the shed", true),
+        ("-is:blocked", "Repair the hinge", false),
+    ] {
+        let response = handle(
+            &mut app,
+            json!({
+                "op":"list_open_tasks","filter":filter,"today":"2026-11-20"
+            }),
+        )
+        .await
+        .unwrap();
+        let Response::Tasks {
+            tasks,
+            constrains_status,
+            ..
+        } = response
+        else {
+            panic!("expected a listing");
+        };
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].title, expected);
+        assert_eq!(constrains_status, explicit);
+    }
+}

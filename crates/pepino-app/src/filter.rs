@@ -3,7 +3,7 @@ use std::{
     sync::{Mutex, MutexGuard, PoisonError},
 };
 
-use pepino_core::filter::{self, Clause, Filter, PresenceField};
+use pepino_core::filter::{self, Clause, Filter, PresenceField, State};
 use serde::{Deserialize, Serialize};
 
 use crate::AppError;
@@ -215,6 +215,24 @@ impl<'a> ViewFilters<'a> {
                 })
             })
             .collect()
+    }
+
+    pub(super) fn constrains_status(&self, filter: &Filter) -> bool {
+        let parsed = self.parsed();
+        std::iter::once(filter)
+            .chain(
+                parsed
+                    .values()
+                    .filter_map(|(_, parsed)| parsed.as_ref().ok()),
+            )
+            .flat_map(Filter::terms)
+            .any(|term| match &term.clause {
+                Clause::Status(_) => true,
+                Clause::Is(states) => states
+                    .iter()
+                    .any(|state| matches!(state, State::Open | State::Closed)),
+                _ => false,
+            })
     }
 
     pub(super) fn needs_comments(&self, filter: &Filter) -> bool {

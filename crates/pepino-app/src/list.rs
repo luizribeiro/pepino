@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use pepino_core::{
     BoardId,
-    filter::{Clause, Term},
+    filter::{Clause, Filter, State, Term},
 };
 use pepino_store::query::{Context, Query, QueryError, QueryErrorKind, Sort};
 
@@ -18,8 +18,9 @@ impl App {
         sort: Option<&str>,
         limit: Option<usize>,
         today: Date,
+        open_default: bool,
     ) -> Result<Response, AppError> {
-        let filter = source.parse()?;
+        let supplied = source.parse()?;
         let sort: Sort = sort
             .unwrap_or("default")
             .parse()
@@ -33,17 +34,29 @@ impl App {
                 .into_iter()
                 .collect()
         };
-        let query = || Query {
-            filter: &filter,
-            context: Context {
-                today: today.into(),
-                me: Some(self.local.identity_id),
-                people: &people,
-                views: &saved,
-            },
+        let context = || Context {
+            today: today.into(),
+            me: Some(self.local.identity_id),
+            people: &people,
+            views: &saved,
         };
         let diagnostic = |error| query_error(error, source, &views, &self.local.display_name);
-        let terms = query().board_terms().map_err(diagnostic)?;
+        let terms = (Query {
+            filter: &supplied,
+            context: context(),
+        })
+        .board_terms()
+        .map_err(diagnostic)?;
+        let constrains_status = views.constrains_status(&supplied);
+        let filter = if open_default && !constrains_status {
+            let open = Term {
+                negated: false,
+                clause: Clause::Is(vec![State::Open]),
+            };
+            Filter::from_terms(supplied.terms().iter().cloned().chain([open]).collect())
+        } else {
+            supplied
+        };
         let local_board = Board {
             id: self.local.board_id,
             name: &self.local.board_name,
@@ -56,7 +69,12 @@ impl App {
                 self.store.board(board).await
             }
             .map_err(store_error)?;
-            let prepared = query().prepare(&view).map_err(diagnostic)?;
+            let prepared = (Query {
+                filter: &filter,
+                context: context(),
+            })
+            .prepare(&view)
+            .map_err(diagnostic)?;
             let mut matching = prepared.select();
             let total = matching.len();
             sort.sort(&mut matching);
@@ -83,6 +101,7 @@ impl App {
         Ok(Response::Tasks {
             names,
             warnings,
+            constrains_status,
             tasks,
             total,
             filter: filter.to_string(),
