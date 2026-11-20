@@ -2,9 +2,40 @@ use pepino_core::{
     BoardId, DeviceId, EdgeKind, Envelope, Event, EventId, FieldName, FieldValue, Hlc,
     InitialFields, Status, TaskId,
 };
-use pepino_store::{EdgeExclusion, EdgeRecord, IdSource, Store};
+use pepino_store::{EdgeExclusion, EdgeRecord, IdSource, Store, SubtreeEntry};
 
 const BOARD: BoardId = BoardId::from_bytes([29; 32]);
+
+#[tokio::test]
+async fn subtree_lists_effective_descendants_in_stable_preorder() {
+    let (store, [greenhouse, door, hinges, frame]) = setup().await;
+    let entry = |task, depth| SubtreeEntry { task, depth };
+    assert_eq!(
+        store.subtree(BOARD, greenhouse).await.unwrap(),
+        [entry(greenhouse, 0)]
+    );
+    add(&store, 11, 1, hinges, EdgeKind::Parent, greenhouse).await;
+    add(&store, 12, 2, door, EdgeKind::Parent, greenhouse).await;
+    add(&store, 13, 3, frame, EdgeKind::Parent, door).await;
+    assert_eq!(
+        store.subtree(BOARD, greenhouse).await.unwrap(),
+        [
+            entry(greenhouse, 0),
+            entry(door, 1),
+            entry(frame, 2),
+            entry(hinges, 1),
+        ]
+    );
+    let records = store.tasks(BOARD).await.unwrap();
+    assert_eq!(records[0].children, [door, hinges].into());
+    assert_eq!(records[3].parent, Some(door));
+    append(&store, 14, 4, Event::TaskDeleted { task: door }).await;
+    assert!(store.subtree(BOARD, door).await.unwrap().is_empty());
+    assert_eq!(
+        store.subtree(BOARD, greenhouse).await.unwrap(),
+        [entry(greenhouse, 0), entry(hinges, 1),]
+    );
+}
 
 async fn append(store: &Store, id: u8, tick: u32, event: Event) {
     let envelope = Envelope::with_id(
