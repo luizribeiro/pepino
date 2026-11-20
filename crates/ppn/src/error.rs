@@ -326,6 +326,13 @@ impl From<AppError> for CliError {
                 diagnostic.message = reference.to_string();
                 diagnostic.hint = Some("Pass `--force` to remove the referenced view.".into());
             }
+            AppError::Storage { reason, .. } if reason.starts_with("decode local state") => {
+                diagnostic.message = "Could not read the local Pepino state.".into();
+            }
+            AppError::WriteCommitted { .. } => {
+                diagnostic.message =
+                    "Pepino recorded the write. The outcome is unavailable.".into();
+            }
             AppError::InvalidInput {
                 field,
                 reason,

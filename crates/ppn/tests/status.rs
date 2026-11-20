@@ -62,3 +62,52 @@ fn status_honors_zero_timeout_on_the_data_directory_lock() {
         "status"
     );
 }
+
+#[test]
+fn invalid_persisted_state_has_a_cli_diagnostic() {
+    let (sandbox, data) = task_sandbox();
+    std::fs::write(data.join("local.json"), "{}").unwrap();
+    let human = sandbox.command().arg("status").output().unwrap();
+    assert_eq!(human.status.code(), Some(1));
+    assert!(human.stdout.is_empty());
+    assert_eq!(
+        human.stderr,
+        b"error: Could not read the local Pepino state.\n"
+    );
+    let structured = sandbox
+        .command()
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    let error = task_error(structured, 1, "failure");
+    assert!(
+        error["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("decode local state")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn permission_errors_report_the_path_without_internal_fields() {
+    use std::os::unix::fs::PermissionsExt;
+    let (sandbox, data) = task_sandbox();
+    let file = data.join("local.json");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::File::open(&file).is_ok() {
+        return;
+    }
+    let args = ["status"];
+    let human = sandbox.command().args(args).output().unwrap();
+    assert_eq!(human.status.code(), Some(5));
+    assert!(human.stdout.is_empty());
+    let stderr = String::from_utf8(human.stderr).unwrap();
+    assert!(stderr.contains("permission denied"));
+    assert!(stderr.contains(file.to_str().unwrap()));
+    let structured = sandbox.command().args(args).arg("--json").output().unwrap();
+    assert_eq!(
+        task_error(structured, 5, "permission_denied")["path"],
+        file.to_str().unwrap()
+    );
+}
