@@ -5,6 +5,8 @@ use pepino_app::{AppError, AppErrorKind};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
+use crate::render::ShortIds;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 #[value(rename_all = "snake_case")]
 pub enum ErrorKind {
@@ -137,14 +139,26 @@ impl CliError {
             return writeln!(stderr);
         }
 
-        writeln!(stderr, "error: {}", self.message)?;
-        if let Some(candidates) = self.details.get("candidates").and_then(Value::as_array) {
-            for id in candidates.iter().filter_map(Value::as_str) {
-                writeln!(stderr, "  {id}")?;
-            }
+        let candidates: Vec<_> = self
+            .details
+            .get("candidates")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        let term = self.details.get("term").and_then(Value::as_str);
+        let fragments = std::iter::once(self.message.as_str())
+            .chain(self.hint.as_deref())
+            .chain(term)
+            .chain(candidates.iter().copied());
+        let ids = ShortIds::new(fragments.flat_map(hex_ids).map(|(_, id)| id));
+        writeln!(stderr, "error: {}", display_ids(&self.message, &ids))?;
+        for id in candidates {
+            writeln!(stderr, "  {}", display_ids(id, &ids))?;
         }
-        if let Some(term) = self.details.get("term").and_then(Value::as_str) {
-            writeln!(stderr, "  term {term:?}")?;
+        if let Some(term) = term {
+            writeln!(stderr, "  term {:?}", display_ids(term, &ids))?;
         }
         if let Some(position) = self.details.get("position")
             && let Some(byte) = position.get("byte").and_then(Value::as_u64)
@@ -156,10 +170,36 @@ impl CliError {
             }
         }
         if let Some(hint) = &self.hint {
-            writeln!(stderr, "hint: {hint}")?;
+            writeln!(stderr, "hint: {}", display_ids(hint, &ids))?;
         }
         Ok(())
     }
+}
+
+fn hex_ids(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let mut start = 0;
+    text.char_indices()
+        .chain([(text.len(), ' ')])
+        .filter_map(move |(end, ch)| {
+            if ch.is_ascii_hexdigit() {
+                return None;
+            }
+            let id = (end - start == 64).then(|| (start, &text[start..end]));
+            start = end + ch.len_utf8();
+            id
+        })
+}
+
+fn display_ids(text: &str, ids: &ShortIds<'_>) -> String {
+    let mut rendered = String::with_capacity(text.len());
+    let mut offset = 0;
+    for (start, id) in hex_ids(text) {
+        rendered.push_str(&text[offset..start]);
+        rendered.push_str(ids.get(id));
+        offset = start + id.len();
+    }
+    rendered.push_str(&text[offset..]);
+    rendered
 }
 
 impl From<AppError> for CliError {

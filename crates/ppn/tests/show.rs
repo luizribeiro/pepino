@@ -85,7 +85,10 @@ fn show_reports_deleted_tasks_as_conflicts() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
-        format!("error: Task {id} \"Order the new mounting plate\" was deleted\n")
+        format!(
+            "error: Task {} \"Order the new mounting plate\" was deleted\n",
+            &id[..6]
+        )
     );
 }
 
@@ -105,7 +108,15 @@ fn show_reports_ambiguous_ids_with_sorted_candidates() {
     let human = sandbox.command().args(["show", &prefix]).output().unwrap();
     assert_eq!(human.status.code(), Some(4));
     let human = String::from_utf8(human.stderr).unwrap();
-    assert!(expected.iter().all(|id| human.contains(id)));
+    let ids = ppn::render::ShortIds::new(expected.iter().map(String::as_str));
+    assert_eq!(
+        human,
+        format!(
+            "error: Task reference {prefix} matches 2 tasks\n  {}\n  {}\nhint: Use a longer task ID.\n",
+            ids.get(&expected[0]),
+            ids.get(&expected[1])
+        )
+    );
 }
 
 #[cfg(unix)]
@@ -164,4 +175,22 @@ fn validation_and_lookup_errors_have_one_message() {
         assert_eq!(output.status.code(), Some(status));
         assert_eq!(output.stderr, expected.as_bytes());
     }
+}
+
+#[test]
+fn human_errors_shorten_full_ids_while_json_keeps_them() {
+    let (sandbox, _) = task_sandbox();
+    let missing = "012345abcdef".repeat(5) + "0123";
+    let output = sandbox.command().args(["show", &missing]).output().unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(
+        output.stderr,
+        b"error: No task matches 012345\nhint: Run `ppn ls` to list tasks.\n"
+    );
+    let output = sandbox
+        .command()
+        .args(["show", &missing, "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(task_error(output, 3, "not_found")["task"], missing);
 }
