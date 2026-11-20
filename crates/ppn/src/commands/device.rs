@@ -36,7 +36,11 @@ pub struct Args {
 enum Action {
     /// List this identity's devices and their membership status.
     #[command(after_help = example_help(&["ppn device ls", "ppn device ls --json"]))]
-    Ls,
+    Ls {
+        /// Show only devices that are still active in the identity.
+        #[arg(long)]
+        active: bool,
+    },
 
     /// Revoke another device from this identity and remove its board access.
     #[command(after_help = example_help(&["ppn device revoke 'Garden tablet'", "ppn device revoke 97ad97 --yes --json"]))]
@@ -95,7 +99,7 @@ impl Args {
     pub(crate) fn requires_identity(&self) -> bool {
         matches!(
             self.action,
-            Action::Ls
+            Action::Ls { .. }
                 | Action::Add { .. }
                 | Action::Rename { .. }
                 | Action::Revoke { .. }
@@ -111,7 +115,7 @@ pub fn run(
     allow_start: bool,
 ) -> Result<CommandResult, CliError> {
     match args.action {
-        Action::Ls => ls::run(context),
+        Action::Ls { active } => ls::run(context, active),
         Action::Leave => leave::run(context, selection, allow_start),
         Action::Revoke { device } => revoke::run(context, &device),
         Action::Rename {

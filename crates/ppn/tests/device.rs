@@ -289,6 +289,26 @@ fn revoke_guards_the_current_device_and_confirms_another_device() {
             .run(&["device", "revoke", "Garden tablet", "--yes"])
             .contains("daemon or board unavailable")
     );
+    let directory = sandbox.run(&["device", "ls", "--json"]);
+    let directory = as_json(&directory);
+    let target = directory["roster"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|device| device["id"] == peer.to_string())
+        .unwrap();
+    assert_eq!(target["revocation"]["by"], own);
+    assert!(
+        target["revocation"]["at"]
+            .as_str()
+            .is_some_and(|date| chrono::DateTime::parse_from_rfc3339(date).is_ok())
+    );
+    let active = as_json(&sandbox.run(&["device", "ls", "--active", "--json"]));
+    assert_eq!(active["roster"].as_array().unwrap().len(), 1);
+    let mut command = sandbox.command();
+    command.args(["device", "ls"]);
+    let tty = task_terminal(command, None);
+    assert!(String::from_utf8_lossy(&tty.stdout).contains("\x1b[2mGarden tablet"));
 }
 
 #[test]

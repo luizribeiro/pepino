@@ -29,7 +29,7 @@ struct DeviceBoard {
     membership: &'static str,
 }
 
-pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
+pub(super) fn run(context: &Context<'_>, active: bool) -> Result<CommandResult, CliError> {
     let app = AppClient::open(context)?;
     let local = app.local_state();
     let path = socket_path(&context.config()?.config);
@@ -41,7 +41,11 @@ pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
             .unwrap_or_else(|| local.board_join_state(board.id))
             == BoardJoinState::Joined
     });
-    let roster: Vec<_> = local.roster().into_values().collect();
+    let roster: Vec<_> = local
+        .roster()
+        .into_values()
+        .filter(|device| !active || device.state == RosterState::Active)
+        .collect();
     let devices = roster
         .iter()
         .map(
@@ -49,10 +53,12 @@ pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
                  id,
                  name,
                  state: roster_state,
+                 leave_requested_at,
                  ..
              }| {
                 let id = *id;
                 let this_device = id == local.device_id;
+                let revoked = *roster_state == RosterState::Revoked;
                 let label = id.to_string();
                 let seen_on_board = local.saw_device_on_board(id)
                     || network.is_some_and(|network| network.peers_synced.contains(&label));
@@ -60,7 +66,7 @@ pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
                     .boards()
                     .iter()
                     .map(|board| {
-                        let membership = if this_device {
+                        let membership = if this_device && !revoked {
                             match network
                                 .and_then(|network| network.board_joins.get(&board.id).copied())
                                 .unwrap_or_else(|| local.board_join_state(board.id))
@@ -75,6 +81,7 @@ pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
                                 .or_else(|| local.observed_members(board.id))
                             {
                                 Some(members) if members.contains(&id) => "member",
+                                Some(_) if revoked => "removed",
                                 Some(_) => "pending",
                                 None => "unknown",
                             }
@@ -99,6 +106,8 @@ pub(super) fn run(context: &Context<'_>) -> Result<CommandResult, CliError> {
                     this_device,
                     boards,
                     state: match (this_device, complete, seen_on_board) {
+                        _ if revoked => "revoked",
+                        _ if leave_requested_at.is_some() => "leave_pending",
                         (true, false, _) => "pending",
                         (true, true, _) => "joined",
                         (false, _, true) => "seen_on_board",
@@ -145,6 +154,8 @@ impl Render for Devices {
                         "seen_on_board" => "seen on the board",
                         "added_not_seen" => "added here, not yet seen",
                         "known_not_seen" => "in roster, not yet seen",
+                        "leave_pending" => "leave requested, awaiting another device",
+                        "revoked" => "board access listed below",
                         state => state,
                     }
                 );
@@ -162,6 +173,13 @@ impl Render for Devices {
                         ));
                     }
                 }
+                if let Some(revocation) = &record.revocation {
+                    text.push_str(&format!(
+                        " · revoked by {} on {}",
+                        short_id(&revocation.by.to_string()),
+                        self.settings.dates().timestamp(revocation.at, terminal),
+                    ));
+                }
                 if let Some(time) = device.last_seen {
                     text.push_str(&format!(
                         " · last seen {}",
@@ -175,6 +193,9 @@ impl Render for Devices {
                         short_id(&board.id.to_string()),
                         board.membership.replace('_', " ")
                     ));
+                }
+                if device.roster_state == RosterState::Revoked && self.settings.terminal.color {
+                    return format!("\x1b[2m{text}\x1b[0m");
                 }
                 text
             })
