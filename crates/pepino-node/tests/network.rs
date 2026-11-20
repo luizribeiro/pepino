@@ -2,6 +2,8 @@
 mod decode;
 #[path = "network/lifecycle.rs"]
 mod lifecycle;
+#[path = "network/scale.rs"]
+mod scale;
 #[path = "network/support.rs"]
 mod support;
 
