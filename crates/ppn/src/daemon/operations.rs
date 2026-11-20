@@ -65,15 +65,22 @@ pub(super) async fn operate(
                 "Could not register the granting device's connection hint.",
             ),
         },
-        Operation::BoardJoinState { timeout_ms } => {
+        Operation::BoardJoinState { timeout_ms, board } => {
+            let select = |states: std::collections::BTreeMap<_, _>| {
+                states
+                    .into_iter()
+                    .filter(|(id, _)| board.is_none_or(|target| *id == target))
+                    .collect::<std::collections::BTreeMap<_, _>>()
+            };
             let changes = engine.status_changes();
             tokio::pin!(changes);
             let complete = async {
                 while let Some(status) = changes.next().await {
-                    if status
-                        .board_join_states()
-                        .values()
-                        .all(|state| *state == BoardJoinState::Joined)
+                    let states = select(status.board_join_states());
+                    if board.is_none_or(|id| states.contains_key(&id))
+                        && states
+                            .values()
+                            .all(|state| *state == BoardJoinState::Joined)
                     {
                         break;
                     }
@@ -81,7 +88,7 @@ pub(super) async fn operate(
             };
             let _ = tokio::time::timeout(Duration::from_millis(timeout_ms), complete).await;
             Outcome::BoardJoinState {
-                boards: engine.status().board_join_states(),
+                boards: select(engine.status().board_join_states()),
             }
         }
         Operation::Stop => Outcome::Stopping,

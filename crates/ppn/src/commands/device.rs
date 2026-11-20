@@ -1,6 +1,6 @@
 mod add;
 mod code_input;
-mod join;
+pub(crate) mod join;
 mod leave;
 mod ls;
 mod rename;

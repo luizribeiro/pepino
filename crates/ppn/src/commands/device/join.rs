@@ -44,7 +44,7 @@ pub(super) fn run(
         .remove(&id)
         .unwrap_or_else(|| format!("unknown device {}", ppn::render::short_id(&id.to_string())));
     let grantor = Grantor { id, name };
-    let outcome = wait_for_boards(&client, peer, wait)?;
+    let outcome = wait_for_boards(&client, peer, wait, None)?;
     let Outcome::BoardJoinState { boards } = outcome else {
         return Err(unexpected_reply());
     };
@@ -68,10 +68,11 @@ pub(super) fn run(
     Ok(CommandResult::document(result))
 }
 
-fn wait_for_boards(
+pub(crate) fn wait_for_boards(
     client: &Client,
     peer: pepino_app::PeerHint,
     wait: Duration,
+    board: Option<BoardId>,
 ) -> Result<Outcome, CliError> {
     let start = Instant::now();
     loop {
@@ -81,6 +82,7 @@ fn wait_for_boards(
             .and_then(|outcome| match outcome {
                 Outcome::PeerHintRegistered => client.call_with(
                     Operation::BoardJoinState {
+                        board,
                         timeout_ms: remaining.as_millis().try_into().unwrap_or(0),
                     },
                     remaining + Duration::from_secs(2),

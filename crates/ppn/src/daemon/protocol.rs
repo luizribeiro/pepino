@@ -37,6 +37,8 @@ pub enum Operation {
     },
     BoardJoinState {
         timeout_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        board: Option<BoardId>,
     },
     Stop,
 }
@@ -45,7 +47,7 @@ impl Operation {
     pub(super) fn wait_ms(&self) -> Option<u64> {
         match *self {
             Self::WaitIdle { timeout_ms }
-            | Self::BoardJoinState { timeout_ms }
+            | Self::BoardJoinState { timeout_ms, .. }
             | Self::DeviceRemoval { timeout_ms, .. } => Some(timeout_ms),
             _ => None,
         }
@@ -192,7 +194,10 @@ fn identifies_the_peer_hint_and_join_state_operations() {
     let request: Request = serde_json::from_value(wait).unwrap();
     assert!(matches!(
         request.request,
-        Operation::BoardJoinState { timeout_ms: 250 }
+        Operation::BoardJoinState {
+            timeout_ms: 250,
+            board: None
+        }
     ));
 }
 
