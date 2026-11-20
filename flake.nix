@@ -12,6 +12,8 @@
 
   outputs = { self, nixpkgs, devenv, flake-utils, ... } @ inputs:
     let
+      inherit (nixpkgs) lib;
+      systemModule = platform: import ./nix/system.nix { inherit self lib platform; };
       workspace = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package;
     in
     flake-utils.lib.eachDefaultSystem
@@ -97,6 +99,9 @@
           };
         }
       ) // {
+      nixosModules.default = systemModule ./nix/nixos.nix;
+      darwinModules.default = systemModule ./nix/darwin.nix;
+
       overlays.default = final: prev: {
         ppn = self.packages.${final.stdenv.hostPlatform.system}.default;
       };

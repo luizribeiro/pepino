@@ -6,18 +6,31 @@ let
   package = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
   fixtures = import ./check-settings.nix { inherit lib package; };
 
-  pepino = import ./module.nix { inherit lib; };
+  attrs = mkOption { type = types.attrs; default = { }; };
   list = mkOption { type = types.listOf types.unspecified; default = [ ]; };
-  evaluate = settings: (lib.evalModules {
+  evaluate = platform: settings: (lib.evalModules {
     specialArgs.pkgs = pkgs // { ppn = package; };
     modules = [
-      pepino.options
-      pepino.validation
+      platform
       {
-        options.assertions = list;
-        options.warnings = list;
-        config.services.pepino.configFile = null;
+        options = {
+          assertions = list;
+          warnings = list;
+          nixpkgs.overlays = list;
+          environment.etc = mkOption { type = types.attrsOf types.attrs; default = { }; };
+          environment.systemPackages = list;
+          users.users = attrs;
+          users.groups = mkOption { type = types.attrsOf types.attrs; default = { }; };
+          users.knownUsers = list;
+          users.knownGroups = list;
+          networking.firewall.allowedUDPPorts = list;
+          systemd.tmpfiles.settings = attrs;
+          system.activationScripts.postActivation.text = mkOption { type = types.str; default = ""; };
+        };
       }
+      ({ config, ... }: lib.mkIf config.services.pepino.enable {
+        users.groups.${config.services.pepino.group}.gid = 450;
+      })
       settings
     ];
   }).config;
@@ -27,30 +40,47 @@ let
     && builtins.deepSeq (removeAttrs config.programs.pepino [ "package" ])
       (builtins.deepSeq (removeAttrs config.services.pepino [ "package" "configFile" ])
         (builtins.seq config.services.pepino.configFile true));
-  rejects = settings:
+  rejects = evaluate: settings:
     let result = builtins.tryEval (passes (evaluate settings));
     in !result.success || !result.value;
 
-  verify =
+  verify = evaluate:
     lib.all (settings: let config = evaluate settings; in passes config && config.warnings == [ ])
       [ fixtures.empty fixtures.cleared fixtures.typical fixtures.full ]
     && (evaluate fixtures.untrusted).warnings != [ ]
-    && lib.all rejects fixtures.invalid;
+    && lib.all (rejects evaluate) fixtures.invalid;
 
-  clientConfig = settings: pepino.render pkgs "pepino-config.toml" (evaluate settings).programs.pepino;
-  nodeConfig = settings: pepino.render pkgs "pepino-node.toml" (evaluate settings).services.pepino;
+  linux = evaluate self.nixosModules.default;
+  darwin = evaluate self.darwinModules.default;
+  fullLinux = linux fixtures.full;
+  fullDarwin = darwin fixtures.full;
 in
-assert verify;
+assert verify linux && verify darwin;
+assert (linux fixtures.empty).environment.systemPackages == [ package ];
+assert (linux fixtures.empty).services.pepino.configFile == null;
+assert !((linux fixtures.empty).environment.etc ? "pepino/node.toml");
+assert !((linux fixtures.untrusted).environment.etc ? "pepino/config.toml");
+assert fullLinux.environment.etc."pepino/node.toml".source == fullLinux.services.pepino.configFile;
+assert fullDarwin.environment.etc."pepino/node.toml".source == fullDarwin.services.pepino.configFile;
+assert builtins.length fullLinux.nixpkgs.overlays == 1;
+assert fullLinux.networking.firewall.allowedUDPPorts == [ 44123 ];
+assert fullLinux.users.users.pepino-relay.isSystemUser;
+assert fullLinux.systemd.tmpfiles.settings.pepino."/srv/pepino".d.mode == "0700";
+assert fullDarwin.users.knownUsers == [ "pepino-relay" ];
+assert fullDarwin.users.knownGroups == [ "pepino-relay" ];
+assert fullDarwin.users.users.pepino-relay.gid == 450;
+assert lib.hasInfix "/srv/pepino" fullDarwin.system.activationScripts.postActivation.text;
+assert lib.hasInfix "port 44123" fullDarwin.environment.etc."pf.anchors/pepino".text;
 pkgs.runCommand "pepino-config-check"
 {
   nativeBuildInputs = [ package ];
-  empty = clientConfig fixtures.empty;
-  cleared = clientConfig fixtures.cleared;
-  client = clientConfig fixtures.full;
-  node = nodeConfig fixtures.full;
-  typicalClient = clientConfig fixtures.typical;
-  typicalNode = nodeConfig fixtures.typical;
-  untrustedNode = nodeConfig fixtures.untrusted;
+  empty = (linux fixtures.empty).environment.etc."pepino/config.toml".source;
+  cleared = (linux fixtures.cleared).environment.etc."pepino/config.toml".source;
+  client = fullLinux.environment.etc."pepino/config.toml".source;
+  node = fullDarwin.services.pepino.configFile;
+  typicalClient = (darwin fixtures.typical).environment.etc."pepino/config.toml".source;
+  typicalNode = (linux fixtures.typical).services.pepino.configFile;
+  untrustedNode = (darwin fixtures.untrusted).services.pepino.configFile;
 }
   ''
     export HOME="$TMPDIR"
