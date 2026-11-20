@@ -354,6 +354,23 @@ fn summaries_and_option_headings_follow_the_cli_help_conventions() {
 }
 
 #[test]
+fn help_describes_board_selection_and_board_output() {
+    for name in ["ls", "ready", "add", "status"] {
+        assert!(run_ppn(&[name, "--help"]).contains("--board"));
+    }
+    let help = as_json(&run_ppn(&["help", "--json"]));
+    let flag = help["flags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|flag| flag["long"] == "board")
+        .unwrap();
+    assert_eq!(flag["env"], "PPN_BOARD");
+    let show = as_json(&run_ppn(&["help", "board", "show", "--json"]));
+    assert!(show["output"]["fields"]["selected_board"].is_string());
+}
+
+#[test]
 fn linking_help_describes_private_inputs_and_verified_outputs() {
     let add = as_json(&run_ppn(&["help", "device", "add", "--json"]));
     assert!(

@@ -15,7 +15,7 @@ Open includes todo and doing. Closed includes done and cancelled.
 A blocked task has an open blocker. Ready means todo with no open blockers.
 has: also accepts custom field names. assignee:me selects the local identity.
 Use ppn help ids for task references used with parent, blocks and blocked-by.
-board: accepts a board name or full ID.
+board: accepts a board name or an unambiguous hexadecimal ID prefix.
 
 Free text searches titles, descriptions and comments by case-insensitive
 substring. @name expands a saved view. Use ppn help dates for date forms.

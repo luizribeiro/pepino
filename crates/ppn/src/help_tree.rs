@@ -153,6 +153,7 @@ impl From<&Arg> for ArgumentInfo {
             default,
             env: match arg.get_id().as_str() {
                 "json" if arg.is_global_set() => Some(crate::flags::JSON_ENV.into()),
+                "board" if arg.is_global_set() => Some(crate::flags::BOARD_ENV.into()),
                 "config" if arg.is_global_set() => Some(crate::config::CONFIG_ENV.into()),
                 _ => arg
                     .get_env()
