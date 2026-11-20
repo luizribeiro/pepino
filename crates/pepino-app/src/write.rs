@@ -101,7 +101,11 @@ impl App {
                 let task = self.resolve(view, "task", &task).await?.id;
                 batch.push(Event::CommentAdded { task, text }, "text")?;
             }
-            _ => return Err(invalid("op", "write operation is unavailable")),
+            Request::Delete { task } => {
+                let task = self.resolve(view, "task", &task).await?.id;
+                batch.push(Event::TaskDeleted { task }, "task")?;
+            }
+            Request::GetTask { .. } => return Err(invalid("op", "expected a write operation")),
         }
         Ok(())
     }

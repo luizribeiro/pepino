@@ -299,3 +299,50 @@ async fn comments_are_ordered_and_preserve_repeated_text() {
         response
     );
 }
+
+#[tokio::test]
+async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
+    let blocker = add(&mut app, "Order a replacement latch").await;
+    let (_, _, tasks) = write(
+        &mut app,
+        json!({
+            "op":"add_task", "title":"Install the latch", "blocked_by":[&blocker]
+        }),
+    )
+    .await;
+    let child = tasks
+        .iter()
+        .find(|task| task.title == "Install the latch")
+        .unwrap()
+        .id
+        .clone();
+    assert!(get(&mut app, &child).await.blocked);
+
+    let (changed, ids, tasks) = write(&mut app, json!({"op":"delete","task":&blocker[..12]})).await;
+    assert!(changed && ids.contains(&blocker) && ids.contains(&child));
+    let remaining = get(&mut app, &child).await;
+    assert_eq!(tasks, std::slice::from_ref(&remaining));
+    assert!(remaining.blocked_by.is_empty() && remaining.ready);
+    for request in [
+        json!({"op":"get_task","task":&blocker}),
+        json!({"op":"delete","task":blocker[..12].to_uppercase()}),
+        json!({"op":"unlink","from":&blocker[..12],"kind":"blocks","to":&child}),
+    ] {
+        assert_eq!(
+            handle(&mut app, request).await.unwrap_err(),
+            AppError::Conflict {
+                task: blocker.clone()
+            }
+        );
+    }
+    let store = Store::open(directory.path().join("pepino.sqlite"))
+        .await
+        .unwrap();
+    let history = store
+        .events(app.local_state().board_id, blocker.parse().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(history.len(), 3);
+}
