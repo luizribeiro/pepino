@@ -1,10 +1,16 @@
+use std::sync::Arc;
+
 use pepino_core::BoardId;
 use sqlx::SqlitePool;
+use tokio::sync::Mutex;
 
 use crate::Error;
 
 #[derive(Clone)]
-pub(crate) struct Spool(SqlitePool);
+pub(crate) struct Spool {
+    pool: SqlitePool,
+    writes: Arc<Mutex<()>>,
+}
 
 impl Spool {
     pub(crate) async fn create(pool: SqlitePool) -> Result<Self, Error> {
@@ -19,36 +25,42 @@ impl Spool {
         .execute(&pool)
         .await
         .map_err(Error::storage)?;
-        Ok(Self(pool))
+        Ok(Self {
+            pool,
+            writes: Arc::default(),
+        })
     }
 
     pub(crate) async fn clear(&self, board: BoardId) -> Result<(), Error> {
+        let _write = self.writes.lock().await;
         sqlx::query("DELETE FROM pepino_delivery WHERE board = ?")
             .bind(board.as_bytes().as_slice())
-            .execute(&self.0)
+            .execute(&self.pool)
             .await
             .map_err(Error::storage)?;
         Ok(())
     }
 
     pub(crate) async fn push(&self, board: BoardId, item: Vec<u8>) -> Result<(), Error> {
+        let _write = self.writes.lock().await;
         sqlx::query("INSERT INTO pepino_delivery (board, item) VALUES (?, ?)")
             .bind(board.as_bytes().as_slice())
             .bind(item)
-            .execute(&self.0)
+            .execute(&self.pool)
             .await
             .map_err(Error::storage)?;
         Ok(())
     }
 
     pub(crate) async fn pop(&self, board: BoardId) -> Result<Option<Vec<u8>>, Error> {
+        let _write = self.writes.lock().await;
         sqlx::query_scalar(
             "DELETE FROM pepino_delivery WHERE id = (
                 SELECT id FROM pepino_delivery WHERE board = ? ORDER BY id LIMIT 1
              ) RETURNING item",
         )
         .bind(board.as_bytes().as_slice())
-        .fetch_optional(&self.0)
+        .fetch_optional(&self.pool)
         .await
         .map_err(Error::storage)
     }

@@ -89,9 +89,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_paused_consumer_can_resume_after_five_thousand_events() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(dir.path().join("node.sqlite"))
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .synchronous(sqlx::sqlite::SqliteSynchronous::Normal);
+        let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
         let spool = Spool::create(pool.clone()).await.unwrap();
-        let acks = AckStore::create(pool).await.unwrap();
+        let acks = AckStore::create(pool.clone()).await.unwrap();
         let board = BoardId::from_bytes([35; 32]);
         let author = p2panda::Credentials::generate().verifying_key();
         let log = p2panda::operation::LogId::digest(b"release checklist");
@@ -109,14 +115,25 @@ mod tests {
         }
         writer.fail(&Error::Storage("deliberate write failure".into()));
         drop(writer);
-        tokio::time::timeout(Duration::from_secs(2), async {
+        let full = tokio::time::timeout(Duration::from_secs(2), async {
             while events.len() < CAPACITY {
                 tokio::task::yield_now().await;
             }
         })
-        .await
-        .unwrap();
+        .await;
+        if full.is_err() {
+            let len = events.len();
+            let errors: Vec<_> = std::iter::from_fn(|| events.try_recv().ok())
+                .filter_map(Result::err)
+                .collect();
+            panic!("expected a full queue, had {len} items and errors {errors:?}");
+        }
         assert_eq!(events.len(), CAPACITY);
+        let spilled: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pepino_delivery")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(spilled, (5_000 - CAPACITY) as i64);
         for seq in 0_u32..5_000 {
             let event = events.recv().await.unwrap().unwrap();
             assert_eq!(
