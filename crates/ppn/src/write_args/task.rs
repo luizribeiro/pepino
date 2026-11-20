@@ -141,6 +141,14 @@ pub struct DescriptionArgs {
 }
 
 impl DescriptionArgs {
+    pub fn input(&self) -> Option<&'static str> {
+        if self.from_file.is_some() {
+            Some("--from-file")
+        } else {
+            self.description.as_ref().map(|_| "--description")
+        }
+    }
+
     pub fn reads_stdin(&self) -> bool {
         self.description.as_deref() == Some("-")
     }

@@ -510,3 +510,21 @@ fn date_keywords_ignore_case_in_fields_and_filters() {
         assert_eq!(picked["due"], listing["resolved_dates"][canonical]);
     }
 }
+
+#[test]
+fn add_errors_distinguish_structured_values_from_appended_flags() {
+    let (sandbox, _) = task_sandbox();
+    let args = ["add", "--from-json", "-", "--tag", "Bad", "--json"];
+    for (input, expected) in [
+        (
+            r#"{"title":"Fit the latch","tags":["Antenna"]}"#,
+            "--from-json",
+        ),
+        (r#"{"title":"Fit the latch","tags":["hardware"]}"#, "--tag"),
+    ] {
+        assert_eq!(
+            task_error(task_stdin(&sandbox, &args, input), 2, "invalid_input")["input"],
+            expected
+        );
+    }
+}

@@ -118,6 +118,22 @@ impl CliError {
         self
     }
 
+    pub fn input_index(&self) -> Option<usize> {
+        let field = self.details.get("field")?.as_str()?;
+        let (_, index) = field.split_once('[')?;
+        index.strip_suffix(']')?.parse().ok()
+    }
+
+    pub fn input_key(&self, field: &str) -> Option<std::borrow::Cow<'_, str>> {
+        let path = self.details.get("field")?.as_str()?.strip_prefix(field)?;
+        if let Some(key) = path.strip_prefix('.') {
+            return Some(std::borrow::Cow::Borrowed(key));
+        }
+        serde_json::from_str(path.strip_prefix('[')?.strip_suffix(']')?)
+            .ok()
+            .map(std::borrow::Cow::Owned)
+    }
+
     pub fn map_input(mut self, field: &str, input: &str) -> Self {
         if self
             .details

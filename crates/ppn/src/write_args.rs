@@ -21,6 +21,12 @@ pub struct CustomArgs {
 }
 
 impl CustomArgs {
+    pub fn set_keys(&self) -> impl Iterator<Item = &str> {
+        self.set
+            .iter()
+            .filter_map(|entry| entry.split_once('=').map(|(key, _)| key))
+    }
+
     pub(super) fn apply(
         self,
         today: Date,
