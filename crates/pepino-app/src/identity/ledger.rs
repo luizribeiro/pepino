@@ -24,6 +24,14 @@ pub(crate) struct IdentityCatalog {
 }
 
 impl IdentityCatalog {
+    #[cfg(test)]
+    pub(super) fn with_root(root: DeviceId) -> Self {
+        Self {
+            root: Some(root),
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn device(&self, id: DeviceId) -> Option<&super::record::RosterDevice> {
         self.record.as_ref()?.devices.get(&id)
     }

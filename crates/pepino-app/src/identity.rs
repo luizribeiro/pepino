@@ -11,3 +11,6 @@ mod admission;
 mod lookup;
 mod migration;
 mod rename;
+
+#[cfg(test)]
+mod property;
