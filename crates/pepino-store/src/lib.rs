@@ -23,6 +23,8 @@ pub use log::{AppendOutcome, IdSource, RebuildReport, SkipReason};
 pub use prefix::PrefixResolution;
 pub use task::TaskRecord;
 
+const FOLD_VERSION: i64 = 1;
+
 static MIGRATOR: Migrator = sqlx::migrate!();
 
 pub struct Store {
@@ -31,17 +33,19 @@ pub struct Store {
 
 impl Store {
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        Self::connect(
-            SqliteConnectOptions::new()
-                .filename(path)
-                .create_if_missing(true)
-                .journal_mode(SqliteJournalMode::Wal),
-        )
-        .await
+        Self::open_file(path.as_ref(), FOLD_VERSION).await
+    }
+
+    async fn open_file(path: &Path, version: i64) -> Result<Self, StoreError> {
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal);
+        Self::connect(options, version).await
     }
 
     pub async fn open_in_memory() -> Result<Self, StoreError> {
-        Self::connect(SqliteConnectOptions::new().in_memory(true)).await
+        Self::connect(SqliteConnectOptions::new().in_memory(true), FOLD_VERSION).await
     }
 
     pub async fn latest_hlc(&self, board: BoardId) -> Result<Option<Hlc>, StoreError> {
@@ -55,9 +59,12 @@ impl Store {
         Ok(key.map(Hlc::from_key))
     }
 
-    async fn connect(options: SqliteConnectOptions) -> Result<Self, StoreError> {
+    async fn connect(options: SqliteConnectOptions, version: i64) -> Result<Self, StoreError> {
         let mut connection = SqliteConnection::connect_with(&options.foreign_keys(true)).await?;
-        MIGRATOR.run(&mut connection).await?;
+        let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
+        MIGRATOR.run(&mut *tx).await?;
+        fold::upgrade(&mut tx, version).await?;
+        tx.commit().await?;
         Ok(Self {
             connection: Mutex::new(connection),
         })

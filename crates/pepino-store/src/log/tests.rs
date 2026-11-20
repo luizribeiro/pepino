@@ -225,3 +225,41 @@ async fn rebuild_failure_leaves_the_current_view_intact() {
     assert_eq!(store.tasks(board).await.unwrap(), before);
     assert_eq!(store.events(board, task).await.unwrap(), history);
 }
+
+#[tokio::test]
+async fn reopening_upgrades_every_boards_projection() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pepino.sqlite");
+    let envelope = creation();
+    let task = envelope.created_task().unwrap();
+    let bytes = envelope.encode().unwrap();
+    let boards = [BoardId::from_bytes([19; 32]), BoardId::from_bytes([52; 32])];
+
+    let older = Store::open_file(&path, crate::FOLD_VERSION).await.unwrap();
+    for board in boards {
+        older
+            .append(board, &bytes, IdSource::Content)
+            .await
+            .unwrap();
+    }
+    sqlx::query("DELETE FROM task_state")
+        .execute(&mut *older.connection.lock().await)
+        .await
+        .unwrap();
+    drop(older);
+    let same_version = Store::open(&path).await.unwrap();
+    assert_eq!(same_version.task(boards[0], task).await.unwrap(), None);
+    drop(same_version);
+
+    let version = crate::FOLD_VERSION + 1;
+    let upgraded = Store::open_file(&path, version).await.unwrap();
+    for board in boards {
+        let record = upgraded.task(board, task).await.unwrap().unwrap();
+        assert_eq!(record.title, "Replace the greenhouse latch");
+    }
+    let current: i64 = sqlx::query_scalar("SELECT version FROM fold_version")
+        .fetch_one(&mut *upgraded.connection.lock().await)
+        .await
+        .unwrap();
+    assert_eq!(current, version);
+}

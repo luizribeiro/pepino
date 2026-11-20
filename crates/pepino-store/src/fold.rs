@@ -62,6 +62,30 @@ pub(crate) async fn fold(
     Ok(Some(task))
 }
 
+pub(crate) async fn upgrade(
+    connection: &mut SqliteConnection,
+    version: i64,
+) -> Result<(), StoreError> {
+    let current: i64 = sqlx::query_scalar("SELECT version FROM fold_version WHERE singleton = 1")
+        .fetch_one(&mut *connection)
+        .await?;
+    if current >= version {
+        return Ok(());
+    }
+
+    let boards: Vec<[u8; 32]> = sqlx::query_scalar("SELECT DISTINCT board FROM event_log")
+        .fetch_all(&mut *connection)
+        .await?;
+    for board in boards {
+        crate::log::rebuild(connection, BoardId::from_bytes(board)).await?;
+    }
+    sqlx::query("UPDATE fold_version SET version = ? WHERE singleton = 1")
+        .bind(version)
+        .execute(connection)
+        .await?;
+    Ok(())
+}
+
 mod registers;
 #[cfg(test)]
 mod tests;
