@@ -49,6 +49,9 @@ enum Command {
     Ls(commands::ls::Args),
     Ready(commands::ready::Args),
     Tree(commands::tree::Args),
+    Deps(commands::deps::Args),
+    Log(commands::log::Args),
+    View(commands::view::Args),
     Debug(debug::Args),
 }
 
@@ -184,6 +187,9 @@ fn dispatch(
         Some(Command::Ls(args)) => commands::ls::run(context, args),
         Some(Command::Ready(args)) => commands::ready::run(context, args),
         Some(Command::Tree(args)) => commands::tree::run(context, args),
+        Some(Command::Deps(args)) => commands::deps::run(context, args),
+        Some(Command::Log(args)) => commands::log::run(context, args),
+        Some(Command::View(args)) => commands::view::run(context, args),
         Some(Command::Debug(args)) => debug::run(context, args),
         None => Ok(help::run(context, Cli::command(), None)),
     }
