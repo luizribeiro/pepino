@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use pepino_core::{
-    BoardId, Date, DeviceId, FieldName, FieldValue, Hlc, IdentityId, Status, TaskId,
+    BoardId, Date, DeviceId, EdgeKind, FieldName, FieldValue, Hlc, IdentityId, Status, TaskId,
 };
-use sqlx::FromRow;
+use sqlx::{Connection, FromRow};
 
-use crate::{BoardKey, Store, StoreError};
+use crate::{BoardKey, Store, StoreError, edges};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskRecord {
@@ -21,6 +21,13 @@ pub struct TaskRecord {
     pub created: Hlc,
     pub updated: Hlc,
     pub author: DeviceId,
+    pub parent: Option<TaskId>,
+    pub children: BTreeSet<TaskId>,
+    pub blocks: BTreeSet<TaskId>,
+    pub blocked_by: BTreeSet<TaskId>,
+    pub relates: BTreeSet<TaskId>,
+    pub blocked: bool,
+    pub ready: bool,
 }
 
 #[derive(FromRow)]
@@ -49,6 +56,13 @@ impl TaskRow {
             created: Hlc::from_key(self.created),
             updated: Hlc::from_key(self.updated),
             author: DeviceId::from_bytes(self.author),
+            parent: None,
+            children: BTreeSet::new(),
+            blocks: BTreeSet::new(),
+            blocked_by: BTreeSet::new(),
+            relates: BTreeSet::new(),
+            blocked: false,
+            ready: false,
         }
     }
 }
@@ -82,8 +96,7 @@ impl TaskRecord {
     fn read_field(&mut self, member: &[u8], bytes: &[u8]) -> Result<(), StoreError> {
         let name = std::str::from_utf8(member)
             .map_err(|error| StoreError::ViewValue(error.to_string()))?;
-        let value = ciborium::from_reader(bytes)
-            .map_err(|error| StoreError::ViewValue(error.to_string()))?;
+        let value = decode_field(bytes)?;
         match (name, value) {
             ("title", FieldValue::Text(text)) => self.title = text,
             ("description", FieldValue::Text(text)) => self.description = Some(text),
@@ -102,6 +115,10 @@ impl TaskRecord {
         }
         Ok(())
     }
+}
+
+pub(crate) fn decode_field(bytes: &[u8]) -> Result<FieldValue, StoreError> {
+    ciborium::from_reader(bytes).map_err(|error| StoreError::ViewValue(error.to_string()))
 }
 
 impl Store {
@@ -125,9 +142,10 @@ impl Store {
         first: [u8; 32],
         last: [u8; 32],
     ) -> Result<Vec<TaskRecord>, StoreError> {
-        let rows = self
+        let (rows, edge_rows) = self
             .read(async |connection| {
-                sqlx::query_as::<_, TaskRow>(
+                let mut tx = connection.begin().await?;
+                let tasks = sqlx::query_as::<_, TaskRow>(
                     "SELECT s.task, s.created, s.updated, s.author, r.kind, r.member, r.value
                      FROM visible_tasks s JOIN task_register r USING (board, task)
                      WHERE s.board = ? AND s.task BETWEEN ? AND ?
@@ -136,8 +154,15 @@ impl Store {
                 .bind(BoardKey(board))
                 .bind(first)
                 .bind(last)
-                .fetch_all(connection)
-                .await
+                .fetch_all(&mut *tx)
+                .await?;
+                let edges = if tasks.is_empty() {
+                    Vec::new()
+                } else {
+                    edges::edge_rows(&mut tx, board).await?
+                };
+                tx.commit().await?;
+                Ok((tasks, edges))
             })
             .await?;
         let mut tasks = BTreeMap::new();
@@ -147,6 +172,44 @@ impl Store {
                 .or_insert_with(|| row.record())
                 .read_register(row)?;
         }
-        Ok(tasks.into_values().collect())
+        for (edge, row) in edges::project(&edge_rows)?.into_iter().zip(edge_rows) {
+            if !edge.is_effective() {
+                continue;
+            }
+            if let Some(task) = tasks.get_mut(edge.from.as_bytes()) {
+                match edge.kind {
+                    EdgeKind::Parent => task.parent = Some(edge.to),
+                    EdgeKind::Blocks => {
+                        task.blocks.insert(edge.to);
+                    }
+                    EdgeKind::Relates => {
+                        task.relates.insert(edge.to);
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(task) = tasks.get_mut(edge.to.as_bytes()) {
+                match edge.kind {
+                    EdgeKind::Parent => {
+                        task.children.insert(edge.from);
+                    }
+                    EdgeKind::Blocks => {
+                        task.blocked_by.insert(edge.from);
+                        task.blocked |= task.status.is_open() && row.source_is_open()?;
+                    }
+                    EdgeKind::Relates => {
+                        task.relates.insert(edge.from);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(tasks
+            .into_values()
+            .map(|mut task| {
+                task.ready = task.status.is_open() && !task.blocked;
+                task
+            })
+            .collect())
     }
 }

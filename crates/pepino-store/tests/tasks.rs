@@ -86,6 +86,13 @@ async fn creation_merges_with_retained_registers_by_clock() {
             counter: 1,
         },
         author,
+        parent: None,
+        children: Default::default(),
+        blocks: Default::default(),
+        blocked_by: Default::default(),
+        relates: Default::default(),
+        blocked: false,
+        ready: true,
     };
     assert_eq!(
         store.task(board, task).await.unwrap(),

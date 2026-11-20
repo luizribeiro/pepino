@@ -1,5 +1,6 @@
 use pepino_core::{
-    BoardId, DeviceId, EdgeKind, Envelope, Event, EventId, Hlc, InitialFields, TaskId,
+    BoardId, DeviceId, EdgeKind, Envelope, Event, EventId, FieldName, FieldValue, Hlc,
+    InitialFields, Status, TaskId,
 };
 use pepino_store::{EdgeExclusion, EdgeRecord, IdSource, Store};
 
@@ -181,6 +182,12 @@ async fn symmetric_edges_share_presence_and_removal_in_either_spelling() {
     add(&store, 12, 3, door, EdgeKind::Relates, hinges).await;
     assert_eq!(store.edges(BOARD, door).await.unwrap(), [relation]);
     assert_eq!(store.edges(BOARD, hinges).await.unwrap(), [relation]);
+    for (task, other) in [(door, hinges), (hinges, door)] {
+        assert_eq!(
+            store.task(BOARD, task).await.unwrap().unwrap().relates,
+            [other].into()
+        );
+    }
     append(
         &store,
         13,
@@ -194,4 +201,52 @@ async fn symmetric_edges_share_presence_and_removal_in_either_spelling() {
     .await;
     add(&store, 14, 3, door, EdgeKind::Relates, hinges).await;
     assert!(store.edges(BOARD, door).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn readiness_follows_status_and_live_blockers() {
+    let (store, [_, door, hinges, _]) = setup().await;
+    add(&store, 10, 1, hinges, EdgeKind::Blocks, door).await;
+    let status = |task, status| Event::TaskFieldSet {
+        task,
+        field: FieldName::new("status").unwrap(),
+        value: FieldValue::Status(status),
+    };
+    let assert_state = async |blocked, ready| {
+        let task = store.task(BOARD, door).await.unwrap().unwrap();
+        assert_eq!((task.blocked, task.ready), (blocked, ready));
+    };
+    assert_state(true, false).await;
+    assert_eq!(
+        store.task(BOARD, door).await.unwrap().unwrap().blocked_by,
+        [hinges].into()
+    );
+    assert_eq!(
+        store.task(BOARD, hinges).await.unwrap().unwrap().blocks,
+        [door].into()
+    );
+    for (id, blocker_status, blocked) in [
+        (11, Status::Done, false),
+        (12, Status::Todo, true),
+        (13, Status::Cancelled, false),
+        (14, Status::Doing, true),
+    ] {
+        append(&store, id, u32::from(id), status(hinges, blocker_status)).await;
+        assert_state(blocked, !blocked).await;
+    }
+    append(&store, 15, 15, status(door, Status::Done)).await;
+    assert_state(false, false).await;
+    append(&store, 16, 16, status(door, Status::Todo)).await;
+    assert_state(true, false).await;
+    append(&store, 17, 17, Event::TaskDeleted { task: hinges }).await;
+    assert_state(false, true).await;
+    assert!(
+        store
+            .task(BOARD, door)
+            .await
+            .unwrap()
+            .unwrap()
+            .blocked_by
+            .is_empty()
+    );
 }
