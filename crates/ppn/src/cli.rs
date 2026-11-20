@@ -1,4 +1,5 @@
 use crate::commands::config as config_command;
+use crate::commands::debug;
 use std::ffi::OsString;
 use std::path::Path;
 use std::{env, fs, io, process::ExitCode};
@@ -18,7 +19,7 @@ use ppn::terminal::{Context, Terminal};
 use crate::commands::add;
 use crate::commands::show;
 use crate::commands::status;
-use crate::{debug, help, version};
+use crate::{help, version};
 
 #[derive(Parser)]
 #[command(
@@ -50,16 +51,7 @@ enum Command {
     Status(status::Args),
     Add(add::Args),
     Show(show::Args),
-    /// Exercise CLI behavior.
-    #[command(
-        hide = true,
-        disable_help_subcommand = true,
-        after_help = example_help(&["ppn debug fail not_found"])
-    )]
-    Debug {
-        #[command(subcommand)]
-        command: debug::Command,
-    },
+    Debug(debug::Args),
 }
 
 pub fn run() -> ExitCode {
@@ -196,7 +188,7 @@ fn dispatch(
         Some(Command::Config(args)) => {
             config_command::run(context, inputs, cli.globals.config, args)
         }
-        Some(Command::Debug { command }) => debug::run(context, command),
+        Some(Command::Debug(args)) => debug::run(context, args),
         None => Ok(help::run(context, Cli::command(), None)),
     }
 }

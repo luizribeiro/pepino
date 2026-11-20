@@ -1,6 +1,5 @@
 mod cli;
 mod commands;
-mod debug;
 mod help;
 mod task_stdin;
 mod version;
