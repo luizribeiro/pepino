@@ -12,7 +12,8 @@ fn prints_version() {
 #[test]
 fn version_supports_human_output_and_global_json() {
     assert_eq!(run_ppn(&["version"]), run_ppn(&["--version"]));
-    let expected = serde_json::json!({"schema": 1, "version": env!("CARGO_PKG_VERSION")});
+    let expected =
+        serde_json::json!({"schema": 1, "kind": "version", "version": env!("CARGO_PKG_VERSION")});
     for args in [
         ["version", "--json"],
         ["--json", "version"],
@@ -30,5 +31,17 @@ fn version_supports_human_output_and_global_json() {
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
         expected
+    );
+}
+
+#[test]
+fn help_documents_identify_their_kinds() {
+    assert_eq!(
+        common::as_json(&run_ppn(&["help", "--json"]))["kind"],
+        "help"
+    );
+    assert_eq!(
+        common::as_json(&run_ppn(&["help", "ids", "--json"]))["kind"],
+        "help_topic"
     );
 }

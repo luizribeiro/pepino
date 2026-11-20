@@ -39,6 +39,7 @@ fn config_show_reports_effective_values_and_sources() {
     assert_eq!(human.lines().count(), 10);
 
     let data = as_json(&sandbox.run(&["config", "show", "--json"]));
+    assert_eq!(data["kind"], "config");
     let values = data["values"].as_object().unwrap();
     assert_eq!(values.len(), 9);
     assert_eq!(
@@ -145,6 +146,7 @@ fn config_path_reports_default_file_presence_without_parsing() {
     let human = run(&["config", "path"]);
     assert!(human.contains(&format!("present  {}", sandbox.config.display())));
     let data = as_json(&run(&["config", "path", "--json"]));
+    assert_eq!(data["kind"], "config_paths");
     let system = std::path::Path::new("/etc/pepino/config.toml");
     assert_eq!(
         data["files"],
@@ -199,7 +201,7 @@ fn config_check_validates_only_the_named_file_when_given() {
     assert_eq!(
         as_json(&success(output)),
         json!({
-            "schema": 1, "valid": true, "files": [{"path": file, "exists": true}],
+            "schema": 1, "kind": "config_check", "valid": true, "files": [{"path": file, "exists": true}],
         })
     );
 }

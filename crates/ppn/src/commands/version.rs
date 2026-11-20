@@ -12,7 +12,10 @@ impl Render for Version {
     }
 
     fn json_fields(self) -> Map<String, Value> {
-        Map::from_iter([("version".into(), self.version.into())])
+        Map::from_iter([
+            ("kind".into(), "version".into()),
+            ("version".into(), self.version.into()),
+        ])
     }
 }
 

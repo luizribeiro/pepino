@@ -110,6 +110,7 @@ impl Render for Show {
 
     fn json_fields(self) -> Map<String, Value> {
         Map::from_iter([
+            ("kind".into(), json!("config")),
             ("values".into(), json!(self.values)),
             ("files".into(), json!(self.files)),
         ])
@@ -144,7 +145,10 @@ impl Render for PathList {
     }
 
     fn json_fields(self) -> Map<String, Value> {
-        Map::from_iter([("files".into(), json!(self.0))])
+        Map::from_iter([
+            ("kind".into(), json!("config_paths")),
+            ("files".into(), json!(self.0)),
+        ])
     }
 }
 
@@ -176,6 +180,7 @@ impl Render for Check {
 
     fn json_fields(self) -> Map<String, Value> {
         Map::from_iter([
+            ("kind".into(), json!("config_check")),
             ("valid".into(), json!(true)),
             ("files".into(), json!(self.files)),
         ])

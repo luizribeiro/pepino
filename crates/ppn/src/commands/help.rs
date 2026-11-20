@@ -65,6 +65,7 @@ impl Render for Help {
             .insert("exit_codes".into(), json!(self.exit_codes));
         self.command
             .insert("error_codes".into(), json!(self.error_codes));
+        self.command.insert("kind".into(), json!("help"));
         self.command.insert("topics".into(), json!(topics::all()));
         self.command
     }
