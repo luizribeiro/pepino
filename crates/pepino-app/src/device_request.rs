@@ -29,6 +29,13 @@ pub struct DeviceRequest {
 }
 
 impl DeviceRequest {
+    pub fn check_pending(directory: &Path) -> Result<(), AppError> {
+        if !exists(&directory.join(FILE_NAME))? && exists(&directory.join(REQUEST))? {
+            return Err(AppError::DeviceRequestPending);
+        }
+        Ok(())
+    }
+
     pub fn load(directory: &Path) -> Result<Option<Self>, AppError> {
         let path = directory.join(REQUEST);
         exists(&path)?.then(|| Self::read(&path)).transpose()

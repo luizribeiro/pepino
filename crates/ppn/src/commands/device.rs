@@ -67,6 +67,12 @@ enum Action {
     },
 }
 
+impl Args {
+    pub(crate) fn requires_identity(&self) -> bool {
+        matches!(self.action, Action::Ls | Action::Add { .. })
+    }
+}
+
 pub fn run(
     context: &Context<'_>,
     args: Args,

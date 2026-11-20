@@ -274,8 +274,8 @@ fn missing_pair(directory: &Path, initialize: bool) -> Result<bool, AppError> {
     let state = directory.join(crate::state::FILE_NAME);
     let database = directory.join(DATABASE);
     let state_exists = exists(&state)?;
-    if !state_exists && exists(&directory.join(crate::device_request::REQUEST))? {
-        return Err(AppError::DeviceRequestPending);
+    if !state_exists {
+        crate::DeviceRequest::check_pending(directory)?;
     }
     if !state_exists && exists(&directory.join(crate::initialize::PENDING))? {
         return if initialize {

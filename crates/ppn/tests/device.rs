@@ -145,9 +145,16 @@ fn cancelling_a_request_removes_pending_state_and_is_idempotent() {
     let node = data.join("node.sqlite");
     std::fs::write(&request, "{}").unwrap();
     std::fs::write(&node, "prepared node").unwrap();
-    for args in [["init", "--json"], ["status", "--json"]] {
+    for args in [
+        &["init"][..],
+        &["status"],
+        &["sync"],
+        &["ls"],
+        &["device", "add"],
+        &["daemon", "status"],
+    ] {
         let error = task_error(
-            sandbox.command().args(args).output().unwrap(),
+            sandbox.command().args(args).arg("--json").output().unwrap(),
             1,
             "device_request_pending",
         );

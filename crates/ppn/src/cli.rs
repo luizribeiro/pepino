@@ -228,6 +228,19 @@ fn dispatch(
     inputs: &ProcessInputs,
     json: bool,
 ) -> Result<CommandResult, CliError> {
+    let needs_identity = match &cli.command {
+        None
+        | Some(Command::Version(_) | Command::Help(_) | Command::Config(_) | Command::Debug(_)) => {
+            false
+        }
+        Some(Command::Device(args)) => args.requires_identity(),
+        Some(_) => true,
+    };
+    if needs_identity {
+        pepino_app::DeviceRequest::check_pending(
+            context.config()?.config.data_dir.value.as_path(),
+        )?;
+    }
     match cli.command {
         Some(Command::Show(args)) => show::run(context, args, cli.globals.verbose),
         Some(Command::Add(args)) => add::run(context, args),
