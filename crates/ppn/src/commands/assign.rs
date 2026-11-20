@@ -12,7 +12,7 @@ pub struct Args {
     /// Task ID or unambiguous prefix.
     #[arg(value_name = "TASK")]
     task: String,
-    /// Use me or full identity IDs.
+    /// Use me, a display name, or an identity ID or prefix.
     #[arg(required = true, value_name = "WHO")]
     assignees: Vec<String>,
     /// Remove the supplied assignees.

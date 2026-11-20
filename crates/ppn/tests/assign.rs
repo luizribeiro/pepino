@@ -62,3 +62,50 @@ fn assign_reports_an_unknown_person_at_the_reference() {
             .contains("Unregistered greenhouse colleague")
     );
 }
+
+#[test]
+fn assign_and_filters_agree_on_names_prefixes_and_ambiguity() {
+    let (sandbox, _) = task_sandbox();
+    let task = create_task(&sandbox, "Inspect the greenhouse frame", &[]);
+    let status = as_json(&sandbox.run(&["status", "--json"]));
+    let name = status["identity"]["display_name"].as_str().unwrap();
+    let id = status["identity"]["id"].as_str().unwrap();
+    assert!(
+        sandbox
+            .run(&["assign", &task, name])
+            .starts_with("Assigned ")
+    );
+    let filter = format!("assignee:{}", &id[..8]);
+    assert_eq!(
+        as_json(&sandbox.run(&["ls", &filter, "--json"]))["total"],
+        1
+    );
+    assert!(
+        sandbox
+            .run(&["assign", "--remove", &task, &id[..8]])
+            .starts_with("Unassigned ")
+    );
+
+    let a = "41ab9101".repeat(8);
+    let b = "41ab9102".repeat(8);
+    sandbox.run(&["assign", &task, &a, &b]);
+    let write = sandbox
+        .command()
+        .args(["assign", &task, "41ab91", "--json"])
+        .output()
+        .unwrap();
+    let query = sandbox
+        .command()
+        .args(["ls", "assignee:41ab91", "--json"])
+        .output()
+        .unwrap();
+    let write = task_error(write, 2, "invalid_input");
+    let query = task_error(query, 2, "invalid_input");
+    assert_eq!(write["reason"], query["reason"]);
+    assert!(
+        write["reason"]
+            .as_str()
+            .unwrap()
+            .contains("ambiguous person")
+    );
+}

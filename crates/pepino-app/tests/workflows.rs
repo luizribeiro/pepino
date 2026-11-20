@@ -1809,12 +1809,42 @@ async fn default_priority_sort_treats_missing_priority_as_zero() {
 }
 
 #[tokio::test]
-async fn an_assignee_write_resolves_the_local_display_name() {
+async fn membership_and_filters_resolve_the_same_people() {
     let directory = tempfile::tempdir().unwrap();
-    let mut app = App::init(directory.path(), NOW).await.unwrap();
-    let name = app.local_state().display_name.clone();
+    let mut app = App::init_with_options(
+        directory.path(),
+        NOW,
+        pepino_app::OpenOptions {
+            display_name: Some("Ada Gardener".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     let task = add(&mut app, "Inspect the greenhouse latch").await;
-    let request = json!({"op":"assign","task":task,"assignees":[name]});
-    assert!(write(&mut app, request).await.0);
-    assert_eq!(get(&mut app, &task).await.assignees.len(), 1);
+    let id = app.local_state().identity_id.to_string();
+    assert!(
+        write(
+            &mut app,
+            json!({"op":"assign","task":task,"assignees":["Ada Gardener"]})
+        )
+        .await
+        .0
+    );
+    let response = handle(
+        &mut app,
+        json!({"op":"list_tasks","filter":format!("assignee:{}", &id[..8]),"today":"2026-11-20"}),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(response, Response::Tasks { total: 1, .. }));
+    assert!(
+        write(
+            &mut app,
+            json!({"op":"unassign","task":task,"assignees":[&id[..8]]})
+        )
+        .await
+        .0
+    );
+    assert!(get(&mut app, &task).await.assignees.is_empty());
 }
