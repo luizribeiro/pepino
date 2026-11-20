@@ -19,7 +19,7 @@ impl App {
     ) -> Result<(), AppError> {
         match request {
             WriteRequest::SaveView { .. } | WriteRequest::DeleteView { .. } => {
-                unreachable!("saved views are handled before event planning")
+                return Err(invalid("request", "saved views do not produce task events"));
             }
 
             WriteRequest::AddTask {

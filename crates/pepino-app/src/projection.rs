@@ -77,6 +77,10 @@ pub(super) fn project(
     })
 }
 
+pub(super) fn project_at(view: &BoardView, id: TaskId) -> Result<TaskSummary, AppError> {
+    project_summary(snapshot_task(view, id)?)
+}
+
 pub(super) fn project_summary(task: &StoredTask) -> Result<TaskSummary, AppError> {
     Ok(TaskSummary {
         id: task.id.to_string(),
