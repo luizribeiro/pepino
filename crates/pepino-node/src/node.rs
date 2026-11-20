@@ -96,7 +96,25 @@ async fn open_database(path: &std::path::Path) -> Result<sqlx::SqlitePool, Error
         use std::os::unix::fs::OpenOptionsExt;
         file.mode(0o600);
     }
-    file.open(path).map_err(Error::storage)?;
+    let database = file.open(path).map_err(Error::storage)?;
+    #[cfg(unix)]
+    {
+        use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+
+        database
+            .set_permissions(Permissions::from_mode(0o600))
+            .map_err(Error::storage)?;
+        for suffix in ["-wal", "-shm"] {
+            let mut sidecar = path.as_os_str().to_owned();
+            sidecar.push(suffix);
+            match std::fs::set_permissions(sidecar, Permissions::from_mode(0o600)) {
+                Ok(()) => (),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                Err(error) => return Err(Error::storage(error)),
+            }
+        }
+    }
+    drop(database);
     let options = SqliteConnectOptions::new()
         .filename(path)
         .journal_mode(SqliteJournalMode::Wal)
@@ -126,7 +144,29 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        for file in ["node.sqlite", "node.sqlite-wal", "node.sqlite-shm"] {
+        let files = ["node.sqlite", "node.sqlite-wal", "node.sqlite-shm"];
+        for file in files {
+            assert_eq!(
+                dir.path()
+                    .join(file)
+                    .metadata()
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600,
+                "{file}"
+            );
+            std::fs::set_permissions(
+                dir.path().join(file),
+                std::fs::Permissions::from_mode(0o644),
+            )
+            .unwrap();
+        }
+        let reopened = open_database(&dir.path().join("node.sqlite"))
+            .await
+            .unwrap();
+        for file in files {
             let mode = dir
                 .path()
                 .join(file)
@@ -136,6 +176,8 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o600, "{file}");
         }
+        reopened.close().await;
+        pool.close().await;
     }
 
     #[tokio::test]
