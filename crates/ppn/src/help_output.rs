@@ -54,6 +54,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "sync",
             "idle Whether all known sync work settled\nnetwork Peers and per-board sync activity\nsynced_devices IDs and known names of devices with a successful board sync",
         ),
+        "identity show" | "identity rename" => (
+            "identity",
+            "identity Identity ID, display name, shared roster, cache status and rejected roster entry count",
+        ),
         "device request" => (
             "device_request",
             "request Secret request code for an existing device\nsecret Whether the request code is secret\ndevice_id Requesting device ID\nfingerprint Fingerprint to verify on both hosts\nexpires_at Expiry of the signed member information",

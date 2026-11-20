@@ -10,6 +10,7 @@ pub mod device;
 pub mod done;
 pub mod edit;
 pub mod help;
+pub mod identity;
 pub mod link;
 pub mod log;
 pub mod ls;
