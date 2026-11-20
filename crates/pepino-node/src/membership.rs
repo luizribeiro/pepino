@@ -265,6 +265,64 @@ fn keep_manager(actors: &[(MemberId, AccessLevel)], current: AccessLevel) -> Res
     Ok(())
 }
 
+impl BoardHandle {
+    /// Check whether a device was admitted by the named manager in this board's history.
+    pub async fn admitted_by(&self, device: DeviceId, manager: DeviceId) -> Result<bool, Error> {
+        use p2panda_auth::group::{GroupAction, GroupMember};
+        type AuthGroup = p2panda_auth::group::GroupCrdt<
+            p2panda_spaces::ActorId,
+            p2panda_spaces::OperationId,
+            p2panda_spaces::AuthMessage<()>,
+            (),
+            p2panda_spaces::StrongRemoveResolver<()>,
+        >;
+
+        let store = SqliteSpacesStore::<Extensions>::new(SqliteStore::from_pool(
+            self.membership_pool.clone(),
+        ));
+        let state: Option<SpacesStoreState<()>> = store
+            .get_space_state(&Hash::from_bytes(*self.id().as_bytes()))
+            .await
+            .map_err(Error::storage)?;
+        let Some(state) = state else { return Ok(false) };
+        for entry in state.groups_y.inner.operations.values() {
+            if entry.group_id != state.group_id || entry.author.as_bytes() != manager.as_bytes() {
+                continue;
+            }
+            let GroupAction::Add {
+                member: GroupMember::Individual(member),
+                access,
+            } = &entry.action
+            else {
+                continue;
+            };
+            if member.as_bytes() != device.as_bytes() {
+                continue;
+            }
+            let at = |heads| {
+                AuthGroup::members_at(&state.groups_y, heads, state.group_id)
+                    .map_err(Error::storage)
+            };
+            let before = at(entry.dependencies.iter().copied().collect())?;
+            if before.iter().any(|(actor, _)| actor == member)
+                || !before.iter().any(|(actor, access)| {
+                    *actor == entry.author && access.level == AccessLevel::Manage
+                })
+            {
+                continue;
+            }
+            let after = at([entry.operation_id].into())?;
+            if after
+                .iter()
+                .any(|(actor, granted)| actor == member && granted.level == access.level)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -87,12 +87,24 @@ async fn the_first_publishes_after_removal_use_rotated_keys() {
     assert_ne!(old, secret_id(&a_settings.database_path, first).await);
     assert_ne!(old, secret_id(&b_settings.database_path, second).await);
     let removed = c.device_id();
+    assert!(alice.admitted_by(removed, a.device_id()).await.unwrap());
+    assert!(ben.admitted_by(removed, a.device_id()).await.unwrap());
+    assert!(!ben.admitted_by(removed, b.device_id()).await.unwrap());
     c.shutdown().await.unwrap();
     let saved = Node::persisted_members(&c_settings.database_path, alice.id())
         .await
         .unwrap();
     assert_eq!(saved[&removed], MemberState::Removed);
     assert_eq!(saved[&a.device_id()], MemberState::Member(Role::Manage));
+    alice.set_role(b.device_id(), Role::Manage).await.unwrap();
+    alice.set_role(a.device_id(), Role::Write).await.unwrap();
+    observe(
+        &mut ben_changes,
+        a.device_id(),
+        MemberState::Member(Role::Write),
+    )
+    .await;
+    assert!(ben.admitted_by(removed, a.device_id()).await.unwrap());
     b.shutdown().await.unwrap();
     a.shutdown().await.unwrap();
 }
