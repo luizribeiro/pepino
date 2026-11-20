@@ -135,3 +135,77 @@ async fn a_returning_peer_and_a_late_member_both_catch_up() {
     views_match(&a, &c).await;
     tokio::join!(left.stop(), right.stop(), third.stop());
 }
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn a_forged_transport_author_is_logged_without_changing_the_view() {
+    use pepino_core::{Envelope, Event, Hlc, TaskId};
+    use pepino_node::Node;
+    use pepino_store::EventClassification;
+
+    let (_dir, mut a, b) = pair().await;
+    let pepino_app::Response::Write {
+        created: Some(task),
+        ..
+    } = write(
+        &mut a.app,
+        json!({"op":"add_task","title":"Fix the shed roof"}),
+    )
+    .await
+    else {
+        panic!("expected a task ID");
+    };
+    let (left, right) = tokio::join!(a.start(), b.start());
+    b.await_events(&right, 1).await;
+    let before = b.app.store().board_with_comments(b.board()).await.unwrap();
+    left.stop().await;
+
+    let raw = Node::spawn(a.settings.clone()).await.unwrap();
+    let board = raw.open_board(a.board()).await.unwrap();
+    board.wait_until_joined(WAIT).await.unwrap();
+    board.wait_until_replayed(WAIT).await.unwrap();
+    let forged = Envelope::new(
+        b.app.local_state().device_id,
+        Hlc {
+            wall_ms: super::directory::NOW + 1,
+            counter: 0,
+        },
+        Event::TaskDeleted {
+            task: task.parse::<TaskId>().unwrap(),
+        },
+    )
+    .unwrap();
+    board.publish(forged.encode().unwrap()).await.unwrap();
+    b.await_events(&right, 2).await;
+    let history = b.app.store().history(b.board(), None, None).await.unwrap();
+    assert!(
+        history
+            .events
+            .iter()
+            .any(|entry| entry.decoded.id() == forged.id()
+                && entry.classification == EventClassification::ForgedAuthor)
+    );
+    assert_eq!(
+        before,
+        b.app.store().board_with_comments(b.board()).await.unwrap()
+    );
+    assert_eq!(
+        b.app
+            .store()
+            .outbox(
+                b.board(),
+                b.app.local_state().device_id,
+                1.try_into().unwrap()
+            )
+            .await
+            .unwrap()
+            .pending,
+        0
+    );
+    board.close().await.unwrap();
+    tokio::try_join!(raw.shutdown(), async {
+        right.stop().await;
+        Ok(())
+    })
+    .unwrap();
+}
