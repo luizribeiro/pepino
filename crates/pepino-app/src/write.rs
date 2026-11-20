@@ -7,7 +7,7 @@ use pepino_store::{BoardView, TaskRecord};
 
 use crate::app::invalid;
 use crate::batch::{Batch, invalid_event};
-use crate::projection::{resolve, resolve_id};
+use crate::projection::{resolve, resolve_id, snapshot_task};
 use crate::{App, AppError, Response, TaskChange, WriteRequest};
 
 impl App {
@@ -27,22 +27,28 @@ impl App {
         let mut changed_targets = Vec::new();
         for (index, reference) in tasks.into_iter().enumerate() {
             let field = format!("tasks[{index}]");
-            let current = resolve(&view, &field, &reference)?;
-            if !seen.insert(current.id) {
+            let task = resolve_id(
+                &view,
+                &field,
+                &reference,
+                matches!(change, TaskChange::Delete),
+            )?;
+            if !seen.insert(task) {
                 continue;
             }
             let before = batch.event_count();
             match &change {
                 TaskChange::SetFields { changes } => {
-                    set_fields(&mut batch, current, changes.clone())?
+                    set_fields(&mut batch, snapshot_task(&view, task)?, changes.clone())?
                 }
-                TaskChange::Delete => {
-                    delete_task(&view, &mut batch, current.id, &field, &seen)?;
+                TaskChange::Delete if view.task(task).is_some() => {
+                    delete_task(&view, &mut batch, task, &field, &seen)?;
                 }
+                TaskChange::Delete => {}
             }
-            order.push(current.id.to_string());
+            order.push(task.to_string());
             if batch.event_count() != before {
-                changed_targets.push(current.id.to_string());
+                changed_targets.push(task.to_string());
             }
         }
         let mut outcome = self.commit_batch(&view, batch).await?;
@@ -170,8 +176,11 @@ impl App {
                 batch.push(Event::CommentAdded { task, text }, "text")?;
             }
             WriteRequest::Delete { task } => {
-                let task = resolve(view, "task", &task)?.id;
-                delete_task(view, batch, task, "task", &BTreeSet::new())?;
+                let task = resolve_id(view, "task", &task, true)?;
+                batch.targets.insert(task);
+                if view.task(task).is_some() {
+                    delete_task(view, batch, task, "task", &BTreeSet::new())?;
+                }
             }
         }
         Ok(())

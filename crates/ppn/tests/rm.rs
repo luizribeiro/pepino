@@ -145,7 +145,7 @@ fn rm_returns_one_batch_outcome_for_multiple_tasks() {
 
 #[cfg(unix)]
 #[test]
-fn rm_leaves_other_tasks_live_when_one_is_deleted_at_the_prompt() {
+fn rm_still_deletes_live_tasks_when_one_is_deleted_at_the_prompt() {
     use std::{
         fs::File,
         io::{BufRead, BufReader, Read, Write},
@@ -174,13 +174,11 @@ fn rm_leaves_other_tasks_live_when_one_is_deleted_at_the_prompt() {
     let mut diagnostic = String::new();
     stderr.read_to_string(&mut diagnostic).unwrap();
     let output = child.wait_with_output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
-    assert!(diagnostic.ends_with(&format!(
-        "error: Task {} \"Order stainless fittings\" was deleted\n",
-        &project.blocker[..6]
-    )));
-    assert_eq!(show_task(&sandbox, &project.parent)["id"], project.parent);
+    assert!(output.status.success(), "{diagnostic}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.starts_with("Deleted "));
+    assert!(stdout.contains(&format!("Already deleted {}", &project.blocker[..6])));
+    assert_deleted(&sandbox, &project.parent);
 }
 
 #[test]

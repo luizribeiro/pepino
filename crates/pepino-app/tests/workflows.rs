@@ -481,17 +481,23 @@ async fn deletion_conflicts_for_full_or_short_ids_and_unblocks_dependents() {
             },
         }
     );
-    assert_eq!(
-        handle(
-            &mut app,
-            json!({"op":"delete","task":blocker[..12].to_uppercase()})
-        )
-        .await
-        .unwrap_err()
-        .kind()
-        .code(),
-        "conflict"
-    );
+    let repeated = json!({"op":"delete","task":blocker[..12].to_uppercase()});
+    assert!(!write(&mut app, repeated).await.0);
+    let response = handle(
+        &mut app,
+        json!({"op":"apply_to_tasks","tasks":[&blocker],"change":{"type":"delete"}}),
+    )
+    .await
+    .unwrap();
+    let Response::BatchWrite {
+        outcome,
+        changed_targets,
+    } = response
+    else {
+        panic!("expected a batch write")
+    };
+    assert!(matches!(*outcome, Response::Write { changed: false, .. }));
+    assert!(changed_targets.is_empty());
     let store = Store::open(directory.path().join("pepino.sqlite"))
         .await
         .unwrap();

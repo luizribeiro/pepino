@@ -49,12 +49,15 @@ pub fn batch_write_document(
         .targets
         .iter()
         .map(|id| {
-            let task = tasks.get(id.as_str()).ok_or_else(|| {
-                CliError::new(
+            let Some(task) = tasks.get(id.as_str()) else {
+                if verb == "Deleted" && !changed.contains(id.as_str()) {
+                    return Ok(format!("Already deleted {}", ids.get(id)));
+                }
+                return Err(CliError::new(
                     ErrorKind::Failure,
                     "The app omitted a task from the batch outcome.",
-                )
-            })?;
+                ));
+            };
             let label = write_label(changed.contains(id.as_str()), verb);
             Ok(task_write_line(task, &ids, &label))
         })

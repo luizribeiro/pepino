@@ -166,7 +166,18 @@ async fn every_operation_classifies_task_references_and_storage_contention() {
     }
     let before = store.latest_hlc(board).await.unwrap();
     for (request, field) in operations("abcdf1", peer) {
-        let conflict = matches!(request["op"].as_str(), Some("add_task" | "link" | "delete"));
+        if request["op"] == "delete" {
+            let outcome = app
+                .handle(serde_json::from_value(request).unwrap(), NOW)
+                .await
+                .unwrap();
+            assert!(matches!(
+                outcome,
+                pepino_app::Response::Write { changed: false, .. }
+            ));
+            continue;
+        }
+        let conflict = matches!(request["op"].as_str(), Some("add_task" | "link"));
         let error = app
             .handle(serde_json::from_value(request).unwrap(), NOW)
             .await
