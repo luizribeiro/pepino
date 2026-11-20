@@ -20,8 +20,19 @@ pub struct AppClient {
 
 impl AppClient {
     pub fn open(context: &Context<'_>) -> Result<Self, CliError> {
+        Self::startup(context, OpenOptions::default(), false)
+    }
+
+    pub fn init(context: &Context<'_>, options: OpenOptions) -> Result<Self, CliError> {
+        Self::startup(context, options, true)
+    }
+
+    fn startup(
+        context: &Context<'_>,
+        mut options: OpenOptions,
+        initialize: bool,
+    ) -> Result<Self, CliError> {
         let directory = context.config()?.config.data_dir.value.as_path();
-        let mut options = OpenOptions::default();
         if let Some(timeout) = context.timeout {
             options.lock_timeout = timeout;
         }
@@ -35,7 +46,13 @@ impl AppClient {
                 )
             })?;
         let now_ms = context.time.now_ms;
-        let app = runtime.block_on(App::open_with_options(directory, now_ms, options))?;
+        let app = runtime.block_on(async {
+            if initialize {
+                App::init_with_options(directory, now_ms, options).await
+            } else {
+                App::open_with_options(directory, now_ms, options).await
+            }
+        })?;
         Ok(Self {
             app,
             runtime,
@@ -112,6 +129,7 @@ mod tests {
                 })
             },
         );
+        AppClient::init(&context, OpenOptions::default()).unwrap();
         let mut client = AppClient::open(&context).unwrap();
         assert_eq!(client.now_ms, context.time.now_ms);
         let Response::Status {

@@ -49,6 +49,7 @@ enum Command {
     Status(status::Args),
     Add(add::Args),
     Show(show::Args),
+    Init(status::InitArgs),
     Ls(commands::ls::Args),
     Ready(commands::ready::Args),
     Tree(commands::tree::Args),
@@ -194,6 +195,7 @@ fn dispatch(
         Some(Command::Show(args)) => show::run(context, args),
         Some(Command::Add(args)) => add::run(context, args, json),
         Some(Command::Status(args)) => status::run(context, args),
+        Some(Command::Init(args)) => status::init(context, args),
         Some(Command::Version(args)) => Ok(version::run(context, args)),
         Some(Command::Help(args)) => help::for_path(context, Cli::command(), args),
         Some(Command::Config(args)) => {

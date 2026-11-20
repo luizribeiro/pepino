@@ -156,6 +156,12 @@ pub fn as_json(text: &str) -> Value {
 }
 
 pub fn task_sandbox() -> (ConfigSandbox, PathBuf) {
+    let (sandbox, data) = uninitialized_task_sandbox();
+    sandbox.run(&["init"]);
+    (sandbox, data)
+}
+
+pub fn uninitialized_task_sandbox() -> (ConfigSandbox, PathBuf) {
     let sandbox = ConfigSandbox::new();
     let data = sandbox.home.path().join("board");
     std::fs::write(

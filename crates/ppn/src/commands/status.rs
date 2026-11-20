@@ -1,4 +1,4 @@
-use pepino_app::{ReadRequest, Request};
+use pepino_app::{OpenOptions, ReadRequest, Request};
 use ppn::app::AppClient;
 use ppn::error::CliError;
 use ppn::help_tree::example_help;
@@ -13,7 +13,38 @@ use ppn::terminal::Context;
 pub struct Args {}
 
 pub fn run(context: &Context<'_>, _: Args) -> Result<CommandResult, CliError> {
-    let response = AppClient::open(context)?.call(Request::Read(ReadRequest::Status))?;
+    document(context, AppClient::open(context)?)
+}
+
+#[derive(clap::Args)]
+#[command(about = "Initialise the local identity, device, and board.", after_help = example_help(&[
+    "ppn init --name 'Ada Gardener' --device 'garden laptop' --board Greenhouse",
+    "ppn init --json",
+]))]
+pub struct InitArgs {
+    /// Display name for the local identity.
+    #[arg(long, value_name = "NAME")]
+    name: Option<String>,
+    /// Name for this device.
+    #[arg(long, value_name = "NAME")]
+    device: Option<String>,
+    /// Name for the local board.
+    #[arg(long, value_name = "NAME")]
+    board: Option<String>,
+}
+
+pub fn init(context: &Context<'_>, args: InitArgs) -> Result<CommandResult, CliError> {
+    let options = OpenOptions {
+        display_name: args.name,
+        device_name: args.device,
+        board_name: args.board,
+        ..OpenOptions::default()
+    };
+    document(context, AppClient::init(context, options)?)
+}
+
+fn document(context: &Context<'_>, mut client: AppClient) -> Result<CommandResult, CliError> {
+    let response = client.call(Request::Read(ReadRequest::Status))?;
     CommandResult::app_document(context, response, |response, _| {
         let Status {
             identity,
