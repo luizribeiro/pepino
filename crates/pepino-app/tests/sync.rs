@@ -252,3 +252,67 @@ async fn deleting_a_live_task_cleans_up_edges_to_already_deleted_batch_targets()
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn deletion_reports_roots_created_when_older_parent_edges_activate() {
+    use pepino_core::{Clock, DeviceId, EdgeKind, Envelope, Event};
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    let mut tasks = Vec::new();
+    for title in [
+        "Clear the old bed",
+        "Order cedar",
+        "Assemble the frame",
+        "Paint the frame",
+    ] {
+        tasks.push(
+            create(&mut app, json!({"op":"add_task","title":title}), title)
+                .await
+                .id,
+        );
+    }
+    let [removed, order, build, paint] = tasks.as_slice() else {
+        panic!("expected four tasks")
+    };
+    let board = app.local_state().board_id;
+    let store = Store::open(directory.path().join("pepino.sqlite"))
+        .await
+        .unwrap();
+    let mut clock = Clock::from_hlc(store.latest_hlc(board).await.unwrap().unwrap());
+    for (from, to) in [
+        (order, build),
+        (paint, order),
+        (build, paint),
+        (order, removed),
+    ] {
+        let event = Event::EdgeAdded {
+            from: from.parse().unwrap(),
+            kind: EdgeKind::Parent,
+            to: to.parse().unwrap(),
+        };
+        let envelope = Envelope::new(
+            DeviceId::from_bytes([61; 32]),
+            clock.tick(NOW).unwrap(),
+            event,
+        )
+        .unwrap();
+        store
+            .append(board, &envelope.encode().unwrap(), IdSource::Content)
+            .await
+            .unwrap();
+    }
+    for request in [
+        json!({"op":"preview_delete","tasks":[removed]}),
+        json!({"op":"delete","task":removed}),
+    ] {
+        let response = dispatch(&mut app, request).await;
+        let (Response::DeletePreview { top_level, .. } | Response::Write { top_level, .. }) =
+            response
+        else {
+            panic!("expected deletion effects");
+        };
+        assert_eq!(top_level.len(), 1);
+        assert_eq!(&top_level[0].id, build);
+    }
+}

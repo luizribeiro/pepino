@@ -265,9 +265,7 @@ pub(super) fn deletion_impact(
     let mut top_level = Vec::new();
     let mut unblocked = Vec::new();
     for task in before.iter().filter(|task| !deleted.contains(&task.id)) {
-        if task.parent.is_some_and(|parent| deleted.contains(&parent))
-            && !has_parent.contains(&task.id)
-        {
+        if task.parent.is_some() && !has_parent.contains(&task.id) {
             top_level.push(task.id);
         }
         if task.blocked && !blocked.contains(&task.id) {

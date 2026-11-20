@@ -143,3 +143,32 @@ fn deleting_a_live_task_cleans_up_edges_to_older_tombstones_in_the_batch() {
     }));
     assert_eq!(reply["deleted"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn rm_lists_a_new_root_created_by_refolding_parent_edges() {
+    let (sandbox, data) = task_sandbox();
+    let removed = create_task(&sandbox, "Clear the old bed", &[]);
+    let order = create_task(&sandbox, "Order cedar", &[]);
+    let build = create_task(&sandbox, "Assemble the frame", &[]);
+    let paint = create_task(&sandbox, "Paint the frame", &[]);
+    for (from, to) in [
+        (&order, &build),
+        (&paint, &order),
+        (&build, &paint),
+        (&order, &removed),
+    ] {
+        append_remote(
+            &data,
+            pepino_core::Event::EdgeAdded {
+                from: from.parse().unwrap(),
+                kind: pepino_core::EdgeKind::Parent,
+                to: to.parse().unwrap(),
+            },
+        );
+    }
+    let output = sandbox.run(&["rm", &removed, "--yes"]);
+    assert!(output.contains(&format!(
+        "Became top-level {}  Assemble the frame",
+        &build[..6]
+    )));
+}
