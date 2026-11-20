@@ -250,28 +250,50 @@ pub fn seed_tasks<T>(
 }
 
 pub fn ambiguous_tasks(data: &std::path::Path) -> (String, [String; 2]) {
-    use pepino_app::{Request, Response};
-    use ppn::write_args::new_task;
-    use std::collections::BTreeMap;
+    use pepino_core::{Clock, DeviceId, Envelope, Event, EventId, InitialFields};
+    use pepino_store::{IdSource, Store};
 
     seed_tasks(data, async |app| {
-        let mut seen = BTreeMap::new();
-        for number in 0..=65_536 {
-            let input = new_task(format!("Inspect hinge assembly {number}"));
-            let Response::Write {
-                created: Some(id), ..
-            } = app.handle(Request::Write(input), SEED_NOW).await.unwrap()
-            else {
-                panic!("expected a created task");
-            };
-            let prefix = id[..4].to_owned();
-            if let Some(previous) = seen.insert(prefix.clone(), id.clone()) {
-                let mut candidates = [previous, id];
-                candidates.sort();
-                return (prefix, candidates);
-            }
+        let board = app.local_state().board_id;
+        let store = Store::open(data.join("pepino.sqlite")).await.unwrap();
+        let view = store.board(board).await.unwrap();
+        let prefix = (0x7faeu16..=u16::MAX)
+            .map(|prefix| format!("{prefix:04x}"))
+            .find(|prefix| {
+                matches!(
+                    view.resolve_task_prefix(prefix).unwrap(),
+                    pepino_store::TaskPrefixResolution::Unknown
+                )
+            })
+            .unwrap();
+        let mut clock = store
+            .latest_hlc(board)
+            .await
+            .unwrap()
+            .map(Clock::from_hlc)
+            .unwrap_or_default();
+        let first = format!("{prefix}01{}", "51".repeat(29));
+        let second = format!("{prefix}02{}", "51".repeat(29));
+        for (id, title) in [
+            (&first, "Inspect the greenhouse hinge"),
+            (&second, "Inspect the frame joint"),
+        ] {
+            let event = Envelope::new(
+                DeviceId::from_bytes([71; 32]),
+                clock.tick(SEED_NOW).unwrap(),
+                Event::TaskCreated {
+                    title: title.into(),
+                    fields: InitialFields::default(),
+                },
+            )
+            .unwrap();
+            let id: EventId = id.parse().unwrap();
+            store
+                .append(board, &event.encode().unwrap(), IdSource::Trusted(id))
+                .await
+                .unwrap();
         }
-        panic!("65,537 tasks must share a four-digit prefix");
+        (prefix, [first, second])
     })
 }
 

@@ -61,14 +61,12 @@ fn deps_deduplicates_the_shared_blocker_in_a_diamond() {
 
 #[test]
 fn task_reads_keep_reference_statuses_across_graphs_and_history() {
-    use pepino_app::{Request, Response, WriteRequest};
-    use ppn::write_args::new_task;
-    use std::collections::BTreeMap;
+    use pepino_app::{Request, WriteRequest};
 
     let (sandbox, data) = task_sandbox();
     let project = small_project(&sandbox);
     let deleted = project.downstream;
-    let (prefix, mut candidates) = common::seed_tasks(&data, async |app| {
+    common::seed_tasks(&data, async |app| {
         app.handle(
             Request::Write(WriteRequest::Delete {
                 task: deleted.clone(),
@@ -77,32 +75,8 @@ fn task_reads_keep_reference_statuses_across_graphs_and_history() {
         )
         .await
         .unwrap();
-        let mut prefixes = BTreeMap::new();
-        for n in 0..=65_536 {
-            let response = app
-                .handle(
-                    Request::Write(new_task(format!("Inspect greenhouse hinge {n}"))),
-                    common::SEED_NOW,
-                )
-                .await
-                .unwrap();
-            let Response::Write {
-                created: Some(id), ..
-            } = response
-            else {
-                panic!("expected a task creation");
-            };
-            let prefix = id[..4].to_owned();
-            if project.parent.starts_with(&prefix) || project.blocker.starts_with(&prefix) {
-                continue;
-            }
-            if let Some(previous) = prefixes.insert(prefix.clone(), id.clone()) {
-                return (prefix, [previous, id]);
-            }
-        }
-        panic!("four-character prefixes must collide");
     });
-    candidates.sort();
+    let (prefix, candidates) = common::ambiguous_tasks(&data);
 
     let missing = "0".repeat(64);
     for command in ["deps", "tree", "log"] {
@@ -132,7 +106,7 @@ fn task_reads_keep_reference_statuses_across_graphs_and_history() {
             .unwrap();
         assert_eq!(task_error(output, 3, "not_found")["task"], deleted);
     }
-    let log = as_json(&sandbox.run(&["log", "--limit", "65540", "--json"]));
+    let log = as_json(&sandbox.run(&["log", "--all", "--json"]));
     let events = log["events"].as_array().unwrap();
     assert!(
         events
