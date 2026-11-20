@@ -48,7 +48,7 @@ fn global_config_flag_overrides_the_environment_file() {
         "/tests/fixtures/missing-config.toml"
     );
     let output = ppn()
-        .args(["version", "--config", missing, "--json"])
+        .args(["config", "show", "--config", missing, "--json"])
         .output()
         .unwrap();
     let diagnostic = assert_json_error(output, 1, "invalid_config");
@@ -855,4 +855,26 @@ fn config_show_replaces_selected_files_with_the_flag_path() {
             .unwrap()
             .contains("missing.toml")
     );
+}
+
+#[test]
+fn commands_load_configuration_only_when_needed() {
+    let sandbox = ConfigSandbox::new();
+    std::fs::write(&sandbox.config, "network = ?").unwrap();
+    for args in [&["version"][..], &["help"], &[]] {
+        success(
+            sandbox
+                .command()
+                .env("PPN_MDNS", "maybe")
+                .args(args)
+                .output()
+                .unwrap(),
+        );
+    }
+    let output = sandbox
+        .command()
+        .args(["config", "show", "--json"])
+        .output()
+        .unwrap();
+    assert_json_error(output, 1, "invalid_config");
 }

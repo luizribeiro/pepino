@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::env;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::time::Duration;
@@ -5,7 +6,7 @@ use std::time::Duration;
 use clap::ValueEnum;
 use serde::Serialize;
 
-use crate::config::Config;
+use crate::config::LoadedConfig;
 use crate::error::{CliError, ErrorKind};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ValueEnum)]
@@ -38,22 +39,35 @@ impl Terminal {
     }
 }
 
-#[derive(Debug)]
-pub struct Context {
+pub struct Context<'a> {
     pub terminal: Terminal,
-    pub config: Option<Config>,
+    config: OnceCell<Result<LoadedConfig, CliError>>,
+    load_config: Box<dyn Fn() -> Result<LoadedConfig, CliError> + 'a>,
     pub yes: bool,
     pub timeout: Option<Duration>,
 }
 
-impl Context {
-    pub fn detect(color: Color, yes: bool, timeout: Option<Duration>) -> Self {
+impl<'a> Context<'a> {
+    pub fn new(
+        terminal: Terminal,
+        yes: bool,
+        timeout: Option<Duration>,
+        load_config: impl Fn() -> Result<LoadedConfig, CliError> + 'a,
+    ) -> Self {
         Self {
-            terminal: Terminal::detect(color),
-            config: None,
+            terminal,
+            config: OnceCell::new(),
+            load_config: Box::new(load_config),
             yes,
             timeout,
         }
+    }
+
+    pub fn config(&self) -> Result<&LoadedConfig, CliError> {
+        self.config
+            .get_or_init(&self.load_config)
+            .as_ref()
+            .map_err(Clone::clone)
     }
 
     pub fn confirm(&self, prompt: &str) -> Result<bool, CliError> {

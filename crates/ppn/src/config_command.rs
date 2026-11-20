@@ -29,18 +29,9 @@ pub enum Command {
     },
 }
 
-pub fn show(
-    context: &Context,
-    key: Option<&str>,
-    files: Vec<FileStatus>,
-) -> Result<CommandResult, CliError> {
-    let config = context.config.as_ref().ok_or_else(|| {
-        CliError::new(
-            ErrorKind::Failure,
-            "Effective configuration is unavailable.",
-        )
-    })?;
-    let mut values = config.values();
+pub fn show(context: &Context<'_>, key: Option<&str>) -> Result<CommandResult, CliError> {
+    let loaded = context.config()?;
+    let mut values = loaded.config.values();
     if let Some(key) = key {
         let Some(value) = values.remove_entry(key) else {
             let error = CliError::new(
@@ -54,7 +45,10 @@ pub fn show(
         };
         values = BTreeMap::from([value]);
     }
-    Ok(CommandResult::document(Show { values, files }))
+    Ok(CommandResult::document(Show {
+        values,
+        files: loaded.files.clone(),
+    }))
 }
 
 struct Show {

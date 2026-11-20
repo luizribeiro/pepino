@@ -59,7 +59,7 @@ impl ErrorKind {
     }
 }
 
-#[derive(Debug, Serialize, thiserror::Error)]
+#[derive(Clone, Debug, Serialize, thiserror::Error)]
 #[error("{message}")]
 pub struct CliError {
     #[serde(skip)]

@@ -11,7 +11,7 @@ use ppn::error::CliError;
 use ppn::flags::{Globals, json_from_env, json_on_command_line};
 use ppn::help_tree::example_help;
 use ppn::output::{CommandResult, finish};
-use ppn::terminal::Context;
+use ppn::terminal::{Context, Terminal};
 
 use crate::{config_command, debug, help, version};
 
@@ -77,9 +77,30 @@ pub fn run() -> ExitCode {
         });
     match parsed {
         Ok((cli, explicit_color)) => {
-            let mut context = context_for(&cli.globals);
+            let env = env::vars_os().collect();
+            let flags = Flags {
+                config: cli.globals.config.clone(),
+                color: explicit_color.then_some(cli.globals.color),
+            };
+            let dirs = platform_dirs(&env);
+            let context = Context::new(
+                Terminal::detect(cli.globals.color),
+                cli.globals.yes,
+                cli.globals.timeout,
+                || {
+                    config::load(
+                        &flags,
+                        &env,
+                        |path| fs::read_to_string(path),
+                        dirs.as_ref().map_err(Clone::clone)?,
+                    )
+                },
+            );
             let json = cli.globals.json;
-            let result = dispatch(cli, explicit_color, &mut context);
+            let result = dirs
+                .as_ref()
+                .map_err(Clone::clone)
+                .and_then(|dirs| dispatch(cli, &context, &flags, &env, dirs));
             finish(result, json, &context.terminal)
         }
         Err(error) => {
@@ -102,26 +123,11 @@ pub fn run() -> ExitCode {
 
 fn dispatch(
     cli: Cli,
-    explicit_color: bool,
-    context: &mut Context,
+    context: &Context<'_>,
+    flags: &Flags,
+    env: &Env,
+    dirs: &PlatformDirs,
 ) -> Result<CommandResult, CliError> {
-    let env: Env = env::vars_os().collect();
-    let dirs = platform_dirs(&env)?;
-    let flags = Flags {
-        config: cli.globals.config,
-        color: explicit_color.then_some(cli.globals.color),
-    };
-
-    let files = match &cli.command {
-        Some(Command::Config {
-            command: config_command::Command::Path | config_command::Command::Check { .. },
-        }) => Vec::new(),
-        _ => {
-            let loaded = config::load(&flags, &env, |path| fs::read_to_string(path), &dirs)?;
-            context.config = Some(loaded.config);
-            loaded.files
-        }
-    };
     match cli.command {
         Some(Command::Version) => Ok(version::run(context)),
         Some(Command::Help { path }) => {
@@ -132,18 +138,18 @@ fn dispatch(
         }
         Some(Command::Config {
             command: config_command::Command::Show { key },
-        }) => config_command::show(context, key.as_deref(), files),
+        }) => config_command::show(context, key.as_deref()),
         Some(Command::Config {
             command: config_command::Command::Path,
-        }) => config_command::path(context, &config::select_files(&flags, &env, &dirs)),
+        }) => config_command::path(context, &config::select_files(flags, env, dirs)),
         Some(Command::Config {
             command: config_command::Command::Check { file },
         }) => {
             let files = match file {
-                Some(file) => vec![config::ConfigFile::explicit(&file, &dirs)],
-                None => config::select_files(&flags, &env, &dirs),
+                Some(file) => vec![config::ConfigFile::explicit(&file, dirs)],
+                None => config::select_files(flags, env, dirs),
             };
-            config_command::check(context, &files, &dirs)
+            config_command::check(context, &files, dirs)
         }
         Some(Command::Debug { command }) => debug::run(context, command),
         None => Ok(help::run(context, Cli::command(), None)),
@@ -177,8 +183,18 @@ fn platform_dirs(env: &Env) -> Result<PlatformDirs, CliError> {
     .map_err(|error| invalid(&error.to_string()))
 }
 
-fn context_for(globals: &Globals) -> Context {
-    Context::detect(globals.color, globals.yes, globals.timeout)
+fn context_for(globals: &Globals) -> Context<'static> {
+    Context::new(
+        Terminal::detect(globals.color),
+        globals.yes,
+        globals.timeout,
+        || {
+            Err(CliError::new(
+                ppn::error::ErrorKind::Failure,
+                "Configuration is unavailable before argument parsing.",
+            ))
+        },
+    )
 }
 
 fn help_flag_target<'a>(
