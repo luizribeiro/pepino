@@ -123,7 +123,7 @@ impl Repairs {
                 continue;
             }
             let mut outcomes = Vec::new();
-            for board in local.boards().iter().rev() {
+            for board in local.identity_owned_boards().rev() {
                 let result = match workers.handle(board.id) {
                     Some(handle)
                         if network

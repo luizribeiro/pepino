@@ -323,28 +323,31 @@ impl SyncEngine {
         local.check_device_write()?;
         boards.open_missing(&local).await?;
         let owner = self.node.device_id();
-        let allowed = futures_util::future::try_join_all(local.boards().iter().map(|board| {
-            let handle = boards.handle(board.id);
-            async move {
-                let denied = || Error::EnrollmentAccess {
-                    board: board.name.clone(),
-                };
-                let handle = handle.ok_or_else(denied)?;
-                handle
-                    .wait_until_joined(Duration::from_secs(5))
-                    .await
-                    .map_err(|_| denied())?;
-                let role = handle
-                    .members()
-                    .await
-                    .map_err(|_| denied())?
-                    .into_iter()
-                    .find_map(|(id, role)| (id == owner && role == Role::Manage).then_some(role))
-                    .ok_or_else(denied)?;
-                Ok::<_, Error>((board.name.as_str(), handle, role))
-            }
-        }))
-        .await?;
+        let allowed =
+            futures_util::future::try_join_all(local.identity_owned_boards().map(|board| {
+                let handle = boards.handle(board.id);
+                async move {
+                    let denied = || Error::EnrollmentAccess {
+                        board: board.name.clone(),
+                    };
+                    let handle = handle.ok_or_else(denied)?;
+                    handle
+                        .wait_until_joined(Duration::from_secs(5))
+                        .await
+                        .map_err(|_| denied())?;
+                    let role = handle
+                        .members()
+                        .await
+                        .map_err(|_| denied())?
+                        .into_iter()
+                        .find_map(|(id, role)| {
+                            (id == owner && role == Role::Manage).then_some(role)
+                        })
+                        .ok_or_else(denied)?;
+                    Ok::<_, Error>((board.name.as_str(), handle, role))
+                }
+            }))
+            .await?;
         let keys = boards
             .authority
             .as_ref()

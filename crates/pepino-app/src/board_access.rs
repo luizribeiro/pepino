@@ -43,6 +43,13 @@ impl LocalState {
         self.catalog.shared.get(&board).copied()
     }
 
+    pub fn identity_owned_boards(&self) -> impl DoubleEndedIterator<Item = &crate::LocalBoard> {
+        self.boards().iter().filter(|board| {
+            self.shared_access(board.id)
+                .is_none_or(|access| access.owner == self.identity_id)
+        })
+    }
+
     pub fn waiting_for_access(&self, board: BoardId) -> bool {
         self.shared_access(board).is_some_and(|access| {
             access.owner != self.identity_id && access.admitted != self.device_id
@@ -96,6 +103,8 @@ async fn access_on_another_persons_board_is_device_specific() {
             admitted: DeviceId::from_bytes([85; 32]),
         },
     );
+    local.name_board(house, "House");
+    assert_eq!(local.identity_owned_boards().count(), 1);
     assert!(local.waiting_for_access(house));
     local.catalog.shared.get_mut(&house).unwrap().admitted = local.device_id;
     assert!(!local.waiting_for_access(house));

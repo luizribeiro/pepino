@@ -112,7 +112,7 @@ pub(super) fn run(
         request,
         identity: local.identity_id,
         display_name: local.display_name().to_owned(),
-        boards: local.boards().to_vec(),
+        boards: local.identity_owned_boards().cloned().collect(),
         devices: local
             .devices()
             .into_iter()
