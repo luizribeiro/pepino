@@ -3,11 +3,17 @@ use std::sync::{Arc, Mutex};
 use futures_util::{StreamExt, stream};
 use pepino_core::{BoardId, DeviceId, EventId};
 use pepino_node::{Error, NodeEvent, NodeEvents, NodeStatus};
+use tokio::sync::{broadcast, mpsc, watch};
+use tokio_stream::wrappers::{BroadcastStream, UnboundedReceiverStream};
 
-use crate::{Acknowledgement, DeliveryStream, Transport, TransportBoard};
+use crate::{Acknowledgement, Delivery, DeliveryStream, Transport, TransportBoard};
+
+type Queue = mpsc::UnboundedSender<Delivery<Receipt>>;
 
 pub(super) struct Stub {
     device: DeviceId,
+    queue: Arc<Mutex<Option<Queue>>>,
+    signals: broadcast::Sender<NodeEvent>,
     status: Arc<Mutex<NodeStatus>>,
 }
 
@@ -15,20 +21,71 @@ impl Stub {
     pub(super) fn new(device: DeviceId) -> Self {
         Self {
             device,
+            queue: Arc::default(),
+            signals: broadcast::channel(128).0,
             status: Arc::default(),
         }
     }
 }
 
 pub(super) struct Board {
+    queue: Arc<Mutex<Option<Queue>>>,
+    deliveries: Option<mpsc::UnboundedReceiver<Delivery<Receipt>>>,
+    signals: broadcast::Sender<NodeEvent>,
     id: BoardId,
     status: Arc<Mutex<NodeStatus>>,
 }
 
-pub(super) struct Receipt;
+pub(super) struct Receipt(watch::Sender<bool>);
+
+impl Stub {
+    pub(super) fn deliver(
+        &self,
+        id: BoardId,
+        signer: DeviceId,
+        bytes: Vec<u8>,
+    ) -> watch::Receiver<bool> {
+        let (ack, received) = watch::channel(false);
+        pending(&self.status, &self.signals, id, true);
+        self.queue
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .send(Delivery {
+                operation: EventId::from_bytes([27; 32]),
+                signer,
+                bytes,
+                ack: Receipt(ack),
+            })
+            .ok()
+            .unwrap();
+        received
+    }
+}
+
+fn pending(
+    status: &Mutex<NodeStatus>,
+    signals: &broadcast::Sender<NodeEvent>,
+    id: BoardId,
+    added: bool,
+) {
+    let mut status = status.lock().unwrap();
+    let count = &mut status.boards.get_mut(&id).unwrap().pending_deliveries;
+    if added {
+        *count += 1;
+    } else {
+        *count -= 1;
+    }
+    let _ = signals.send(NodeEvent::PendingDeliveries {
+        board: id,
+        count: *count,
+    });
+}
 
 impl Acknowledgement for Receipt {
     async fn ack(&self) -> Result<(), Error> {
+        self.0.send_replace(true);
         Ok(())
     }
 }
@@ -37,7 +94,16 @@ impl TransportBoard for Board {
     type Ack = Receipt;
 
     fn deliveries(&mut self) -> Result<DeliveryStream<Receipt>, Error> {
-        Ok(Box::pin(stream::pending()))
+        let rx = self.deliveries.take().ok_or(Error::EventsTaken)?;
+        let id = self.id;
+        let status = self.status.clone();
+        let signals = self.signals.clone();
+        Ok(UnboundedReceiverStream::new(rx)
+            .map(move |delivery| {
+                pending(&status, &signals, id, false);
+                Ok(delivery)
+            })
+            .boxed())
     }
 
     async fn publish(&self, _: Vec<u8>) -> Result<EventId, Error> {
@@ -47,6 +113,7 @@ impl TransportBoard for Board {
     }
 
     async fn close(self) -> Result<(), Error> {
+        self.queue.lock().unwrap().take();
         self.status.lock().unwrap().boards.remove(&self.id);
         Ok(())
     }
@@ -65,7 +132,12 @@ impl Transport for Stub {
             return Err(Error::BoardOpen(id));
         }
         status.boards.insert(id, Default::default());
+        let (sender, receiver) = mpsc::unbounded_channel();
+        *self.queue.lock().unwrap() = Some(sender);
         Ok(Board {
+            queue: self.queue.clone(),
+            deliveries: Some(receiver),
+            signals: self.signals.clone(),
             id,
             status: self.status.clone(),
         })
@@ -73,7 +145,10 @@ impl Transport for Stub {
 
     fn events(&self) -> NodeEvents {
         Box::pin(
-            stream::iter([Ok(NodeEvent::PeerSeen { peer: self.device })]).chain(stream::pending()),
+            stream::iter([Ok(NodeEvent::PeerSeen { peer: self.device })]).chain(
+                BroadcastStream::new(self.signals.subscribe())
+                    .map(|result| result.map_err(|error| Error::Node(error.to_string()))),
+            ),
         )
     }
 
@@ -93,4 +168,21 @@ async fn a_board_remains_open_until_its_handle_closes() {
     ));
     board.close().await.unwrap();
     assert!(node.status().boards.is_empty());
+}
+
+#[tokio::test]
+async fn queues_verified_bytes_with_an_independent_ack() {
+    let author = DeviceId::from_bytes([43; 32]);
+    let node = Stub::new(author);
+    let id = BoardId::from_bytes([12; 32]);
+    let mut board = node.open_board(id).await.unwrap();
+    let receipt = node.deliver(id, author, b"Repair storm shutters".to_vec());
+    assert_eq!(node.status().boards[&id].pending_deliveries, 1);
+    let item = board.deliveries().unwrap().next().await.unwrap().unwrap();
+    assert_eq!(node.status().boards[&id].pending_deliveries, 0);
+    assert_eq!(item.signer, author);
+    assert_eq!(item.bytes, b"Repair storm shutters");
+    assert!(!*receipt.borrow());
+    item.ack.ack().await.unwrap();
+    assert!(*receipt.borrow());
 }
