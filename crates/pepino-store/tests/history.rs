@@ -1,23 +1,28 @@
-use pepino_core::{
-    BoardId, DeviceId, EdgeKind, Envelope, Event, EventId, Hlc, InitialFields, TaskId,
-};
+use pepino_core::{BoardId, DeviceId, EdgeKind, Envelope, Event, Hlc, InitialFields, TaskId};
 use pepino_store::{AppendOutcome, EventRecord, IdSource, Store};
 
 #[tokio::test]
 async fn history_includes_creation_and_both_edge_endpoints_in_envelope_order() {
     let store = Store::open_in_memory().await.unwrap();
     let board = BoardId::from_bytes([19; 32]);
-    let task = TaskId::from_bytes([44; 32]);
     let to = TaskId::from_bytes([96; 32]);
     let hlc = Hlc {
         wall_ms: 1_795_144_800_000,
         counter: 3,
     };
+    let creation = Event::TaskCreated {
+        title: "Paint the hallway".into(),
+        fields: InitialFields::default(),
+    };
+    let task = Envelope::new(DeviceId::from_bytes([31; 32]), hlc, creation.clone())
+        .unwrap()
+        .created_task()
+        .unwrap();
     let mut expected = Vec::new();
-    for (id, author, event) in [
-        (56, 31, Event::TaskDeleted { task }),
+    let mut edge_ids = Vec::new();
+    for (author, event) in [
+        (31, Event::TaskDeleted { task }),
         (
-            48,
             55,
             Event::EdgeAdded {
                 from: task,
@@ -25,16 +30,8 @@ async fn history_includes_creation_and_both_edge_endpoints_in_envelope_order() {
                 to,
             },
         ),
+        (31, creation),
         (
-            44,
-            31,
-            Event::TaskCreated {
-                title: "Paint the hallway".into(),
-                fields: InitialFields::default(),
-            },
-        ),
-        (
-            36,
             79,
             Event::EdgeRemoved {
                 from: task,
@@ -43,11 +40,16 @@ async fn history_includes_creation_and_both_edge_endpoints_in_envelope_order() {
             },
         ),
     ] {
-        let id = EventId::from_bytes([id; 32]);
         let author = DeviceId::from_bytes([author; 32]);
-        let bytes = Envelope::new(author, hlc, event).unwrap().encode().unwrap();
+        let edge = matches!(event, Event::EdgeAdded { .. } | Event::EdgeRemoved { .. });
+        let envelope = Envelope::new(author, hlc, event).unwrap();
+        let id = envelope.id();
+        if edge {
+            edge_ids.push(id);
+        }
+        let bytes = envelope.encode().unwrap();
         let outcome = store
-            .append(board, &bytes, IdSource::Trusted(id))
+            .append(board, &bytes, IdSource::Content)
             .await
             .unwrap();
         assert_eq!(outcome, AppendOutcome::Applied { id, task });
@@ -75,7 +77,10 @@ async fn history_includes_creation_and_both_edge_endpoints_in_envelope_order() {
     assert_eq!(store.events(board, task).await.unwrap(), expected);
     assert_eq!(
         store.events(board, to).await.unwrap(),
-        [expected[0].clone(), expected[2].clone()]
+        expected
+            .into_iter()
+            .filter(|record| edge_ids.contains(&record.id))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -109,35 +114,27 @@ async fn board_history_keeps_skips_and_limits_after_task_filtering() {
     event.as_map_mut().unwrap()[0].0 = Value::from("reminder_added");
     let mut unknown_bytes = Vec::new();
     ciborium::into_writer(&unknown, &mut unknown_bytes).unwrap();
-    for (byte, raw) in [
-        (3, unknown_bytes.as_slice()),
-        (1, &[0x82, 2, 0xf6]),
-        (2, &bytes),
-    ] {
-        store
-            .append(
-                board,
-                raw,
-                IdSource::Trusted(EventId::from_bytes([byte; 32])),
-            )
-            .await
-            .unwrap();
+    for raw in [unknown_bytes.as_slice(), &[0x82, 2, 0xf6], &bytes] {
+        store.append(board, raw, IdSource::Content).await.unwrap();
     }
     let history = store.history(board, None, None).await.unwrap();
     let events = &history.events;
-    assert_eq!(
-        events
-            .iter()
-            .map(|item| item.classification)
-            .collect::<Vec<_>>(),
-        [Applied, UnknownEvent]
-    );
+    assert!(events[0].decoded.id() < events[1].decoded.id());
+    let applied = events
+        .iter()
+        .find(|item| item.classification == Applied)
+        .unwrap();
+    let unknown = events
+        .iter()
+        .find(|item| item.classification == UnknownEvent)
+        .unwrap();
+    assert_eq!(events.len(), 2);
     assert_eq!(history.unordered[0].decoded.hlc(), None);
     assert_eq!(history.unordered[0].decoded.author(), None);
-    assert_eq!(events[0].event, Some(comment));
-    assert_eq!(events[1].decoded.author(), Some(author));
-    assert_eq!(events[1].decoded.hlc(), Some(hlc));
-    assert_eq!(events[1].tasks, [task]);
+    assert_eq!(applied.event, Some(comment));
+    assert_eq!(unknown.decoded.author(), Some(author));
+    assert_eq!(unknown.decoded.hlc(), Some(hlc));
+    assert_eq!(unknown.tasks, [task]);
     assert_eq!(store.history(board, None, Some(2)).await.unwrap(), history);
     assert_eq!(
         store

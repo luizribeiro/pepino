@@ -45,7 +45,7 @@ async fn get(app: &mut App, id: &str) -> TaskRecord {
 async fn receive(store: &Store, board: BoardId, events: &[EventRecord]) {
     let raw: Vec<_> = events
         .iter()
-        .map(|event| (event.bytes.as_slice(), IdSource::Trusted(event.id)))
+        .map(|event| (event.bytes.as_slice(), IdSource::Content))
         .collect();
     store.append_batch(board, &raw).await.unwrap();
 }

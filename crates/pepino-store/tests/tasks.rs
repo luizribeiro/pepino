@@ -1,6 +1,6 @@
 use pepino_core::{
     BoardId, Clock, Date, DeviceId, Envelope, Event, FieldName, FieldValue, Hlc, IdentityId,
-    InitialFields, Status, TaskId,
+    InitialFields, Status,
 };
 use pepino_store::{IdSource, Store, TaskRecord};
 
@@ -122,10 +122,11 @@ async fn lists_tasks_by_full_creation_clock_then_id() {
         counter: 2,
         ..later
     };
-    for (id, hlc, title) in [
-        (40, later, "Paint the porch"),
-        (12, later, "Order the paint"),
-        (91, earlier, "Measure the porch"),
+    let mut expected = Vec::new();
+    for (hlc, title) in [
+        (later, "Paint the porch"),
+        (later, "Order the paint"),
+        (earlier, "Measure the porch"),
     ] {
         let creation = Envelope::new(
             author,
@@ -136,23 +137,19 @@ async fn lists_tasks_by_full_creation_clock_then_id() {
             },
         )
         .unwrap();
-        let task = TaskId::from_bytes([id; 32]);
+        expected.push((hlc, creation.created_task().unwrap()));
         store
-            .append(
-                board,
-                &creation.encode().unwrap(),
-                IdSource::Trusted(task.0),
-            )
+            .append(board, &creation.encode().unwrap(), IdSource::Content)
             .await
             .unwrap();
     }
+    expected.sort_unstable();
     let tasks = store.tasks(board).await.unwrap();
     assert_eq!(
         tasks
             .into_iter()
             .map(|task| (task.created, task.id))
             .collect::<Vec<_>>(),
-        [(earlier, 91), (later, 12), (later, 40)]
-            .map(|(hlc, id)| (hlc, TaskId::from_bytes([id; 32])))
+        expected
     );
 }

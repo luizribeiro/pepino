@@ -1,4 +1,4 @@
-use pepino_core::{BoardId, DeviceId, Envelope, Event, EventId, Hlc, InitialFields};
+use pepino_core::{BoardId, DeviceId, Envelope, Event, Hlc, InitialFields};
 use pepino_store::{CommentRecord, IdSource, Store};
 
 #[tokio::test]
@@ -20,12 +20,11 @@ async fn comments_are_visible_only_on_live_tasks_and_ordered_by_clock_then_id() 
     .unwrap();
     let task = creation.created_task().unwrap();
     let mut comments = Vec::new();
-    for (id, author, counter, text) in [
-        (14, 33, 2, "Bring painter’s tape"),
-        (95, 54, 0, "Sand the rail first"),
-        (10, 74, 2, "Paint is in the closet"),
+    for (author, counter, text) in [
+        (33, 2, "Bring painter’s tape"),
+        (54, 0, "Sand the rail first"),
+        (74, 2, "Paint is in the closet"),
     ] {
-        let id = EventId::from_bytes([id; 32]);
         let author = DeviceId::from_bytes([author; 32]);
         let hlc = Hlc { counter, ..hlc };
         let envelope = Envelope::new(
@@ -38,11 +37,11 @@ async fn comments_are_visible_only_on_live_tasks_and_ordered_by_clock_then_id() 
         )
         .unwrap();
         store
-            .append(board, &envelope.encode().unwrap(), IdSource::Trusted(id))
+            .append(board, &envelope.encode().unwrap(), IdSource::Content)
             .await
             .unwrap();
         comments.push(CommentRecord {
-            id,
+            id: envelope.id(),
             author,
             hlc,
             text: text.into(),
