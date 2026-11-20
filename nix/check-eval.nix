@@ -26,6 +26,8 @@ in
           systemd.user.timers = attrs;
           systemd.paths = attrs;
           systemd.services = attrs;
+          launchd.agents = attrs;
+          launchd.daemons = attrs;
           system.activationScripts.postActivation.text = mkOption { type = types.str; default = ""; };
         };
       }

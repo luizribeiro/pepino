@@ -37,7 +37,10 @@ let
       users.groups.${node.group or "pepino"}.gid = 450;
     });
   fullLinux = linux fixtures.full;
-  fullDarwinSettings = lib.recursiveUpdate fixtures.full { services.pepino.openFirewall = false; };
+  fullDarwinSettings = lib.recursiveUpdate fixtures.full {
+    programs.pepino.daemon.enable = true;
+    services.pepino.openFirewall = false;
+  };
   fullDarwin = darwinWithAccount fullDarwinSettings;
 
   nixos = nixpkgs.lib.nixosSystem {
@@ -65,6 +68,8 @@ assert lib.all
   in config.assertions == [ ] && config.warnings == [ ]
     && config.environment.etc == { } && config.environment.systemPackages == [ ])
   [ linux darwin ];
+assert (darwin fixtures.disabled).launchd.agents == { };
+assert (darwin fixtures.disabled).launchd.daemons == { };
 assert rejects (linux fixtures.invalidLinux) "services.pepino.openFirewall requires services.pepino.port.";
 assert rejects (darwinWithAccount fixtures.invalidDarwinFirewall)
   "services.pepino.openFirewall is not supported on nix-darwin. Configure the firewall manually.";
@@ -91,6 +96,12 @@ assert fullDarwin.users.knownGroups == [ "pepino-relay" ];
 assert fullDarwin.users.users.pepino-relay.uid == 451;
 assert fullDarwin.users.users.pepino-relay.gid == 450;
 assert lib.hasInfix "/srv/pepino" fullDarwin.system.activationScripts.postActivation.text;
+assert fullDarwin.launchd.agents.pepino.serviceConfig.KeepAlive.SuccessfulExit == false;
+assert lib.hasInfix (builtins.unsafeDiscardStringContext "${package}/bin/ppn daemon run")
+  (builtins.elemAt fullDarwin.launchd.agents.pepino.serviceConfig.ProgramArguments 2);
+assert fullDarwin.launchd.daemons.pepino-node.serviceConfig.UserName == "pepino-relay";
+assert lib.hasInfix "test -f /srv/pepino/local.json"
+  (builtins.elemAt fullDarwin.launchd.daemons.pepino-node.serviceConfig.ProgramArguments 2);
 pkgs.runCommand "pepino-config-check"
 {
   nativeBuildInputs = [ package pkgs.nix ];
