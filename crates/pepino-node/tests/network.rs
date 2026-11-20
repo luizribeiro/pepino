@@ -4,6 +4,8 @@ mod crash;
 mod decode;
 #[path = "network/lifecycle.rs"]
 mod lifecycle;
+#[path = "network/membership.rs"]
+mod membership;
 #[path = "network/scale.rs"]
 mod scale;
 #[path = "network/support.rs"]
