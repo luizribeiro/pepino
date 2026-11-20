@@ -1,20 +1,17 @@
-use crate::Date;
-use crate::app::{invalid, store_error};
-use crate::projection::project;
-use crate::state::storage;
-use crate::views::SavedViews;
-use crate::{App, Response};
-use crate::{AppError, FilterDiagnostic, FilterInput, MissingReference};
-use pepino_core::filter::Filter;
-use pepino_store::query::{self, Context, Query, QueryError, QueryErrorKind, Sort};
 use std::collections::{BTreeMap, BTreeSet};
-
-type ViewFilters<'a> = BTreeMap<&'a str, (FilterInput, Filter)>;
 
 use pepino_core::{
     BoardId,
-    filter::{Clause, Term},
+    filter::{Clause, Filter, Term},
 };
+use pepino_store::query::{self, Context, Query, QueryError, QueryErrorKind, Sort};
+
+use crate::app::{invalid, store_error};
+use crate::projection::project;
+use crate::state::storage;
+use crate::{App, AppError, Date, FilterDiagnostic, FilterInput, MissingReference, Response};
+
+type ViewFilters<'a> = BTreeMap<&'a str, (FilterInput, Filter)>;
 
 impl App {
     pub(super) async fn list_tasks(
@@ -30,7 +27,18 @@ impl App {
             .parse()
             .map_err(|error| invalid("sort", error))?;
         self.reload_state().await?;
-        let views = parse_views(&self.local.saved_views, today)?;
+        let views = self
+            .local
+            .saved_views
+            .iter()
+            .map(|(name, text)| {
+                let input = FilterInput::Text(text.into());
+                let parsed = input
+                    .parse(today)
+                    .map_err(|error| storage("decode saved filter", error, false))?;
+                Ok((name, (input, parsed)))
+            })
+            .collect::<Result<ViewFilters<'_>, AppError>>()?;
         let saved = |name: &str| views.get(name).map(|(_, filter)| filter.clone());
         let people = |name: &str| {
             (name == self.local.display_name)
@@ -79,6 +87,25 @@ impl App {
             sort: sort.to_string(),
         })
     }
+}
+
+fn needs_comments<'a>(filter: &'a Filter, views: &'a ViewFilters<'_>) -> bool {
+    let mut pending = vec![filter];
+    let mut seen = BTreeSet::new();
+    while let Some(filter) = pending.pop() {
+        for term in filter.terms() {
+            match &term.clause {
+                Clause::Text(_) => return true,
+                Clause::View(name) if seen.insert(name.as_str()) => {
+                    if let Some((_, nested)) = views.get(name.as_str()) {
+                        pending.push(nested);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 #[derive(Clone, Copy)]
@@ -136,36 +163,4 @@ fn query_error(
             hint: None,
         })),
     }
-}
-
-fn needs_comments<'a>(filter: &'a Filter, views: &'a ViewFilters<'_>) -> bool {
-    let mut pending = vec![filter];
-    let mut seen = BTreeSet::new();
-    while let Some(filter) = pending.pop() {
-        for term in filter.terms() {
-            match &term.clause {
-                Clause::Text(_) => return true,
-                Clause::View(name) if seen.insert(name.as_str()) => {
-                    if let Some((_, nested)) = views.get(name.as_str()) {
-                        pending.push(nested);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    false
-}
-
-fn parse_views(views: &SavedViews, today: Date) -> Result<ViewFilters<'_>, AppError> {
-    views
-        .iter()
-        .map(|(name, text)| {
-            let input = FilterInput::Text(text.into());
-            let parsed = input
-                .parse(today)
-                .map_err(|error| storage("decode saved filter", error, false))?;
-            Ok((name, (input, parsed)))
-        })
-        .collect()
 }
