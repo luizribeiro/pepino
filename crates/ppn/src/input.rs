@@ -26,6 +26,19 @@ pub fn read_text(value: Option<String>, from_file: Option<&Path>) -> Result<Stri
     }
 }
 
+pub fn read_task_text(value: Option<String>, from_file: Option<&Path>) -> Result<String, CliError> {
+    let external = from_file.is_some() || value.as_deref() == Some("-");
+    let mut text = read_text(value, from_file)?;
+    if external {
+        trim_trailing_newlines(&mut text);
+    }
+    Ok(text)
+}
+
+pub fn trim_trailing_newlines(text: &mut String) {
+    text.truncate(text.trim_end_matches(['\r', '\n']).len());
+}
+
 fn read_error(source: &str, error: io::Error) -> CliError {
     let kind = match error.kind() {
         io::ErrorKind::NotFound => ErrorKind::NotFound,

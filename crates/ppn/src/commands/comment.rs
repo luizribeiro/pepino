@@ -4,7 +4,7 @@ use pepino_app::{Request, WriteRequest};
 use ppn::app::AppClient;
 use ppn::error::CliError;
 use ppn::help_tree::example_help;
-use ppn::input::read_text;
+use ppn::input::read_task_text;
 use ppn::output::CommandResult;
 use ppn::render::write_document;
 use ppn::terminal::Context;
@@ -33,7 +33,7 @@ pub fn run(
         from_file,
     }: Args,
 ) -> Result<CommandResult, CliError> {
-    let text = read_text(text, from_file.as_deref())?;
+    let text = read_task_text(text, from_file.as_deref())?;
     let response =
         AppClient::open(context)?.call(Request::Write(WriteRequest::Comment { task, text }))?;
     write_document(context, response, "Commented on")

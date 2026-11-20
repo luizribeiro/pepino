@@ -17,7 +17,7 @@ fn comment_appends_text_from_each_source_and_preserves_repeats() {
     let json = as_json(&success(task_stdin(
         &sandbox,
         &["comment", task, "-", "--json"],
-        note,
+        &format!("{note}\r\n\n"),
     )));
     assert_write(&json, true);
     assert_eq!(json["tasks"][0]["comment_count"], 2);
@@ -29,7 +29,7 @@ fn comment_appends_text_from_each_source_and_preserves_repeats() {
     sandbox.run(&["comment", task, "--from-file", path]);
     assert_eq!(
         show_task(&sandbox, task)["comments"][2]["text"],
-        "Sort the bolts.\nCount the washers.\n"
+        "Sort the bolts.\nCount the washers."
     );
 }
 
