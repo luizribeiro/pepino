@@ -182,7 +182,9 @@ mod tests {
                 "no-node-at-relay,invalid=http://relay.example".into(),
             ),
         ]);
-        let error = apply(&mut Draft::new(&dirs), &env).unwrap_err().to_string();
+        let error = apply(&mut Draft::new(&dirs).unwrap(), &env)
+            .unwrap_err()
+            .to_string();
         for key in [
             "PPN_MDNS: mdns",
             "PPN_BOOTSTRAP_NODES: bootstrap_nodes[0]",

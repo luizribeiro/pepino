@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::path::serialize_path;
-use super::{AbsolutePath, DateFormat, Network, NodeId, PlatformDirs, RelayUrl};
+use super::{AbsolutePath, DateFormat, Network, NodeId, PlatformDirs, RelayUrl, ValueError};
 use crate::terminal::Color;
 
 pub const DEFAULT_RELAY_URLS: &[&str] = &[
@@ -59,14 +59,14 @@ pub struct BootstrapNode {
 }
 
 #[derive(Clone, Debug)]
-pub struct Config {
+pub struct Config<P = AbsolutePath> {
     pub network: Setting<Network>,
     pub relay_urls: Setting<Vec<RelayUrl>>,
     pub mdns: Setting<bool>,
-    pub credentials_file: Setting<AbsolutePath>,
+    pub credentials_file: Setting<P>,
     pub trusted_devices: Setting<Vec<NodeId>>,
     pub bootstrap_nodes: Setting<Vec<BootstrapNode>>,
-    pub data_dir: Setting<AbsolutePath>,
+    pub data_dir: Setting<P>,
     pub ui: UiConfig,
 }
 
@@ -77,30 +77,8 @@ pub struct UiConfig {
 }
 
 impl Config {
-    pub fn defaults(dirs: &PlatformDirs) -> Self {
-        Self {
-            network: Setting::defaulted("pepino".parse().expect("non-empty default network")),
-            relay_urls: Setting::defaulted(
-                DEFAULT_RELAY_URLS
-                    .iter()
-                    .map(|url| {
-                        url.parse()
-                            .expect("hardcoded default relay is an HTTPS URL")
-                    })
-                    .collect(),
-            ),
-            mdns: Setting::defaulted(true),
-            credentials_file: Setting::defaulted(dirs.data_dir.join("credentials.cbor")),
-            trusted_devices: Setting::defaulted(Vec::new()),
-            bootstrap_nodes: Setting::defaulted(Vec::new()),
-            data_dir: Setting::defaulted(dirs.data_dir.clone()),
-            ui: UiConfig {
-                color: Setting::defaulted(Color::Auto),
-                date_format: Setting::defaulted(
-                    "%Y-%m-%d".parse().expect("valid default date format"),
-                ),
-            },
-        }
+    pub fn defaults(dirs: &PlatformDirs) -> Result<Self, ValueError> {
+        Config::initial(None).and_then(|config| config.resolve_paths(dirs))
     }
 
     pub fn values(&self) -> BTreeMap<&'static str, Value> {
@@ -118,6 +96,64 @@ impl Config {
     }
 }
 
+impl<P: Clone> Config<P> {
+    pub(crate) fn initial(path: P) -> Result<Self, ValueError> {
+        Ok(Self {
+            network: Setting::defaulted("pepino".parse()?),
+            relay_urls: Setting::defaulted(
+                DEFAULT_RELAY_URLS
+                    .iter()
+                    .map(|url| url.parse())
+                    .collect::<Result<_, _>>()?,
+            ),
+            mdns: Setting::defaulted(true),
+            credentials_file: Setting::defaulted(path.clone()),
+            trusted_devices: Setting::defaulted(Vec::new()),
+            bootstrap_nodes: Setting::defaulted(Vec::new()),
+            data_dir: Setting::defaulted(path),
+            ui: UiConfig {
+                color: Setting::defaulted(Color::Auto),
+                date_format: Setting::defaulted("%Y-%m-%d".parse()?),
+            },
+        })
+    }
+}
+
+impl Config<Option<AbsolutePath>> {
+    pub(crate) fn resolve_paths(self, dirs: &PlatformDirs) -> Result<Config, ValueError> {
+        let Config {
+            network,
+            relay_urls,
+            mdns,
+            credentials_file,
+            trusted_devices,
+            bootstrap_nodes,
+            data_dir,
+            ui,
+        } = self;
+        let data_dir = Setting {
+            value: data_dir.value.unwrap_or_else(|| dirs.data_dir.clone()),
+            source: data_dir.source,
+        };
+        let credentials_file = Setting {
+            value: credentials_file
+                .value
+                .unwrap_or_else(|| data_dir.value.join("credentials.cbor")),
+            source: credentials_file.source,
+        };
+        Ok(Config {
+            network,
+            relay_urls,
+            mdns,
+            credentials_file,
+            trusted_devices,
+            bootstrap_nodes,
+            data_dir,
+            ui,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -129,7 +165,7 @@ mod tests {
     fn defaults_cover_the_schema_with_default_sources() {
         let dirs =
             PlatformDirs::new(Platform::Linux, Path::new("/home/release"), None, None).unwrap();
-        let values = Config::defaults(&dirs).values();
+        let values = Config::defaults(&dirs).unwrap().values();
         assert_eq!(values.len(), 9);
         assert!(values.values().all(|value| value["source"] == "default"));
         assert_eq!(values["network"]["value"], "pepino");

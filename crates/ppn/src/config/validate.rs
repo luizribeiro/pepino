@@ -22,7 +22,7 @@ pub(crate) const ROOT_KEYS: &[&str] = &[
 pub(crate) const UI_KEYS: &[&str] = &["ui.color", "ui.date_format"];
 
 pub fn validate_file(path: &Path, text: &str, dirs: &PlatformDirs) -> Result<Config, CliError> {
-    let mut draft = Draft::new(dirs);
+    let mut draft = Draft::new(dirs)?;
     draft.apply_file(
         path,
         text,
@@ -30,30 +30,24 @@ pub fn validate_file(path: &Path, text: &str, dirs: &PlatformDirs) -> Result<Con
             path: path.to_owned(),
         },
     )?;
-    Ok(draft.finish())
+    draft.finish()
 }
 
 pub(crate) struct Draft<'a> {
     pub dirs: &'a PlatformDirs,
-    pub config: Config,
-    use_generated_credentials: bool,
+    pub config: Config<Option<AbsolutePath>>,
 }
 
 impl<'a> Draft<'a> {
-    pub fn new(dirs: &'a PlatformDirs) -> Self {
-        Self {
+    pub fn new(dirs: &'a PlatformDirs) -> Result<Self, CliError> {
+        Ok(Self {
             dirs,
-            config: Config::defaults(dirs),
-            use_generated_credentials: true,
-        }
+            config: Config::initial(None).map_err(default_error)?,
+        })
     }
 
-    pub fn finish(mut self) -> Config {
-        if self.use_generated_credentials {
-            self.config.credentials_file.value =
-                self.config.data_dir.value.join("credentials.cbor");
-        }
-        self.config
+    pub fn finish(self) -> Result<Config, CliError> {
+        self.config.resolve_paths(self.dirs).map_err(default_error)
     }
 
     pub fn apply_file(&mut self, path: &Path, text: &str, source: &Source) -> Result<(), CliError> {
@@ -117,21 +111,9 @@ impl<'a> Draft<'a> {
                 })
             ),
             "ui.date_format" => assign!(self.config.ui.date_format, parse_value(value)),
-            "data_dir" => {
-                let path = self
-                    .configured_path(value)
-                    .map(|path| path.unwrap_or_else(|| self.dirs.data_dir.clone()));
-                assign!(self.config.data_dir, path);
-            }
+            "data_dir" => assign!(self.config.data_dir, self.configured_path(value)),
             "credentials_file" => {
-                if let Some(path) = validator.require(key, input, self.configured_path(value)) {
-                    self.use_generated_credentials = path.is_none();
-                    self.config.credentials_file = Setting {
-                        value: path
-                            .unwrap_or_else(|| self.config.data_dir.value.join("credentials.cbor")),
-                        source: source.clone(),
-                    };
-                }
+                assign!(self.config.credentials_file, self.configured_path(value))
             }
             "relay_urls" => {
                 if let Some(values) = validator.list(key, input, Validator::parse) {
@@ -167,6 +149,13 @@ impl<'a> Draft<'a> {
             value => AbsolutePath::expand(Path::new(value), self.dirs.home.as_path()).map(Some),
         }
     }
+}
+
+fn default_error(error: ValueError) -> CliError {
+    CliError::new(
+        crate::error::ErrorKind::InvalidConfig,
+        format!("Configuration defaults: {error}"),
+    )
 }
 
 fn bootstrap_node(
@@ -307,7 +296,7 @@ date_format = "%Q"
     fn derives_generated_credentials_after_merging_paths() {
         let home = Path::new("/home/release");
         let dirs = PlatformDirs::new(Platform::Linux, home, None, None).unwrap();
-        let mut draft = Draft::new(&dirs);
+        let mut draft = Draft::new(&dirs).unwrap();
         draft
             .apply_file(
                 &home.join("config.toml"),
@@ -315,7 +304,7 @@ date_format = "%Q"
                 &Source::Env,
             )
             .unwrap();
-        let config = draft.finish();
+        let config = draft.finish().unwrap();
         assert_eq!(
             config.credentials_file.value.as_path(),
             Path::new("/srv/pepino/credentials.cbor")

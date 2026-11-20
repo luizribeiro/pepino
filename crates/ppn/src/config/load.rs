@@ -21,7 +21,7 @@ pub fn load(
     read: impl FnMut(&Path) -> io::Result<String>,
     dirs: &PlatformDirs,
 ) -> Result<LoadedConfig, CliError> {
-    let mut draft = Draft::new(dirs);
+    let mut draft = Draft::new(dirs)?;
     let files = visit_files(&select_files(flags, env, dirs), read, |file, text| {
         draft.apply_file(&file.path, text, &file.source)
     })?;
@@ -33,7 +33,7 @@ pub fn load(
         };
     }
     Ok(LoadedConfig {
-        config: draft.finish(),
+        config: draft.finish()?,
         files,
     })
 }
