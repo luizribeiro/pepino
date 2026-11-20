@@ -231,3 +231,44 @@ async fn app_writes_continue_while_publish_is_waiting_on_the_transport() {
         2
     );
 }
+
+#[tokio::test]
+async fn publishes_a_smaller_local_event_written_after_the_first_scan() {
+    use pepino_core::{Envelope, Event, Hlc, InitialFields};
+
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([55; 32]);
+    let device = DeviceId::from_bytes([56; 32]);
+    let mut app = directory::prepare(dir.path(), board, device).await;
+    directory::write(
+        &mut app,
+        json!({"op":"add_task","title":"Label the garden plots"}),
+    )
+    .await;
+    let node = Arc::new(Stub::new(device));
+    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    let limit = Duration::from_secs(5);
+    engine.wait_idle(limit).await.unwrap();
+    let first = node.published();
+    let early = Envelope::new(
+        device,
+        Hlc {
+            wall_ms: directory::NOW - 1,
+            counter: 0,
+        },
+        Event::TaskCreated {
+            title: "Mark water lines".into(),
+            fields: InitialFields::default(),
+        },
+    )
+    .unwrap();
+    let later = Envelope::decode(&first[0]).unwrap();
+    assert!((Some(early.hlc()), early.id()) < (later.hlc(), later.id()));
+    let bytes = early.encode().unwrap();
+    app.store().append(board, &bytes, None).await.unwrap();
+    engine.wait_idle(limit).await.unwrap();
+    assert_eq!(node.published(), [first[0].clone(), bytes]);
+    engine.shutdown().await.unwrap();
+}
