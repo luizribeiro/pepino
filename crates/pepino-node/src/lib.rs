@@ -3,7 +3,6 @@ mod board;
 mod board_lease;
 mod board_task;
 mod credentials;
-#[cfg(test)]
 mod cursor;
 mod events;
 mod membership;

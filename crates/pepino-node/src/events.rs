@@ -7,6 +7,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use crate::{
     Error,
     ack::{Ack, AckStore},
+    cursor::Position,
     receipt::Payload,
 };
 
@@ -30,12 +31,13 @@ impl BoardEvent {
         id: EventId,
         bytes: Vec<u8>,
         acks: &AckStore,
+        position: Position,
     ) -> Self {
         Self {
             id,
             author,
             bytes,
-            ack: acks.receipt(board, id),
+            ack: acks.receipt(board, id, position),
         }
     }
 }
@@ -78,7 +80,15 @@ mod tests {
     #[tokio::test]
     async fn skips_receipts_and_continues_after_an_error() {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        p2panda_store::sqlite::run_pending_migrations(&pool)
+            .await
+            .unwrap();
         let acks = AckStore::create(pool).await.unwrap();
+        let position = Position {
+            author: p2panda::Credentials::generate().verifying_key(),
+            log: p2panda::operation::LogId::digest(b"release board"),
+            seq: 0,
+        };
         let board = BoardId::from_bytes([32; 32]);
         let author = DeviceId::from_bytes([45; 32]);
         let old = BoardEvent::new(
@@ -87,6 +97,7 @@ mod tests {
             EventId::from_bytes([73; 32]),
             b"Plan release".to_vec(),
             &acks,
+            position,
         );
         old.ack().await.unwrap();
         let recent = BoardEvent::new(
@@ -95,6 +106,7 @@ mod tests {
             EventId::from_bytes([74; 32]),
             b"Confirm maintenance window".to_vec(),
             &acks,
+            Position { seq: 1, ..position },
         );
         let error = StreamEvent::ReplayFailed {
             error: std::sync::Arc::new(p2panda::streams::ReplayError::CriticalError),

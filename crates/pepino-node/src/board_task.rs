@@ -98,6 +98,7 @@ impl BoardTask {
                 id,
                 operation.message().bytes.clone(),
                 &self.acks,
+                operation.processed().header().into(),
             )));
         } else if let Some(error) = pipeline_error(&event) {
             let _ = self.events.send(Err(error));
