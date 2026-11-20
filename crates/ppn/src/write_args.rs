@@ -3,7 +3,7 @@ mod add;
 pub use add::new_task;
 mod task;
 
-pub use task::{AddFieldArgs, DescriptionArgs, RelationArgs, TaskWriteArgs};
+pub use task::{AddFieldArgs, DescriptionArgs, RelationArgs, TaskStatus, TaskWriteArgs};
 
 use std::collections::BTreeMap;
 

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use clap::Args;
+use clap::{Args, ValueEnum};
+use pepino_app::Status;
 
 use super::{AddMembershipArgs, CustomArgs};
 use crate::error::CliError;
@@ -18,6 +19,9 @@ pub struct TaskWriteArgs {
 
 #[derive(Args, Default)]
 pub struct AddFieldArgs {
+    /// Set the task status.
+    #[arg(long, value_enum)]
+    pub status: Option<TaskStatus>,
     /// Set the due date. Accepts YYYY-MM-DD or relative dates such as tomorrow and -2w.
     #[arg(long, allow_hyphen_values = true, value_name = "DATE")]
     pub due: Option<String>,
@@ -28,6 +32,25 @@ pub struct AddFieldArgs {
     pub custom: CustomArgs,
     #[command(flatten)]
     pub description: DescriptionArgs,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum TaskStatus {
+    Todo,
+    Doing,
+    Done,
+    Cancelled,
+}
+
+impl From<TaskStatus> for Status {
+    fn from(value: TaskStatus) -> Self {
+        match value {
+            TaskStatus::Todo => Self::Todo,
+            TaskStatus::Doing => Self::Doing,
+            TaskStatus::Done => Self::Done,
+            TaskStatus::Cancelled => Self::Cancelled,
+        }
+    }
 }
 
 #[derive(Args, Default)]

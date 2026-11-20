@@ -30,6 +30,7 @@ impl TaskWriteArgs {
             description,
             due,
             priority,
+            status,
             tags,
             assignees,
             fields,
@@ -46,6 +47,9 @@ impl TaskWriteArgs {
         }
         if let Some(value) = self.fields.description.read()? {
             *description = Some(value);
+        }
+        if let Some(value) = self.fields.status {
+            *status = value.into();
         }
         *priority = self.fields.priority.or(*priority);
         tags.extend(self.membership.tags);
@@ -77,6 +81,7 @@ mod tests {
             fields: crate::write_args::AddFieldArgs {
                 due: Some("tomorrow".into()),
                 priority: Some(2),
+                status: Some(crate::write_args::TaskStatus::Doing),
                 ..Default::default()
             },
         };
@@ -87,6 +92,7 @@ mod tests {
         assert_eq!(json["due"], "2026-11-21");
         assert_eq!(json["tags"], serde_json::json!(["hardware"]));
         assert_eq!(json["priority"], 2);
+        assert_eq!(json["status"], "doing");
         assert_eq!(json["assignees"], serde_json::json!(["me"]));
         assert_eq!(json["parent"], "abcd");
         assert_eq!(json["blocks"], serde_json::json!(["eb01"]));
