@@ -17,7 +17,7 @@ pub trait Render {
 
 type WriteOutput = dyn FnOnce(bool, &Terminal, &mut dyn Write) -> Result<(), CliError>;
 
-pub struct CommandResult(Box<WriteOutput>, Vec<Warning>);
+pub struct CommandResult(Box<WriteOutput>, Vec<Warning>, Option<String>);
 
 #[derive(Serialize)]
 pub struct Warning {
@@ -53,6 +53,7 @@ impl CommandResult {
                 Ok(())
             }),
             Vec::new(),
+            None,
         )
     }
     pub fn app_document(
@@ -70,15 +71,26 @@ impl CommandResult {
                         Err(error) => Err(error.into()),
                     }
                 } else {
-                    write_text(&human(&response, &settings)?, stdout)
+                    let text = human(&response, &settings)?;
+                    if text.is_empty() {
+                        Ok(())
+                    } else {
+                        write_text(&text, stdout)
+                    }
                 };
                 flush_output(result, stdout).map(|_| ())
             }),
             Vec::new(),
+            None,
         ))
     }
     pub fn with_warnings(mut self, warnings: impl IntoIterator<Item = impl Into<Warning>>) -> Self {
         self.1.extend(warnings.into_iter().map(Into::into));
+        self
+    }
+
+    pub fn with_human_note(mut self, note: Option<String>) -> Self {
+        self.2 = note;
         self
     }
 }
@@ -104,8 +116,11 @@ fn finish_to(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
-    let result = result.and_then(|CommandResult(write, warnings)| {
+    let result = result.and_then(|CommandResult(write, warnings, note)| {
         write(json, terminal, stdout)?;
+        if !json && let Some(note) = note {
+            let _ = writeln!(stderr, "{note}");
+        }
         for warning in warnings {
             if json {
                 let _ = serde_json::to_writer(&mut *stderr, &json!({"warning": warning}));
@@ -210,6 +225,30 @@ mod tests {
     }
 
     #[test]
+    fn limits_a_success_note_to_human_stderr() {
+        let terminal = Terminal::fixed(None, false);
+        for json in [false, true] {
+            let result = CommandResult::document(Task {
+                title: "Order a replacement screw",
+            })
+            .with_human_note(Some("showing 1 of 2".into()));
+            let mut stderr = Vec::new();
+            assert_eq!(
+                finish_to(Ok(result), json, &terminal, &mut io::sink(), &mut stderr),
+                ExitCode::SUCCESS
+            );
+            assert_eq!(
+                stderr,
+                if json {
+                    &b""[..]
+                } else {
+                    &b"showing 1 of 2\n"[..]
+                }
+            );
+        }
+    }
+
+    #[test]
     fn outputs_the_protocol_object_with_only_the_schema_added() {
         let fixture = json!({"kind":"tasks","tasks":[],"total":0,"filter":"due:tomorrow",
             "sort":"due","resolved_dates":{"tomorrow":"2026-11-21"}});
@@ -251,6 +290,16 @@ mod tests {
         let mut expected = fixture;
         expected["schema"] = json!(1);
         assert_eq!(serde_json::from_slice::<Value>(&stdout).unwrap(), expected);
+
+        let empty = CommandResult::app_document(
+            &context,
+            serde_json::from_value(expected).unwrap(),
+            |_, _| Ok(String::new()),
+        )
+        .unwrap();
+        let mut stdout = Vec::new();
+        (empty.0)(false, &context.terminal, &mut stdout).unwrap();
+        assert!(stdout.is_empty());
     }
 
     #[test]
