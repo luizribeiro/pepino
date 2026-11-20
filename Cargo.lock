@@ -3347,6 +3347,7 @@ dependencies = [
 name = "pepino-app"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "chrono",
  "ciborium",
  "getrandom 0.4.3",

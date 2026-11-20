@@ -329,7 +329,7 @@ pub(super) async fn worker<T: Send + 'static>(
         .map_err(|error| storage(context, error, false))
 }
 
-async fn lock(directory: &Path, timeout: Duration) -> Result<File, AppError> {
+pub(super) async fn lock(directory: &Path, timeout: Duration) -> Result<File, AppError> {
     let path = directory.join("local.lock");
     let mut file = worker("open lock file", move || {
         let mut options = FileOptions::new();

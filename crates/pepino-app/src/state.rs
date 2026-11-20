@@ -157,16 +157,7 @@ impl LocalState {
     }
 
     pub(super) fn write(&self, path: &Path) -> Result<(), AppError> {
-        let directory = path
-            .parent()
-            .ok_or_else(|| storage("save local state", "missing parent directory", false))?;
-        let replace = || {
-            stage(directory, self)?
-                .persist(path)
-                .map_err(|error| error.error)?;
-            sync_directory(directory)
-        };
-        replace().map_err(|error| path_io_error(path, "save local state", error))
+        write_json(path, self)
     }
 
     fn decode(bytes: &[u8], path: &Path) -> Result<Self, AppError> {
@@ -264,7 +255,20 @@ fn create_directory(directory: &Path) -> io::Result<()> {
     builder.create(directory)
 }
 
-fn stage(directory: &Path, state: &LocalState) -> io::Result<tempfile::NamedTempFile> {
+pub(super) fn write_json(path: &Path, data: &impl Serialize) -> Result<(), AppError> {
+    let directory = path
+        .parent()
+        .ok_or_else(|| storage("save local state", "missing parent directory", false))?;
+    let replace = || {
+        stage(directory, data)?
+            .persist(path)
+            .map_err(|error| error.error)?;
+        sync_directory(directory)
+    };
+    replace().map_err(|error| path_io_error(path, "save local state", error))
+}
+
+fn stage(directory: &Path, state: &impl Serialize) -> io::Result<tempfile::NamedTempFile> {
     let mut file = tempfile::NamedTempFile::new_in(directory)?;
     #[cfg(unix)]
     {

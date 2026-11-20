@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+blake3 = "1"
 strsim = "0.11"
 tokio = { version = "1", features = ["rt", "time"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
