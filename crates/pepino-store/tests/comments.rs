@@ -49,14 +49,21 @@ async fn comments_are_visible_only_on_live_tasks_and_ordered_by_clock_then_id() 
         });
     }
     assert!(store.comments(board, task).await.unwrap().is_empty());
-    assert!(store.board(board).await.unwrap().comments(task).is_empty());
+    assert!(
+        store
+            .board_with_comments(board)
+            .await
+            .unwrap()
+            .comments(task)
+            .is_empty()
+    );
     store
         .append(board, &creation.encode().unwrap(), IdSource::Content)
         .await
         .unwrap();
     comments.sort_by_key(|comment| (comment.hlc, comment.id));
     assert_eq!(store.comments(board, task).await.unwrap(), comments);
-    let snapshot = store.board(board).await.unwrap();
+    let snapshot = store.board_with_comments(board).await.unwrap();
     assert_eq!(snapshot.comments(task), comments);
     let deletion = Envelope::new(creation.author(), hlc, Event::TaskDeleted { task }).unwrap();
     store
@@ -64,7 +71,14 @@ async fn comments_are_visible_only_on_live_tasks_and_ordered_by_clock_then_id() 
         .await
         .unwrap();
     assert!(store.comments(board, task).await.unwrap().is_empty());
-    assert!(store.board(board).await.unwrap().comments(task).is_empty());
+    assert!(
+        store
+            .board_with_comments(board)
+            .await
+            .unwrap()
+            .comments(task)
+            .is_empty()
+    );
     assert_eq!(snapshot.comments(task), comments);
     assert_eq!(store.task(board, task).await.unwrap(), None);
 }

@@ -203,7 +203,7 @@ async fn load() -> BoardView {
         )
         .await;
     }
-    store.board(BOARD).await.unwrap()
+    store.board_with_comments(BOARD).await.unwrap()
 }
 
 async fn record(store: &Store, index: u8, wall_ms: u64, event_id: EventId, event: Event) {

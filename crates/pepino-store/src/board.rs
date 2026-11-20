@@ -94,6 +94,11 @@ impl Store {
         })
     }
 
+    /// Loads the board's tasks, edges, and comments from a single SQLite read snapshot.
+    pub async fn board_with_comments(&self, board: BoardId) -> Result<BoardView, StoreError> {
+        self.board(board).await
+    }
+
     pub async fn task(&self, board: BoardId, id: TaskId) -> Result<Option<TaskRecord>, StoreError> {
         Ok(self.board(board).await?.task(id).cloned())
     }
