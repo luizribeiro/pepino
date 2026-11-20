@@ -275,7 +275,8 @@ fn rejects_corrupt_truncated_unsupported_and_other_device_grants() {
     }
     join(&ferrum, &grant);
     let signed: pepino_app::SignedGrant = Kind::Grant.decode(&grant).unwrap();
-    let request_record: pepino_app::DeviceRequest = Kind::Request.decode(&request).unwrap();
+    let request_record = ppn::device_code::decode_request(&request).unwrap();
+    assert!(request.len() < 750, "request length {}", request.len());
     let board = signed.verify(&request_record).unwrap();
     for host in [&titanium, &ferrum] {
         let log = std::fs::read_to_string(host.data.join("daemon.log")).unwrap();
@@ -286,7 +287,7 @@ fn rejects_corrupt_truncated_unsupported_and_other_device_grants() {
 }
 
 fn unsupported_grant() -> String {
-    let mut value = vec![2, 0xf6];
+    let mut value = vec![1, 0xf6];
     let mut hash = blake3::Hasher::new();
     hash.update(b"PPN-GRANT-").update(&value);
     value.extend(&hash.finalize().as_bytes()[..8]);

@@ -22,14 +22,8 @@ pub(super) fn run(
     selection: Option<&Path>,
     allow_start: bool,
 ) -> Result<CommandResult, CliError> {
-    let device: DeviceRequest = Kind::Request.decode(code).map_err(invalid_code)?;
+    let device = ppn::device_code::decode_request(code)?;
     device.member_info()?;
-    if device.secret.is_none() {
-        return Err(CliError::new(
-            ErrorKind::InvalidInput,
-            "The request is missing its secret.",
-        ));
-    }
     if name.as_deref().is_some_and(|name| name.trim().is_empty()) {
         return Err(CliError::new(
             ErrorKind::InvalidInput,
@@ -73,7 +67,10 @@ pub(super) fn run(
     let outcome = client
         .call_with(
             Operation::AddMember {
-                device: device.clone(),
+                device: DeviceRequest {
+                    secret: None,
+                    ..device.clone()
+                },
                 name,
             },
             Duration::from_secs(20),

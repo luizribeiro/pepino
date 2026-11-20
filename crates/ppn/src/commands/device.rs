@@ -9,7 +9,7 @@ use clap::Subcommand;
 use pepino_app::{App, OpenOptions};
 use pepino_core::DeviceId;
 use ppn::{
-    device_code::{Error as CodeError, Kind},
+    device_code::{Error as CodeError, Kind, encode_request},
     error::{CliError, ErrorKind},
     help_tree::example_help,
     output::{CommandResult, Render},
@@ -96,7 +96,7 @@ pub fn run(
                 return Ok(CommandResult::document(CancelRequest(removed)));
             }
             let request = runtime.block_on(App::request_device(directory, options))?;
-            let code = Kind::Request.encode(&request).map_err(invalid_code)?;
+            let code = encode_request(&request)?;
             let fingerprint = request.fingerprint();
             let note = format!(
                 "Device {}, fingerprint {fingerprint}. This request code is secret.",
