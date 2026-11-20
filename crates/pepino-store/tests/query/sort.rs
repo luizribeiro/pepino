@@ -12,7 +12,7 @@ fn default_sort_groups_open_tasks_then_uses_priority_due_creation_and_id() {
     let listed: Vec<_> = tasks.iter().map(|task| task.id).collect();
     assert_eq!(
         listed,
-        [1, 7, 0, 11, 8, 4, 6, 9, 12, 13, 2, 10, 3, 5].map(id)
+        [1, 7, 0, 11, 8, 6, 9, 12, 13, 4, 2, 10, 3, 5].map(id)
     );
 }
 

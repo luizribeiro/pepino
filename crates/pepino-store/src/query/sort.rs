@@ -120,7 +120,7 @@ impl Sort {
         let keys = match self {
             Self::Default => (!left.status.is_open())
                 .cmp(&(!right.status.is_open()))
-                .then_with(|| SortKey::Priority.compare(Direction::Descending, left, right))
+                .then_with(|| right.priority.unwrap_or(0).cmp(&left.priority.unwrap_or(0)))
                 .then_with(|| SortKey::Due.compare(Direction::Ascending, left, right))
                 .then_with(|| SortKey::Created.compare(Direction::Ascending, left, right)),
             Self::By(keys) => keys

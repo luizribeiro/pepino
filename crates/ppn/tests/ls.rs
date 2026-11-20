@@ -335,3 +335,17 @@ fn numeric_filter_reports_text_values_in_stdout_and_stderr_json() {
         listing["warnings"][0]["message"]
     );
 }
+
+#[test]
+fn default_sort_places_negative_priority_below_unprioritized_tasks() {
+    let (sandbox, _) = task_sandbox();
+    let low = create_task(&sandbox, "Paint the trim", &["--priority=-2"]);
+    let middle = create_task(&sandbox, "Inspect the frame", &[]);
+    let high = create_task(&sandbox, "Seal the roof", &["--priority=3"]);
+    let listed = as_json(&sandbox.run(&["ls", "--json"]));
+    assert_eq!(listed["tasks"][0]["id"], high);
+    assert_eq!(listed["tasks"][1]["id"], middle);
+    assert_eq!(listed["tasks"][2]["id"], low);
+    let explicit = as_json(&sandbox.run(&["ls", "--sort=-priority", "--json"]));
+    assert_eq!(explicit["tasks"][1]["id"], low);
+}

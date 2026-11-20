@@ -1765,3 +1765,45 @@ async fn numeric_filter_warns_about_text_through_saved_views() {
             .contains("numeric comparison never matches them")
     );
 }
+
+#[tokio::test]
+async fn default_priority_sort_treats_missing_priority_as_zero() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::init(directory.path(), NOW).await.unwrap();
+    for (index, (title, priority)) in [
+        ("Low-priority trim", Some(-2)),
+        ("Inspect the frame", None),
+        ("Order hinges", Some(0)),
+        ("Seal the roof", Some(3)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let input = json!({"op":"add_task","title":title,"priority":priority});
+        app.handle(serde_json::from_value(input).unwrap(), NOW + index as u64)
+            .await
+            .unwrap();
+    }
+    let response = handle(
+        &mut app,
+        json!({"op":"list_tasks","filter":"","today":"2026-11-20"}),
+    )
+    .await
+    .unwrap();
+    let Response::Tasks { tasks, .. } = response else {
+        panic!("expected a listing")
+    };
+    assert_eq!(
+        tasks
+            .iter()
+            .map(|task| task.title.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Seal the roof",
+            "Inspect the frame",
+            "Order hinges",
+            "Low-priority trim"
+        ]
+    );
+    assert_eq!(tasks[1].priority, None);
+}
