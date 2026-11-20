@@ -114,6 +114,16 @@ impl Event {
         }
     }
 
+    /// Returns the task IDs in the event, with the source before the destination for edges.
+    /// Creation has no task ID in the payload. See [`crate::Envelope::created_task`].
+    pub fn referenced_tasks(&self) -> impl Iterator<Item = TaskId> + use<> {
+        let destination = match self {
+            Self::EdgeAdded { to, .. } | Self::EdgeRemoved { to, .. } => Some(*to),
+            _ => None,
+        };
+        [self.task(), destination].into_iter().flatten()
+    }
+
     /// Checks the event against the validity rules of its wire format.
     ///
     /// Validity rules are frozen per format version. Adding a built-in field

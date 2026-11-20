@@ -175,6 +175,12 @@ fn event_superset_preserves_known_encodings() {
             Some(task)
         };
         assert_eq!(known.task(), target);
+        let references = match known.kind() {
+            "task_created" => vec![],
+            "edge_added" | "edge_removed" => vec![task, to],
+            _ => vec![task],
+        };
+        assert_eq!(known.referenced_tasks().collect::<Vec<_>>(), references);
         let bytes = encode(future);
         let expected = Envelope::new(author, hlc, known).unwrap();
         assert_eq!(
