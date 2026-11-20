@@ -1,6 +1,6 @@
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 use futures_util::{StreamExt, stream};
@@ -23,6 +23,7 @@ struct Publisher {
 pub(super) struct Stub {
     publisher: Arc<Publisher>,
     device: DeviceId,
+    instance: [u8; 16],
     queue: Arc<Mutex<Option<Queue>>>,
     signals: broadcast::Sender<NodeEvent>,
     status: Arc<Mutex<NodeStatus>>,
@@ -32,13 +33,17 @@ impl Stub {
     pub(super) fn restarted(&self) -> Self {
         Self {
             publisher: self.publisher.clone(),
+            instance: self.instance,
             ..Self::new(self.device)
         }
     }
 
     pub(super) fn new(device: DeviceId) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let instance = u128::from(NEXT.fetch_add(1, Ordering::Relaxed)).to_le_bytes();
         Self {
             device,
+            instance,
             publisher: Arc::default(),
             queue: Arc::default(),
             signals: broadcast::channel(128).0,
@@ -200,6 +205,10 @@ impl Transport for Stub {
         self.device
     }
 
+    fn instance_id(&self) -> [u8; 16] {
+        self.instance
+    }
+
     async fn open_board(&self, id: BoardId) -> Result<Board, Error> {
         let mut status = self.status.lock().unwrap();
         if status.boards.contains_key(&id) {
@@ -279,4 +288,12 @@ async fn rejection_does_not_change_the_transport_log() {
     node.reject(false);
     board.publish(bytes.clone()).await.unwrap();
     assert_eq!(node.published(), [bytes]);
+}
+
+#[test]
+fn restarting_preserves_the_replication_instance() {
+    let device = DeviceId::from_bytes([55; 32]);
+    let original = Stub::new(device);
+    assert_eq!(original.instance_id(), original.restarted().instance_id());
+    assert_ne!(original.instance_id(), Stub::new(device).instance_id());
 }

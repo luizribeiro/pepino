@@ -29,6 +29,7 @@ pub trait Transport: Send + Sync + 'static {
     type Board: TransportBoard;
 
     fn device_id(&self) -> DeviceId;
+    fn instance_id(&self) -> [u8; 16];
     fn open_board(&self, board: BoardId)
     -> impl Future<Output = Result<Self::Board, Error>> + Send;
     fn open_board_for_store(
@@ -81,6 +82,10 @@ impl Transport for Node {
 
     fn device_id(&self) -> DeviceId {
         Node::device_id(self)
+    }
+
+    fn instance_id(&self) -> [u8; 16] {
+        Node::instance_id(self)
     }
 
     async fn open_board(&self, board: BoardId) -> Result<Self::Board, Error> {
