@@ -165,6 +165,7 @@ pub enum Response {
         tasks: Vec<TaskSummary>,
         total: usize,
         filter: String,
+        resolved_dates: BTreeMap<String, Date>,
         sort: String,
     },
 }

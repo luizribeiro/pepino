@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
+
 use pepino_core::{
     BoardId,
     filter::{Clause, Term},
 };
-use pepino_store::query::{self, Context, Query, QueryError, QueryErrorKind, Sort};
+use pepino_store::query::{Context, Query, QueryError, QueryErrorKind, Sort};
 
 use crate::app::{invalid, store_error};
 use crate::filter::ViewFilters;
@@ -47,14 +49,15 @@ impl App {
             name: &self.local.board_name,
         };
         let boards = select_boards(&[local_board], &terms)?;
-        let (tasks, total) = if let Some(&board) = boards.first() {
+        let (tasks, total, resolved_dates) = if let Some(&board) = boards.first() {
             let view = if views.needs_comments(&filter) {
                 self.store.board_with_comments(board).await
             } else {
                 self.store.board(board).await
             }
             .map_err(store_error)?;
-            let mut matching = query::select(&view, &query()).map_err(diagnostic)?;
+            let prepared = query().prepare(&view).map_err(diagnostic)?;
+            let mut matching = prepared.select();
             let total = matching.len();
             sort.sort(&mut matching);
             let tasks = matching
@@ -62,14 +65,20 @@ impl App {
                 .take(limit.unwrap_or(total))
                 .map(project_summary)
                 .collect::<Result<_, _>>()?;
-            (tasks, total)
+            let resolved_dates = prepared
+                .resolved_dates()
+                .iter()
+                .map(|(expression, date)| (expression.clone(), (*date).into()))
+                .collect();
+            (tasks, total, resolved_dates)
         } else {
-            (Vec::new(), 0)
+            (Vec::new(), 0, BTreeMap::new())
         };
         Ok(Response::Tasks {
             tasks,
             total,
             filter: filter.to_string(),
+            resolved_dates,
             sort: sort.to_string(),
         })
     }

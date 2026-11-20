@@ -83,6 +83,11 @@ impl<'view> Prepared<'view> {
         &self.resolved_dates
     }
 
+    /// Returns matching tasks in the order of the prepared board snapshot.
+    pub fn select(&self) -> Vec<&'view TaskRecord> {
+        self.view.iter().filter(|task| self.matches(task)).collect()
+    }
+
     /// Tests a task from the snapshot used to prepare the query.
     pub fn matches(&self, task: &TaskRecord) -> bool {
         let mut evaluation = TaskEvaluation {
@@ -128,8 +133,7 @@ pub fn select<'view>(
     view: &'view BoardView,
     query: &Query<'_>,
 ) -> Result<Vec<&'view TaskRecord>, QueryError> {
-    let prepared = query.prepare(view)?;
-    Ok(view.iter().filter(|task| prepared.matches(task)).collect())
+    Ok(query.prepare(view)?.select())
 }
 
 type Predicate = Box<dyn Fn(&TaskRecord) -> bool>;
