@@ -24,7 +24,8 @@ pub struct BoardStatus {
 }
 
 impl Status {
-    /// Reports whether the latest snapshot has any known work.
+    /// Reports whether local work has drained and every connected peer is caught up.
+    /// Without connected peers, only local work is considered.
     pub fn is_idle(&self) -> bool {
         self.idle_with(&self.node)
     }
@@ -38,6 +39,7 @@ impl Status {
                     !signals.replaying
                         && signals.active_syncs.is_empty()
                         && signals.pending_deliveries == 0
+                        && node.connected_peers.is_subset(&signals.caught_up)
                 })
         })
     }

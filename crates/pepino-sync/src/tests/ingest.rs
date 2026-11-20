@@ -175,3 +175,57 @@ async fn a_crash_after_commit_redelivers_as_a_duplicate() {
     assert!(restarted.published().is_empty());
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn waits_for_a_connected_peers_first_pull_and_ingests_its_events() {
+    use pepino_core::{Envelope, Event, Hlc, InitialFields};
+    use std::task::Poll;
+
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([61; 32]);
+    let local = DeviceId::from_bytes([62; 32]);
+    let peer = DeviceId::from_bytes([63; 32]);
+    let app = directory::prepare(dir.path(), board, local).await;
+    let node = Arc::new(Stub::new(local));
+    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    let limit = Duration::from_secs(5);
+    engine.wait_idle(limit).await.unwrap();
+    assert!(engine.status().is_idle());
+    assert!(engine.status().node.connected_peers.is_empty());
+    node.connect(peer);
+
+    {
+        let idle = engine.wait_idle(limit);
+        tokio::pin!(idle);
+        assert_eq!(futures_util::poll!(&mut idle).map(|_| ()), Poll::Pending);
+        super::publish::until(&engine, |status| {
+            status.boards[&board].scan_generation == Some(2)
+        })
+        .await;
+        assert!(!engine.status().is_idle());
+        assert_eq!(futures_util::poll!(&mut idle).map(|_| ()), Poll::Pending);
+        let event = Envelope::new(
+            peer,
+            Hlc {
+                wall_ms: 100,
+                counter: 0,
+            },
+            Event::TaskCreated {
+                title: "Count the seed trays".into(),
+                fields: InitialFields::default(),
+            },
+        )
+        .unwrap();
+        let ack = node.deliver(board, peer, event.encode().unwrap());
+        node.caught_up(board, peer);
+        idle.await.unwrap();
+        assert!(*ack.borrow());
+    }
+    assert_eq!(
+        app.store().tasks(board).await.unwrap()[0].title,
+        "Count the seed trays"
+    );
+    engine.shutdown().await.unwrap();
+}

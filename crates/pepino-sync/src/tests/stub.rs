@@ -67,6 +67,23 @@ pub(super) struct Receipt {
 }
 
 impl Stub {
+    pub(super) fn connect(&self, peer: DeviceId) {
+        self.status.lock().unwrap().connected_peers.insert(peer);
+        let _ = self.signals.send(NodeEvent::PeerConnected { peer });
+    }
+
+    pub(super) fn caught_up(&self, board: BoardId, peer: DeviceId) {
+        self.status
+            .lock()
+            .unwrap()
+            .boards
+            .get_mut(&board)
+            .unwrap()
+            .caught_up
+            .insert(peer);
+        let _ = self.signals.send(NodeEvent::CaughtUp { board, peer });
+    }
+
     pub(super) fn pause_publish(&self) -> watch::Receiver<bool> {
         let (started, observing) = watch::channel(false);
         *self.publisher.pause.lock().unwrap() = Some(started);
