@@ -12,7 +12,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "ls" | "ready" => (
             "tasks",
-            "tasks Matching task records after sorting and limiting\ntotal Number of matches before the limit\nfilter Canonical filter accepted by --filter\nresolved_dates Calendar dates for relative operands\nsort Sort specification used\nwarnings Filter warnings\nconstrains_status Whether the user filter selects a status\nnames Display names keyed by identity or device ID",
+            "tasks Matching task records after sorting and limiting, with board context for listings across boards\ntotal Number of matches before the limit\nfilter Canonical filter accepted by --filter\nresolved_dates Calendar dates for relative operands\nsort Sort specification used\nwarnings Filter warnings\nconstrains_status Whether the user filter selects a status\nnames Display names keyed by identity or device ID",
         ),
         "show" => (
             "task",
@@ -32,7 +32,19 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "init" | "status" => (
             "status",
-            "identity Local person\ndevice Local device\nboard Current board\nboards Configured boards and their membership states\ndata_dir Local data directory\ncounts Task and event counts\nnetwork Daemon network snapshot or offline\nprotocol_version Application protocol version",
+            "identity Local person\ndevice Local device\nboard Selected board\nselected_board Board selected for this invocation and its source\nboards Known boards with membership and sync activity\ndata_dir Local data directory\ncounts Task and event counts\nnetwork Daemon network snapshot or offline\nprotocol_version Application protocol version",
+        ),
+        "board ls" => (
+            "boards",
+            "boards Known boards with current marker, counts, membership and sync activity\nselected_board Board selected for this invocation and its source",
+        ),
+        "board show" => (
+            "board",
+            "board Board with current marker, counts, membership and sync activity\nselected_board Board selected for this invocation and its source",
+        ),
+        "board new" | "board use" | "board rename" => (
+            "board",
+            "board Affected board with counts, membership and sync activity",
         ),
         "daemon run" | "daemon start" | "daemon stop" | "daemon status" => (
             "daemon",
@@ -56,7 +68,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "device ls" => (
             "devices",
-            "devices Device IDs, names, current-device marker, state and last seen time",
+            "devices Device IDs, names, current-device marker, state, last seen time and membership by board",
         ),
         "view ls" => ("views", "views Saved filters ordered by name"),
         "view save" => (

@@ -1,5 +1,6 @@
 pub mod add;
 pub mod assign;
+pub mod board;
 pub mod cancel;
 pub mod comment;
 pub mod config;

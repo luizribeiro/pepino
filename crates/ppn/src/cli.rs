@@ -76,6 +76,7 @@ enum Command {
     Unlink(commands::unlink::Args),
     Daemon(commands::daemon::Args),
     Device(commands::device::Args),
+    Board(commands::board::Args),
     Sync(commands::sync::Args),
     Debug(debug::Args),
 }
@@ -250,6 +251,12 @@ fn dispatch(
     match cli.command {
         Some(Command::Show(args)) => show::run(context, args, cli.globals.verbose),
         Some(Command::Add(args)) => add::run(context, args),
+        Some(Command::Board(args)) => commands::board::run(
+            context,
+            args,
+            cli.globals.config.as_deref(),
+            inputs.daemon_enabled(),
+        ),
         Some(Command::Status(args)) => status::run(context, args),
         Some(Command::Init(args)) => status::init(context, args),
         Some(Command::Version(args)) => Ok(version::run(context, args)),
