@@ -1326,3 +1326,42 @@ fn simultaneous_add_processes_share_one_board() {
         2
     );
 }
+
+#[test]
+fn add_warns_for_a_recorded_exclusion_and_succeeds() {
+    let (sandbox, _) = task_sandbox();
+    let end = create_task(&sandbox, "Seal the frame", &[]);
+    let start = create_task(&sandbox, "Sand the rough edges", &["--blocks", &end]);
+    let output = sandbox
+        .command()
+        .args([
+            "add",
+            "Paint the frame",
+            "--blocks",
+            &start,
+            "--blocked-by",
+            &end,
+            "--color",
+            "always",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let human = String::from_utf8(output.stdout).unwrap();
+    assert!(human.starts_with("Created "));
+    assert!(!human.contains('\x1b'));
+    let warning = String::from_utf8(output.stderr).unwrap();
+    assert!(warning.starts_with("warning: Excluded recorded link "));
+    assert!(warning.contains("it would create a cycle"));
+    assert_eq!(warning.lines().count(), 1);
+    assert!(!warning.contains('\x1b'));
+    let id = human.split_whitespace().nth(1).unwrap();
+    assert!(
+        sandbox
+            .run(&["show", id])
+            .contains("it would create a cycle")
+    );
+    let detail = as_json(&sandbox.run(&["show", id, "--json"]));
+    assert_eq!(detail["edges"][0]["reason"], "cycle");
+    assert_eq!(detail["edges"][0]["effective"], false);
+}
