@@ -20,6 +20,16 @@ pub struct TaskWriteArgs {
     /// Assign me or a full identity ID. Repeat for more assignees.
     #[arg(long = "assign", value_name = "WHO")]
     pub assignees: Vec<String>,
+    #[command(flatten)]
+    pub relations: RelationArgs,
+    #[command(flatten)]
+    pub fields: FieldArgs,
+    #[command(flatten)]
+    pub description: DescriptionArgs,
+}
+
+#[derive(Args, Default)]
+pub struct RelationArgs {
     /// Set the parent task ID or prefix.
     #[arg(long, value_name = "TASK")]
     pub parent: Option<String>,
@@ -29,10 +39,22 @@ pub struct TaskWriteArgs {
     /// Depend on a task by ID or prefix. Repeat for more dependencies.
     #[arg(long, value_name = "TASK")]
     pub blocked_by: Vec<String>,
-    #[command(flatten)]
-    pub fields: FieldArgs,
-    #[command(flatten)]
-    pub description: DescriptionArgs,
+}
+
+impl RelationArgs {
+    pub(super) fn apply(self, request: &mut pepino_app::WriteRequest) {
+        if let pepino_app::WriteRequest::AddTask {
+            parent,
+            blocks,
+            blocked_by,
+            ..
+        } = request
+        {
+            *parent = self.parent.or_else(|| parent.take());
+            blocks.extend(self.blocks);
+            blocked_by.extend(self.blocked_by);
+        }
+    }
 }
 
 #[derive(Args, Default)]

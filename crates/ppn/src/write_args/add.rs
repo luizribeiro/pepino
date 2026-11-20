@@ -33,9 +33,6 @@ impl TaskWriteArgs {
             tags,
             assignees,
             fields,
-            parent,
-            blocks,
-            blocked_by,
             ..
         } = &mut request
         else {
@@ -51,12 +48,10 @@ impl TaskWriteArgs {
             *description = Some(value);
         }
         *priority = self.priority.or(*priority);
-        *parent = self.parent.or_else(|| parent.take());
         tags.extend(self.tags);
         assignees.extend(self.assignees);
         fields.extend(self.fields.changes(today)?);
-        blocks.extend(self.blocks);
-        blocked_by.extend(self.blocked_by);
+        self.relations.apply(&mut request);
         Ok(request)
     }
 }
@@ -69,6 +64,11 @@ mod tests {
     fn applies_write_options_to_an_add_request() {
         let today = "2026-11-20".parse().unwrap();
         let args = TaskWriteArgs {
+            relations: crate::write_args::RelationArgs {
+                parent: Some("abcd".into()),
+                blocks: vec!["eb01".into()],
+                ..Default::default()
+            },
             due: Some("tomorrow".into()),
             tags: vec!["hardware".into()],
             priority: Some(2),
@@ -81,5 +81,7 @@ mod tests {
         assert_eq!(json["due"], "2026-11-21");
         assert_eq!(json["tags"], serde_json::json!(["hardware"]));
         assert_eq!(json["priority"], 2);
+        assert_eq!(json["parent"], "abcd");
+        assert_eq!(json["blocks"], serde_json::json!(["eb01"]));
     }
 }
