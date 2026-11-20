@@ -3,8 +3,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use pepino_core::{Clock, Hlc, TaskId};
-use pepino_store::{DatabaseErrorKind, Store, StoreError};
+use pepino_core::{BoardId, Clock, DeviceId, Hlc, TaskId};
+use pepino_store::{AppendOutcome, DatabaseErrorKind, Store, StoreError};
 use tokio::time::{Instant, sleep};
 
 use crate::state::{io_error, path_io_error, storage};
@@ -14,6 +14,14 @@ use crate::{
 };
 
 pub(super) const DATABASE: &str = "pepino.sqlite";
+
+#[derive(Debug, thiserror::Error)]
+pub enum SyncStoreError {
+    #[error(transparent)]
+    Lock(#[from] AppError),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
 
 pub struct App {
     pub(super) store: Store,
@@ -145,6 +153,22 @@ impl App {
 
     pub fn local_state(&self) -> &LocalState {
         &self.local
+    }
+
+    /// Access the event store for reads.
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
+    /// Append a transport delivery under the same directory lock used by local requests.
+    pub async fn append_received(
+        &self,
+        board: BoardId,
+        bytes: &[u8],
+        signer: DeviceId,
+    ) -> Result<AppendOutcome, SyncStoreError> {
+        let _guard = lock(&self.directory, self.lock_timeout).await?;
+        Ok(self.store.append(board, bytes, Some(signer)).await?)
     }
 
     pub async fn handle(&mut self, request: Request, now: u64) -> Result<Response, AppError> {

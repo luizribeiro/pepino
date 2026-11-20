@@ -230,3 +230,46 @@ async fn local_state_replacement_preserves_the_directory_lock() {
     drop(guard);
     App::open(path, NOW).await.unwrap();
 }
+
+#[tokio::test]
+async fn transport_append_uses_the_request_lock_and_releases_it_after_commit() {
+    use pepino_app::{OpenOptions, SyncStoreError};
+    use pepino_store::{AppendOutcome, SkipReason};
+    use std::{fs::File, time::Duration};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path();
+    let app = fixture::open_with_options(
+        path,
+        NOW,
+        OpenOptions {
+            lock_timeout: Duration::ZERO,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let board = app.local_state().board_id;
+    let author = app.local_state().device_id;
+    let guard = File::options()
+        .read(true)
+        .write(true)
+        .open(path.join("local.lock"))
+        .unwrap();
+    guard.try_lock().unwrap();
+    let bytes = [0x82, 2, 0xf6];
+    assert!(matches!(
+        app.append_received(board, &bytes, author).await,
+        Err(SyncStoreError::Lock(AppError::Busy))
+    ));
+    assert_eq!(app.store().statistics(board).await.unwrap().total, 0);
+    guard.unlock().unwrap();
+    assert!(matches!(
+        app.append_received(board, &bytes, author).await.unwrap(),
+        AppendOutcome::Skipped {
+            reason: SkipReason::UnknownVersion(2),
+            ..
+        }
+    ));
+    guard.try_lock().unwrap();
+}

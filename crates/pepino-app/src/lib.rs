@@ -23,7 +23,7 @@ mod views;
 mod wire;
 mod write;
 
-pub use app::App;
+pub use app::{App, SyncStoreError};
 pub use filter::{FilterDiagnostic, FilterInput, FilterPosition, FilterWarning};
 pub use hlc::Hlc;
 pub use log::{
