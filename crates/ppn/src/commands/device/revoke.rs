@@ -1,8 +1,14 @@
+use std::time::Duration;
+
 use chrono::Utc;
 use pepino_sync::{BoardRemoval, Removal};
 use ppn::{
     app::AppClient,
-    daemon::{address::socket_path, client::Client},
+    daemon::{
+        address::socket_path,
+        client::Client,
+        protocol::{Operation, Outcome, wait_millis},
+    },
     render::short_id,
 };
 
@@ -38,6 +44,8 @@ pub(super) fn run(context: &Context<'_>, reference: &str) -> Result<CommandResul
     if !context.confirm(&prompt)? {
         return Ok(CommandResult::document(result));
     }
+    let wait = context.timeout.unwrap_or(Duration::from_secs(8));
+    let timeout_ms = wait_millis(wait)?;
     let (directory, options) = local_options(context, None)?;
     let local = runtime()?.block_on(async {
         let app = App::open_with_options(directory, context.time.now_ms, options).await?;
@@ -46,17 +54,28 @@ pub(super) fn run(context: &Context<'_>, reference: &str) -> Result<CommandResul
     let daemon = Client {
         path: socket_path(&context.config()?.config),
     };
-    let _ = daemon.nudge();
+    let outcome = daemon.call_with(
+        Operation::DeviceRemoval {
+            device: target.id,
+            timeout_ms,
+        },
+        wait + Duration::from_secs(1),
+    );
     result.confirmed = true;
-    result.boards = local
-        .boards()
-        .iter()
-        .cloned()
-        .map(|board| BoardRemoval {
-            board,
-            result: Removal::Unavailable,
-        })
-        .collect();
+    result.boards = match outcome {
+        Ok(Outcome::DeviceRemoval {
+            boards: Some(boards),
+        }) => boards,
+        _ => local
+            .boards()
+            .iter()
+            .cloned()
+            .map(|board| BoardRemoval {
+                board,
+                result: Removal::Unavailable,
+            })
+            .collect(),
+    };
     Ok(CommandResult::document(result))
 }
 
@@ -69,15 +88,37 @@ struct Report {
 
 impl Render for Report {
     fn human(&self, _: &Terminal) -> String {
-        if self.confirmed {
+        let mut text = if self.confirmed {
             format!(
                 "Revoked {} ({}).",
                 self.name,
                 short_id(&self.device.to_string())
             )
         } else {
-            "Revocation cancelled.".into()
+            return "Revocation cancelled.".into();
+        };
+        for outcome in &self.boards {
+            let status = match outcome.result {
+                Removal::Removed => "removed",
+                Removal::ManagerRequired => "pending, this device needs Manage",
+                Removal::LastManager => {
+                    "pending, grant Manage to another device on this board first"
+                }
+                Removal::Unavailable => "pending, daemon or board unavailable",
+            };
+            text.push_str(&format!(
+                "\n  {} · {status}",
+                single_line(&outcome.board.name)
+            ));
         }
+        if self
+            .boards
+            .iter()
+            .any(|board| board.result != Removal::Removed)
+        {
+            text.push_str("\nActive managers retry pending boards automatically. You can also rerun this command.");
+        }
+        text
     }
 
     fn json_fields(self) -> Map<String, Value> {
