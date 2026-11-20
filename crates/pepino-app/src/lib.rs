@@ -18,6 +18,7 @@ mod device_request;
 mod device_update;
 mod filter;
 mod hlc;
+mod identity;
 mod initialize;
 mod list;
 mod log;
