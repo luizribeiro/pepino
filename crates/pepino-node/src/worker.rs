@@ -48,24 +48,27 @@ impl Worker {
         thread::Builder::new()
             .name("pepino-node".into())
             .spawn(move || {
-                let runtime = Builder::new_multi_thread()
+                let runtimes = Builder::new_multi_thread()
                     .worker_threads(2)
                     .enable_all()
-                    .build();
-                let handle = runtime
+                    .build()
+                    .and_then(|runtime| {
+                        let cleanup = Builder::new_current_thread().enable_all().build()?;
+                        Ok((runtime, cleanup))
+                    });
+                let handle = runtimes
                     .as_ref()
-                    .map(|rt| rt.handle().clone())
+                    .map(|(runtime, _)| runtime.handle().clone())
                     .map_err(ToString::to_string);
                 if ready_tx.send(handle).is_ok()
-                    && let Ok(runtime) = runtime
+                    && let Ok((runtime, cleanup)) = runtimes
                 {
-                    runtime.block_on(async {
-                        let _ = stop_rx.await;
-                        if let Some(pool) = worker_pool.get() {
-                            pool.close().await;
-                        }
-                    });
+                    let _ = runtime.block_on(stop_rx);
+                    // Live storage tasks can hold pooled connections while waiting for work.
                     drop(runtime);
+                    if let Some(pool) = worker_pool.get() {
+                        cleanup.block_on(pool.close());
+                    }
                 }
                 drop(lock);
                 let _ = done_tx.send(());
@@ -118,6 +121,31 @@ mod tests {
         );
         worker.shutdown().await.unwrap();
         drop(Worker::start(&database).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn shutdown_releases_connections_held_by_worker_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        let worker = Worker::start(&dir.path().join("node.sqlite"))
+            .await
+            .unwrap();
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        worker.pool.set(pool.clone()).unwrap();
+        let checked_out = pool.clone();
+        let (ready, acquired) = oneshot::channel();
+        let holder = worker.handle.spawn(async move {
+            let _connection = checked_out.acquire().await.unwrap();
+            ready.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        acquired.await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), worker.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(holder.await.unwrap_err().is_cancelled());
+        assert!(pool.is_closed());
+        assert_eq!(pool.size(), 0);
     }
 
     #[tokio::test]
