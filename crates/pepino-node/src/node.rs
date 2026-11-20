@@ -100,7 +100,7 @@ impl Node {
             // p2panda discovers LAN addresses through mDNS. A bare key carries no address.
             return Ok(());
         };
-        let url = crate::settings::relay_url(relay)?;
+        let url = crate::settings::peer_relay_url(relay)?;
         let node = self.inner.clone();
         self.worker
             .run(async move { node.insert_bootstrap(key, url).await.map_err(Error::node) })

@@ -20,17 +20,6 @@ pub(super) fn run(
     selection: Option<&Path>,
 ) -> Result<CommandResult, CliError> {
     let grant: DeviceGrant = Kind::Grant.decode(code).map_err(invalid_code)?;
-    if grant
-        .peer
-        .relay_url
-        .as_deref()
-        .is_some_and(|url| url.parse::<ppn::config::RelayUrl>().is_err())
-    {
-        return Err(CliError::new(
-            ErrorKind::InvalidInput,
-            "Invalid granting device relay URL.",
-        ));
-    }
     let (directory, options) = local_options(context, None)?;
     let local = runtime()?.block_on(App::join_device(directory, grant, options))?;
     let config = &context.config()?.config;

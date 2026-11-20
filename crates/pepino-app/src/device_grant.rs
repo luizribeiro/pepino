@@ -51,6 +51,10 @@ impl DeviceGrant {
             mut devices,
             peer,
         } = self;
+        if let Some(url) = &peer.relay_url {
+            pepino_node::peer_relay_url(url)
+                .map_err(|_| invalid("grant", "invalid granting device relay URL"))?;
+        }
         let unique: BTreeSet<_> = boards.iter().map(|board| board.id).collect();
         if boards.is_empty()
             || boards.len() != unique.len()

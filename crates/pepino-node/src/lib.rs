@@ -22,7 +22,7 @@ pub use credentials::DeviceCredentials;
 pub use events::{BoardEvent, BoardEvents};
 pub use membership::{MemberInfo, Role};
 pub use node::Node;
-pub use settings::{BootstrapNode, MdnsMode, NodeSettings};
+pub use settings::{BootstrapNode, MdnsMode, NodeSettings, peer_relay_url};
 pub use status::{NodeEvent, NodeEvents, SyncCounts};
 pub use status_state::{BoardStatus, NodeStatus};
 

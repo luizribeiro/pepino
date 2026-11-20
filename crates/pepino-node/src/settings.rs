@@ -118,9 +118,34 @@ pub(crate) fn relay_url(text: &str) -> Result<RelayUrl, Error> {
     Ok(url)
 }
 
+pub fn peer_relay_url(text: &str) -> Result<RelayUrl, Error> {
+    let error = || Error::Settings("peer hints require an HTTPS relay URL with a host".into());
+    let (scheme, authority) = text.split_once("://").ok_or_else(error)?;
+    if !scheme.eq_ignore_ascii_case("https")
+        || authority.starts_with(['/', '\\'])
+        || text.chars().any(char::is_whitespace)
+    {
+        return Err(error());
+    }
+    relay_url(text).map_err(|_| error())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peer_hints_require_https_with_an_explicit_host() {
+        assert!(peer_relay_url("HTTPS://relay.example.org:443").is_ok());
+        for url in [
+            "http://relay.example.org",
+            "https:///relay.example.org",
+            "https://",
+            " https://relay.example.org",
+        ] {
+            assert!(peer_relay_url(url).is_err(), "{url}");
+        }
+    }
 
     #[test]
     fn offline_settings_bind_ephemeral_loopback_without_discovery() {
