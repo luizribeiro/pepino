@@ -26,57 +26,74 @@ impl fmt::Display for Position {
     }
 }
 
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ErrorKind {
-    #[error("unterminated quote. Add a closing double quote")]
     UnterminatedQuote,
-    #[error("empty term. Supply a search term")]
     EmptyTerm,
-    #[error("empty view reference. Supply a saved view name after '@'")]
     EmptyView,
-    #[error(
-        "invalid saved view name {name:?}. View names cannot contain spaces and must match [a-z][a-z0-9_-]* within 64 bytes"
-    )]
-    InvalidView { name: String },
-    #[error("unknown filter key {value:?}. Use {suggested:?}")]
+    InvalidView {
+        name: String,
+    },
     UnknownKey {
         value: String,
         suggested: &'static str,
     },
-    #[error("empty value. Supply a value for each alternative")]
     EmptyValue,
-    #[error("comparisons are unavailable for {key:?}. Use {key}:value for equality")]
-    UnsupportedComparison { key: String },
-    #[error(
-        "unknown status {value:?}. Use {}",
-        super::keywords::accepted(super::keywords::STATUSES, None)
-    )]
-    UnknownStatus { value: String },
-    #[error("invalid tag {value:?}. Tags must match [a-z][a-z0-9_./-]*")]
-    InvalidTag { value: String },
-    #[error(
-        "unknown state {value:?}. Use {}",
-        super::keywords::accepted(super::State::WORDS, None)
-    )]
-    UnknownState { value: String },
-    #[error(
-        "unsupported presence field {field:?}. Use {}",
-        super::keywords::accepted(super::PresenceField::WORDS, Some("a custom field"))
-    )]
-    UnsupportedPresence { field: String },
-    #[error(
-        "invalid date {value:?}. Use YYYY-MM-DD, today, tomorrow, yesterday, a weekday, or an offset such as +3d"
-    )]
-    InvalidDate { value: String },
-    #[error("invalid integer {value:?}. Enter a signed 64-bit integer")]
-    InvalidInteger { value: String },
-    #[error("date {value:?} is outside the supported calendar range")]
-    DateOutOfRange { value: String },
-    #[error("keywords are lowercase. Use {lowercase:?} for {value:?}")]
-    LowercaseKeyword { value: String, lowercase: String },
+    UnsupportedComparison {
+        key: String,
+    },
+    UnknownStatus {
+        value: String,
+    },
+    InvalidTag {
+        value: String,
+    },
+    UnknownState {
+        value: String,
+    },
+    UnsupportedPresence {
+        field: String,
+    },
+    InvalidDate {
+        value: String,
+    },
+    InvalidInteger {
+        value: String,
+    },
+    DateOutOfRange {
+        value: String,
+    },
+    LowercaseKeyword {
+        value: String,
+        lowercase: String,
+    },
 }
 
 impl ErrorKind {
+    pub(crate) fn reason(&self) -> String {
+        match self {
+            Self::UnterminatedQuote => "unterminated quote".into(),
+            Self::EmptyTerm => "empty term".into(),
+            Self::EmptyView => "empty view reference".into(),
+            Self::InvalidView { name } => format!("invalid saved view name {name:?}"),
+            Self::UnknownKey { value, .. } => format!("unknown filter key {value:?}"),
+            Self::EmptyValue => "empty value".into(),
+            Self::UnsupportedComparison { key } => {
+                format!("comparisons are unavailable for {key:?}")
+            }
+            Self::UnknownStatus { value } => format!("unknown status {value:?}"),
+            Self::InvalidTag { value } => format!("invalid tag {value:?}"),
+            Self::UnknownState { value } => format!("unknown state {value:?}"),
+            Self::UnsupportedPresence { field } => format!("unsupported presence field {field:?}"),
+            Self::InvalidDate { value } => format!("invalid date {value:?}"),
+            Self::InvalidInteger { value } => format!("invalid integer {value:?}"),
+            Self::DateOutOfRange { value } => {
+                format!("date {value:?} is outside the supported calendar range")
+            }
+            Self::LowercaseKeyword { .. } => "keywords are lowercase".into(),
+        }
+    }
+
     pub fn hint(&self) -> Option<String> {
         use super::keywords::{STATUSES, accepted};
 
@@ -111,6 +128,18 @@ impl ErrorKind {
         Some(hint)
     }
 }
+
+impl fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.reason())?;
+        if let Some(hint) = self.hint() {
+            write!(f, ". {hint}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ErrorKind {}
 
 #[cfg(test)]
 mod tests {
