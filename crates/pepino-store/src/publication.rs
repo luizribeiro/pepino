@@ -23,34 +23,6 @@ impl Store {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use pepino_core::Envelope;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn records_only_existing_events_and_keeps_the_first_receipt() {
-        let store = Store::open_in_memory().await.unwrap();
-        let board = BoardId::from_bytes([13; 32]);
-        let bytes = [0x82, 2, 0xf6];
-        let event = Envelope::decode(&bytes).unwrap().id();
-        let receipt = EventId::from_bytes([17; 32]);
-        assert!(store.mark_published(board, event, receipt).await.is_err());
-        store.append(board, &bytes, None).await.unwrap();
-        store.mark_published(board, event, receipt).await.unwrap();
-        store
-            .mark_published(board, event, EventId::from_bytes([19; 32]))
-            .await
-            .unwrap();
-        let actual: [u8; 32] = sqlx::query_scalar("SELECT operation FROM publication")
-            .fetch_one(&mut *store.connection.lock().await)
-            .await
-            .unwrap();
-        assert_eq!(&actual, receipt.as_bytes());
-    }
-}
-
 #[derive(Debug)]
 pub struct Outbox {
     pub pending: u64,
@@ -152,4 +124,32 @@ async fn pages_by_clock_then_id_and_excludes_receipts_and_forgery() {
             .pending,
         0
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use pepino_core::Envelope;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn records_only_existing_events_and_keeps_the_first_receipt() {
+        let store = Store::open_in_memory().await.unwrap();
+        let board = BoardId::from_bytes([13; 32]);
+        let bytes = [0x82, 2, 0xf6];
+        let event = Envelope::decode(&bytes).unwrap().id();
+        let receipt = EventId::from_bytes([17; 32]);
+        assert!(store.mark_published(board, event, receipt).await.is_err());
+        store.append(board, &bytes, None).await.unwrap();
+        store.mark_published(board, event, receipt).await.unwrap();
+        store
+            .mark_published(board, event, EventId::from_bytes([19; 32]))
+            .await
+            .unwrap();
+        let actual: [u8; 32] = sqlx::query_scalar("SELECT operation FROM publication")
+            .fetch_one(&mut *store.connection.lock().await)
+            .await
+            .unwrap();
+        assert_eq!(&actual, receipt.as_bytes());
+    }
 }
