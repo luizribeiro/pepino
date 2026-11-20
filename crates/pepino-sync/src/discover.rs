@@ -19,10 +19,13 @@ pub(crate) async fn run<T: Transport>(
         };
         let mut poll = tokio::time::interval(poll);
         let mut published = None;
+        let mut revocations = crate::revoke::Repairs::default();
         loop {
             let generation = *nudges.borrow_and_update();
             let mut workers = boards.lock().await;
-            if let Err(error) = reconcile(&mut workers, &mut published, generation).await {
+            if let Err(error) =
+                reconcile(&mut workers, &mut published, &mut revocations, generation).await
+            {
                 crate::status::record_error(
                     &workers.changes,
                     workers.app.local_state().catalog_board(),
@@ -53,6 +56,7 @@ struct Publication {
 async fn reconcile<T: Transport>(
     boards: &mut BoardWorkers<T>,
     published: &mut Option<Publication>,
+    revocations: &mut crate::revoke::Repairs,
     generation: u64,
 ) -> Result<(), Error> {
     let local = reconcile_roster(boards, boards.app.fresh_local_state().await?).await?;
@@ -74,7 +78,12 @@ async fn reconcile<T: Transport>(
                 .await?;
             if let Some(ids) = ids {
                 if local.created_boards().contains(&board.id) {
-                    enrolled.insert(board.id, local.devices().keys().all(|id| ids.contains(id)));
+                    let complete = local.roster().values().all(|row| {
+                        row.state == pepino_app::RosterState::Revoked
+                            || row.leave_requested_at.is_some()
+                            || ids.contains(&row.id)
+                    });
+                    enrolled.insert(board.id, complete);
                 }
                 members.insert(board.id, ids);
             }
@@ -99,7 +108,8 @@ async fn reconcile<T: Transport>(
     });
 
     let catalog = local.catalog_board();
-    if local.devices().len() > 1
+    if local.device_revocation().is_none()
+        && local.devices().len() > 1
         && node_status
             .boards
             .get(&catalog)
@@ -108,7 +118,7 @@ async fn reconcile<T: Transport>(
         && let Some(member) = boards.node.local_member_bundle().await?
     {
         let bytes = local.encode_catalog(&member)?;
-        let peers = node_status.connected_peers;
+        let peers = node_status.connected_peers.clone();
         if published
             .as_ref()
             .is_none_or(|last| last.bytes != bytes || !peers.is_subset(&last.peers))
@@ -116,6 +126,9 @@ async fn reconcile<T: Transport>(
             handle.publish(bytes.clone()).await?;
         }
         *published = Some(Publication { bytes, peers });
+    }
+    if published.is_some() && local.check_device_write().is_ok() {
+        revocations.reconcile(boards, &local, &node_status).await;
     }
     boards.changes.send_if_modified(|status| {
         let advanced = status.catalog_generation != generation;

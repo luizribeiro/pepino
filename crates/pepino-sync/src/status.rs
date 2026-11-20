@@ -11,6 +11,7 @@ pub struct Status {
     pub(crate) roster_pending: Option<BoardId>,
     pub members: BTreeMap<BoardId, BTreeSet<DeviceId>>,
     pub boards: BTreeMap<BoardId, BoardStatus>,
+    pub device_removals: BTreeMap<DeviceId, Vec<crate::BoardRemoval>>,
     pub node: NodeStatus,
     pub last_node_event: Option<NodeEvent>,
     pub last_node_error: Option<String>,

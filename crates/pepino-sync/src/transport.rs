@@ -103,7 +103,14 @@ impl TransportBoard for BoardHandle {
         let members = self.members().await?;
         let mut ids: BTreeSet<_> = members.iter().map(|(device, _)| *device).collect();
         if enroll && members.contains(&(local.device_id, Role::Manage)) {
-            for device in local.devices().into_keys() {
+            for device in local
+                .roster()
+                .into_values()
+                .filter(|row| {
+                    row.state == pepino_app::RosterState::Active && row.leave_requested_at.is_none()
+                })
+                .map(|row| row.id)
+            {
                 if !ids.contains(&device)
                     && let Some(bundle) = local.device_bundle(device)
                     && self.add_member(&bundle, Role::Manage).await.is_ok()

@@ -1,3 +1,7 @@
+use std::{collections::BTreeMap, time::Duration};
+use tokio::time::Instant;
+
+use crate::{Transport, TransportBoard, board_workers::BoardWorkers};
 use pepino_app::LocalBoard;
 use pepino_core::DeviceId;
 use pepino_node::{BoardHandle, Error, Role};
@@ -47,6 +51,82 @@ pub(crate) async fn remove(handle: &BoardHandle, own: DeviceId, device: DeviceId
     }
 }
 
+#[derive(Default)]
+pub(crate) struct Repairs {
+    published: BTreeMap<DeviceId, (pepino_app::Revocation, Instant)>,
+}
+
+impl Repairs {
+    fn notice_pending(
+        &mut self,
+        id: DeviceId,
+        revocation: pepino_app::Revocation,
+        connected: bool,
+    ) -> bool {
+        let (saved, first) = self
+            .published
+            .entry(id)
+            .or_insert_with(|| (revocation.clone(), Instant::now()));
+        if *saved != revocation {
+            *saved = revocation;
+            *first = Instant::now();
+        }
+        connected && first.elapsed() < Duration::from_secs(2)
+    }
+
+    pub(crate) async fn reconcile<T: Transport>(
+        &mut self,
+        workers: &BoardWorkers<T>,
+        local: &pepino_app::LocalState,
+        network: &pepino_node::NodeStatus,
+    ) {
+        let roster = local.roster();
+        self.published
+            .retain(|id, _| roster.get(id).is_some_and(|row| row.revocation.is_some()));
+        let mut reports = BTreeMap::new();
+        for row in roster.into_values().filter(|row| row.id != local.device_id) {
+            let Some(revocation) = row.revocation else {
+                continue;
+            };
+            // A connected device needs time to ingest the notice before the catalog block.
+            if self.notice_pending(
+                row.id,
+                revocation,
+                network.connected_peers.contains(&row.id),
+            ) {
+                continue;
+            }
+            let mut outcomes = Vec::new();
+            for board in local.boards().iter().rev() {
+                let result = match workers.handle(board.id) {
+                    Some(handle)
+                        if network
+                            .boards
+                            .get(&board.id)
+                            .is_some_and(|signals| signals.joined) =>
+                    {
+                        handle.remove_revoked(local.device_id, row.id).await
+                    }
+                    _ => Removal::Unavailable,
+                };
+                outcomes.push(BoardRemoval {
+                    board: board.clone(),
+                    result,
+                });
+            }
+            outcomes.reverse();
+            reports.insert(row.id, outcomes);
+        }
+        workers.changes.send_if_modified(|status| {
+            if status.device_removals == reports {
+                return false;
+            }
+            status.device_removals = reports;
+            true
+        });
+    }
+}
+
 #[cfg(test)]
 #[test]
 fn removal_requires_manage_only_if_the_device_is_still_a_member() {
@@ -72,4 +152,19 @@ fn removal_requires_manage_only_if_the_device_is_still_a_member() {
         removal_guard(&managers, tablet, laptop),
         Some(Removal::ManagerRequired)
     );
+}
+
+#[cfg(test)]
+#[tokio::test(start_paused = true)]
+async fn restart_revisits_a_durable_revocation_even_without_the_first_scan() {
+    let device = DeviceId::from_bytes([51; 32]);
+    let revocation = pepino_app::Revocation {
+        by: DeviceId::from_bytes([52; 32]),
+        at: std::time::SystemTime::UNIX_EPOCH.into(),
+    };
+    let mut restarted = Repairs::default();
+    assert!(restarted.notice_pending(device, revocation.clone(), true));
+    assert!(!restarted.notice_pending(device, revocation.clone(), false));
+    tokio::time::advance(Duration::from_secs(2)).await;
+    assert!(!restarted.notice_pending(device, revocation, true));
 }
