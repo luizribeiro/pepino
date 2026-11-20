@@ -266,3 +266,44 @@ fn clocks_preserve_raw_values_alongside_rfc3339_utc() {
         round_trip(&clock);
     }
 }
+
+#[test]
+fn task_comments_and_edge_effects_have_stable_shapes() {
+    use pepino_app::{EdgeEffect, TaskRecord};
+
+    let id = "97ad".repeat(16);
+    let peer = "33ea".repeat(16);
+    let author = "6b37".repeat(16);
+    let note = "d81e".repeat(16);
+    let created =
+        json!({"wall_ms":1_795_144_800_000u64,"counter":1,"utc":"2026-11-20T03:20:00.000Z"});
+    let updated =
+        json!({"wall_ms":1_795_144_800_123u64,"counter":2,"utc":"2026-11-20T03:20:00.123Z"});
+    let record = json!({
+        "id":id, "title":"Replace the greenhouse latch", "description":"Use stainless hardware.",
+        "status":"doing", "due":"2026-12-01", "priority":2, "fields":{"estimate":{"type":"integer","value":3}},
+        "tags":["greenhouse"], "assignees":["a6e1".repeat(16)], "created":created, "updated":updated,
+        "author":author, "parent":peer, "children":[], "blocks":[], "blocked_by":[], "relates":[],
+        "blocked":false, "ready":true,
+        "comments":[{"id":note,"author":author,"hlc":updated,"text":"The new latch arrived."}],
+    });
+    let task: TaskRecord = serde_json::from_value(record.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&task).unwrap(), record);
+    round_trip(&task);
+
+    for edge in [
+        json!({"from":id,"kind":"blocks","to":peer,"effective":false,"reason":"cycle"}),
+        json!({"from":id,"kind":"parent","to":peer,"effective":true}),
+    ] {
+        let effect = serde_json::from_value::<EdgeEffect>(edge.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&effect).unwrap(), edge);
+        round_trip(&effect);
+    }
+
+    let response = json!({"v":1,"result":{"ok":{"kind":"task","task":record}}});
+    let wire = WireResponse::new(Ok(Response::Task {
+        task: Box::new(task),
+    }));
+    assert_eq!(serde_json::to_value(&wire).unwrap(), response);
+    round_trip(&wire);
+}
