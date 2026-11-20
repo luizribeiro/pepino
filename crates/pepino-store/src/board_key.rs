@@ -16,6 +16,6 @@ impl Type<Sqlite> for BoardKey {
 
 impl Encode<'_, Sqlite> for BoardKey {
     fn encode_by_ref(&self, args: &mut SqliteArgumentsBuffer) -> Result<IsNull, BoxDynError> {
-        self.0.as_bytes().encode_by_ref(args)
+        <[u8; 32] as Encode<'_, Sqlite>>::encode_by_ref(self.0.as_bytes(), args)
     }
 }
