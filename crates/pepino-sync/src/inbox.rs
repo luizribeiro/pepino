@@ -76,6 +76,9 @@ async fn ingest<A>(
     delivery: &Delivery<A>,
     status: &watch::Sender<Status>,
 ) {
+    if ingest_catalog(app, board, delivery, status).await {
+        return;
+    }
     let mut retry = Retry::new();
     loop {
         match app
@@ -120,6 +123,46 @@ async fn ingest<A>(
                     format!("store operation {}: {error}", delivery.operation),
                 );
             }
+        }
+        retry.wait().await;
+    }
+}
+
+async fn ingest_catalog<A>(
+    app: &App,
+    board: BoardId,
+    delivery: &Delivery<A>,
+    status: &watch::Sender<Status>,
+) -> bool {
+    let mut retry = Retry::new();
+    loop {
+        match app
+            .receive_catalog(board, delivery.signer, &delivery.bytes)
+            .await
+        {
+            Ok(false) => return false,
+            Ok(true) => match app.fresh_local_state().await {
+                Ok(local) => {
+                    status.send_if_modified(|state| {
+                        let mut changed = false;
+                        for board in local.boards() {
+                            if let std::collections::btree_map::Entry::Vacant(entry) =
+                                state.boards.entry(board.id)
+                            {
+                                entry.insert(Default::default());
+                                state
+                                    .board_joins
+                                    .insert(board.id, local.board_join_state(board.id));
+                                changed = true;
+                            }
+                        }
+                        changed
+                    });
+                    return true;
+                }
+                Err(error) => record_error(status, board, format!("read board catalog: {error}")),
+            },
+            Err(error) => record_error(status, board, format!("save board catalog: {error}")),
         }
         retry.wait().await;
     }
