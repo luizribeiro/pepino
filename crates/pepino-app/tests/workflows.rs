@@ -817,6 +817,7 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
             .unwrap(),
         pepino_store::AppendOutcome::Skipped { .. }
     ));
+    let names = json!({app.local_state().device_id.to_string(): app.local_state().device_name});
     let unordered = json!([
         {"id":future_id.to_string(),"author":null,"hlc":null,"kind":"unknown","classification":"unknown_version","change":{"type":"skipped","summary":"Skipped event","version":2,"tasks":[]}},
     ]);
@@ -828,7 +829,7 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
     read_golden(
         &mut app,
         json!({"op":"log","task":null,"limit":null}),
-        json!({"ok":{"kind":"log","titles":{(task.as_str()):"Replace the greenhouse latch"},"unordered":unordered,"events":events}}),
+        json!({"ok":{"kind":"log","names":names,"titles":{(task.as_str()):"Replace the greenhouse latch"},"unordered":unordered,"events":events}}),
     )
     .await;
     read_golden(
@@ -840,7 +841,7 @@ async fn history_reports_board_and_task_changes_including_skipped_envelopes() {
     read_golden(
         &mut app,
         json!({"op":"log","task":task,"limit":2}),
-        json!({"ok":{"kind":"log","titles":{(task.as_str()):"Replace the greenhouse latch"},"unordered":[],"events":&events.as_array().unwrap()[1..]}}),
+        json!({"ok":{"kind":"log","names":names,"titles":{(task.as_str()):"Replace the greenhouse latch"},"unordered":[],"events":&events.as_array().unwrap()[1..]}}),
     )
     .await;
     read_golden(

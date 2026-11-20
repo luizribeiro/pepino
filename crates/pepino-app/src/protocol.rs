@@ -160,6 +160,8 @@ pub enum Response {
         titles: BTreeMap<String, Option<String>>,
         events: Vec<EventRecord>,
         unordered: Vec<EventRecord>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        names: BTreeMap<String, String>,
     },
     ViewSaved {
         view: SavedView,

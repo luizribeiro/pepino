@@ -182,13 +182,32 @@ impl App {
             .events
             .into_iter()
             .map(EventRecord::try_from)
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
         let unordered = history
             .unordered
             .into_iter()
             .map(EventRecord::try_from)
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?;
+        let names = self
+            .local
+            .names_for(events.iter().chain(&unordered).flat_map(|event| {
+                let people = match &event.change.detail {
+                    EventDetail::Creation { fields, .. } => Some(&fields.assignees),
+                    _ => None,
+                };
+                let assignee = match &event.change.detail {
+                    EventDetail::Assignee { who, .. } => Some(who.as_str()),
+                    _ => None,
+                };
+                event
+                    .author
+                    .as_deref()
+                    .into_iter()
+                    .chain(assignee)
+                    .chain(people.into_iter().flatten().map(String::as_str))
+            }));
         Ok(Response::Log {
+            names,
             titles,
             events,
             unordered,
