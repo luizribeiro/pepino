@@ -9,7 +9,7 @@ mod support;
 
 use futures_util::StreamExt;
 use pepino_node::{Error, MemberInfo, NodeEvent, OpenBoardOptions, Role};
-use std::{collections::BTreeSet, time::Duration};
+use std::collections::BTreeSet;
 use support::*;
 use tokio::time::timeout;
 
@@ -174,11 +174,12 @@ async fn restart_recovers_acks_individually_and_catches_up_offline() {
 
     let b = start(&b_settings).await;
     let mut board_b = b.open_board(board_id).await.unwrap();
-    assert!(
-        timeout(Duration::from_millis(400), board_b.events().unwrap().next())
-            .await
-            .is_err()
-    );
+    board_b.wait_until_replayed(WAIT).await.unwrap();
+    let after_restart = b"checklist recovery complete";
+    let sentinel = board_a.publish(after_restart.to_vec()).await.unwrap();
+    let event = next(&mut board_b.events().unwrap()).await;
+    assert_eq!(event.id, sentinel);
+    event.ack().await.unwrap();
     b.shutdown().await.unwrap();
 
     let b = start(&b_settings).await;
@@ -192,6 +193,7 @@ async fn restart_recovers_acks_individually_and_catches_up_offline() {
             (pending, a.device_id(), PLAN),
             (acked, a.device_id(), REVIEW),
             (offline, a.device_id(), DONE),
+            (sentinel, a.device_id(), after_restart),
         ],
     )
     .await;
