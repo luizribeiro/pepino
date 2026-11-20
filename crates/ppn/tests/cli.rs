@@ -3,7 +3,18 @@ use std::process::Command;
 
 fn ppn() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ppn"));
-    command.env_remove("PPN_JSON").env_remove("NO_COLOR");
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("PPN_") {
+            command.env_remove(name);
+        }
+    }
+    command.env_remove("NO_COLOR").env(
+        "PPN_CONFIG",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/default-config.toml"
+        ),
+    );
     command
 }
 
@@ -24,6 +35,25 @@ fn prints_version() {
     assert_eq!(
         run_ppn(&["--version"]),
         concat!("ppn ", env!("CARGO_PKG_VERSION"), "\n")
+    );
+}
+
+#[test]
+fn global_config_flag_overrides_the_environment_file() {
+    let missing = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/missing-config.toml"
+    );
+    let output = ppn()
+        .args(["version", "--config", missing, "--json"])
+        .output()
+        .unwrap();
+    let diagnostic = assert_json_error(output, 1, "invalid_config");
+    assert!(
+        diagnostic["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(missing)
     );
 }
 

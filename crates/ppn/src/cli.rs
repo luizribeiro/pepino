@@ -1,11 +1,16 @@
-use std::ffi::OsString;
-use std::{env, process::ExitCode};
+use std::ffi::{OsStr, OsString};
+use std::path::Path;
+use std::{env, fs, process::ExitCode};
 
-use clap::{ColorChoice, CommandFactory, Parser, Subcommand, error::ErrorKind};
+use clap::{
+    ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand, error::ErrorKind,
+    parser::ValueSource,
+};
+use ppn::config::{self, Env, Flags, Platform, PlatformDirs};
 use ppn::error::CliError;
 use ppn::flags::{Globals, json_from_env, json_on_command_line};
 use ppn::help_tree::example_help;
-use ppn::output::finish;
+use ppn::output::{CommandResult, finish};
 use ppn::terminal::Context;
 
 use crate::{debug, help, version};
@@ -58,21 +63,18 @@ pub fn run() -> ExitCode {
             return finish(Err(error), json_flag, &context.terminal);
         }
     };
-    match Cli::try_parse_from(&args) {
-        Ok(cli) => {
-            let context = context_for(&cli.globals);
-            let result = match cli.command {
-                Some(Command::Version) => Ok(version::run(&context)),
-                Some(Command::Help { path }) => {
-                    let mut definition = Cli::command();
-                    definition.build();
-                    help_target(&definition, path.iter().map(String::as_str))
-                        .map(|command| help::run(&context, command.clone(), None))
-                }
-                Some(Command::Debug { command }) => debug::run(&context, command),
-                None => Ok(help::run(&context, Cli::command(), None)),
-            };
-            finish(result, cli.globals.json, &context.terminal)
+    let parsed = Cli::command()
+        .try_get_matches_from(&args)
+        .and_then(|mut matches| {
+            let explicit_color = matches.value_source("color") == Some(ValueSource::CommandLine);
+            Cli::from_arg_matches_mut(&mut matches).map(|cli| (cli, explicit_color))
+        });
+    match parsed {
+        Ok((cli, explicit_color)) => {
+            let mut context = context_for(&cli.globals);
+            let json = cli.globals.json;
+            let result = dispatch(cli, explicit_color, &mut context);
+            finish(result, json, &context.terminal)
         }
         Err(error) => {
             let mut definition = Cli::command();
@@ -90,6 +92,60 @@ pub fn run() -> ExitCode {
             finish(result, json, &context.terminal)
         }
     }
+}
+
+fn dispatch(
+    cli: Cli,
+    explicit_color: bool,
+    context: &mut Context,
+) -> Result<CommandResult, CliError> {
+    let env: Env = env::vars_os().collect();
+    let dirs = platform_dirs(&env)?;
+    let flags = Flags {
+        config: cli.globals.config,
+        color: explicit_color.then_some(cli.globals.color),
+    };
+
+    let loaded = config::load(&flags, &env, |path| fs::read_to_string(path), &dirs)?;
+    context.config = Some(loaded.config);
+    match cli.command {
+        Some(Command::Version) => Ok(version::run(context)),
+        Some(Command::Help { path }) => {
+            let mut definition = Cli::command();
+            definition.build();
+            help_target(&definition, path.iter().map(String::as_str))
+                .map(|command| help::run(context, command.clone(), None))
+        }
+        Some(Command::Debug { command }) => debug::run(context, command),
+        None => Ok(help::run(context, Cli::command(), None)),
+    }
+}
+
+fn platform_dirs(env: &Env) -> Result<PlatformDirs, CliError> {
+    let lookup = |name| env.get(OsStr::new(name)).map(Path::new);
+    let fallback_home = env::home_dir();
+    let home = lookup("HOME")
+        .filter(|path| !path.as_os_str().is_empty())
+        .or(fallback_home.as_deref());
+    let invalid = |message: &str| {
+        CliError::new(
+            ppn::error::ErrorKind::InvalidConfig,
+            format!("HOME: {message}"),
+        )
+    };
+    let home = home.ok_or_else(|| invalid("could not determine the home directory"))?;
+    let platform = if cfg!(target_os = "macos") {
+        Platform::MacOs
+    } else {
+        Platform::Linux
+    };
+    PlatformDirs::new(
+        platform,
+        home,
+        lookup("XDG_CONFIG_HOME"),
+        lookup("XDG_STATE_HOME"),
+    )
+    .map_err(|error| invalid(&error.to_string()))
 }
 
 fn context_for(globals: &Globals) -> Context {

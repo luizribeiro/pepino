@@ -1,5 +1,6 @@
 use std::env;
 use std::ffi::OsString;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Args, ValueEnum};
@@ -22,6 +23,10 @@ pub struct Globals {
     /// Limit the time spent waiting, for example 5 seconds, 500ms, or 2m.
     #[arg(long, global = true, value_name = "DURATION", value_parser = parse_timeout)]
     pub timeout: Option<Duration>,
+
+    /// Read only this configuration file. PPN_CONFIG also selects a file.
+    #[arg(long, global = true, value_name = "PATH")]
+    pub config: Option<PathBuf>,
 
     /// Control color. Auto honors NO_COLOR and the terminal.
     #[arg(long, global = true, default_value = "auto", value_enum)]
@@ -65,6 +70,7 @@ impl Globals {
     pub fn on_early_exit(args: &[OsString], json: bool) -> Self {
         Self {
             json,
+            config: None,
             yes: options(args).iter().any(|arg| arg == "--yes"),
             color: option_values(args, "--color")
                 .filter_map(|value| Color::from_str(value, false).ok())

@@ -5,6 +5,7 @@ use std::time::Duration;
 use clap::ValueEnum;
 use serde::Serialize;
 
+use crate::config::Config;
 use crate::error::{CliError, ErrorKind};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, ValueEnum)]
@@ -40,6 +41,7 @@ impl Terminal {
 #[derive(Debug)]
 pub struct Context {
     pub terminal: Terminal,
+    pub config: Option<Config>,
     pub yes: bool,
     pub timeout: Option<Duration>,
 }
@@ -48,6 +50,7 @@ impl Context {
     pub fn detect(color: Color, yes: bool, timeout: Option<Duration>) -> Self {
         Self {
             terminal: Terminal::detect(color),
+            config: None,
             yes,
             timeout,
         }
