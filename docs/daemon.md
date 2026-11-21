@@ -14,6 +14,12 @@ whether it is running, its PID and uptime, and the socket path. `ppn daemon
 stop` waits for shutdown. SIGTERM and SIGINT also shut down a foreground
 process. One daemon can run per data directory.
 
+For a relay directory, initialise with `ppn relay init` before running the
+daemon. The Nix system service `services.pepino` performs that step when it
+starts. Its daemon carries ciphertext for boards handed over by trusted device
+IDs. `ppn relay show` prints its address and `ppn status` reports its
+replication activity. See [Carry boards on an always-on relay](relay.md).
+
 The daemon uses the configured network, relays, bootstrap peers, mDNS
 setting and device credentials. Set `port` to a fixed IPv4 UDP port from
 1 to 65535. The default is an ephemeral port.

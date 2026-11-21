@@ -57,8 +57,9 @@ when overriding settings in user configuration.
 
 ## Always-on host
 
-This NixOS host joins an existing identity as a full device with access to
-its boards. Relay-only operation is unavailable.
+This service runs an encrypted board relay under a separate account. It
+creates relay credentials on first start, then waits for trusted devices to
+hand it boards.
 
 ```nix
 {
@@ -69,6 +70,8 @@ its boards. Relay-only operation is unavailable.
     mdns = true;
     port = 44123;
     openFirewall = true;
+    trustedDevices = [ "<64-digit node ID>" ];
+    maxBoards = 64;
   };
 }
 ```
@@ -78,29 +81,22 @@ state directory. It renders `/etc/pepino/node.toml` with
 `daemon.autostart = false`. The `pepino-node` wrapper runs `ppn` as the service
 account with this configuration.
 
-On the server, generate a request with `sudo pepino-node device request --name server`.
-On the laptop, wait for `ppn daemon status` to report a running daemon, then run
-`ppn device add REQUEST`. Keep the grant private and paste it as one argument
-on the server.
-
 ```sh
-sudo pepino-node device join GRANT --timeout 60s
-sudo pepino-node status
-sudo pepino-node ls
+sudo pepino-node relay show
+sudo pepino-node status --json
 ```
 
-NixOS uses `pepino.path` to start `pepino.service` when the join installs
-`local.json`. The node starts on subsequent boots and uses the private socket
-`/run/pepino/control.sock`. The service can write persistent state under
-`services.pepino.dataDir`. View logs with `journalctl -u pepino.service`.
+On NixOS the service uses the private socket `/run/pepino/control.sock`.
+View logs with `journalctl -u pepino.service`.
 
 On nix-darwin, omit `openFirewall`, set unused numeric IDs with
 `users.users.pepino.uid` and `users.groups.pepino.gid`, and run `pepino-node`
-directly as a sudo-enabled administrator. The launchd daemon
-`org.nixos.pepino-node` checks for joined state at boot and every five seconds.
-It uses `runtime/daemon.sock` under `dataDir`. Account and directory permissions
+as a sudo-enabled administrator. The launchd daemon `org.nixos.pepino-node`
+uses `runtime/daemon.sock` under `dataDir`. Account and directory permissions
 apply on macOS. Filesystem sandboxing and runtime directory management are
 provided by systemd on NixOS.
+
+See [Carry boards on an always-on relay](relay.md) for handing over boards.
 
 On NixOS, `openFirewall` opens the fixed IPv4 UDP port and UDP 5353 if mDNS is
 enabled. Unset `mdns` defaults to enabled. You can leave the firewall closed
@@ -116,14 +112,15 @@ A service-only installation provides `pepino-node`. Enable
 | --- | --- | --- | --- |
 | `programs.pepino.enable` | Boolean | `false` | Install the client and its system-wide config. |
 | `programs.pepino.daemon.enable` | Boolean | `false` | Start the user sync daemon with the login session. Requires the client to be enabled. |
-| `services.pepino.enable` | Boolean | `false` | Run the always-on sync node under its own account. |
+| `services.pepino.enable` | Boolean | `false` | Run the always-on board relay under its own account. |
 | Both: `package` | Package | Pepino's flake package for the host system | Package for the client or always-on node. |
 | Both: `network` | String | Unset | Network name. |
 | Both: `relayUrls` | List of HTTPS URLs | Unset | Relay servers to use. |
 | Both: `mdns` | Boolean | Unset | Discover peers through multicast DNS. |
 | `programs.pepino.credentialsFile` | Absolute path string | Unset | Runtime path to client credentials. When unset, `ppn` uses `credentials.cbor` in the effective client state directory. |
 | `services.pepino.credentialsFile` | Absolute path string | Unset | Runtime path to the always-on node's credentials. When unset, `ppn` uses `credentials.cbor` in the service state directory. |
-| Both: `trustedDevices` | List of 64-digit hex node IDs | Unset | Devices allowed to request board relaying. |
+| `services.pepino.trustedDevices` | List of 64-digit hex node IDs | Unset | Devices allowed to request board relaying. |
+| `services.pepino.maxBoards` | Non-negative integer | `64` | Admission limit for carried boards. |
 | Both: `bootstrapNodes` | List of `{ nodeId, relayUrl }` | Unset | Bootstrap peer IDs and HTTPS relay URLs. |
 | Both: `dataDir` | Absolute path string | Client unset, service `/var/lib/pepino` | State directory. |
 | `programs.pepino.ui.color` | `"auto"`, `"always"`, or `"never"` | Unset | Terminal color mode. |
@@ -150,10 +147,9 @@ unset for separate per-user credentials.
 
 ## Verification
 
-The x86_64 NixOS VM check runs the laptop and always-on services together on
-an isolated VLAN using mDNS. It exercises the request and grant, compares the
-JSON task lists, and verifies replication after editing a task and rebooting
-the server. Run it on a Linux host with KVM using
+The x86_64 NixOS VM check runs a relay and two devices on an isolated VLAN
+using mDNS. It links the devices and checks replication in both directions
+while the devices take turns being online. Run it on a Linux host with KVM using
 `nix build .#checks.x86_64-linux.vm`.
 
 The nix-darwin launchd definitions have been evaluated. Their runtime behavior
