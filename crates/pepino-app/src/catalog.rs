@@ -254,6 +254,7 @@ impl App {
     ) -> Result<Response, AppError> {
         Self::validate_board_name(name)?;
         let board = self.local.resolve_board(reference, "board")?;
+        self.local.check_board_write(board)?;
         let mut info = self.board_info(board).await?;
         if board.name != name {
             let mut local = self.local.clone();

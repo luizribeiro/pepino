@@ -109,6 +109,8 @@ impl Args {
         matches!(
             self.operation,
             Operation::Invite { .. }
+                | Operation::Join { .. }
+                | Operation::Request { .. }
                 | Operation::Use { .. }
                 | Operation::New { .. }
                 | Operation::Rename { .. }

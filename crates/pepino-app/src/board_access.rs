@@ -145,4 +145,14 @@ async fn read_members_cannot_enqueue_task_writes() {
     assert!(
         matches!(outcome, Err(AppError::PermissionDenied { path, reason }) if path.contains("House") && reason.contains("read role"))
     );
+    let rename = app
+        .handle(
+            crate::Request::Write(crate::WriteRequest::BoardRename {
+                board: "House".into(),
+                name: "Renamed House".into(),
+            }),
+            0,
+        )
+        .await;
+    assert!(matches!(rename, Err(AppError::PermissionDenied { .. })));
 }

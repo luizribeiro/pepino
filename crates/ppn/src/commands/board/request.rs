@@ -24,6 +24,8 @@ pub(super) fn run(
     config_path: Option<&Path>,
     allow_start: bool,
 ) -> Result<CommandResult, CliError> {
+    let config = &context.config()?.config;
+    pepino_app::LocalState::load(config.data_dir.value.as_path())?.check_device_write()?;
     let client = running(context, config_path, allow_start)?;
     let outcome = client
         .call_with(Operation::BoardRequest { name }, Duration::from_secs(20))
