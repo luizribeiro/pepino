@@ -116,6 +116,7 @@ impl Record {
                     .get(device)
                     .is_none_or(|row| row.state == RosterState::Revoked)
                 {
+                    current.confirmed.remove(device);
                     current.devices.insert(
                         *device,
                         RosterDevice::active(*device, name.clone(), Some(writer), *added_ms),

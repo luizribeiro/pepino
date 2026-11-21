@@ -48,6 +48,33 @@ impl DeviceHistory {
     }
 }
 
+fn is_fenced<'a>(
+    index: usize,
+    history: &[CausalEdit<'_>],
+    devices: &BTreeMap<DeviceId, DeviceHistory>,
+    revocations: impl Fn(DeviceId) -> &'a [usize],
+) -> bool {
+    let entry = &history[index];
+    let writer_fenced = revocations(entry.edit.writer).iter().any(|&revocation| {
+        !(history[revocation].follows(index)
+            || devices[&entry.edit.writer]
+                .admissions
+                .iter()
+                .any(|&admission| {
+                    entry.follows(admission) && history[admission].follows(revocation)
+                }))
+    });
+    let Change::Add { device, .. } = entry.edit.change else {
+        return writer_fenced;
+    };
+    writer_fenced
+        || revocations(device).iter().any(|&revocation| {
+            !(history[revocation].follows(index)
+                || (entry.edit.writer == history[revocation].edit.writer
+                    && entry.follows(revocation)))
+        })
+}
+
 pub(super) fn fold(
     entries: &BTreeMap<EventId, SignedEdit>,
     root: DeviceId,
@@ -110,7 +137,17 @@ pub(super) fn fold(
         };
         let authorized = match &edit.change {
             Change::Initialize { .. } => edit.writer == root && edit.parents.is_empty(),
-            Change::Add { device, .. } => active(edit.writer) && !active(*device),
+            Change::Add { device, .. } => {
+                active(edit.writer)
+                    && !active(*device)
+                    && (edit.writer == root
+                        || devices.get(device).is_none_or(|target| {
+                            !target
+                                .revocations
+                                .iter()
+                                .any(|&index| current.follows(index))
+                        }))
+            }
             Change::RenameDevice(device, _) => active(edit.writer) && active(*device),
             Change::RenameIdentity(_) | Change::ConfirmDevice => active(edit.writer),
             Change::ConfirmOwnership { root: confirmed } => {
@@ -143,12 +180,6 @@ pub(super) fn fold(
         history.push(current);
     }
 
-    let fenced = |index: usize| {
-        devices[&history[index].edit.writer]
-            .revocations
-            .iter()
-            .any(|&revocation| !history[revocation].follows(index))
-    };
     let mut fences = BTreeMap::<DeviceId, Vec<usize>>::new();
     let mut refused = BTreeSet::new();
     for (index, device) in root_revocations {
@@ -157,15 +188,21 @@ pub(super) fn fold(
             .past
             .iter()
             .enumerate()
-            .any(|(parent, &present)| present && (refused.contains(&parent) || fenced(parent)))
+            .any(|(parent, &present)| {
+                present
+                    && (refused.contains(&parent)
+                        || is_fenced(parent, &history, &devices, |device| {
+                            devices
+                                .get(&device)
+                                .map_or(&[], |row| row.revocations.as_slice())
+                        }))
+            })
         {
             refused.insert(index);
         } else {
             fences.entry(device).or_default().push(index);
         }
     }
-    view.revoked_writers.extend(fences.keys().copied());
-
     let mut record = None;
     let mut confirmations = Vec::new();
     for (index, entry) in history.iter().enumerate() {
@@ -174,10 +211,8 @@ pub(super) fn fold(
             view.visits += 1;
         }
         let edit = entry.edit;
-        let fenced = fences.get(&edit.writer).is_some_and(|revocations| {
-            revocations
-                .iter()
-                .any(|&revocation| !history[revocation].follows(index))
+        let fenced = is_fenced(index, &history, &devices, |device| {
+            fences.get(&device).map_or(&[], Vec::as_slice)
         });
         if fenced || refused.contains(&index) || !edit.parents.is_disjoint(&view.rejected) {
             view.rejected.insert(entry.id);
@@ -206,6 +241,7 @@ pub(super) fn fold(
             if let Some(&last) = revocations.last()
                 && let Change::Revoke { at, .. } = history[last].edit.change
             {
+                view.revoked_writers.insert(device);
                 record.revoke(device, Revocation { by: root, at });
             }
         }
@@ -373,7 +409,8 @@ mod tests {
         fn only_root_revocation_fences_roster_edits(
             size in 3u8..18,
             victim in any::<u8>(),
-            edits in prop::collection::vec((any::<u8>(), any::<u8>(), any::<u16>(), any::<i32>(), 0u8..4), 1..32),
+            readmit in any::<bool>(),
+            edits in prop::collection::vec((any::<u8>(), any::<u8>(), any::<u16>(), any::<i32>(), 0u8..5), 1..32),
         ) {
             let mut entries = roster(size);
             let last = usize::from(size - 1);
@@ -384,8 +421,15 @@ mod tests {
                 at: chrono::DateTime::UNIX_EPOCH,
             }));
             let mut available_parents: Vec<_> = (0..=last + 2).collect();
+            if readmit {
+                entries.insert(id(last + 3), entry(0, u64::from(size) + 2, &[last + 2], add(victim)));
+                available_parents.push(last + 3);
+            }
             for (index, &(author, target, parents, time, action)) in edits.iter().enumerate() {
-                let writer = 1 + author % (size - 1);
+                let writer = match author % size {
+                    0 => 80,
+                    writer => writer,
+                };
                 let split = parents.to_be_bytes();
                 let parents: Vec<_> = split.into_iter().filter_map(|offset| {
                     available_parents.get(usize::from(offset) % (available_parents.len() + 1)).copied()
@@ -396,8 +440,9 @@ mod tests {
                         device: device(target),
                         at: chrono::DateTime::from_timestamp(i64::from(time), 0).unwrap(),
                     },
-                    1 if writer == victim => add(100 + index as u8),
-                    2 if writer == victim => Change::ConfirmOwnership { root: device(0) },
+                    1 => add(victim),
+                    2 if !readmit && writer == victim => add(100 + index as u8),
+                    3 if !readmit && writer == victim => Change::ConfirmOwnership { root: device(0) },
                     _ => Change::RenameDevice(device(writer), format!("Workshop tool {index}")),
                 };
                 let generation = parents.iter().map(|&parent| entries[&id(parent)].edit.generation + 1).max().unwrap_or(0);
@@ -411,12 +456,88 @@ mod tests {
             prop_assert_eq!(&view.record, &other.record);
             prop_assert_eq!(&view.rejected, &other.rejected);
             let record = view.record.unwrap();
-            prop_assert_eq!(&view.revoked_writers, &BTreeSet::from([device(victim)]));
-            prop_assert_eq!(record.devices[&device(victim)].state, RosterState::Revoked);
+            prop_assert_eq!(&view.revoked_writers, &(!readmit).then_some(device(victim)).into_iter().collect());
+            prop_assert_eq!(record.devices[&device(victim)].state,
+                if readmit { RosterState::Active } else { RosterState::Revoked });
             prop_assert_eq!(record.devices[&device(80)].state, RosterState::Active);
             prop_assert!(!record.confirmed.contains(&device(victim)));
             prop_assert_eq!(record.devices.len(), usize::from(size) + 1);
         }
+    }
+
+    fn revoke(seat: u8) -> Change {
+        Change::Revoke {
+            device: device(seat),
+            at: chrono::DateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn non_root_admissions_cannot_clear_a_revocation() {
+        let mut entries = roster(3);
+        entries.insert(id(3), entry(0, 3, &[2], add(3)));
+        entries.insert(id(4), entry(0, 4, &[3], revoke(3)));
+        entries.insert(id(5), entry(2, 5, &[4], add(3)));
+        entries.insert(id(6), entry(2, 3, &[2], add(3)));
+        entries.insert(id(7), entry(0, 3, &[2], add(3)));
+        let view = fold(&entries, device(0), |_, _| false);
+        assert_eq!(view.rejected, [id(5), id(6), id(7)].into());
+        assert_eq!(
+            view.record.unwrap().devices[&device(3)].state,
+            RosterState::Revoked
+        );
+    }
+
+    #[test]
+    fn an_accomplices_void_readmission_cannot_be_a_parent_of_its_revocation() {
+        let mut entries = roster(3);
+        entries.insert(id(3), entry(1, 3, &[2], add(3)));
+        entries.insert(id(4), entry(0, 4, &[3], revoke(1)));
+        entries.insert(id(5), entry(3, 5, &[4], add(1)));
+        entries.insert(id(6), entry(0, 6, &[5], revoke(3)));
+        let view = fold(&entries, device(0), |_, _| false);
+        assert_eq!(view.rejected, [id(5), id(6)].into());
+        assert_eq!(
+            view.record.unwrap().devices[&device(1)].state,
+            RosterState::Revoked
+        );
+
+        entries.insert(id(7), entry(0, 5, &[4], revoke(3)));
+        let view = fold(&entries, device(0), |_, _| false);
+        assert_eq!(view.revoked_writers, [device(1), device(3)].into());
+    }
+
+    #[test]
+    fn readmitted_device_can_confirm_link_and_leave_with_its_new_parents() {
+        let mut entries = roster(3);
+        let confirm = Change::ConfirmOwnership { root: device(0) };
+        entries.insert(id(3), entry(1, 3, &[2], confirm.clone()));
+        entries.insert(id(4), entry(0, 4, &[3], revoke(1)));
+        entries.insert(id(5), entry(1, 4, &[3], add(5)));
+        entries.insert(id(6), entry(0, 5, &[4], add(1)));
+        let view = fold(&entries, device(0), |_, _| false);
+        assert!(view.revoked_writers.is_empty());
+        assert!(!view.record.unwrap().confirmed.contains(&device(1)));
+
+        entries.insert(id(7), entry(1, 6, &[6], confirm));
+        entries.insert(id(8), entry(1, 7, &[7], add(4)));
+        let at = chrono::DateTime::UNIX_EPOCH;
+        entries.insert(id(9), entry(1, 8, &[8], Change::RequestLeave { at }));
+        let view = fold(&entries, device(0), |_, _| false);
+        assert_eq!(view.rejected, [id(5)].into());
+        let record = view.record.unwrap();
+        assert!(record.confirmed.contains(&device(1)));
+        assert_eq!(record.devices[&device(4)].state, RosterState::Active);
+        assert_eq!(record.devices[&device(1)].leave_requested_at, Some(at));
+
+        entries.insert(id(10), entry(0, 9, &[9], revoke(1)));
+        let view = fold(&entries, device(0), |_, _| false);
+        assert_eq!(view.rejected, [id(5)].into());
+        assert_eq!(view.revoked_writers, [device(1)].into());
+        assert_eq!(
+            view.record.unwrap().devices[&device(4)].state,
+            RosterState::Active
+        );
     }
 
     #[test]

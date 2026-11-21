@@ -46,7 +46,7 @@ impl LocalState {
         ) {
             return Err(crate::app::invalid(
                 "device",
-                "this key was revoked and can no longer sign roster edits",
+                "this key is revoked and cannot sign roster edits",
             ));
         }
         self.catalog

@@ -763,3 +763,80 @@ fn private_and_board_rosters_agree_on_concurrent_device_retirement() {
         }
     }
 }
+
+#[cfg(test)]
+#[test]
+fn board_removes_a_revoked_device_despite_a_non_root_readmission() {
+    use super::edit::Change;
+    use crate::{BoardPerson, DeviceMembershipChange, reconcile_person};
+    use pepino_node::{DeviceCredentials, Role};
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = DeviceCredentials::load_or_create(dir.path().join("laptop")).unwrap();
+    let tablet = DeviceCredentials::load_or_create(dir.path().join("tablet")).unwrap();
+    let phone = DeviceCredentials::load_or_create(dir.path().join("phone")).unwrap();
+    let anchor = root.device_id();
+    let identity = IdentityId::from_bytes([60; 32]);
+    let mut ledger = IdentityCatalog::with_root(anchor);
+    let put = |ledger: &mut IdentityCatalog, keys: &DeviceCredentials, change| {
+        ledger
+            .append(portable_scope(), identity, keys, change)
+            .unwrap();
+    };
+    put(
+        &mut ledger,
+        &root,
+        Change::Initialize {
+            display_name: "Ada Gardener".into(),
+            device_name: "Laptop".into(),
+            added_ms: None,
+        },
+    );
+    let add = |keys: &DeviceCredentials, name: &str| Change::Add {
+        device: keys.device_id(),
+        name: name.into(),
+        added_ms: None,
+    };
+    for (keys, name) in [(&tablet, "Greenhouse tablet"), (&phone, "Garden phone")] {
+        put(&mut ledger, &root, add(keys, name));
+        put(&mut ledger, keys, Change::ConfirmOwnership { root: anchor });
+    }
+    let card = |ledger: &IdentityCatalog| IdentityCard::from_ledger(identity, ledger, anchor);
+    let mut board = BoardPerson::introduced(&card(&ledger), anchor, None).unwrap();
+    let revoked = phone.device_id();
+    put(
+        &mut ledger,
+        &root,
+        Change::Revoke {
+            device: revoked,
+            at: chrono::DateTime::UNIX_EPOCH,
+        },
+    );
+    assert!(board.merge(&card(&ledger)).unwrap());
+    put(&mut ledger, &tablet, add(&phone, "Garden phone"));
+    let mut attempted = card(&ledger);
+    attempted.edits = ledger.edits().cloned().collect();
+    assert_eq!(attempted.record().unwrap().rejected_count(), 1);
+    assert!(!board.merge(&attempted).unwrap());
+
+    let row = board.devices().find(|row| row.id == revoked).unwrap();
+    assert_eq!(row.state, RosterState::Revoked);
+    let devices = board
+        .devices()
+        .filter(|row| board.confirms(row.id))
+        .map(|row| row.id)
+        .chain(board.confirmed_revoked_devices())
+        .collect();
+    let enrolled = [
+        (anchor, Role::Write),
+        (tablet.device_id(), Role::Write),
+        (revoked, Role::Write),
+    ]
+    .into();
+    assert_eq!(
+        reconcile_person(&board, &devices, &enrolled, Some(Role::Write)),
+        vec![DeviceMembershipChange::Remove(revoked)]
+    );
+    let remaining = [(anchor, Role::Write), (tablet.device_id(), Role::Write)].into();
+    assert!(reconcile_person(&board, &devices, &remaining, Some(Role::Write)).is_empty());
+}
