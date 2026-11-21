@@ -51,7 +51,8 @@ pub use board_card_wire::BoardCards;
 pub use board_grant::BoardGrant;
 pub use board_membership::{
     BoardDeparture, BoardLeave, DeviceMembershipChange, MUTUAL_REMOVAL_RISK, ManagePerson,
-    MembershipAction, MembershipChange, MembershipRecord, SignedBoardLeave, reconcile_person,
+    MembershipAction, MembershipChange, MembershipRecord, MembershipRefusal, SignedBoardLeave,
+    reconcile_person,
 };
 pub use board_people::BoardPerson;
 pub use board_request::BoardRequest;

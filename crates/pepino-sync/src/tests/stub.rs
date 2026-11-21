@@ -5,6 +5,7 @@ use std::sync::{
 };
 
 use futures_util::{StreamExt, stream};
+use pepino_app::DeviceMembershipChange;
 use pepino_core::{BoardId, DeviceId, EventId};
 use pepino_node::{Error, NodeEvent, NodeEvents, NodeStatus, Role};
 use tokio::sync::{broadcast, mpsc, watch};
@@ -23,6 +24,8 @@ struct Publisher {
     next_fault: Mutex<Option<PublishFault>>,
     operation_role: Mutex<Option<Role>>,
     role_queries: Mutex<Option<watch::Sender<usize>>>,
+    membership: Mutex<BTreeMap<BoardId, BTreeMap<DeviceId, Role>>>,
+    membership_changes: Mutex<Vec<(BoardId, DeviceId, Option<Role>)>>,
 }
 
 #[derive(Clone, Copy)]
@@ -112,6 +115,21 @@ impl Stub {
 
     pub(super) fn set_operation_role(&self, role: Role) {
         *self.publisher.operation_role.lock().unwrap() = Some(role);
+    }
+
+    pub(super) fn set_joined_members(&self, board: BoardId, members: BTreeMap<DeviceId, Role>) {
+        self.publisher
+            .membership
+            .lock()
+            .unwrap()
+            .insert(board, members);
+        if let Some(status) = self.status.lock().unwrap().boards.get_mut(&board) {
+            status.joined = true;
+        }
+    }
+
+    pub(super) fn membership_changes(&self) -> Vec<(BoardId, DeviceId, Option<Role>)> {
+        self.publisher.membership_changes.lock().unwrap().clone()
     }
 
     pub(super) fn stop_deliveries(&self) {
@@ -268,6 +286,46 @@ impl TransportBoard for Board {
                 futures_util::future::ready((!delivery.ack.is_acked()).then_some(Ok(delivery)))
             })
             .boxed())
+    }
+
+    async fn roles(&self) -> Result<BTreeMap<DeviceId, Role>, Error> {
+        Ok(self
+            .publisher
+            .membership
+            .lock()
+            .unwrap()
+            .get(&self.id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn apply_device_change(&self, change: DeviceMembershipChange) -> Result<(), Error> {
+        let mut boards = self.publisher.membership.lock().unwrap();
+        let members = boards.entry(self.id).or_default();
+        let (device, role) = match change {
+            DeviceMembershipChange::Enroll(info, role) => {
+                let device = info.device_id()?;
+                if members.get(&device).is_some_and(|&current| current != role) {
+                    return Err(Error::Member(
+                        "device already has a different direct role".into(),
+                    ));
+                }
+                (device, Some(role))
+            }
+            DeviceMembershipChange::SetRole(device, role) => (device, Some(role)),
+            DeviceMembershipChange::Remove(device) => (device, None),
+        };
+        if let Some(role) = role {
+            members.insert(device, role);
+        } else {
+            members.remove(&device);
+        }
+        self.publisher
+            .membership_changes
+            .lock()
+            .unwrap()
+            .push((self.id, device, role));
+        Ok(())
     }
 
     async fn operation_role(&self, _: EventId) -> Result<Option<Role>, Error> {

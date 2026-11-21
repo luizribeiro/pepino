@@ -1,5 +1,6 @@
 mod directory;
 mod ingest;
+mod membership;
 mod network;
 mod property;
 mod publish;

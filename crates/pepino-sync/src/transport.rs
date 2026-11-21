@@ -193,7 +193,15 @@ impl TransportBoard for BoardHandle {
     }
 
     async fn roles(&self) -> Result<BTreeMap<DeviceId, Role>, Error> {
-        Ok(self.members().await?.into_iter().collect())
+        Ok(self
+            .member_states()
+            .await?
+            .into_iter()
+            .filter_map(|(id, state)| match state {
+                pepino_node::MemberState::Member(role) => Some((id, role)),
+                _ => None,
+            })
+            .collect())
     }
 
     async fn apply_device_change(

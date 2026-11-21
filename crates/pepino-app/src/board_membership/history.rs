@@ -41,6 +41,32 @@ pub struct MembershipRecord {
     pub operation: EventId,
     pub actor: DeviceId,
     pub change: MembershipChange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<MembershipRefusal>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub applied: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub relayed: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MembershipRefusal {
+    AuthorNoLongerManager,
+    LastManager,
+}
+
+impl std::fmt::Display for MembershipRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::AuthorNoLongerManager => "the author no longer has the manage role",
+            Self::LastManager => "the board would lose its last manager",
+        })
+    }
 }
 
 impl MembershipRecord {
@@ -72,7 +98,7 @@ impl LocalState {
         person: PersonKey,
     ) -> BTreeMap<EventId, &MembershipRecord> {
         self.membership_history(board)
-            .filter(|record| record.change.person == person)
+            .filter(|record| record.change.person == person && record.refusal.is_none())
             .map(|record| (record.operation, record))
             .collect()
     }
@@ -202,7 +228,33 @@ impl App {
                     .entry(board)
                     .or_default()
                     .entry(record.operation)
+                    .and_modify(|existing| {
+                        if existing.relayed {
+                            *existing = record.clone();
+                        }
+                    })
                     .or_insert(record);
+            }
+        })
+        .await
+    }
+    pub async fn mark_membership_result(
+        &self,
+        board: BoardId,
+        operation: EventId,
+        result: Result<(), MembershipRefusal>,
+    ) -> Result<(), AppError> {
+        self.update_local(move |local| {
+            if let Some(record) = local
+                .catalog
+                .membership
+                .get_mut(&board)
+                .and_then(|records| records.get_mut(&operation))
+                && !record.applied
+                && record.refusal.is_none()
+            {
+                record.applied = result.is_ok();
+                record.refusal = result.err();
             }
         })
         .await
@@ -248,6 +300,9 @@ mod tests {
         .map(|(id, revision, action)| MembershipRecord {
             operation: EventId::from_bytes([id; 32]),
             actor,
+            refusal: None,
+            applied: false,
+            relayed: false,
             change: MembershipChange {
                 person,
                 action,

@@ -286,11 +286,23 @@ impl LocalState {
         for (board, records) in announcement.own_membership {
             if active_sender && self.shared_access(board).is_some() {
                 let stored = self.catalog.membership.entry(board).or_default();
-                for record in records
+                for mut record in records
                     .into_iter()
                     .filter(|record| record.change.person == own)
                 {
-                    stored.entry(record.operation).or_insert(record);
+                    record.relayed = true;
+                    stored
+                        .entry(record.operation)
+                        .and_modify(|existing| {
+                            if existing.relayed
+                                && existing.change == record.change
+                                && existing.actor == record.actor
+                            {
+                                existing.applied |= record.applied;
+                                existing.refusal = existing.refusal.or(record.refusal);
+                            }
+                        })
+                        .or_insert(record);
                 }
             }
         }
@@ -569,6 +581,9 @@ fn the_bootstrap_catalog_sender_cannot_relay_own_membership() {
             incarnation: None,
             parents: Default::default(),
         },
+        refusal: None,
+        applied: false,
+        relayed: false,
     };
     let announcement = Announcement {
         v: crate::PROTOCOL_VERSION,

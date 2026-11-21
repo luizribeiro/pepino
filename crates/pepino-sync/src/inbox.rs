@@ -218,6 +218,9 @@ async fn ingest_cards<B: TransportBoard>(
                         pepino_app::MembershipRecord {
                             operation: delivery.operation,
                             actor: delivery.signer,
+                            refusal: None,
+                            applied: false,
+                            relayed: false,
                             change,
                         },
                     )

@@ -26,6 +26,8 @@ pub(crate) fn records(local: &LocalState, board: BoardId) -> Vec<Value> {
                 "operation_id": change.operation, "at": change.change.at, "action": action,
                 "person": {"id": key.0, "root": key.1, "name": people.get(&key)},
                 "actor": actor(change.actor), "role": change.change.action.role(),
+                "applied": change.applied && change.refusal.is_none(),
+                "not_applied_reason": change.refusal.map(|reason| reason.to_string()),
                 "superseded": local.membership_superseded(board, change)
             }),
         ));
@@ -69,7 +71,9 @@ pub(crate) fn line(row: &Value) -> String {
         _ if name == by => format!("{at} · {name} left"),
         _ => format!("{at} · {name} left (processed by {by})"),
     };
-    if row["superseded"].as_bool() == Some(true) {
+    if let Some(reason) = row["not_applied_reason"].as_str() {
+        format!("{line} · not applied ({reason})")
+    } else if row["superseded"].as_bool() == Some(true) {
         format!("{line} · superseded")
     } else {
         line

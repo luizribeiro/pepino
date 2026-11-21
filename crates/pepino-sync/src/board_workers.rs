@@ -59,10 +59,7 @@ impl<T: Transport> BoardWorkers<T> {
 
     pub async fn open_missing(&mut self, local: &LocalState) -> Result<(), Error> {
         for board in local.boards().iter().filter(|board| {
-            !matches!(
-                local.board_departure(board.id),
-                Some(pepino_app::BoardDeparture::Left | pepino_app::BoardDeparture::Removed)
-            ) || local.needs_readmission_replay(board.id)
+            !local.board_departure_confirmed(board.id) || local.needs_readmission_replay(board.id)
         }) {
             if self.stopping.has_changed().is_err() {
                 return Ok(());

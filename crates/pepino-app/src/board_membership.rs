@@ -2,7 +2,7 @@ mod forget;
 mod history;
 mod leave;
 
-pub use history::{MembershipAction, MembershipChange, MembershipRecord};
+pub use history::{MembershipAction, MembershipChange, MembershipRecord, MembershipRefusal};
 pub use leave::{BoardDeparture, BoardLeave, SignedBoardLeave};
 
 use std::collections::{BTreeMap, BTreeSet};

@@ -95,6 +95,14 @@ impl LocalState {
         }
     }
 
+    pub fn board_departure_confirmed(&self, board: BoardId) -> bool {
+        self.latest_membership(board, self.own_person_key())
+            .is_some_and(|record| {
+                record.change.action.role().is_none()
+                    && (record.applied || self.catalog.observed_board_removals.contains(&board))
+            })
+    }
+
     pub fn board_leave_requests(&self, board: BoardId) -> impl Iterator<Item = &SignedBoardLeave> {
         self.catalog
             .board_leaves
