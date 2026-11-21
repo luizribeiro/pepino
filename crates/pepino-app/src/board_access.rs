@@ -21,6 +21,17 @@ impl std::fmt::Display for BoardRole {
     }
 }
 
+impl BoardRole {
+    pub fn from_transport(role: pepino_node::Role) -> Option<Self> {
+        match role {
+            pepino_node::Role::Read => Some(Self::Read),
+            pepino_node::Role::Write => Some(Self::Write),
+            pepino_node::Role::Manage => Some(Self::Manage),
+            _ => None,
+        }
+    }
+}
+
 impl From<BoardRole> for pepino_node::Role {
     fn from(role: BoardRole) -> Self {
         match role {
@@ -46,10 +57,9 @@ impl LocalState {
     }
 
     pub fn identity_owned_boards(&self) -> impl DoubleEndedIterator<Item = &crate::LocalBoard> {
-        self.boards().iter().filter(|board| {
-            self.shared_access(board.id)
-                .is_none_or(|access| self.owns_share(access))
-        })
+        self.boards()
+            .iter()
+            .filter(|board| self.shared_access(board.id).is_none())
     }
 
     pub fn owns_share(&self, access: SharedAccess) -> bool {
@@ -60,8 +70,14 @@ impl LocalState {
     }
 
     pub fn waiting_for_access(&self, board: BoardId) -> bool {
-        self.shared_access(board)
-            .is_some_and(|access| !self.owns_share(access) && access.admitted != self.device_id)
+        self.shared_access(board).is_some_and(|access| {
+            access.admitted != self.device_id
+                && !self
+                    .catalog
+                    .observed_members
+                    .get(&board)
+                    .is_some_and(|members| members.contains(&self.device_id))
+        })
     }
 
     pub fn check_board_write(&self, board: &crate::LocalBoard) -> Result<(), AppError> {
@@ -69,6 +85,16 @@ impl LocalState {
             path: format!("board {:?}", board.name),
             reason: reason.into(),
         };
+        if self.needs_readmission_replay(board.id) {
+            return Err(denied(
+                "waiting for board history to sync after readmission",
+            ));
+        }
+        if let Some(departure) = self.board_departure(board.id) {
+            return Err(denied(&format!(
+                "membership {departure}. Local data can still be read"
+            )));
+        }
         if self.waiting_for_access(board.id) {
             return Err(denied("this device is waiting for access"));
         }
@@ -165,4 +191,19 @@ async fn read_members_cannot_enqueue_task_writes() {
         )
         .await;
     assert!(matches!(rename, Err(AppError::PermissionDenied { .. })));
+}
+
+impl crate::App {
+    pub async fn observe_board_role(
+        &self,
+        board: BoardId,
+        role: BoardRole,
+    ) -> Result<(), AppError> {
+        self.update_local(move |local| {
+            if let Some(access) = local.catalog.shared.get_mut(&board) {
+                access.role = role;
+            }
+        })
+        .await
+    }
 }

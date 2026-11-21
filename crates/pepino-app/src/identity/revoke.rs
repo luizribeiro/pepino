@@ -66,11 +66,22 @@ impl App {
             ));
         }
         let boards = local.boards().to_vec();
-        for board in local.identity_owned_boards() {
+        for board in local
+            .boards()
+            .iter()
+            .filter(|board| local.board_departure(board.id).is_none())
+        {
             let states = Node::persisted_members(&self.directory.join(NODE_DATABASE), board.id)
                 .await
                 .ok()
                 .filter(|states| !states.is_empty())
+                .or_else(|| {
+                    (local.waiting_for_access(board.id)
+                        && local
+                            .shared_access(board.id)
+                            .is_some_and(|access| access.role != crate::BoardRole::Manage))
+                    .then(Default::default)
+                })
                 .ok_or_else(|| {
                     invalid(
                         "board",
@@ -88,7 +99,7 @@ impl App {
                 return Err(invalid(
                     "device",
                     format!(
-                        "{:?} would lose its only manager. Use the target device to grant Manage to another member on that board first (BoardHandle::set_role).",
+                        "{:?} would lose its only manager. Promote another person or enroll a second manager device first.",
                         board.name,
                     ),
                 ));
