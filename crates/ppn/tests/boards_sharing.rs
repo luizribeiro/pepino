@@ -847,7 +847,19 @@ fn the_original_inviter_can_leave_after_promoting_a_successor() {
         1,
         "confirmation_required",
     );
-    let result = owner.json(&["board", "leave", "--board", "House", "--yes"]);
+    common::task_error(
+        owner.output(&["board", "leave", "--board", "House", "--yes", "--json"]),
+        1,
+        "confirmation_required",
+    );
+    let result = owner.json(&[
+        "board",
+        "leave",
+        "--board",
+        "House",
+        "--yes",
+        "--i-understand-mutual-removal-risk",
+    ]);
     assert_eq!(result["departure"], "left");
     until(
         || member(&manager, "Ada"),

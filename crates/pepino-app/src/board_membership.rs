@@ -187,6 +187,19 @@ impl ManagePerson {
         devices: &BTreeSet<DeviceId>,
         members: &BTreeMap<DeviceId, Role>,
     ) -> bool {
+        if matches!(self, Self::Leave) && self.affects_managers(devices, members) {
+            let remaining: BTreeSet<_> = members
+                .iter()
+                .filter(|(device, role)| **role == Manage && !devices.contains(device))
+                .map(|(&device, _)| {
+                    local
+                        .board_people(board)
+                        .find(|person| person.confirms(device))
+                        .map_or((None, device), |person| (Some(person.id), person.key().1))
+                })
+                .collect();
+            return remaining.len() == 1;
+        }
         target != local.own_person_key()
             && !matches!(self, Self::Role(BoardRole::Manage))
             && (self.affects_managers(devices, members)
@@ -251,6 +264,13 @@ mod tests {
         assert!(
             ManagePerson::Leave
                 .check(local, board, me, &mine, &memberships, false)
+                .unwrap_err()
+                .to_string()
+                .contains("mutual")
+        );
+        assert!(
+            ManagePerson::Leave
+                .check(local, board, me, &mine, &memberships, true)
                 .is_ok()
         );
         for action in [ManagePerson::Remove, ManagePerson::Role(BoardRole::Write)] {

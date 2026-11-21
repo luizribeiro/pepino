@@ -58,7 +58,11 @@ enum Operation {
     },
     /// Leave the board on all your devices.
     #[command(after_help = example_help(&["ppn board leave --board House --yes"]))]
-    Leave,
+    Leave {
+        /// Acknowledge that concurrent mutual manager departures can destroy access.
+        #[arg(long)]
+        i_understand_mutual_removal_risk: bool,
+    },
     /// Delete this host's local history of a board you left or were removed from.
     #[command(after_help = example_help(&["ppn board forget House --yes"]))]
     Forget {
@@ -143,7 +147,7 @@ impl Args {
             Operation::Invite { .. }
                 | Operation::Role { .. }
                 | Operation::Remove { .. }
-                | Operation::Leave
+                | Operation::Leave { .. }
                 | Operation::Join { .. }
                 | Operation::Request { .. }
                 | Operation::Use { .. }
@@ -189,14 +193,16 @@ pub fn run(
                 i_understand_mutual_removal_risk,
             );
         }
-        Operation::Leave => {
+        Operation::Leave {
+            i_understand_mutual_removal_risk,
+        } => {
             return manage::run(
                 context,
                 config_path,
                 allow_start,
                 "me",
                 pepino_app::ManagePerson::Leave,
-                false,
+                i_understand_mutual_removal_risk,
             );
         }
         Operation::Forget { board } => return manage::forget(context, &board),
