@@ -208,12 +208,7 @@ impl Render for Members {
                     row.push_str(&format!(" · added {at}"));
                 }
                 if let Some(at) = device["revocation"]["at"].as_str() {
-                    let status = if device["revocation"]["mutual"].as_bool() == Some(true) {
-                        "mutually revoked"
-                    } else {
-                        "revoked"
-                    };
-                    row.push_str(&format!(" · {status} {at}"));
+                    row.push_str(&format!(" · revoked {at}"));
                 }
                 lines.push(row);
             }

@@ -187,7 +187,7 @@ fn a_daemon_resumes_an_offline_revocation_and_readmission_restores_the_gap() {
 }
 
 #[test]
-fn a_leave_request_remains_visible_then_another_daemon_completes_it() {
+fn a_leave_request_remains_visible_until_the_first_daemon_completes_it() {
     let directory = tempfile::tempdir().unwrap();
     let network = directory.path().file_name().unwrap().to_str().unwrap();
     let owner = Host::owner(network);
@@ -202,6 +202,11 @@ fn a_leave_request_remains_visible_then_another_daemon_completes_it() {
     );
     let request = tablet.json(&["device", "leave", "--yes"]);
     assert_eq!(request["pending"], true);
+    assert!(
+        tablet
+            .run(&["device", "leave", "--yes"])
+            .contains("The first device must complete the removal.")
+    );
     assert!(tablet.run(&["status"]).contains("requested to leave"));
     assert!(tablet.run(&["device", "ls"]).contains("leave requested"));
     owner.start();

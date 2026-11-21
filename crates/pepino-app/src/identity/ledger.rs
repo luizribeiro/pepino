@@ -34,7 +34,7 @@ impl IdentityCatalog {
     }
 
     pub(crate) fn refresh_projection(&mut self, board: BoardId, identity: IdentityId) {
-        if self.projection_version < 3 && !self.edits.is_empty() {
+        if self.projection_version < 4 && !self.edits.is_empty() {
             self.refresh(board, identity);
         }
         self.sanitize_names();
@@ -204,7 +204,7 @@ impl IdentityCatalog {
             } = self.fold(root, board, identity);
             self.record = record;
             self.rejected = rejected;
-            self.projection_version = 3;
+            self.projection_version = 4;
             self.sanitize_names();
         }
     }

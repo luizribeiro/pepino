@@ -650,6 +650,21 @@ fn private_and_board_rosters_agree_on_concurrent_device_retirement() {
         let mut first_view = first_roster.clone();
         let mut second_view = base.clone();
         let at = chrono::DateTime::from_timestamp(1795145000, 0).unwrap();
+        let spare = DeviceId::from_bytes([88; 32]);
+        if first.device_id() == anchor {
+            second_view
+                .append(
+                    origin,
+                    identity,
+                    second,
+                    Change::Add {
+                        device: spare,
+                        name: "Workshop spare".into(),
+                        added_ms: None,
+                    },
+                )
+                .unwrap();
+        }
         first_view
             .append(
                 origin,
@@ -695,6 +710,8 @@ fn private_and_board_rosters_agree_on_concurrent_device_retirement() {
         let mut board = BoardPerson::introduced(&card(&base), anchor, None).unwrap();
         assert!(board.merge(&card(&first_view)).unwrap());
         assert!(board.merge(&card(&second_view)).unwrap());
+        assert!(private.device(spare).is_none());
+        assert!(!board.confirms(spare));
         assert!(board.devices().eq(private.devices()));
         assert!(
             board
@@ -710,7 +727,7 @@ fn private_and_board_rosters_agree_on_concurrent_device_retirement() {
             .map(|row| row.id)
             .chain(board.confirmed_revoked_devices())
             .collect();
-        if confirmation_is_concurrent {
+        if confirmation_is_concurrent && first.device_id() == anchor {
             assert!(!board.confirms(phone.device_id()));
             assert!(board.confirms_revoked_device(phone.device_id()));
         }
@@ -720,26 +737,29 @@ fn private_and_board_rosters_agree_on_concurrent_device_retirement() {
             (phone.device_id(), Role::Write),
         ]
         .into();
+        let revoked = if first.device_id() == anchor {
+            Some(second.device_id())
+        } else if second.device_id() == anchor {
+            Some(first.device_id())
+        } else {
+            None
+        };
         assert_eq!(
             reconcile_person(&board, &devices, &enrolled, Some(Role::Write)),
-            private
-                .devices()
-                .filter(|row| row.state == RosterState::Revoked)
-                .map(|row| DeviceMembershipChange::Remove(row.id))
+            revoked
+                .into_iter()
+                .map(DeviceMembershipChange::Remove)
                 .collect::<Vec<_>>(),
         );
 
-        for keys in [first, second] {
+        for keys in [&root, &tablet, &phone] {
             let row = private.device(keys.device_id()).unwrap();
-            if keys.device_id() == anchor {
-                assert_eq!(row.state, RosterState::Active);
+            let expected = if Some(keys.device_id()) == revoked {
+                RosterState::Revoked
             } else {
-                assert_eq!(row.state, RosterState::Revoked);
-                assert_eq!(
-                    row.revocation.as_ref().unwrap().mutual,
-                    first.device_id() != anchor && second.device_id() != anchor
-                );
-            }
+                RosterState::Active
+            };
+            assert_eq!(row.state, expected);
         }
     }
 }

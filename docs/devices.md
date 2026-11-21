@@ -109,7 +109,7 @@ creates the initial record. Older additions keep an unknown add time.
 
 ## Removing a device
 
-From another active device, run `ppn device revoke 'Greenhouse tablet'`.
+From the first device, run `ppn device revoke 'Greenhouse tablet'`.
 The confirmation shows the key fingerprint and boards affected. Pass
 `--yes` when running without a terminal. Use `--json` for per-board
 results. The signed revocation stays in the roster, and linked managers'
@@ -117,22 +117,18 @@ daemons retry any board they could not update. You can also rerun the
 command. If membership is unavailable locally, sync the board and retry.
 Grant another device Manage on any board where the target is the only
 manager before revoking it. The node API exposes `BoardHandle::set_role`
-to promote a member on a particular board. Avoid revoking another manager
-while that manager is revoking you. Concurrent removals can leave the
-board without a manager.
+to promote a member on a particular board.
 
-Revoke from your first device when you can, since it anchors the identity
-and wins a contested revocation. When two other devices revoke each other
-concurrently, both are revoked. If the first device is stolen, the identity
-cannot be defended and you must create a new one.
+The first device anchors the identity. Only it can revoke devices, so keep it.
+If you lose it, you can still use and link devices, but you lose the ability
+to revoke them. If it is stolen, create a new identity and ask to be re-invited
+to shared boards. Moving the anchor to another device is unsupported.
 
-To retire the device you're using, run `ppn device leave` (or
-`ppn device leave --yes` in a script). The daemon publishes a signed
-request, and the host pauses task sync. Another active device's daemon
-must process the request. Until it does, `ppn status` and `ppn device ls`
-show the pending leave. The last active device must link another device
-before it can leave. To wipe the retired host, wait for removal, stop its
-daemon, and delete the data directory and credentials file listed by the
+On a linked device, run `ppn device leave` (or `ppn device leave --yes` in a
+script). The daemon publishes a signed request and the host pauses task sync.
+The first device's daemon processes the request. `ppn status` and
+`ppn device ls` show the pending leave. To wipe the retired host, wait for
+removal, stop its daemon, and delete the data directory and credentials file listed by the
 command. Delete copies in backups separately if you want them wiped too.
 
 Removal rotates board keys. The removed device cannot read new data even

@@ -462,7 +462,7 @@ fn the_inviter_rejects_an_expired_member_bundle() {
 }
 
 #[test]
-fn a_linked_device_can_revoke_the_device_that_accepted_a_share() {
+fn the_first_device_can_revoke_a_linked_device_from_a_shared_board() {
     let dir = tempfile::tempdir().unwrap();
     let network = dir.path().file_name().unwrap().to_str().unwrap();
     let owner = host(network, "Ada", "Laptop", "Owner private");
@@ -490,39 +490,29 @@ fn a_linked_device_can_revoke_the_device_that_accepted_a_share() {
         |row| row["membership"] == "joined",
         WAIT,
     );
-    let output = linked.output(&[
+    let denied = common::task_error(
+        linked.output(&["device", "revoke", "Phone", "--yes", "--json"]),
+        5,
+        "permission_denied",
+    );
+    assert!(
+        denied["message"]
+            .as_str()
+            .unwrap()
+            .contains("run this on Phone")
+    );
+    let denied = linked.output(&["device", "revoke", "Phone", "--yes"]);
+    assert_eq!(denied.status.code(), Some(5));
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("run this on Phone"));
+
+    let report = guest.json(&[
         "device",
         "revoke",
-        "Phone",
+        "Linked tablet",
         "--yes",
         "--timeout",
         "60s",
-        "--json",
     ]);
-    assert!(output.status.success(), "{output:?}");
-    let warning: Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(warning["kind"], "warning");
-    assert!(
-        warning["warning"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("first device wins a contested revocation")
-    );
-    let report = common::as_json(&String::from_utf8(output.stdout).unwrap());
-    let notices = report["notices"].as_array().unwrap();
-    assert_eq!(notices.len(), 2);
-    assert!(
-        notices[0]
-            .as_str()
-            .unwrap()
-            .contains("this device is revoked too")
-    );
-    assert!(
-        notices[1]
-            .as_str()
-            .unwrap()
-            .contains("first device wins a contested revocation")
-    );
     let rows = report["boards"].as_array().unwrap();
     assert!(
         rows.iter()
@@ -533,13 +523,18 @@ fn a_linked_device_can_revoke_the_device_that_accepted_a_share() {
     until(
         || member(&owner, "Ben"),
         |person| {
-            person["devices"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|device| device["name"] == "Phone" && device["membership"] == "removed")
+            person["devices"].as_array().unwrap().iter().any(|device| {
+                device["name"] == "Linked tablet" && device["membership"] == "removed"
+            })
         },
         WAIT,
+    );
+    assert!(
+        member(&owner, "Ben")["devices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|device| { device["name"] == "Phone" && device["membership"] == "member" })
     );
 }
 

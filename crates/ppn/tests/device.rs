@@ -254,7 +254,7 @@ fn revoke_guards_the_current_device_and_confirms_another_device() {
         self_error["message"]
             .as_str()
             .unwrap()
-            .contains("another device")
+            .contains("first device anchors the identity")
     );
     let mut command = sandbox.command();
     command.args(["device", "revoke", "Garden tablet"]);
@@ -313,7 +313,7 @@ fn revoke_guards_the_current_device_and_confirms_another_device() {
 }
 
 #[test]
-fn leaving_the_last_active_device_fails_before_confirmation() {
+fn the_first_device_cannot_leave() {
     let (sandbox, _) = uninitialized_task_sandbox();
     sandbox.run(&["init", "--name", "Ada Gardener"]);
     let output = sandbox
@@ -326,8 +326,15 @@ fn leaving_the_last_active_device_fails_before_confirmation() {
         result["message"]
             .as_str()
             .unwrap()
-            .contains("last active device")
+            .contains("first device anchors the identity")
     );
+    let human = sandbox
+        .command()
+        .args(["device", "leave"])
+        .output()
+        .unwrap();
+    assert_eq!(human.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&human.stderr).contains("first device anchors the identity"));
 }
 
 #[cfg(pepino_network_tests)]

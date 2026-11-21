@@ -17,8 +17,6 @@ pub struct Revocation {
     #[serde(with = "wire_id")]
     pub by: DeviceId,
     pub at: chrono::DateTime<chrono::Utc>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub mutual: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -76,13 +74,6 @@ impl Record {
         }
     }
 
-    pub(super) fn active_count(&self) -> usize {
-        self.devices
-            .values()
-            .filter(|device| device.state == RosterState::Active)
-            .count()
-    }
-
     pub(super) fn revoke(&mut self, device: DeviceId, revocation: Revocation) {
         if let Some(row) = self.devices.get_mut(&device) {
             row.state = RosterState::Revoked;
@@ -91,77 +82,70 @@ impl Record {
         }
     }
 
-    pub(super) fn fold<'a>(
-        edits: impl IntoIterator<Item = (&'a Change, DeviceId)>,
-    ) -> Option<Self> {
-        let mut record = None;
-        for (change, writer) in edits {
-            if let Change::Initialize {
-                display_name,
-                device_name,
+    pub(super) fn apply(record: &mut Option<Self>, change: &Change, writer: DeviceId) {
+        if let Change::Initialize {
+            display_name,
+            device_name,
+            added_ms,
+        } = change
+        {
+            record.get_or_insert_with(|| Self {
+                display_name: display_name.clone(),
+                confirmed: [writer].into(),
+                retirement_confirmations: BTreeSet::new(),
+                devices: [(
+                    writer,
+                    RosterDevice::active(writer, device_name.clone(), None, *added_ms),
+                )]
+                .into(),
+            });
+            return;
+        }
+        let Some(current) = record else { return };
+        match change {
+            Change::Add {
+                device,
+                name,
                 added_ms,
-            } = change
-            {
-                record.get_or_insert_with(|| Self {
-                    display_name: display_name.clone(),
-                    confirmed: [writer].into(),
-                    retirement_confirmations: BTreeSet::new(),
-                    devices: [(
-                        writer,
-                        RosterDevice::active(writer, device_name.clone(), None, *added_ms),
-                    )]
-                    .into(),
-                });
-                continue;
-            }
-            let current = record.as_mut()?;
-            match change {
-                Change::Add {
-                    device,
-                    name,
-                    added_ms,
-                } => {
-                    if current
-                        .devices
-                        .get(device)
-                        .is_none_or(|row| row.state == RosterState::Revoked)
-                    {
-                        current.devices.insert(
-                            *device,
-                            RosterDevice::active(*device, name.clone(), Some(writer), *added_ms),
-                        );
-                    }
-                }
-                Change::RequestLeave { at } => {
-                    if let Some(row) = current.devices.get_mut(&writer)
-                        && row.state == RosterState::Active
-                    {
-                        row.leave_requested_at.get_or_insert(*at);
-                    }
-                }
-                Change::Revoke { device, at } => {
-                    current.revoke(
+            } => {
+                if current
+                    .devices
+                    .get(device)
+                    .is_none_or(|row| row.state == RosterState::Revoked)
+                {
+                    current.devices.insert(
                         *device,
-                        Revocation {
-                            by: writer,
-                            at: *at,
-                            mutual: false,
-                        },
+                        RosterDevice::active(*device, name.clone(), Some(writer), *added_ms),
                     );
                 }
-                Change::RenameIdentity(name) => current.display_name.clone_from(name),
-                Change::RenameDevice(device, name) => {
-                    if let Some(device) = current.devices.get_mut(device) {
-                        device.name.clone_from(name);
-                    }
-                }
-                Change::ConfirmOwnership { .. } => {
-                    current.confirmed.insert(writer);
-                }
-                Change::Initialize { .. } | Change::ConfirmDevice => (),
             }
+            Change::RequestLeave { at } => {
+                if let Some(row) = current.devices.get_mut(&writer)
+                    && row.state == RosterState::Active
+                {
+                    row.leave_requested_at.get_or_insert(*at);
+                }
+            }
+            Change::Revoke { device, at } => {
+                current.revoke(
+                    *device,
+                    Revocation {
+                        by: writer,
+                        at: *at,
+                    },
+                );
+            }
+            Change::RenameIdentity(name) => current.display_name.clone_from(name),
+            Change::RenameDevice(device, name) => {
+                if let Some(device) = current.devices.get_mut(device) {
+                    device.name.clone_from(name);
+                }
+            }
+            Change::ConfirmOwnership { .. } => {
+                current.confirmed.insert(writer);
+            }
+            Change::Initialize { .. } | Change::ConfirmDevice => (),
         }
-        record
     }
 }
 
@@ -181,7 +165,11 @@ fn renaming_preserves_the_device_admission() {
         added_ms: Some(1795144900000),
     };
     let rename = Change::RenameDevice(peer, "Garden tablet".into());
-    let record = Record::fold([(&initialize, owner), (&add, owner), (&rename, peer)]).unwrap();
+    let mut record = None;
+    for (change, writer) in [(&initialize, owner), (&add, owner), (&rename, peer)] {
+        Record::apply(&mut record, change, writer);
+    }
+    let record = record.unwrap();
     assert_eq!(record.devices[&peer].name, "Garden tablet");
     assert_eq!(record.devices[&peer].added_by, Some(owner));
     assert_eq!(

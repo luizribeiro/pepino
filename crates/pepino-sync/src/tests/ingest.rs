@@ -378,21 +378,65 @@ async fn shutdown_commits_and_acknowledges_the_delivery_it_already_took() {
 
 #[tokio::test]
 async fn a_pending_leave_pauses_incoming_task_updates() {
+    use pepino_app::{App, DeviceGrant, OpenOptions, PeerHint, SignedGrant};
+    use pepino_node::{Node, NodeSettings};
+
     let dir = tempfile::tempdir().unwrap();
-    let app = pepino_app::App::init(dir.path(), directory::NOW)
+    let laptop = dir.path().join("laptop");
+    let tablet = dir.path().join("tablet");
+    let root = App::init(&laptop, directory::NOW).await.unwrap();
+    let keys = root.identity_credentials().unwrap();
+    let peer = keys.device_id();
+    let request = App::request_device(
+        &tablet,
+        OpenOptions {
+            device_name: Some("Greenhouse tablet".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let local = request.id;
+    root.remember_device(local, request.name.clone(), None)
         .await
         .unwrap();
-    let local = app.local_state().device_id;
-    let board = app.local_state().catalog_board();
-    let peer = DeviceId::from_bytes([51; 32]);
-    app.remember_device(peer, "Ferrum".into(), None)
+    let roster = root.fresh_local_state().await.unwrap();
+    let board = roster.catalog_board();
+    let grant = DeviceGrant {
+        recipient: local,
+        request: request.binding(),
+        identity: roster.identity_id,
+        display_name: roster.display_name().into(),
+        boards: roster.boards().to_vec(),
+        devices: roster.devices(),
+        peer: PeerHint {
+            id: peer,
+            relay_url: None,
+        },
+    };
+    App::join_device(
+        &tablet,
+        SignedGrant::issue(&grant, &request, &keys).unwrap(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let app = App::open(&tablet, directory::NOW).await.unwrap();
+    app.reconcile_identity(peer, &app.identity_credentials().unwrap())
         .await
         .unwrap();
+    let node = Node::spawn(NodeSettings::offline(keys, laptop.join("node.sqlite")))
+        .await
+        .unwrap();
+    let member = node.member_info().await.unwrap();
+    node.shutdown().await.unwrap();
+    let catalog = roster.encode_catalog(&member).unwrap();
+    assert!(app.receive_catalog(board, peer, &catalog).await.unwrap());
     app.record_leave_request(std::time::SystemTime::now().into())
         .await
         .unwrap();
     let node = Arc::new(Stub::new(local));
-    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+    let engine = SyncEngine::start(Default::default(), node.clone(), &tablet)
         .await
         .unwrap();
     let mut receipt = node.deliver(board, peer, vec![0x82, 2, 0xf6]);

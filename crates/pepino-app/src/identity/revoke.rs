@@ -6,8 +6,13 @@ use crate::{App, AppError, LocalState, app::invalid, initialize::NODE_DATABASE};
 
 use super::{RosterDevice, RosterState, edit::Change};
 
+const FIRST_DEVICE: &str = "The first device anchors the identity and cannot be revoked or leave.";
+
 impl LocalState {
     pub fn check_can_leave(&self) -> Result<(), AppError> {
+        if self.roster_root() == Some(self.device_id) {
+            return Err(invalid("device", FIRST_DEVICE));
+        }
         if self.device_revocation().is_none() && self.device_leave_requested_at().is_some() {
             return Ok(());
         }
@@ -18,30 +23,32 @@ impl LocalState {
                 "wait for an active identity roster before leaving",
             ));
         }
-        if self
-            .roster()
-            .values()
-            .filter(|row| row.state == RosterState::Active)
-            .count()
-            < 2
-        {
-            return Err(invalid(
-                "device",
-                "the last active device cannot leave; link another device first",
-            ));
-        }
         Ok(())
     }
 
     pub fn revocation_target(&self, reference: &str) -> Result<RosterDevice, AppError> {
-        let id = self.resolve_device(reference)?;
-        if id == self.device_id {
-            return Err(invalid(
+        let root = self.roster_root().ok_or_else(|| {
+            invalid(
                 "device",
-                "run this command from another device, or use `ppn device leave` to retire this one",
-            ));
+                "wait for the identity roster to sync before revoking a device",
+            )
+        })?;
+        let mut roster = self.roster();
+        if root != self.device_id {
+            let name = roster
+                .get(&root)
+                .map_or_else(|| root.to_string(), |row| row.name.clone());
+            return Err(AppError::PermissionDenied {
+                path: "device revoke".into(),
+                reason: format!("Only the first device can revoke. Please run this on {name}."),
+            });
         }
-        self.roster()
+        self.check_device_write()?;
+        let id = self.resolve_device(reference)?;
+        if id == root {
+            return Err(invalid("device", FIRST_DEVICE));
+        }
+        roster
             .remove(&id)
             .ok_or_else(|| invalid("device", "device is missing from the identity roster"))
     }
@@ -55,7 +62,6 @@ impl App {
     ) -> Result<LocalState, AppError> {
         let keys = self.identity_credentials()?;
         let local = self.fresh_local_state().await?;
-        local.check_device_write()?;
         if local.revocation_target(&device.to_string())?.state == RosterState::Revoked {
             return Ok(local);
         }
@@ -112,7 +118,6 @@ impl App {
             }
         }
         self.try_update_local_state(move |local| {
-            local.check_device_write()?;
             if local.boards() != boards || !local.active_roster_device(local.device_id) {
                 return Err(AppError::Busy);
             }
@@ -141,7 +146,7 @@ async fn revocation_keeps_the_first_signed_record_when_retried() {
             .await
             .unwrap_err()
             .to_string()
-            .contains("device leave")
+            .contains(FIRST_DEVICE)
     );
     let first = app.record_device_revocation(tablet, at).await.unwrap();
     drop(app);
@@ -173,7 +178,7 @@ impl App {
 
 #[cfg(test)]
 #[tokio::test]
-async fn leave_requires_another_active_device_and_stays_pending() {
+async fn the_first_device_cannot_leave_even_with_other_active_devices() {
     let dir = tempfile::tempdir().unwrap();
     let app = App::init(dir.path(), 0).await.unwrap();
     let at = DateTime::from_timestamp(1795145000, 0).unwrap();
@@ -182,21 +187,17 @@ async fn leave_requires_another_active_device_and_stays_pending() {
             .await
             .unwrap_err()
             .to_string()
-            .contains("last active")
+            .contains(FIRST_DEVICE)
     );
-    let tablet = DeviceId::from_bytes([51; 32]);
-    app.remember_device(tablet, "Garden tablet".into(), None)
+    app.remember_device(DeviceId::from_bytes([51; 32]), "Garden tablet".into(), None)
         .await
         .unwrap();
-    let pending = app.record_leave_request(at).await.unwrap();
-    let device = &pending.roster()[&pending.device_id];
-    assert_eq!(device.leave_requested_at, Some(at));
-    assert_eq!(device.state, RosterState::Active);
-    assert_eq!(
-        pending,
-        app.record_leave_request(at + chrono::TimeDelta::seconds(1))
+    assert!(
+        app.record_leave_request(at)
             .await
-            .unwrap()
+            .unwrap_err()
+            .to_string()
+            .contains(FIRST_DEVICE)
     );
 }
 

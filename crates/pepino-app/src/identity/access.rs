@@ -14,7 +14,14 @@ impl LocalState {
             .identity
             .device(self.device_id)
             .and_then(|device| device.revocation.as_ref())
-            .or(self.catalog.observed_catalog_removal.as_ref())
+            .or_else(|| {
+                self.catalog
+                    .observed_catalog_removal
+                    .as_ref()
+                    .filter(|removal| {
+                        self.roster_root() == Some(removal.by) && self.device_id != removal.by
+                    })
+            })
     }
 
     pub fn device_leave_requested_at(&self) -> Option<DateTime<Utc>> {
@@ -69,48 +76,10 @@ impl App {
             local
                 .catalog
                 .observed_catalog_removal
-                .get_or_insert(Revocation {
-                    by,
-                    at,
-                    mutual: false,
-                });
+                .get_or_insert(Revocation { by, at });
         })
         .await
     }
-}
-
-#[cfg(test)]
-#[tokio::test]
-async fn a_pending_leave_refuses_writes_but_allows_reads() {
-    use crate::{App, ReadRequest, Request, WriteRequest};
-
-    let dir = tempfile::tempdir().unwrap();
-    let mut app = App::init(dir.path(), 0).await.unwrap();
-    app.remember_device(
-        pepino_core::DeviceId::from_bytes([52; 32]),
-        "Ferrum".into(),
-        None,
-    )
-    .await
-    .unwrap();
-    app.record_leave_request(DateTime::from_timestamp(1795145000, 0).unwrap())
-        .await
-        .unwrap();
-    assert!(matches!(
-        app.handle(
-            Request::Write(WriteRequest::IdentityRename {
-                name: "Renamed Workshop".into()
-            }),
-            0
-        )
-        .await,
-        Err(AppError::DeviceLeaving)
-    ));
-    assert!(
-        app.handle(Request::Read(ReadRequest::Status), 0)
-            .await
-            .is_ok()
-    );
 }
 
 #[cfg(test)]
@@ -126,7 +95,12 @@ async fn an_authenticated_catalog_removal_is_retained_across_restart() {
     drop(app);
     let local = LocalState::load(dir.path()).unwrap();
     assert!(local.needs_readmission_replay(board));
+    assert!(local.check_device_write().is_ok());
+    let mut linked = local.clone();
+    linked.device_id = by;
+    let root = local.roster_root().unwrap();
+    linked.catalog.observed_catalog_removal.as_mut().unwrap().by = root;
     assert!(
-        matches!(local.check_device_write(), Err(AppError::DeviceRevoked { by: signer, at: time, .. }) if signer == by && time == at)
+        matches!(linked.check_device_write(), Err(AppError::DeviceRevoked { by: signer, at: time, .. }) if signer == root && time == at)
     );
 }

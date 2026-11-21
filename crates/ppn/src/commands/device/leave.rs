@@ -24,7 +24,7 @@ pub(super) fn run(
         credentials: config.credentials_file.value.as_path().to_owned(),
     };
     let prompt = format!(
-        "Retire {} from {}? This device will stop syncing tasks. Another active device must complete the removal. Previously synced data will stay on disk.",
+        "Retire {} from {}? This device will stop syncing tasks. The first device must complete the removal. Previously synced data will stay on disk.",
         single_line(local.device_name()),
         single_line(local.display_name()),
     );
@@ -66,7 +66,7 @@ impl Render for Leave {
             "Start the daemon to publish the request."
         };
         format!(
-            "Leave requested. {publication} Another active device must complete the removal. Task sync is paused on this device.\nExisting tasks, the identity record, and the local keys remain on disk. Check `ppn status` to see when the request is complete. To wipe this device, stop the daemon and delete the data directory ({}) and credentials file ({}).",
+            "Leave requested. {publication} The first device must complete the removal. Task sync is paused on this device.\nExisting tasks, the identity record, and the local keys remain on disk. Check `ppn status` to see when the request is complete. To wipe this device, stop the daemon and delete the data directory ({}) and credentials file ({}).",
             single_line(&self.data.display().to_string()),
             single_line(&self.credentials.display().to_string()),
         )
