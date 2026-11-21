@@ -110,6 +110,19 @@ impl LocalState {
             .unwrap_or_default()
     }
 
+    pub fn board_person_labels(&self, board: BoardId) -> BTreeMap<PersonKey, String> {
+        let mut labels = self.person_labels();
+        for (key, label) in &mut labels {
+            if self
+                .latest_membership(board, *key)
+                .is_some_and(|record| record.change.action.role().is_none())
+            {
+                label.push_str(" (former member)");
+            }
+        }
+        labels
+    }
+
     pub(crate) fn has_board_person_conflict(&self, board: BoardId, id: IdentityId) -> bool {
         let own = (id == self.identity_id).then(|| self.own_person_key());
         self.board_people(board)
@@ -122,7 +135,7 @@ impl LocalState {
     }
 
     pub fn identity_labels(&self, board: BoardId) -> BTreeMap<IdentityId, String> {
-        let labels = self.person_labels();
+        let labels = self.board_person_labels(board);
         let mut names = BTreeMap::<IdentityId, Vec<String>>::new();
         for key in self
             .board_people(board)
@@ -175,12 +188,9 @@ impl LocalState {
         let mut devices = BTreeMap::<DeviceId, (PersonKey, String)>::new();
         let mut conflicts = BTreeSet::new();
         for person in self.board_people(board) {
+            let roster = self.membership_devices(board, person.key());
             for device in person.devices() {
-                let admitted = device.id == person.first_device
-                    || (person.invited_by.is_none()
-                        && !self.board_people(board).any(|other| {
-                            other.key() != person.key() && other.first_device == device.id
-                        }));
+                let admitted = device.id == person.first_device || roster.contains(&device.id);
                 if admitted
                     && let Some((other, _)) =
                         devices.insert(device.id, (person.key(), device.name.clone()))
