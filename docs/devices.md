@@ -121,6 +121,11 @@ to promote a member on a particular board. Avoid revoking another manager
 while that manager is revoking you. Concurrent removals can leave the
 board without a manager.
 
+Revoke from your first device when you can, since it anchors the identity
+and wins a contested revocation. When two other devices revoke each other
+concurrently, both are revoked. If the first device is stolen, the identity
+cannot be defended and you must create a new one.
+
 To retire the device you're using, run `ppn device leave` (or
 `ppn device leave --yes` in a script). The daemon publishes a signed
 request, and the host pauses task sync. Another active device's daemon

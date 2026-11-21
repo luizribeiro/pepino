@@ -490,7 +490,39 @@ fn a_linked_device_can_revoke_the_device_that_accepted_a_share() {
         |row| row["membership"] == "joined",
         WAIT,
     );
-    let report = linked.json(&["device", "revoke", "Phone", "--yes", "--timeout", "60s"]);
+    let output = linked.output(&[
+        "device",
+        "revoke",
+        "Phone",
+        "--yes",
+        "--timeout",
+        "60s",
+        "--json",
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let warning: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(warning["kind"], "warning");
+    assert!(
+        warning["warning"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("first device wins a contested revocation")
+    );
+    let report = common::as_json(&String::from_utf8(output.stdout).unwrap());
+    let notices = report["notices"].as_array().unwrap();
+    assert_eq!(notices.len(), 2);
+    assert!(
+        notices[0]
+            .as_str()
+            .unwrap()
+            .contains("this device is revoked too")
+    );
+    assert!(
+        notices[1]
+            .as_str()
+            .unwrap()
+            .contains("first device wins a contested revocation")
+    );
     let rows = report["boards"].as_array().unwrap();
     assert!(
         rows.iter()

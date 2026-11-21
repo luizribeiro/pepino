@@ -16,6 +16,10 @@ use super::*;
 
 const CONSEQUENCES: &str = "Once removed, the device can no longer read anything new. It keeps everything it already had. If offline, it may never receive notice and will show stale data. Adding it again gives it the full history, including the time it was removed. Concurrent revocations between managers can leave a board without a manager.";
 
+const CONTEST_NOTE: &str = "If the revoked device contests, this device is revoked too.";
+const ROOT_WARNING: &str =
+    "The first device wins a contested revocation. If it is stolen, create a new identity.";
+
 pub(super) fn run(context: &Context<'_>, reference: &str) -> Result<CommandResult, CliError> {
     let client = AppClient::open(context)?;
     let local = client.local_state();
@@ -30,16 +34,32 @@ pub(super) fn run(context: &Context<'_>, reference: &str) -> Result<CommandResul
         .iter()
         .map(|board| single_line(&board.name))
         .collect::<Vec<_>>();
-    let prompt = format!(
+    let root = local.roster_root();
+    let notices: Vec<_> = [
+        (root.is_some_and(|root| root != local.device_id)).then_some(CONTEST_NOTE),
+        (root == Some(target.id)).then_some(ROOT_WARNING),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let mut prompt = format!(
         "Revoke {name} ({})? Key fingerprint {fingerprint}.\nBoards affected: {}.\n{CONSEQUENCES}",
         short_id(&id),
         boards.join(", "),
     );
+    for notice in &notices {
+        prompt.push('\n');
+        if *notice == ROOT_WARNING {
+            prompt.push_str("Warning: ");
+        }
+        prompt.push_str(notice);
+    }
     let mut result = Report {
         device: target.id,
         name,
         confirmed: false,
         boards: Vec::new(),
+        notices,
     };
     if !context.confirm(&prompt)? {
         return Ok(CommandResult::document(result));
@@ -86,7 +106,16 @@ pub(super) fn run(context: &Context<'_>, reference: &str) -> Result<CommandResul
             })
             .collect(),
     };
-    Ok(CommandResult::document(result))
+    let mut output = CommandResult::document(result);
+    if context.yes {
+        output = output
+            .with_human_note(
+                root.is_some_and(|root| root != local.device_id)
+                    .then(|| CONTEST_NOTE.to_owned()),
+            )
+            .with_warnings((root == Some(target.id)).then(|| ROOT_WARNING.to_owned()));
+    }
+    Ok(output)
 }
 
 struct Report {
@@ -94,6 +123,7 @@ struct Report {
     name: String,
     confirmed: bool,
     boards: Vec<BoardRemoval>,
+    notices: Vec<&'static str>,
 }
 
 impl Report {
@@ -158,6 +188,7 @@ impl Render for Report {
             ("confirmed".into(), json!(self.confirmed)),
             ("complete".into(), json!(self.complete())),
             ("boards".into(), json!(self.boards)),
+            ("notices".into(), json!(self.notices)),
         ])
     }
 }

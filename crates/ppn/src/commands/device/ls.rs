@@ -54,6 +54,7 @@ pub(super) fn run(context: &Context<'_>, active: bool) -> Result<CommandResult, 
                  name,
                  state: roster_state,
                  leave_requested_at,
+                 revocation,
                  ..
              }| {
                 let id = *id;
@@ -106,6 +107,12 @@ pub(super) fn run(context: &Context<'_>, active: bool) -> Result<CommandResult, 
                     this_device,
                     boards,
                     state: match (this_device, complete, seen_on_board) {
+                        _ if revocation
+                            .as_ref()
+                            .is_some_and(|revocation| revocation.mutual) =>
+                        {
+                            "mutually_revoked"
+                        }
                         _ if revoked => "revoked",
                         _ if leave_requested_at.is_some() => "leave_pending",
                         (true, false, _) => "pending",
@@ -146,6 +153,8 @@ impl Render for Devices {
                     short_id(&device.id.to_string()),
                     match device.roster_state {
                         RosterState::Active => "active",
+                        RosterState::Revoked if device.state == "mutually_revoked" =>
+                            "mutually revoked",
                         RosterState::Revoked => "revoked",
                     },
                     device.member_of,
@@ -155,7 +164,7 @@ impl Render for Devices {
                         "added_not_seen" => "added here, not yet seen",
                         "known_not_seen" => "in roster, not yet seen",
                         "leave_pending" => "leave requested, awaiting another device",
-                        "revoked" => "board access listed below",
+                        "revoked" | "mutually_revoked" => "board access listed below",
                         state => state,
                     }
                 );

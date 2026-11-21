@@ -283,6 +283,7 @@ fn revoke_guards_the_current_device_and_confirms_another_device() {
     );
     let result = as_json(&sandbox.run(&["device", "revoke", "Garden tablet", "--yes", "--json"]));
     assert_eq!(result["device_id"], peer.to_string());
+    assert_eq!(result["notices"], serde_json::json!([]));
     assert_eq!(result["boards"][0]["result"], "unavailable");
     assert!(
         sandbox
