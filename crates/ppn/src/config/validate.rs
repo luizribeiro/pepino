@@ -97,6 +97,19 @@ pub(crate) fn port(
     validator.require(key, input, port).map(Some)
 }
 
+pub(crate) fn max_boards(
+    validator: &mut Validator<'_>,
+    key: &str,
+    input: &Input<'_>,
+) -> Option<usize> {
+    let max = input
+        .get_ref()
+        .as_integer()
+        .and_then(|value| u32::from_str_radix(value.as_str(), value.radix()).ok())
+        .ok_or(ValueError("expected an integer from 0 to 4294967295"));
+    validator.require(key, input, max).map(|max| max as usize)
+}
+
 pub(crate) fn color(validator: &mut Validator<'_>, key: &str, input: &Input<'_>) -> Option<Color> {
     let color = text(input.get_ref()).and_then(|value| {
         Color::from_str(value, false).map_err(|_| ValueError("expected auto, always, or never"))

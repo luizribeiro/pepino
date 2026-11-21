@@ -218,6 +218,7 @@ settings! {
         data_dir: AbsolutePath = path("PPN_DATA_DIR", "Absolute path, ~, or a path beginning with ~/.", dirs.data_dir());
         credentials_file: AbsolutePath = path("PPN_CREDENTIALS_FILE", "Absolute path, ~, or a path beginning with ~/.",
             Ok(data_dir.value.join("credentials.cbor")));
+        max_boards: usize = max_boards("PPN_MAX_BOARDS", "Maximum relay boards. Zero refuses new boards.", Ok(64));
         trusted_devices: Vec<NodeId> = list("PPN_TRUSTED_DEVICES", "Comma-separated 64-digit hex node IDs.", Ok(Vec::new()));
         bootstrap_nodes: Vec<BootstrapNode> = bootstrap_list("PPN_BOOTSTRAP_NODES",
             "Comma-separated node_id=https://relay.example pairs with 64-digit hex node IDs.", Ok(Vec::new()));
@@ -258,6 +259,7 @@ mod tests {
         assert_eq!(values["network"]["value"], "pepino");
         assert_eq!(values["relay_urls"]["value"], json!(DEFAULT_RELAY_URLS));
         assert_eq!(values["mdns"]["value"], true);
+        assert_eq!(values["max_boards"]["value"], 64);
         assert_eq!(
             values["credentials_file"]["value"],
             "/home/release/.local/state/pepino/credentials.cbor"

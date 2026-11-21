@@ -66,6 +66,8 @@ pub(crate) fn port(raw: &str) -> DeValue<'_> {
     DeValue::parse(raw).map_or_else(|_| scalar(raw), Spanned::into_inner)
 }
 
+pub(crate) use port as max_boards;
+
 pub(crate) fn list(raw: &str) -> DeValue<'_> {
     comma_list(raw, scalar)
 }
@@ -130,6 +132,7 @@ mod tests {
                 ("PPN_DAEMON_AUTOSTART", "false"),
                 ("PPN_DAEMON_SOCKET_PATH", "~/release.sock"),
                 ("PPN_CREDENTIALS_FILE", "~/keys/device.cbor"),
+                ("PPN_MAX_BOARDS", "12"),
                 ("PPN_TRUSTED_DEVICES", id),
                 ("PPN_BOOTSTRAP_NODES", &bootstrap),
                 ("PPN_DATA_DIR", "/srv/pepino"),
@@ -141,7 +144,7 @@ mod tests {
         let read = |path: &Path| {
             if path == dirs.user_config().unwrap().as_path() {
                 Ok(format!(
-                    "network = 'user-release'\ntrusted_devices = ['{id}']\n[ui]\ncolor = 'auto'"
+                    "network = 'user-release'\nmax_boards = 48\ntrusted_devices = ['{id}']\n[ui]\ncolor = 'auto'"
                 ))
             } else {
                 Err(io::ErrorKind::NotFound.into())
@@ -165,6 +168,7 @@ mod tests {
             "/home/release/keys/device.cbor"
         );
         assert_eq!(values["trusted_devices"]["value"], serde_json::json!([id]));
+        assert_eq!(values["max_boards"]["value"], 12);
         assert_eq!(values["bootstrap_nodes"]["value"][0]["node_id"], id);
         assert_eq!(
             values["bootstrap_nodes"]["value"][0]["relay_url"],

@@ -36,12 +36,12 @@ fn config_show_reports_effective_values_and_sources() {
             .lines()
             .any(|line| line.starts_with("network") && line.ends_with("release-team"))
     );
-    assert_eq!(human.lines().count(), 14);
+    assert_eq!(human.lines().count(), 15);
 
     let data = as_json(&sandbox.run(&["config", "show", "--json"]));
     assert_eq!(data["kind"], "config");
     let values = data["values"].as_object().unwrap();
-    assert_eq!(values.len(), 13);
+    assert_eq!(values.len(), 14);
     assert_eq!(
         values["network"],
         json!({
@@ -481,4 +481,30 @@ fn test_sandbox_rejects_escaped_runtime_state_and_credentials() {
                 .contains("Test path escaped")
         );
     }
+}
+
+#[test]
+fn relay_board_limit_accepts_zero_and_can_be_overridden() {
+    let sandbox = ConfigSandbox::new();
+    std::fs::write(&sandbox.config, "max_boards = 0").unwrap();
+    let show = |value: Option<&str>| {
+        let mut command = sandbox.command();
+        if let Some(value) = value {
+            command.env("PPN_MAX_BOARDS", value);
+        }
+        command
+            .args(["config", "show", "max_boards", "--json"])
+            .output()
+            .unwrap()
+    };
+    assert_eq!(
+        as_json(&success(show(None)))["values"]["max_boards"]["value"],
+        0
+    );
+    let override_value = as_json(&success(show(Some("12"))));
+    assert_eq!(
+        override_value["values"]["max_boards"],
+        json!({"value":12,"source":"env"})
+    );
+    assert_json_error(show(Some("-1")), 1, "invalid_config");
 }
