@@ -27,3 +27,5 @@ pub mod view;
 
 pub mod daemon;
 pub mod sync;
+
+pub mod relay;

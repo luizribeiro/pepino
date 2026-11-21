@@ -70,6 +70,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "board",
             "board Board with current marker, counts, membership and sync activity\nselected_board Board selected for this invocation and its source",
         ),
+        "relay init" | "relay show" => (
+            "relay",
+            "node_id Full relay node ID\naddress Node ID with the HTTPS relay URL when configured\nrelay_url Configured connection URL or null",
+        ),
         "board new" | "board use" | "board rename" => (
             "board",
             "board Affected board with counts, membership and sync activity",
@@ -144,6 +148,12 @@ pub(super) fn for_command(command: &Command) -> Value {
         document["cancel_output"] = shape(
             "device_request_cancel",
             "cancelled Whether a pending request was removed",
+        );
+    }
+    if name == "status" {
+        document["relay_output"] = shape(
+            "relay",
+            "role Relay directory role\nnode_id Full relay node ID\naddress Relay connection address\nrelay_url Configured connection URL or null\nonline Whether the relay daemon answered\nrelay Board counts per device, stored bytes, peers, board limit and rejection count",
         );
     }
     if name == "help" {

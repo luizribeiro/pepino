@@ -69,7 +69,7 @@ pub fn run(
                 process::stop(&client, context.timeout.unwrap_or(process::STOP_LIMIT))
             {
                 if unavailable(&error) {
-                    drop(AppClient::open(context)?);
+                    check_directory(context)?;
                 }
                 return Err(unreachable(error));
             }
@@ -78,7 +78,7 @@ pub fn run(
         Action::Status => {
             let status = client.status().map_err(unreachable)?;
             if status.is_none() {
-                drop(AppClient::open(context)?);
+                check_directory(context)?;
             }
             ("status", status)
         }
@@ -90,6 +90,17 @@ pub fn run(
     }))
 }
 
+fn check_directory(context: &Context<'_>) -> Result<(), CliError> {
+    let config = &context.config()?.config;
+    let data = config.data_dir.value.as_path();
+    if pepino_app::is_relay(data)? {
+        pepino_app::relay_credentials(data, config.credentials_file.value.as_path())?;
+    } else {
+        drop(AppClient::open(context)?);
+    }
+    Ok(())
+}
+
 pub fn ensure_running(
     client: &Client,
     context: &Context<'_>,
@@ -99,7 +110,7 @@ pub fn ensure_running(
     if let Some(status) = client.status().map_err(unreachable)? {
         return Ok(status);
     }
-    drop(AppClient::open(context)?);
+    check_directory(context)?;
     if !allow_start {
         return Err(CliError::new(
             ErrorKind::DaemonUnreachable,

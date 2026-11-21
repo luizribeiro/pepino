@@ -14,6 +14,9 @@ use ppn::terminal::{Context, RenderSettings};
 pub struct Args {}
 
 pub fn run(context: &Context<'_>, _: Args) -> Result<CommandResult, CliError> {
+    if pepino_app::is_relay(context.config()?.config.data_dir.value.as_path())? {
+        return super::relay::status(context);
+    }
     let client = AppClient::open(context)?;
     let path = socket_path(&context.config()?.config);
     let network = (Client { path })

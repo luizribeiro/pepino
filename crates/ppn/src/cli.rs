@@ -78,6 +78,7 @@ enum Command {
     Device(commands::device::Args),
     Identity(commands::identity::Args),
     Board(commands::board::Args),
+    Relay(commands::relay::Args),
     Sync(commands::sync::Args),
     Debug(debug::Args),
 }
@@ -316,6 +317,10 @@ fn dispatch(
         | Some(Command::Version(_) | Command::Help(_) | Command::Config(_) | Command::Debug(_)) => {
             false
         }
+        Some(Command::Relay(_)) => false,
+        Some(Command::Daemon(_) | Command::Status(_)) => {
+            !pepino_app::is_relay(context.config()?.config.data_dir.value.as_path())?
+        }
         Some(Command::Device(args)) => args.requires_identity(),
         Some(_) => true,
     };
@@ -348,6 +353,7 @@ fn dispatch(
         ),
         Some(Command::Identity(args)) => commands::identity::run(context, args),
         Some(Command::Status(args)) => status::run(context, args),
+        Some(Command::Relay(args)) => commands::relay::run(context, args),
         Some(Command::Init(args)) => status::init(context, args),
         Some(Command::Version(args)) => Ok(version::run(context, args)),
         Some(Command::Help(args)) => help::for_path(context, definition(), args),
