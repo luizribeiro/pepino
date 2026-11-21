@@ -81,7 +81,10 @@ impl AppClient {
 
     pub fn author_labels(&self, verbose: bool) -> impl Fn(Option<&str>) -> String + use<> {
         let local = self.app.local_state();
-        let devices = local.author_devices();
+        let board = self
+            .selected_board()
+            .map_or(local.board_id(), |(board, _)| board.id);
+        let devices = local.author_devices(board);
         let people = local.person_labels();
         move |id| author_label(id, &devices, &people, verbose)
     }
@@ -254,8 +257,8 @@ mod tests {
 
 fn author_label(
     id: Option<&str>,
-    devices: &std::collections::BTreeMap<pepino_core::DeviceId, (pepino_core::IdentityId, String)>,
-    people: &std::collections::BTreeMap<pepino_core::IdentityId, String>,
+    devices: &std::collections::BTreeMap<pepino_core::DeviceId, (pepino_app::PersonKey, String)>,
+    people: &std::collections::BTreeMap<pepino_app::PersonKey, String>,
     verbose: bool,
 ) -> String {
     use crate::render::{short_id, single_line};
@@ -282,8 +285,8 @@ fn author_label(
 fn labels_authors_as_the_identity_or_an_unknown_device() {
     let cobalt = pepino_core::DeviceId::from_bytes([19; 32]);
     let identity = pepino_core::IdentityId::from_bytes([20; 32]);
-    let devices = [(cobalt, (identity, "Garden tablet".into()))].into();
-    let people = [(identity, "Ada Gardener".into())].into();
+    let devices = [(cobalt, ((identity, cobalt), "Garden tablet".into()))].into();
+    let people = [((identity, cobalt), "Ada Gardener".into())].into();
     for (verbose, expected) in [
         (false, "Ada Gardener"),
         (true, "Ada Gardener (Garden tablet)"),

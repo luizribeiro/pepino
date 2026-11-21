@@ -20,17 +20,22 @@ impl BoardPerson {
         invitation: Option<(DeviceId, DateTime<Utc>)>,
     ) -> Result<Self, AppError> {
         card.name_for(first_device)?;
+        let record = card.verified_record()?;
         Ok(Self {
             id: card.id,
             first_device,
             invited_by: invitation.map(|(device, _)| device),
             invited_at: invitation.map(|(_, at)| at),
-            record: card.record()?,
+            record,
         })
     }
 
     pub(crate) fn sanitize_names(&mut self) {
         self.record.sanitize_names();
+    }
+
+    pub fn key(&self) -> crate::PersonKey {
+        (self.id, self.record.root.unwrap_or(self.first_device))
     }
 
     pub fn name(&self) -> &str {
@@ -45,7 +50,12 @@ impl BoardPerson {
         if self.id != card.id || self.record.root != Some(card.root) {
             return Ok(false);
         }
-        card.merge_into(&mut self.record)?;
+        let mut record = self.record.clone();
+        card.merge_into(&mut record)?;
+        if !record.fully_verified(self.id) {
+            return Ok(false);
+        }
+        self.record = record;
         Ok(true)
     }
 

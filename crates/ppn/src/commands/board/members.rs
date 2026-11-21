@@ -40,7 +40,7 @@ pub(super) fn run(
         .block_on(Node::persisted_members(&path, board.id))
         .map_err(|_| CliError::new(ErrorKind::Failure, "Could not read the board membership."))?;
     let labels = local.person_labels();
-    let authors = local.author_devices();
+    let authors = local.author_devices(board.id);
     let mut people = Vec::new();
     for person in local.board_people(board.id) {
         let admitted = person.invited_by.map(|_| person.first_device);
@@ -56,15 +56,15 @@ pub(super) fn run(
                 _ => 0,
             });
         let inviter = person.invited_by.and_then(|device| {
-            let (identity, _) = authors.get(&device)?;
-            Some(json!({"id": identity, "name": labels.get(identity), "device_id": device}))
+            let (key, _) = authors.get(&device)?;
+            Some(json!({"id": key.0, "root": key.1, "name": labels.get(key), "device_id": device}))
         });
-        people.push(json!({"id": person.id, "name": labels[&person.id], "role": role, "devices": rows,
+        people.push(json!({"id": person.id, "root": person.key().1, "name": labels.get(&person.key()).map(String::as_str).unwrap_or_else(|| person.name()), "role": role, "devices": rows,
             "invited_at": person.invited_at, "invited_by": inviter, "invited_by_device_id": person.invited_by}));
     }
     if people.is_empty() {
         let roster = local.roster();
-        people.push(json!({"id": local.identity_id, "name": labels[&local.identity_id],
+        people.push(json!({"id": local.identity_id, "root": local.own_person_key().1, "name": labels.get(&local.own_person_key()).map(String::as_str).unwrap_or_else(|| local.display_name()),
             "role": local.shared_access(board.id).map_or("manage", |access| match access.role {
                 pepino_app::BoardRole::Read => "read", pepino_app::BoardRole::Write => "write", pepino_app::BoardRole::Manage => "manage",
             }),
@@ -97,7 +97,13 @@ fn devices<'a>(
             Some(MemberState::Removed) => "removed",
             _ => "waiting_for_access",
         };
-        json!({"id": device.id, "name": device.name, "membership": membership, "role": role_name(state)})
+        let added_at = device.added_at.and_then(|time| {
+            i64::try_from(time.wall_ms).ok().and_then(chrono::DateTime::from_timestamp_millis)
+        });
+        json!({
+            "id": device.id, "name": device.name, "membership": membership, "role": role_name(state),
+            "added_at": added_at, "revocation": device.revocation,
+        })
     }).collect()
 }
 
@@ -122,11 +128,18 @@ impl Render for Members {
             }
             lines.push(line);
             for device in person["devices"].as_array().into_iter().flatten() {
-                lines.push(format!(
+                let mut row = format!(
                     "  {} · {}",
                     text(&device["name"]),
                     text(&device["membership"]).replace('_', " ")
-                ));
+                );
+                if let Some(at) = device["added_at"].as_str() {
+                    row.push_str(&format!(" · added {at}"));
+                }
+                if let Some(at) = device["revocation"]["at"].as_str() {
+                    row.push_str(&format!(" · revoked {at}"));
+                }
+                lines.push(row);
             }
         }
         lines.join("\n")

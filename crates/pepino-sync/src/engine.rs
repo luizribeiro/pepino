@@ -39,6 +39,8 @@ pub enum Error {
     #[error(transparent)]
     Node(#[from] pepino_node::Error),
     #[error(transparent)]
+    BoardAuthority(#[from] crate::catalog_authority::Error),
+    #[error(transparent)]
     Worker(#[from] tokio::task::JoinError),
     #[error("outbox poll interval must be positive")]
     PollInterval,

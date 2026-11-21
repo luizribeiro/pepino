@@ -39,6 +39,7 @@ impl BoardGrant {
     pub fn verify(signed: SignedGrant, request: &BoardRequest) -> Result<Self, AppError> {
         let grant = signed.verify_body(request.secret()?, |body: &Self| body.peer.id)?;
         grant.check_request(request)?;
+        grant.owner.verified_record()?;
         crate::App::validate_board_name(&grant.board.name)?;
         if grant
             .card_exchange

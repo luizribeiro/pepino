@@ -34,6 +34,8 @@ impl From<BoardRole> for pepino_node::Role {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SharedAccess {
     pub owner: IdentityId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_root: Option<DeviceId>,
     pub role: BoardRole,
     pub admitted: DeviceId,
 }
@@ -46,14 +48,20 @@ impl LocalState {
     pub fn identity_owned_boards(&self) -> impl DoubleEndedIterator<Item = &crate::LocalBoard> {
         self.boards().iter().filter(|board| {
             self.shared_access(board.id)
-                .is_none_or(|access| access.owner == self.identity_id)
+                .is_none_or(|access| self.owns_share(access))
         })
     }
 
+    pub fn owns_share(&self, access: SharedAccess) -> bool {
+        access.owner == self.identity_id
+            && access
+                .owner_root
+                .is_none_or(|root| root == self.own_person_key().1)
+    }
+
     pub fn waiting_for_access(&self, board: BoardId) -> bool {
-        self.shared_access(board).is_some_and(|access| {
-            access.owner != self.identity_id && access.admitted != self.device_id
-        })
+        self.shared_access(board)
+            .is_some_and(|access| !self.owns_share(access) && access.admitted != self.device_id)
     }
 
     pub fn check_board_write(&self, board: &crate::LocalBoard) -> Result<(), AppError> {
@@ -98,6 +106,7 @@ async fn access_on_another_persons_board_is_device_specific() {
     local.catalog.shared.insert(
         house,
         SharedAccess {
+            owner_root: None,
             owner: IdentityId::from_bytes([84; 32]),
             role: BoardRole::Read,
             admitted: DeviceId::from_bytes([85; 32]),
@@ -123,6 +132,7 @@ async fn read_members_cannot_enqueue_task_writes() {
         local.catalog.shared.insert(
             house,
             SharedAccess {
+                owner_root: None,
                 owner: IdentityId::from_bytes([87; 32]),
                 role: BoardRole::Read,
                 admitted: local.device_id,

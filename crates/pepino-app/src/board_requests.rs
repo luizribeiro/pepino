@@ -27,11 +27,7 @@ impl App {
         let shared = self.local.shared_access(board.id);
         let owner = shared.map(|access| crate::NamedRecord {
             id: access.owner.to_string(),
-            name: self
-                .local
-                .person_labels()
-                .remove(&access.owner)
-                .unwrap_or_default(),
+            name: self.local.board_owner_name(board.id, access),
         });
         Ok(BoardInfo {
             board: board.clone(),

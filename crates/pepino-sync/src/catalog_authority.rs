@@ -12,11 +12,11 @@ struct SpaceAuthority {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("read the catalog board's creation: {0}")]
+    #[error("read the board's creation: {0}")]
     Sqlite(#[from] sqlx::Error),
-    #[error("decode the catalog board's membership history: {0}")]
+    #[error("decode the board's membership history: {0}")]
     Decode(String),
-    #[error("the catalog board has multiple creation operations")]
+    #[error("the board has multiple creation operations")]
     MultipleCreators,
 }
 

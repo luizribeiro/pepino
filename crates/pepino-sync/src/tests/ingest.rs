@@ -276,7 +276,7 @@ async fn stream_errors_back_off_and_keep_the_board_non_idle_until_repoll() {
     };
     let (_stop, stopping) = watch::channel(());
     tokio::select! {
-        result = crate::inbox::run(&app, board, &handle, stream, &status, stopping) => panic!("{result:?}"),
+        result = crate::inbox::run(&app, board, &handle, stream, &status, stopping, None) => panic!("{result:?}"),
         _ = async { tokio::join!(observe, seq); } => (),
     }
 }

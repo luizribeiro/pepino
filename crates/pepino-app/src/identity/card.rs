@@ -13,9 +13,24 @@ pub struct IdentityCard {
 }
 
 impl IdentityCard {
+    pub fn key(&self) -> crate::PersonKey {
+        (self.id, self.root)
+    }
+
     pub(crate) fn record(&self) -> Result<IdentityCatalog, AppError> {
         let mut record = IdentityCatalog::with_root(self.root);
         self.merge_into(&mut record)?;
+        Ok(record)
+    }
+
+    pub(crate) fn verified_record(&self) -> Result<IdentityCatalog, AppError> {
+        let record = self.record()?;
+        if !record.fully_verified(self.id) {
+            return Err(invalid(
+                "identity",
+                "the identity card has unverified roster edits",
+            ));
+        }
         Ok(record)
     }
 
@@ -31,12 +46,22 @@ impl IdentityCard {
         Self {
             id,
             root: record.root.unwrap_or(fallback),
-            edits: record.edits().cloned().collect(),
+            edits: record.portable_edits(id),
         }
     }
 
+    pub fn authenticates_creator(
+        &self,
+        creator: DeviceId,
+        signer: DeviceId,
+    ) -> Result<bool, AppError> {
+        let record = self.record()?;
+        Ok(record.device(creator).is_some()
+            && (signer == creator || record.authored_by(portable_scope(), self.id, creator)))
+    }
+
     pub fn name_for(&self, member: DeviceId) -> Result<String, AppError> {
-        let catalog = self.record()?;
+        let catalog = self.verified_record()?;
         match catalog.device(member) {
             Some(row) if row.state == RosterState::Active => {
                 Ok(catalog.name().unwrap_or_default().to_owned())
@@ -57,7 +82,7 @@ impl LocalState {
         let card = IdentityCard {
             id: self.identity_id,
             root,
-            edits: self.catalog.identity.edits().cloned().collect(),
+            edits: self.catalog.identity.portable_edits(self.identity_id),
         };
         if card.record()?.name() != Some(self.display_name()) {
             return Err(invalid(

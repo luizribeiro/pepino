@@ -118,9 +118,10 @@ impl<T: Transport> BoardWorkers<T> {
         let nudged = self.nudged.clone();
         let poll = self.poll;
         let node_instance = self.node.instance_id();
+        let authority = self.authority.as_ref().map(|(path, _)| path.clone());
         self.workers.spawn(async move {
             let result = {
-                let inbox = receive(&app, id, board.as_ref(), stream, &status, stopping.clone());
+                let inbox = receive(&app, id, board.as_ref(), stream, &status, stopping.clone(), authority.as_deref());
                 tokio::pin!(inbox);
                 tokio::select! {
                     biased;
@@ -173,11 +174,12 @@ async fn receive<B: TransportBoard>(
     stream: DeliveryStream<B::Ack>,
     status: &watch::Sender<Status>,
     mut stopping: watch::Receiver<()>,
+    authority: Option<&std::path::Path>,
 ) -> Result<(), Error> {
     use futures_util::StreamExt;
     use pepino_node::{Error as NodeError, MemberState};
     let mut membership = board.membership_events();
-    match crate::inbox::run(app, id, board, stream, status, stopping.clone()).await {
+    match crate::inbox::run(app, id, board, stream, status, stopping.clone(), authority).await {
         Err(Error::Node(NodeError::Removed)) => (),
         result => return result,
     }

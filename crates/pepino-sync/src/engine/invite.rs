@@ -23,6 +23,7 @@ impl SyncEngine {
         let local = self.app.fresh_local_state().await?;
         local.check_device_write()?;
         local.check_invitable(id)?;
+        local.check_person_id(request.identity.key())?;
         let board = local.resolve_board(&id.to_string(), "board")?;
         let denied = || Error::EnrollmentAccess {
             board: board.name.clone(),
@@ -56,7 +57,24 @@ impl SyncEngine {
             }
             .into());
         }
+        let creator = match &workers.authority {
+            Some((path, _)) => crate::catalog_authority::creator(path, id).await?,
+            None => None,
+        }
+        .ok_or_else(|| AppError::InvalidInput {
+            field: "board".into(),
+            reason: "Wait for the board's creation record to sync.".into(),
+            diagnostic: None,
+        })?;
         let (owner, owner_device) = owner_card(&local, id)?;
+        if !owner.authenticates_creator(creator, local.device_id)? {
+            return Err(AppError::InvalidInput {
+                field: "board".into(),
+                reason: "The owner's roster needs a signed edit from this board's creator.".into(),
+                diagnostic: None,
+            }
+            .into());
+        }
         self.app.consume_board_request(id, &request).await?;
         let admission = BoardAdmission {
             owner: owner.clone(),
@@ -67,7 +85,7 @@ impl SyncEngine {
         };
         handle.add_member(&member, role.into()).await?;
         self.app
-            .record_board_admission(id, local.device_id, admission.clone())
+            .record_board_admission(id, local.device_id, creator, admission.clone())
             .await?;
         handle
             .publish(BoardCards::Introduce(admission.clone()).encode()?)
@@ -76,6 +94,7 @@ impl SyncEngine {
             let exchange = CardExchange {
                 board: id,
                 person: admission.invitee.id,
+                root: Some(admission.invitee.root),
             };
             Some(
                 self.create_card_exchange(&mut workers, &local, exchange, &member)
@@ -118,12 +137,22 @@ fn owner_card(
     let owner = local
         .shared_access(id)
         .map_or(local.identity_id, |access| access.owner);
-    if owner == local.identity_id {
+    if local
+        .shared_access(id)
+        .is_none_or(|access| local.owns_share(access))
+    {
         return Ok((local.identity_card()?, local.device_id));
     }
     let person = local
         .board_people(id)
-        .find(|person| person.id == owner)
+        .find(|person| {
+            person.id == owner
+                && local
+                    .shared_access(id)
+                    .and_then(|access| access.owner_root)
+                    .is_none_or(|root| person.key().1 == root)
+                && person.invited_by.is_none()
+        })
         .ok_or_else(|| AppError::InvalidInput {
             field: "board".into(),
             reason: "Wait for the board owner's identity card to sync.".into(),

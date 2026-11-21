@@ -221,7 +221,9 @@ impl App {
                 .collect::<Result<Vec<_>, _>>()
         };
         let (top_level, unblocked) = (summarize(top_level)?, summarize(unblocked)?);
-        let names = self.local.task_names(tasks.iter().chain(&deleted));
+        let names = self
+            .local
+            .task_names(self.selected_board().id, tasks.iter().chain(&deleted));
         Ok(Response::Write {
             targets,
             names,

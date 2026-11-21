@@ -9,6 +9,8 @@ use crate::{App, AppError, LocalState, app::invalid};
 pub struct CardExchange {
     pub board: BoardId,
     pub person: IdentityId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<pepino_core::DeviceId>,
 }
 
 impl LocalState {
@@ -60,6 +62,7 @@ async fn card_exchanges_are_retained_without_becoming_visible_boards() {
     let channel = BoardId::from_bytes([72; 32]);
     let exchange = CardExchange {
         board,
+        root: None,
         person: IdentityId::from_bytes([73; 32]),
     };
     app.register_created_board(board, "House").await.unwrap();

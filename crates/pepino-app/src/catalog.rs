@@ -16,7 +16,7 @@ pub(crate) struct CatalogState {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) shared: BTreeMap<BoardId, crate::SharedAccess>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) people: BTreeMap<BoardId, BTreeMap<IdentityId, crate::BoardPerson>>,
+    pub(crate) people: BTreeMap<BoardId, BTreeMap<String, crate::BoardPerson>>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(crate) invalid_board_cards: BTreeSet<pepino_core::EventId>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -188,7 +188,10 @@ impl LocalState {
         }
         for (id, access) in announcement.shared {
             if id != self.catalog_board() && self.catalog.revisions.contains_key(&id) {
-                self.catalog.shared.entry(id).or_insert(access);
+                let saved = self.catalog.shared.entry(id).or_insert(access);
+                if saved.owner == access.owner && saved.owner_root.is_none() {
+                    saved.owner_root = access.owner_root;
+                }
             }
         }
         Ok(())
@@ -383,6 +386,7 @@ async fn trusted_catalog_discovery_leaves_shared_access_with_the_joining_device(
     let mut local = app.fresh_local_state().await.unwrap();
     let house = BoardId::from_bytes([74; 32]);
     let access = SharedAccess {
+        owner_root: None,
         owner: IdentityId::from_bytes([75; 32]),
         role: BoardRole::Write,
         admitted: source,

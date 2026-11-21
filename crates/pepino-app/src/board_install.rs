@@ -30,7 +30,7 @@ impl LocalState {
             .catalog
             .board_request
             .as_ref()
-            .is_none_or(|request| request.identity.id != self.identity_id)
+            .is_none_or(|request| request.identity.key() != self.own_person_key())
             || grant.recipient != self.device_id
             || grant.owner.id == self.identity_id
         {
@@ -58,6 +58,7 @@ impl LocalState {
             id,
             SharedAccess {
                 owner: grant.owner.id,
+                owner_root: Some(grant.owner.root),
                 role: grant.role,
                 admitted: self.device_id,
             },
@@ -69,6 +70,7 @@ impl LocalState {
                 crate::CardExchange {
                     board: id,
                     person: self.identity_id,
+                    root: Some(self.own_person_key().1),
                 },
             )?;
         }
@@ -198,6 +200,10 @@ async fn joining_adds_one_board_to_the_existing_local_catalog() {
     local.install_share(&grant, "grant digest".into()).unwrap();
     assert!(local.catalog.board_request.is_none());
     assert_eq!(local.boards().len(), 2);
+    assert_eq!(
+        local.shared_access(id).unwrap().owner_root,
+        Some(grant.owner.root)
+    );
     assert_eq!(local.catalog_board(), private);
     assert_eq!(local.card_exchanges().values().next().unwrap().board, id);
     assert_eq!(local.board_join_state(id), BoardJoinState::WaitingToBeAdded);

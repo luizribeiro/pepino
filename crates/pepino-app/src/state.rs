@@ -113,31 +113,56 @@ impl LocalState {
 
     pub(super) fn task_names<'a>(
         &self,
+        board: BoardId,
         tasks: impl IntoIterator<Item = &'a crate::TaskSummary>,
     ) -> std::collections::BTreeMap<String, String> {
-        self.names_for(tasks.into_iter().flat_map(|task| {
-            std::iter::once(task.author.as_str()).chain(task.assignees.iter().map(String::as_str))
-        }))
+        let mut references = BTreeMap::<BoardId, BTreeSet<&str>>::new();
+        for task in tasks {
+            references
+                .entry(task.board.as_ref().map_or(board, |board| board.id))
+                .or_default()
+                .extend(
+                    std::iter::once(task.author.as_str())
+                        .chain(task.assignees.iter().map(String::as_str)),
+                );
+        }
+        let mut names = BTreeMap::<String, BTreeSet<String>>::new();
+        for (board, ids) in references {
+            for (id, name) in self.names_for(board, ids) {
+                names.entry(id).or_default().insert(name);
+            }
+        }
+        names
+            .into_iter()
+            .map(|(id, labels)| (id, labels.into_iter().collect::<Vec<_>>().join(" / ")))
+            .collect()
     }
 
     pub(super) fn names_for<'a>(
         &self,
+        board: BoardId,
         ids: impl IntoIterator<Item = &'a str>,
     ) -> std::collections::BTreeMap<String, String> {
         let labels = self.person_labels();
-        let devices = self.author_devices();
+        let devices = self.author_devices(board);
+        let identities = self.identity_labels(board);
         let mut names = BTreeMap::new();
         for reference in ids {
             let person = reference
                 .parse::<DeviceId>()
                 .ok()
-                .and_then(|id| devices.get(&id).map(|(person, _)| *person))
-                .or_else(|| reference.parse().ok());
-            if let Some(id) = person
-                && let Some(name) = labels.get(&id)
-            {
-                names.insert(reference.into(), name.clone());
-                if labels.len() > 1 {
+                .and_then(|id| devices.get(&id).map(|(person, _)| *person));
+            let identity = person.map(|key| key.0).or_else(|| reference.parse().ok());
+            if let Some(id) = identity {
+                let name = person
+                    .and_then(|key| labels.get(&key))
+                    .or_else(|| identities.get(&id));
+                if let Some(name) = name {
+                    names.insert(reference.into(), name.clone());
+                }
+                if labels.len() > 1
+                    && let Some(name) = identities.get(&id)
+                {
                     names.insert(id.to_string(), name.clone());
                 }
             }
@@ -251,13 +276,17 @@ impl LocalState {
             *name = crate::write::safe_roster_name(name);
         }
         local.catalog.identity.sanitize_names();
-        for person in local
-            .catalog
-            .people
-            .values_mut()
-            .flat_map(|people| people.values_mut())
-        {
-            person.sanitize_names();
+        for people in local.catalog.people.values_mut() {
+            *people = std::mem::take(people)
+                .into_values()
+                .map(|mut person| {
+                    person.sanitize_names();
+                    (
+                        crate::people_names::person_storage_key(person.key()),
+                        person,
+                    )
+                })
+                .collect();
         }
         if version == 5 {
             local.stage_legacy_roster();
@@ -439,6 +468,7 @@ mod tests {
         state.other_devices.insert(peer, "garden tablet".into());
         let stranger = DeviceId::from_bytes([44; 32]).to_string();
         let names = state.names_for(
+            state.board_id(),
             [own.to_string(), peer.to_string(), stranger]
                 .iter()
                 .map(String::as_str),

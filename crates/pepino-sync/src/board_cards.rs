@@ -1,12 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use pepino_app::{BoardCards, BoardRole, LocalState};
-use pepino_core::{BoardId, DeviceId, IdentityId};
+use pepino_core::{BoardId, DeviceId};
 use pepino_node::NodeStatus;
 
 use crate::{Error, Transport, TransportBoard, board_workers::BoardWorkers};
 
-pub(crate) type Publications = BTreeMap<(BoardId, IdentityId), (Vec<u8>, BTreeSet<DeviceId>)>;
+pub(crate) type Publications =
+    BTreeMap<(BoardId, pepino_app::PersonKey), (Vec<u8>, BTreeSet<DeviceId>)>;
 
 pub(crate) async fn publish<T: Transport>(
     workers: &BoardWorkers<T>,
@@ -41,19 +42,22 @@ pub(crate) async fn publish<T: Transport>(
             }
         };
         let peers = &node.connected_peers;
-        let key = (board.id, local.identity_id);
+        let key = (board.id, local.own_person_key());
         if needs_publication(published.get(&key), bytes, peers) {
             handle.publish(bytes.clone()).await?;
             published.insert(key, (bytes.clone(), peers.clone()));
         }
     }
     for (&channel, exchange) in local.card_exchanges() {
-        let (destination, card) = if exchange.person == local.identity_id {
-            (channel, local.identity_card()?)
-        } else if let Some(person) = local
-            .board_people(exchange.board)
-            .find(|person| person.id == exchange.person)
+        let (destination, card) = if exchange.person == local.identity_id
+            && exchange
+                .root
+                .is_none_or(|root| root == local.own_person_key().1)
         {
+            (channel, local.identity_card()?)
+        } else if let Some(person) = local.board_people(exchange.board).find(|person| {
+            person.id == exchange.person && exchange.root.is_none_or(|root| root == person.key().1)
+        }) {
             (exchange.board, person.card())
         } else {
             continue;
@@ -68,8 +72,8 @@ pub(crate) async fn publish<T: Transport>(
         let Some(handle) = workers.handle(destination) else {
             continue;
         };
+        let key = (destination, card.key());
         let bytes = BoardCards::Update(card).encode()?;
-        let key = (destination, exchange.person);
         if needs_publication(published.get(&key), &bytes, &node.connected_peers) {
             handle.publish(bytes.clone()).await?;
             published.insert(key, (bytes, node.connected_peers.clone()));

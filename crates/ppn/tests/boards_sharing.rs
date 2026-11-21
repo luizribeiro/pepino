@@ -153,6 +153,18 @@ fn two_identities_share_one_board_and_edit_each_others_work() {
         WAIT,
     );
     assert_eq!(confirmed["tasks"][0]["id"], second);
+    let house_tasks = luiz.json(&["ls", "board:House"]);
+    let guest_task = house_tasks["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["id"] == second)
+        .unwrap();
+    assert_eq!(
+        house_tasks["names"][guest_task["author"].as_str().unwrap()],
+        "Ana",
+        "{house_tasks:#}"
+    );
     let show = |host: &Host| host.json(&["show", "--board", "House", task]);
     let result = until(
         || show(&luiz),
@@ -274,10 +286,16 @@ fn a_read_invitation_is_pending_offline_and_refuses_writes() {
         |value| value["membership"] == "joined",
         WAIT,
     );
-    let names = reader.json(&["show", "--board", "House", task])["names"].clone();
-    assert_eq!(
-        names,
-        owner.json(&["show", "--board", "House", task])["names"]
+    let expected = owner.json(&["show", "--board", "House", task])["names"].clone();
+    until(
+        || {
+            let output = reader.output(&["show", "--board", "House", task, "--json"]);
+            output.status.success().then(|| {
+                common::as_json(&String::from_utf8(output.stdout).unwrap())["names"].clone()
+            })
+        },
+        |names| names.as_ref() == Some(&expected),
+        WAIT,
     );
     assert!(
         reader

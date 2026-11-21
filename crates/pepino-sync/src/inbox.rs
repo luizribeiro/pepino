@@ -17,6 +17,7 @@ pub(crate) async fn run<B: TransportBoard>(
     mut deliveries: DeliveryStream<B::Ack>,
     status: &watch::Sender<Status>,
     mut stopping: watch::Receiver<()>,
+    authority: Option<&std::path::Path>,
 ) -> Result<(), Error> {
     let mut stream_retry = Retry::new();
     let mut last_stream_error = None;
@@ -54,7 +55,7 @@ pub(crate) async fn run<B: TransportBoard>(
                 stream_retry = Retry::new();
                 last_stream_error = None;
                 let finish = async {
-                    if !ingest_cards(app, id, handle, &delivery, status).await {
+                    if !ingest_cards(app, id, handle, &delivery, status, authority).await {
                         ingest(app, id, &delivery, status).await;
                     }
                     let mut retry = Retry::new();
@@ -211,15 +212,26 @@ async fn ingest_cards<B: TransportBoard>(
     handle: &B,
     delivery: &Delivery<B::Ack>,
     status: &watch::Sender<Status>,
+    authority: Option<&std::path::Path>,
 ) -> bool {
     if !BoardCards::is_board_card(&delivery.bytes) {
         return false;
     }
     let mut retry = Retry::new();
     while let Some(cards) = BoardCards::decode(&delivery.bytes) {
-        let manager = if let BoardCards::Introduce(admission) = &cards {
+        let creator = if let BoardCards::Introduce(admission) = &cards {
             match handle.admitted_by(admission.device, delivery.signer).await {
-                Ok(allowed) => allowed,
+                Ok(true) if let Some(path) = authority => {
+                    match crate::catalog_authority::creator(path, board).await {
+                        Ok(creator) => creator,
+                        Err(error) => {
+                            record_error(status, board, error.to_string());
+                            retry.wait().await;
+                            continue;
+                        }
+                    }
+                }
+                Ok(_) => None,
                 Err(error) => {
                     record_error(
                         status,
@@ -231,10 +243,10 @@ async fn ingest_cards<B: TransportBoard>(
                 }
             }
         } else {
-            false
+            None
         };
         match app
-            .receive_board_cards(board, delivery.signer, manager, cards)
+            .receive_board_cards(board, delivery.signer, creator, cards)
             .await
         {
             Ok(()) | Err(pepino_app::AppError::InvalidInput { .. }) => break,

@@ -120,7 +120,6 @@ fn document(
         ""
     };
     let rejected_board_card_entries = local.rejected_board_cards();
-    let labels = local.person_labels();
     let boards = local
         .boards()
         .iter()
@@ -134,7 +133,7 @@ fn document(
             let waiting = local.waiting_for_access(board.id);
             let owner = access.map(|access| pepino_app::NamedRecord {
                 id: access.owner.to_string(),
-                name: labels.get(&access.owner).cloned().unwrap_or_default(),
+                name: local.board_owner_name(board.id, access),
             });
             (
                 board.clone(),

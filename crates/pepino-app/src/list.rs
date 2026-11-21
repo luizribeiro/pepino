@@ -30,7 +30,10 @@ impl App {
             .map_err(|error| invalid("sort", error))?;
         let views = ViewFilters::new(&self.local.saved_views);
         let saved = |name: &str| views.resolve(name);
-        let people = |name: &str| self.local.person_candidates(None, name);
+        let people = |name: &str| {
+            self.local
+                .person_candidates(Some(self.selected_board().id), None, name)
+        };
         let context = || Context {
             today: today.into(),
             me: Some(self.local.identity_id),
@@ -69,7 +72,13 @@ impl App {
         let people = |name: &str| {
             snapshots
                 .iter()
-                .flat_map(|(_, view)| self.local.person_candidates(Some(view), name))
+                .flat_map(|(board, view)| {
+                    self.local.person_candidates(
+                        (snapshots.len() == 1).then_some(board.id),
+                        Some(view),
+                        name,
+                    )
+                })
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect()
@@ -126,7 +135,10 @@ impl App {
                     }),
             )
         };
-        let names = self.local.task_names(&tasks);
+        let names_board = snapshots
+            .first()
+            .map_or(self.selected_board().id, |(board, _)| board.id);
+        let names = self.local.task_names(names_board, &tasks);
         Ok(Response::Tasks {
             names,
             warnings,
@@ -143,11 +155,23 @@ impl App {
 impl LocalState {
     pub(super) fn person_candidates(
         &self,
+        board: Option<pepino_core::BoardId>,
         view: Option<&BoardView>,
         name: &str,
     ) -> Vec<IdentityId> {
+        let known = self.person_names();
+        let unambiguous = |id| {
+            board.map_or_else(
+                || known.keys().filter(|&&(other, _)| other == id).count() <= 1,
+                |board| !self.has_board_person_conflict(board, id),
+            )
+        };
         if let Ok(id) = name.parse() {
-            return vec![id];
+            return if unambiguous(id) {
+                vec![id]
+            } else {
+                Vec::new()
+            };
         }
         let (base, suffix) = name
             .rsplit_once('#')
@@ -157,13 +181,36 @@ impl LocalState {
             .map_or((name, None), |(base, suffix)| {
                 (base, Some(suffix.to_ascii_lowercase()))
             });
+        let base = if suffix.is_some() {
+            base.strip_prefix("⚠ ").unwrap_or(base)
+        } else {
+            base
+        };
         let base = fold_text(base);
-        let known = self.person_names();
-        let named = known.iter().filter_map(|(&id, label)| {
+        let named = known.iter().filter_map(|(&(id, root), label)| {
+            let conflict = known
+                .keys()
+                .any(|&(other, other_root)| id == other && root != other_root);
+            if conflict
+                && board.is_none_or(|board| {
+                    self.has_board_person_conflict(board, id)
+                        || !self
+                            .board_people(board)
+                            .any(|person| person.key() == (id, root))
+                            && self.own_person_key() != (id, root)
+                })
+            {
+                return None;
+            }
+            let suffix_key = if conflict {
+                root.to_string()
+            } else {
+                id.to_string()
+            };
             (fold_text(label) == base
                 && suffix
                     .as_ref()
-                    .is_none_or(|suffix| id.to_string().starts_with(suffix)))
+                    .is_none_or(|suffix| suffix_key.starts_with(suffix)))
             .then_some(id)
         });
         if suffix.is_some() || name.len() < 4 || !name.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -175,9 +222,9 @@ impl LocalState {
             .chain(
                 known
                     .keys()
-                    .copied()
+                    .map(|&(id, _)| id)
                     .chain(view.into_iter().flat_map(BoardView::assignee_ids).copied())
-                    .filter(|id| id.to_string().starts_with(&prefix)),
+                    .filter(|id| unambiguous(*id) && id.to_string().starts_with(&prefix)),
             )
             .collect()
     }

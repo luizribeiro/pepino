@@ -274,7 +274,10 @@ impl App {
         view: &BoardView,
         references: Vec<String>,
     ) -> Result<BTreeSet<IdentityId>, AppError> {
-        let people = |name: &str| self.local.person_candidates(Some(view), name);
+        let people = |name: &str| {
+            self.local
+                .person_candidates(Some(self.selected_board().id), Some(view), name)
+        };
         references
             .into_iter()
             .enumerate()
@@ -294,6 +297,18 @@ impl App {
                     self.local
                         .ambiguous_person(&error, field.clone())
                         .unwrap_or_else(|| invalid(field, error))
+                })
+                .and_then(|id| {
+                    if self
+                        .local
+                        .has_board_person_conflict(self.selected_board().id, id)
+                    {
+                        return Err(invalid(
+                            format!("assignees[{index}]"),
+                            "Multiple people on this board claim this identity ID.",
+                        ));
+                    }
+                    Ok(id)
                 })
             })
             .collect()

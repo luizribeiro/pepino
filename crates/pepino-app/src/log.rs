@@ -175,9 +175,9 @@ impl App {
             .into_iter()
             .map(EventRecord::try_from)
             .collect::<Result<Vec<_>, _>>()?;
-        let names = self
-            .local
-            .names_for(events.iter().chain(&unordered).flat_map(|event| {
+        let names = self.local.names_for(
+            self.selected_board().id,
+            events.iter().chain(&unordered).flat_map(|event| {
                 let people = match &event.change.detail {
                     EventDetail::Creation { fields, .. } => Some(&fields.assignees),
                     _ => None,
@@ -192,7 +192,8 @@ impl App {
                     .into_iter()
                     .chain(assignee)
                     .chain(people.into_iter().flatten().map(String::as_str))
-            }));
+            }),
+        );
         for event in events.iter_mut().chain(&mut unordered) {
             event.change.summary = event
                 .change

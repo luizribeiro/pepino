@@ -44,7 +44,7 @@ impl App {
         &self,
         board: BoardId,
         signer: DeviceId,
-        manager: bool,
+        creator: Option<DeviceId>,
         cards: BoardCards,
     ) -> Result<(), AppError> {
         let mut digest = blake3::Hasher::new_derive_key("Pepino rejected board card v1");
@@ -54,8 +54,11 @@ impl App {
             .update(&cards.encode()?);
         let id = EventId::from_bytes(*digest.finalize().as_bytes());
         match cards {
-            BoardCards::Introduce(admission) if manager => {
-                match self.record_board_admission(board, signer, admission).await {
+            BoardCards::Introduce(admission) if let Some(creator) = creator => {
+                match self
+                    .record_board_admission(board, signer, creator, admission)
+                    .await
+                {
                     Ok(()) => return Ok(()),
                     Err(AppError::InvalidInput { .. }) => (),
                     Err(error) => return Err(error),
@@ -81,25 +84,28 @@ impl App {
         self.try_update_local_state(move |local| {
             let known_board = local.boards().iter().any(|entry| entry.id == board)
                 && board != local.catalog_board();
-            match local
-                .catalog
-                .people
-                .get_mut(&board)
-                .and_then(|people| people.get_mut(&card.id))
-            {
+            match local.catalog.people.get_mut(&board).and_then(|people| {
+                people.get_mut(&crate::people_names::person_storage_key(card.key()))
+            }) {
                 Some(person) => {
                     if !person.merge(&card)? {
                         local.catalog.invalid_board_cards.insert(id);
                     }
                 }
-                None if known_board => {
-                    local
-                        .catalog
-                        .pending_cards
-                        .entry(board)
-                        .or_default()
-                        .insert(id, card);
-                }
+                None if known_board => match card.verified_record() {
+                    Ok(_) => {
+                        local
+                            .catalog
+                            .pending_cards
+                            .entry(board)
+                            .or_default()
+                            .insert(id, card);
+                    }
+                    Err(AppError::InvalidInput { .. }) => {
+                        local.catalog.invalid_board_cards.insert(id);
+                    }
+                    Err(error) => return Err(error),
+                },
                 None => (),
             }
             Ok(())
@@ -141,7 +147,7 @@ async fn card_updates_cannot_introduce_people() {
     app.receive_board_cards(
         id,
         local.device_id,
-        false,
+        None,
         BoardCards::decode(&update).unwrap(),
     )
     .await
@@ -180,7 +186,7 @@ async fn repeated_unauthorized_introductions_count_once() {
         app.receive_board_cards(
             id,
             stranger,
-            false,
+            None,
             BoardCards::Introduce(introduction.clone()),
         )
         .await

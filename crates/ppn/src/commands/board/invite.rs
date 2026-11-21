@@ -35,6 +35,7 @@ pub(super) fn run(
     let board = app.selected_board()?.0;
     let local = app.local_state();
     local.check_invitable(board.id)?;
+    local.check_person_id(request.identity.key())?;
     let fingerprint = request.fingerprint()?;
     let notice = format!(
         "Inviting {} ({}), device {}, fingerprint {fingerprint}, to board {} as {role}",

@@ -115,7 +115,7 @@ impl App {
                     .map(|(id, title)| (id.to_string(), title)),
             );
         }
-        let labels = self.local.person_labels();
+        let labels = self.local.identity_labels(self.selected_board().id);
         let assignee_names = task
             .assignees
             .iter()
@@ -128,6 +128,7 @@ impl App {
             .collect::<Result<_, _>>()?;
         let task = project(task, board.comments(task.id))?;
         let names = self.local.names_for(
+            self.selected_board().id,
             task.assignees
                 .iter()
                 .map(String::as_str)
@@ -163,7 +164,10 @@ impl App {
                 })
             })
             .collect::<Result<Vec<_>, AppError>>()?;
-        let names = self.local.task_names(nodes.iter().map(|node| &node.task));
+        let names = self.local.task_names(
+            self.selected_board().id,
+            nodes.iter().map(|node| &node.task),
+        );
         Ok(Response::Tree { nodes, names })
     }
 
@@ -186,6 +190,7 @@ impl App {
         let blockers = project_deps(deps.blocked_by)?;
         let dependents = project_deps(deps.blocks)?;
         let names = self.local.task_names(
+            self.selected_board().id,
             std::iter::once(task.as_ref())
                 .chain(blockers.iter().chain(&dependents).map(|entry| &entry.task)),
         );

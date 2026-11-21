@@ -98,6 +98,41 @@ impl IdentityCatalog {
         })
     }
 
+    pub(crate) fn portable_edits(&self, identity: IdentityId) -> Vec<SignedEdit> {
+        self.root.map_or_else(Vec::new, |root| {
+            self.fold(root, portable_scope(), identity)
+                .ordered
+                .into_iter()
+                .filter_map(|edit| {
+                    let id = EventId::from_bytes(edit.digest(portable_scope(), identity).ok()?);
+                    self.edits.get(&id).cloned()
+                })
+                .collect()
+        })
+    }
+
+    pub(crate) fn fully_verified(&self, identity: IdentityId) -> bool {
+        self.rejected_count() == 0
+            && self.record.is_some()
+            && self.root.is_some_and(|root| {
+                self.fold(root, portable_scope(), identity).ordered.len() == self.edits.len()
+            })
+    }
+
+    pub(super) fn authored_by(
+        &self,
+        board: BoardId,
+        identity: IdentityId,
+        writer: DeviceId,
+    ) -> bool {
+        self.root.is_some_and(|root| {
+            self.fold(root, board, identity)
+                .ordered
+                .iter()
+                .any(|edit| edit.writer == writer)
+        })
+    }
+
     pub(super) fn refresh(&mut self, board: BoardId, identity: IdentityId) {
         if let Some(root) = self.root {
             let folded = self.fold(root, board, identity);

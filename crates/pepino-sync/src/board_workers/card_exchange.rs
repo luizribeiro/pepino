@@ -58,11 +58,12 @@ async fn receive<A: Acknowledgement>(
         let mut retry = Retry::new();
         while let Some(BoardCards::Update(card)) = BoardCards::decode(&delivery.bytes) {
             if card.id != exchange.person
+                || exchange.root.is_some_and(|root| root != card.root)
                 || app
                     .receive_board_cards(
                         exchange.board,
                         delivery.signer,
-                        false,
+                        None,
                         BoardCards::Update(card),
                     )
                     .await
