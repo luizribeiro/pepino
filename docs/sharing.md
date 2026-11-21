@@ -35,31 +35,68 @@ progress.
 
 | Role | Access |
 | --- | --- |
-| `read` | Read tasks, comments, and the board's complete history. |
-| `write` | Read the history and publish changes to tasks, assignments, and comments. This is the default. |
-| `manage` | Write and invite a new person to the board. |
+| `read` | Read tasks, comments, and the board's complete history. Give this to people who follow the work. |
+| `write` | Read the history and publish changes to tasks, assignments, and comments. Give this to people who work on the board. This is the default. |
+| `manage` | Write and manage invitations, roles, and removals. Give this to trusted people who administer the board. |
 
-The recipient joins under their existing identity. Their linked devices
-learn that the board exists and display **waiting for access**. They need
-a separate membership grant in a future release. Changing roles,
-removing people, and leaving a shared board also belong to that release.
-Device revocation records the change in your identity's roster and reports
-the result for each board. If your device is waiting for access to a shared
-board, removing the lost device from that board is pending. A board manager
-can remove it.
+Recipients join under their existing identities. A manager's daemon
+adds each active linked device at the person's role and removes revoked
+devices. A new device shows **waiting for access** until a manager
+enrolls it. Every member can see each person's display name and device
+roster, including when devices were added or revoked.
 
-Use `ppn board members House` to see roles, devices, and invitation
-details. Add `--json` for full identity and device IDs. Use an identity
-name, `name#suffix`, full identity ID, or `me` with `ppn assign` and
-`assignee:` filters. When names collide the suffix identifies the person.
+Use `ppn board members House` to see people, effective device membership,
+and membership history. **Device roles differ** indicates a role change
+that has yet to reach every device. **Removal pending** indicates a
+revoked device that still has transport access. `ppn log --board House`
+also shows invitations, role changes, removals, and completed leaves.
+Use `--json` for full IDs and timestamps.
 
-Everyone on a shared board can see your identity name and every device's
-name and ID, including when devices were added or revoked. Your identity
-roster is republished to every board you share.
+A read member sends signed roster updates and leave requests through an
+encrypted channel. Managers receive and relay those records. They can
+delay or drop updates. A device signature protects each roster edit and
+leave request from forgery. Another manager can continue relaying when
+the inviter leaves.
 
-A read member sends signed identity updates through a separate encrypted
-channel. Their granting manager relays the updates and can delay or drop
-them. The member's signature prevents the manager from forging updates.
+## Manage members
+
+Select a person by name, `name#suffix`, full identity ID, or `me`. If a
+name matches multiple people, the error lists the qualified names to
+use. The same references work with `ppn assign` and `assignee:` filters.
+
+```sh
+ppn board role Ana write --board House
+ppn board remove Ana --board House --yes
+ppn board leave --board House --yes
+ppn board forget House --yes
+```
+
+Role changes and removals apply to the person's devices. A non-manager
+who leaves pauses board task sync locally while a manager's daemon
+processes the signed request. Use `ppn status` or `ppn board ls` to check
+its progress. A sole managing person must promote another person
+before demoting themselves or leaving. Device revocation also checks
+for the last manager.
+
+Removing or demoting another manager requires `--yes` and
+`--i-understand-mutual-removal-risk`. If two managers concurrently remove
+or demote one another, their competing changes can leave the board
+unrecoverable. Coordinate manager changes before issuing these commands.
+
+Removing a person rotates the board's keys. The former member keeps
+everything they already decrypted, and the transport may still deliver
+ciphertext. A device that was offline during removal can be blocked on
+reconnect before it learns of the removal. Re-inviting a former member
+gives them the complete history, including work from the time they
+were away. Past tasks, comments, and assignments keep their authors
+and assignees.
+
+After departure, the local history is read-only. `ppn board forget House
+--yes` deletes that host's application history and catalog entry for
+House. Run it on each device where you want to remove the local history.
+The node database can retain encrypted transport operations and
+membership metadata. Copies already exported or backed up must be
+deleted separately.
 
 A roster originally signed against a private catalog needs a portable
 proof before it can be used in an invitation. The command reports this
