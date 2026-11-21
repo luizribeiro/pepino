@@ -107,18 +107,33 @@ impl IdentityCard {
     pub fn name_for(&self, member: DeviceId) -> Result<String, AppError> {
         let catalog = self.verified_record()?;
         match catalog.device(member) {
-            Some(row) if row.state == RosterState::Active => {
+            Some(row) if row.state == RosterState::Active && catalog.confirms(member) => {
                 Ok(catalog.name().unwrap_or_default().to_owned())
             }
             _ => Err(invalid(
                 "identity",
-                "the signed identity record does not establish this device as active",
+                "this device has not confirmed active membership of the identity",
             )),
         }
     }
 }
 
 impl LocalState {
+    pub fn roster_device_confirmed(&self, device: DeviceId) -> bool {
+        self.catalog.identity.confirms(device)
+    }
+
+    pub fn needs_roster_confirmation(&self) -> bool {
+        self.active_roster_device(self.device_id)
+            && !self.roster_device_confirmed(self.device_id)
+            && self.roster_root().is_some()
+            && !self.catalog.identity.has_revoked_writer(
+                self.catalog_board(),
+                self.identity_id,
+                self.device_id,
+            )
+    }
+
     pub fn identity_card(&self) -> Result<IdentityCard, AppError> {
         let root = self
             .roster_root()
@@ -162,12 +177,10 @@ impl crate::App {
                     "wait for this device's identity roster to sync",
                 ));
             }
-            if !local.catalog.identity.authored_by(
-                portable_scope(),
-                local.identity_id,
-                keys.device_id(),
-            ) {
-                local.append_identity(&keys, super::edit::Change::ConfirmDevice)?;
+            if local.needs_roster_confirmation()
+                && let Some(root) = local.roster_root()
+            {
+                local.append_identity(&keys, super::edit::Change::ConfirmOwnership { root })?;
             }
             Ok(())
         })
@@ -268,4 +281,309 @@ fn card_updates_converge_without_authorizing_an_edit_from_before_admission() {
         prop_assert_eq!(record.name(), Some("Renamed gardener"));
         prop_assert_eq!(record.rejected_count(), 1);
     });
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn a_bundle_and_roster_claim_do_not_establish_device_ownership() {
+    use super::edit::Change;
+    use crate::{BoardAdmission, BoardPerson};
+    use pepino_core::BoardId;
+
+    let dir = tempfile::tempdir().unwrap();
+    let owner = crate::App::init(dir.path().join("owner"), 0).await.unwrap();
+    let guest = crate::App::init(dir.path().join("guest"), 0).await.unwrap();
+    let owner_keys = owner.identity_credentials().unwrap();
+    let guest_keys = guest.identity_credentials().unwrap();
+    let board = BoardId::from_bytes([92; 32]);
+    owner
+        .register_created_board(board, "Greenhouse")
+        .await
+        .unwrap();
+    let mut local = owner.fresh_local_state().await.unwrap();
+    let mut claimant = guest.fresh_local_state().await.unwrap();
+    let node = pepino_node::Node::spawn(pepino_node::NodeSettings::offline(
+        owner_keys.clone(),
+        dir.path().join("bundle.sqlite"),
+    ))
+    .await
+    .unwrap();
+    let bundle = node.member_info().await.unwrap();
+    let device = node.device_id();
+    claimant
+        .append_identity(
+            &guest_keys,
+            Change::Add {
+                device,
+                name: "Greenhouse laptop".into(),
+                added_ms: None,
+            },
+        )
+        .unwrap();
+    let mut claim = claimant.identity_card().unwrap();
+    claim.bundles.insert(device, bundle.to_hex());
+    owner
+        .record_board_admission(
+            board,
+            local.device_id,
+            local.device_id,
+            BoardAdmission {
+                owner: local.identity_card().unwrap(),
+                owner_device: local.device_id,
+                invitee: claim.clone(),
+                device: claimant.device_id,
+                at: chrono::DateTime::from_timestamp(1795145000, 0).unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+    local = owner.fresh_local_state().await.unwrap();
+    let owner_devices = local.membership_devices(board, local.own_person_key());
+    let claimant_devices = local.membership_devices(board, claimant.own_person_key());
+    assert!(owner_devices.contains(&device));
+    assert!(!claimant_devices.contains(&device));
+    assert!(local.membership_conflicts(board).is_empty());
+    let claimed = BoardPerson::introduced(&claim, claimant.device_id, None).unwrap();
+    assert!(
+        crate::reconcile_person(
+            &claimed,
+            &claimant_devices,
+            &Default::default(),
+            Some(pepino_node::Role::Write)
+        )
+        .is_empty()
+    );
+
+    claimant
+        .append_identity(&owner_keys, Change::ConfirmOwnership { root: claim.root })
+        .unwrap();
+    owner
+        .receive_board_cards(
+            board,
+            claimant.device_id,
+            None,
+            crate::BoardCards::Update(claimant.identity_card().unwrap()),
+        )
+        .await
+        .unwrap();
+    let local = owner.fresh_local_state().await.unwrap();
+    assert_eq!(local.membership_conflicts(board), [device].into());
+    assert!(
+        local
+            .membership_devices(board, claimant.own_person_key())
+            .contains(&device)
+    );
+    assert!(
+        local
+            .membership_devices(board, local.own_person_key())
+            .contains(&device)
+    );
+    node.shutdown().await.unwrap();
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn credentials_without_a_confirmation_cannot_be_used_to_enroll_a_device() {
+    use super::edit::Change;
+
+    let dir = tempfile::tempdir().unwrap();
+    let owner = crate::App::init(dir.path().join("owner"), 0).await.unwrap();
+    let guest = crate::App::init(dir.path().join("guest"), 0).await.unwrap();
+    let tablet_keys =
+        pepino_node::DeviceCredentials::load_or_create(dir.path().join("tablet")).unwrap();
+    let tablet = pepino_node::Node::spawn(pepino_node::NodeSettings::offline(
+        tablet_keys.clone(),
+        dir.path().join("tablet.sqlite"),
+    ))
+    .await
+    .unwrap();
+    let bundle = tablet.member_info().await.unwrap();
+    let mut person = guest.fresh_local_state().await.unwrap();
+    let guest_keys = guest.identity_credentials().unwrap();
+    let device = tablet.device_id();
+    person
+        .append_identity(
+            &guest_keys,
+            Change::Add {
+                device,
+                name: "Greenhouse tablet".into(),
+                added_ms: None,
+            },
+        )
+        .unwrap();
+    let mut claim = person.identity_card().unwrap();
+    claim.bundles.insert(device, bundle.to_hex());
+    let root = claim.root;
+    let board = pepino_core::BoardId::from_bytes([71; 32]);
+    owner
+        .register_created_board(board, "Greenhouse")
+        .await
+        .unwrap();
+    let local = owner.fresh_local_state().await.unwrap();
+    owner
+        .record_board_admission(
+            board,
+            local.device_id,
+            local.device_id,
+            crate::BoardAdmission {
+                owner: local.identity_card().unwrap(),
+                owner_device: local.device_id,
+                invitee: claim,
+                device: person.device_id,
+                at: std::time::UNIX_EPOCH.into(),
+            },
+        )
+        .await
+        .unwrap();
+    let local = owner.fresh_local_state().await.unwrap();
+    let saved = local
+        .board_people(board)
+        .find(|saved| saved.id == person.identity_id)
+        .unwrap();
+    let transport = [(person.device_id, pepino_node::Role::Write)].into();
+    let plan = crate::reconcile_person(
+        saved,
+        &local.membership_devices(board, saved.key()),
+        &transport,
+        Some(pepino_node::Role::Write),
+    );
+    assert!(plan.is_empty());
+
+    person
+        .append_identity(&tablet_keys, Change::ConfirmOwnership { root })
+        .unwrap();
+    owner
+        .receive_board_cards(
+            board,
+            person.device_id,
+            None,
+            crate::BoardCards::Update(person.identity_card().unwrap()),
+        )
+        .await
+        .unwrap();
+    let local = owner.fresh_local_state().await.unwrap();
+    let saved = local
+        .board_people(board)
+        .find(|saved| saved.id == person.identity_id)
+        .unwrap();
+    let plan = crate::reconcile_person(
+        saved,
+        &local.membership_devices(board, saved.key()),
+        &transport,
+        Some(pepino_node::Role::Write),
+    );
+    assert_eq!(
+        plan,
+        [crate::DeviceMembershipChange::Enroll(
+            Box::new(bundle),
+            pepino_node::Role::Write
+        )]
+    );
+    tablet.shutdown().await.unwrap();
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn competing_manager_plans_repair_reordered_enrollments_and_removals() {
+    use super::edit::Change;
+    use crate::{BoardPerson, DeviceMembershipChange, reconcile_person};
+    use pepino_node::Role;
+    use proptest::prelude::*;
+    use std::collections::BTreeMap;
+
+    let directory = tempfile::tempdir().unwrap();
+    let app = crate::App::init(directory.path(), 0).await.unwrap();
+    let keys = pepino_node::DeviceCredentials::load_or_create(directory.path().join("tablet.cbor"))
+        .unwrap();
+    let tablet = pepino_node::Node::spawn(pepino_node::NodeSettings::offline(
+        keys.clone(),
+        directory.path().join("tablet.sqlite"),
+    ))
+    .await
+    .unwrap();
+    let bundle = tablet.member_info().await.unwrap();
+    let laptop = app.local_state().device_id;
+    let phone_keys =
+        pepino_node::DeviceCredentials::load_or_create(directory.path().join("phone.cbor"))
+            .unwrap();
+    let phone = phone_keys.device_id();
+    app.remember_device(phone, "Old phone".into(), None)
+        .await
+        .unwrap();
+    app.remember_device(tablet.device_id(), "Garden tablet".into(), None)
+        .await
+        .unwrap();
+    app.remember_member_bundle(&bundle).await.unwrap();
+    let active = app
+        .try_update_local_state(move |local| {
+            let root = local.roster_root().unwrap();
+            for keys in [&phone_keys, &keys] {
+                local.append_identity(keys, Change::ConfirmOwnership { root })?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let at = chrono::DateTime::from_timestamp(1795145000, 0).unwrap();
+    let final_state = app.record_device_revocation(phone, at).await.unwrap();
+    let person = |local: &LocalState| {
+        BoardPerson::introduced(&local.identity_card().unwrap(), laptop, None).unwrap()
+    };
+    let old = person(&active);
+    let desired = person(&final_state);
+    let devices = [laptop, tablet.device_id(), phone].into();
+    let apply = |members: &mut BTreeMap<_, _>, change: &DeviceMembershipChange| match change {
+        DeviceMembershipChange::Enroll(info, role) => {
+            members.insert(info.device_id().unwrap(), *role);
+        }
+        DeviceMembershipChange::Remove(id) => {
+            members.remove(id);
+        }
+        DeviceMembershipChange::SetRole(id, role) => {
+            if let Some(existing) = members.get_mut(id) {
+                *existing = *role;
+            }
+        }
+    };
+    let mut rng = proptest::test_runner::TestRunner::default();
+    rng.run(
+        &proptest::collection::vec((any::<bool>(), any::<bool>(), any::<u8>()), 1..30),
+        |actions| {
+            let mut observed = [(laptop, Role::Write), (phone, Role::Write)].into();
+            let mut delayed = Vec::new();
+            for (latest, apply_now, priority) in actions {
+                let (view, role) = if latest {
+                    (&desired, Role::Read)
+                } else {
+                    (&old, Role::Write)
+                };
+                let plan = reconcile_person(view, &devices, &observed, Some(role));
+                if apply_now {
+                    for change in &plan {
+                        apply(&mut observed, change);
+                    }
+                } else {
+                    delayed.extend(plan.into_iter().map(|change| (priority, change)));
+                }
+            }
+            delayed.sort_by_key(|(priority, _)| *priority);
+            for (_, change) in delayed {
+                apply(&mut observed, &change);
+            }
+            for change in reconcile_person(&desired, &devices, &observed, Some(Role::Read)) {
+                apply(&mut observed, &change);
+            }
+            prop_assert_eq!(
+                &observed,
+                &[(laptop, Role::Read), (tablet.device_id(), Role::Read)].into()
+            );
+            for change in reconcile_person(&desired, &devices, &observed, None) {
+                apply(&mut observed, &change);
+            }
+            prop_assert!(observed.is_empty());
+            Ok(())
+        },
+    )
+    .unwrap();
+    tablet.shutdown().await.unwrap();
 }

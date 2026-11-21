@@ -37,6 +37,18 @@ impl SyncEngine {
             return Err(denied());
         }
         let person = request.identity.key();
+        if local.membership_conflicts(id).contains(&request.device.id)
+            || local
+                .board_people(id)
+                .any(|known| known.key() != person && known.confirms(request.device.id))
+        {
+            return Err(AppError::InvalidInput {
+                field: "request".into(),
+                reason: "The device has confirmed more than one identity on this board.".into(),
+                diagnostic: None,
+            }
+            .into());
+        }
         let former = local
             .latest_membership(id, person)
             .is_some_and(|record| record.change.action.role().is_none());
@@ -86,9 +98,7 @@ impl SyncEngine {
             reason: "Wait for the board's creation record to sync.".into(),
             diagnostic: None,
         })?;
-        if creator == local.device_id {
-            local = self.app.confirm_roster_device().await?;
-        }
+        local = self.app.confirm_roster_device().await?;
         let (owner, owner_device) = owner_card(&local, id)?;
         if !owner.authenticates_creator(creator, local.device_id)? {
             return Err(AppError::InvalidInput {
@@ -207,7 +217,9 @@ fn owner_card(
     let card = person.card();
     let active = person
         .devices()
-        .find(|device| device.state == pepino_app::RosterState::Active)
+        .find(|device| {
+            person.confirms(device.id) && device.state == pepino_app::RosterState::Active
+        })
         .ok_or_else(|| AppError::InvalidInput {
             field: "board".into(),
             reason: "The board owner's identity has no known active devices.".into(),

@@ -41,11 +41,13 @@ pub(super) fn run(
         .map_err(|_| CliError::new(ErrorKind::Failure, "Could not read the board membership."))?;
     let labels = local.person_labels();
     let authors = local.author_devices(board.id);
+    let conflicts = local.membership_conflicts(board.id);
     let mut people = Vec::new();
     for person in local.board_people(board.id) {
         let roster = local.membership_devices(board.id, person.key());
         let roles: std::collections::BTreeSet<_> = roster
             .iter()
+            .filter(|device| !conflicts.contains(device))
             .filter_map(|device| role_name(members.get(device)))
             .collect();
         let latest = local.latest_membership(board.id, person.key());
@@ -56,13 +58,17 @@ pub(super) fn run(
                 .filter(|device| roster.contains(&device.id)),
             &members,
             former,
+            &conflicts,
         );
         let role = if former {
             None
         } else if let Some(record) = latest {
             record.change.action.role().map(|role| role.to_string())
         } else {
-            role_name(members.get(&person.first_device))
+            roster
+                .get(&person.first_device)
+                .filter(|id| !conflicts.contains(id))
+                .and_then(|id| role_name(members.get(id)))
                 .or_else(|| roles.iter().next().copied())
                 .map(str::to_string)
         };
@@ -79,7 +85,7 @@ pub(super) fn run(
             "role": local.shared_access(board.id).map_or("manage", |access| match access.role {
                 pepino_app::BoardRole::Read => "read", pepino_app::BoardRole::Write => "write", pepino_app::BoardRole::Manage => "manage",
             }),
-            "devices": devices(roster.values(), &members, false), "invited_at": null, "invited_by": null}));
+            "devices": devices(roster.values(), &members, false, &conflicts), "invited_at": null, "invited_by": null}));
     }
     Ok(CommandResult::document(Members {
         board: board.name.clone(),
@@ -102,10 +108,12 @@ fn devices<'a>(
     roster: impl Iterator<Item = &'a pepino_app::RosterDevice>,
     members: &MemberStates,
     former: bool,
+    conflicts: &std::collections::BTreeSet<pepino_core::DeviceId>,
 ) -> Vec<Value> {
     roster.map(|device| {
         let state = members.get(&device.id);
         let membership = match state {
+            _ if conflicts.contains(&device.id) => "identity_conflict",
             Some(MemberState::Member(_)) if former || device.state == pepino_app::RosterState::Revoked => "removal_pending",
             Some(MemberState::Member(_)) => "member",
             Some(MemberState::Removed) => "removed",

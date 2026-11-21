@@ -228,6 +228,7 @@ impl crate::App {
         info: &pepino_node::MemberInfo,
         name: Option<&str>,
     ) -> Result<BoardRequest, AppError> {
+        self.confirm_roster_device().await?;
         let keys = self.identity_credentials()?;
         let info = info.clone();
         let name = name.map(crate::normalize_name).transpose()?;

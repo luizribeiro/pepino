@@ -28,6 +28,9 @@ pub(super) enum Change {
     RenameIdentity(String),
     RenameDevice(DeviceId, String),
     ConfirmDevice,
+    ConfirmOwnership {
+        root: DeviceId,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

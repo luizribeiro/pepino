@@ -91,6 +91,9 @@ fn fold_causal<'a>(
             Change::Add { device, .. } => active(edit.writer) && !active(*device),
             Change::RenameDevice(device, _) => active(edit.writer) && active(*device),
             Change::RenameIdentity(_) | Change::ConfirmDevice => active(edit.writer),
+            Change::ConfirmOwnership { root: confirmed } => {
+                *confirmed == root && active(edit.writer)
+            }
             Change::RequestLeave { .. } => {
                 active(edit.writer)
                     && record
@@ -213,7 +216,10 @@ pub(super) fn valid_names(change: &Change, legacy: bool) -> bool {
             }
         }
         Change::RenameIdentity(name) | Change::RenameDevice(_, name) => valid(name),
-        Change::Revoke { .. } | Change::RequestLeave { .. } | Change::ConfirmDevice => true,
+        Change::Revoke { .. }
+        | Change::RequestLeave { .. }
+        | Change::ConfirmDevice
+        | Change::ConfirmOwnership { .. } => true,
     }
 }
 

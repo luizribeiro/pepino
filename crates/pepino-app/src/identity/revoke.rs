@@ -70,6 +70,12 @@ impl App {
             .boards()
             .iter()
             .filter(|board| local.board_departure(board.id).is_none())
+            .filter(|board| {
+                local.shared_access(board.id).is_none()
+                    || local
+                        .membership_devices(board.id, local.own_person_key())
+                        .contains(&device)
+            })
         {
             let states = Node::persisted_members(&self.directory.join(NODE_DATABASE), board.id)
                 .await

@@ -53,10 +53,7 @@ pub(super) fn run(
             _ => None,
         })
         .collect();
-    let mut devices = local.membership_devices(board.id, person);
-    if person == local.own_person_key() {
-        devices.extend(local.roster().into_keys());
-    }
+    let devices = local.membership_devices(board.id, person);
     let previous = local.board_departure(board.id);
     if !(matches!(action, ManagePerson::Leave) && previous.is_some()) {
         action.check(local, board.id, person, &devices, &members, true)?;

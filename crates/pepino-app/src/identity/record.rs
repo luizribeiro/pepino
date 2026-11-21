@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use pepino_core::DeviceId;
 use serde::{Deserialize, Serialize};
@@ -60,6 +60,8 @@ impl RosterDevice {
 pub(super) struct Record {
     pub(super) display_name: String,
     pub(super) devices: BTreeMap<DeviceId, RosterDevice>,
+    #[serde(default)]
+    pub(super) confirmed: BTreeSet<DeviceId>,
 }
 
 impl Record {
@@ -90,6 +92,7 @@ impl Record {
             {
                 record.get_or_insert_with(|| Self {
                     display_name: display_name.clone(),
+                    confirmed: [writer].into(),
                     devices: [(
                         writer,
                         RosterDevice::active(writer, device_name.clone(), None, *added_ms),
@@ -141,6 +144,9 @@ impl Record {
                     if let Some(device) = current.devices.get_mut(device) {
                         device.name.clone_from(name);
                     }
+                }
+                Change::ConfirmOwnership { .. } => {
+                    current.confirmed.insert(writer);
                 }
                 Change::Initialize { .. } | Change::ConfirmDevice => (),
             }

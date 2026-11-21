@@ -71,6 +71,12 @@ impl IdentityCatalog {
             .flat_map(|record| record.devices.values())
     }
 
+    pub(crate) fn confirms(&self, id: DeviceId) -> bool {
+        self.record
+            .as_ref()
+            .is_some_and(|record| record.confirmed.contains(&id) || self.root == Some(id))
+    }
+
     pub(crate) fn device(&self, id: DeviceId) -> Option<&super::record::RosterDevice> {
         self.record.as_ref()?.devices.get(&id)
     }

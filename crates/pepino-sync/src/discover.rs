@@ -75,6 +75,12 @@ async fn reconcile<T: Transport>(
     generation: u64,
 ) -> Result<(), Error> {
     let mut local = reconcile_roster(boards, boards.app.fresh_local_state().await?).await?;
+    if boards.authority.is_some()
+        && local.needs_roster_confirmation()
+        && local.check_device_write().is_ok()
+    {
+        local = boards.app.confirm_roster_device().await?;
+    }
     if local.roster_ready()
         && local.device_bundle(local.device_id).is_none()
         && let Some(member) = boards.node.local_member_bundle().await?

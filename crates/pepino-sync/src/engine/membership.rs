@@ -28,10 +28,7 @@ impl SyncEngine {
                 reason: "this device is waiting for access".into(),
             })?;
         let members = handle.roles().await?;
-        let mut devices = local.membership_devices(board, person);
-        if person == local.own_person_key() {
-            devices.extend(local.roster().into_keys());
-        }
+        let devices = local.membership_devices(board, person);
         if devices.is_empty() {
             return Err(AppError::PermissionDenied {
                 path: format!("board {:?}", known.name),

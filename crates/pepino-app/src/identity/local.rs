@@ -75,6 +75,7 @@ fn authoritative_names_supersede_names_from_the_grant() {
     local.other_devices.insert(peer, "Old tablet".into());
     local.catalog.identity.record = Some(Record {
         display_name: "Ada Workshop".into(),
+        confirmed: [own].into(),
         devices: [(
             own,
             RosterDevice::active(own, "Titanium".into(), None, None),

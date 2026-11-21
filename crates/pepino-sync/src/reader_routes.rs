@@ -73,7 +73,8 @@ pub(crate) async fn reconcile_channel(
 ) -> Result<(), Error> {
     let members = handle.roles().await?;
     let current = channel.roles().await?;
-    let reader_devices = local.membership_devices(board, reader);
+    let conflicts = local.membership_conflicts(board);
+    let reader_devices = &local.membership_devices(board, reader) - &conflicts;
     let departed = !active
         || local
             .latest_membership(board, reader)
@@ -85,12 +86,18 @@ pub(crate) async fn reconcile_channel(
     };
     let managers: BTreeSet<_> = members
         .iter()
-        .filter_map(|(&id, &role)| (role == Role::Manage).then_some(id))
+        .filter_map(|(&id, &role)| {
+            (role == Role::Manage
+                && !conflicts.contains(&id)
+                && local.board_people(board).any(|person| person.confirms(id)))
+            .then_some(id)
+        })
         .collect();
     let bundle_for = |device: DeviceId| {
         local.device_bundle(device).or_else(|| {
             local
                 .board_people(board)
+                .filter(|person| person.confirms(device))
                 .find_map(|person| person.device_bundle(device))
         })
     };

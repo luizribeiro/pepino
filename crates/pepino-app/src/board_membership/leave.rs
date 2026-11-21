@@ -104,6 +104,7 @@ impl LocalState {
             .filter(move |request| {
                 request.leave.incarnation
                     == self.membership_incarnation(board, request.leave.person)
+                    && self.active_board_device(board, request.leave.person, request.leave.device)
             })
     }
     pub(crate) fn save_board_leave(&mut self, board: BoardId, request: SignedBoardLeave) {
@@ -161,9 +162,11 @@ impl App {
                 person.key() == request.leave.person
                     && person.devices().any(|device| {
                         device.id == request.leave.device
+                            && person.confirms(device.id)
                             && device.state == crate::RosterState::Active
                     })
             }) || (local.own_person_key() == request.leave.person
+                && local.roster_device_confirmed(request.leave.device)
                 && local.active_roster_device(request.leave.device))
             {
                 local.save_board_leave(board, request);

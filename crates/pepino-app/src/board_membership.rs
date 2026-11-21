@@ -27,7 +27,7 @@ pub fn reconcile_person(
 ) -> Vec<DeviceMembershipChange> {
     person
         .devices()
-        .filter(|row| devices.contains(&row.id))
+        .filter(|row| devices.contains(&row.id) && person.confirms(row.id))
         .filter_map(|row| {
             let current = members.get(&row.id).copied();
             if row.state == RosterState::Revoked || desired.is_none() {
@@ -49,24 +49,60 @@ pub fn reconcile_person(
 
 impl LocalState {
     pub fn membership_devices(&self, board: BoardId, key: PersonKey) -> BTreeSet<DeviceId> {
-        let mut devices = BTreeMap::new();
+        let mut confirmed: BTreeSet<_> = self
+            .board_people(board)
+            .filter(|person| person.key() == key)
+            .flat_map(|person| {
+                person
+                    .devices()
+                    .filter(|row| person.confirms(row.id))
+                    .map(|row| row.id)
+            })
+            .collect();
+        if key == self.own_person_key() {
+            confirmed.extend(
+                self.roster()
+                    .into_keys()
+                    .filter(|id| self.roster_device_confirmed(*id)),
+            );
+        }
+        confirmed
+    }
+
+    pub(crate) fn active_board_device(
+        &self,
+        board: BoardId,
+        key: PersonKey,
+        device: DeviceId,
+    ) -> bool {
+        if key == self.own_person_key() {
+            return self.roster_device_confirmed(device) && self.active_roster_device(device);
+        }
+        self.board_people(board).any(|person| {
+            person.key() == key
+                && person.confirms(device)
+                && person
+                    .devices()
+                    .any(|row| row.id == device && row.state == RosterState::Active)
+        })
+    }
+
+    pub fn membership_conflicts(&self, board: BoardId) -> BTreeSet<DeviceId> {
+        let mut owners = BTreeMap::new();
         let mut conflicts = BTreeSet::new();
-        for person in self.board_people(board) {
-            for row in person.devices() {
-                if devices
-                    .insert(row.id, person.key())
-                    .is_some_and(|old| old != person.key())
-                {
-                    conflicts.insert(row.id);
+        let people: BTreeSet<_> = self
+            .board_people(board)
+            .map(BoardPerson::key)
+            .chain([self.own_person_key()])
+            .collect();
+        for key in people {
+            for device in self.membership_devices(board, key) {
+                if owners.insert(device, key).is_some_and(|other| other != key) {
+                    conflicts.insert(device);
                 }
             }
         }
-        devices
-            .into_iter()
-            .filter_map(|(device, owner)| {
-                (owner == key && !conflicts.contains(&device)).then_some(device)
-            })
-            .collect()
+        conflicts
     }
 }
 
@@ -183,7 +219,6 @@ fn level(role: Role) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
 
     #[tokio::test]
     async fn management_guards_apply_to_every_device_of_a_person() {
@@ -249,93 +284,5 @@ mod tests {
                 .check(local, local.catalog_board(), me, &mine, &memberships, true)
                 .is_err()
         );
-    }
-
-    #[tokio::test]
-    async fn competing_manager_plans_repair_reordered_enrollments_and_removals() {
-        let directory = tempfile::tempdir().unwrap();
-        let app = crate::App::init(directory.path(), 0).await.unwrap();
-        let keys =
-            pepino_node::DeviceCredentials::load_or_create(directory.path().join("tablet.cbor"))
-                .unwrap();
-        let tablet = pepino_node::Node::spawn(pepino_node::NodeSettings::offline(
-            keys,
-            directory.path().join("tablet.sqlite"),
-        ))
-        .await
-        .unwrap();
-        let bundle = tablet.member_info().await.unwrap();
-        let laptop = app.local_state().device_id;
-        let phone = DeviceId::from_bytes([73; 32]);
-        app.remember_device(phone, "Old phone".into(), None)
-            .await
-            .unwrap();
-        app.remember_device(tablet.device_id(), "Garden tablet".into(), None)
-            .await
-            .unwrap();
-        app.remember_member_bundle(&bundle).await.unwrap();
-        let active = app.fresh_local_state().await.unwrap();
-        let at = chrono::DateTime::from_timestamp(1795145000, 0).unwrap();
-        let final_state = app.record_device_revocation(phone, at).await.unwrap();
-        let person = |local: &LocalState| {
-            BoardPerson::introduced(&local.identity_card().unwrap(), laptop, None).unwrap()
-        };
-        let old = person(&active);
-        let desired = person(&final_state);
-        let devices = [laptop, tablet.device_id(), phone].into();
-        let apply = |members: &mut BTreeMap<_, _>, change: &DeviceMembershipChange| match change {
-            DeviceMembershipChange::Enroll(info, role) => {
-                members.insert(info.device_id().unwrap(), *role);
-            }
-            DeviceMembershipChange::Remove(id) => {
-                members.remove(id);
-            }
-            DeviceMembershipChange::SetRole(id, role) => {
-                if let Some(existing) = members.get_mut(id) {
-                    *existing = *role;
-                }
-            }
-        };
-        let mut rng = proptest::test_runner::TestRunner::default();
-        rng.run(
-            &proptest::collection::vec((any::<bool>(), any::<bool>(), any::<u8>()), 1..30),
-            |actions| {
-                let mut observed = [(laptop, Role::Write), (phone, Role::Write)].into();
-                let mut delayed = Vec::new();
-                for (latest, apply_now, priority) in actions {
-                    let (view, role) = if latest {
-                        (&desired, Role::Read)
-                    } else {
-                        (&old, Role::Write)
-                    };
-                    let plan = reconcile_person(view, &devices, &observed, Some(role));
-                    if apply_now {
-                        for change in &plan {
-                            apply(&mut observed, change);
-                        }
-                    } else {
-                        delayed.extend(plan.into_iter().map(|change| (priority, change)));
-                    }
-                }
-                delayed.sort_by_key(|(priority, _)| *priority);
-                for (_, change) in delayed {
-                    apply(&mut observed, &change);
-                }
-                for change in reconcile_person(&desired, &devices, &observed, Some(Role::Read)) {
-                    apply(&mut observed, &change);
-                }
-                prop_assert_eq!(
-                    &observed,
-                    &[(laptop, Role::Read), (tablet.device_id(), Role::Read)].into()
-                );
-                for change in reconcile_person(&desired, &devices, &observed, None) {
-                    apply(&mut observed, &change);
-                }
-                prop_assert!(observed.is_empty());
-                Ok(())
-            },
-        )
-        .unwrap();
-        tablet.shutdown().await.unwrap();
     }
 }

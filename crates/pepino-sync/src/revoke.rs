@@ -124,7 +124,12 @@ impl Repairs {
                 continue;
             }
             let mut outcomes = Vec::new();
-            for board in local.boards().iter().rev() {
+            for board in local.boards().iter().rev().filter(|board| {
+                local.shared_access(board.id).is_none()
+                    || local
+                        .membership_devices(board.id, local.own_person_key())
+                        .contains(&row.id)
+            }) {
                 let result = match workers.handle(board.id) {
                     _ if local.waiting_for_access(board.id) => Removal::WaitingForAccess,
                     Some(handle)

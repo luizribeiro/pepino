@@ -81,6 +81,17 @@ impl Repairs {
             if members.get(&local.device_id) != Some(&Role::Manage) {
                 continue;
             }
+            let conflicts = local.membership_conflicts(board.id);
+            for &device in &conflicts {
+                if members.contains_key(&device)
+                    && let Err(error) = handle
+                        .apply_device_change(DeviceMembershipChange::Remove(device))
+                        .await
+                {
+                    crate::status::record_error(&workers.changes, board.id, error.to_string());
+                }
+            }
+            let members = handle.roles().await?;
             let mut completed = false;
             for request in local.board_leave_requests(board.id) {
                 let person = request.leave.person;
@@ -110,7 +121,7 @@ impl Repairs {
             }
             for saved in local.board_people(board.id) {
                 let mut person = saved.clone();
-                let devices = local.membership_devices(board.id, person.key());
+                let devices = &local.membership_devices(board.id, person.key()) - &conflicts;
                 if person.key() == local.own_person_key() {
                     match local.identity_card() {
                         Ok(card) => {
@@ -120,11 +131,15 @@ impl Repairs {
                         Err(error) => return Err(error.into()),
                     }
                 }
-                let current = members.get(&person.first_device).copied().or_else(|| {
-                    devices
-                        .iter()
-                        .find_map(|device| members.get(device).copied())
-                });
+                let current = devices
+                    .get(&person.first_device)
+                    .and_then(|id| members.get(id))
+                    .copied()
+                    .or_else(|| {
+                        devices
+                            .iter()
+                            .find_map(|device| members.get(device).copied())
+                    });
                 let desired = match local.latest_membership(board.id, person.key()) {
                     Some(record) if record.change.action.role().is_none() => {
                         let connected = devices.iter().any(|device| {

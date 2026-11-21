@@ -21,8 +21,16 @@ impl BoardPerson {
         first_device: DeviceId,
         invitation: Option<(DeviceId, DateTime<Utc>)>,
     ) -> Result<Self, AppError> {
-        card.name_for(first_device)?;
         let record = card.verified_record()?;
+        if !record
+            .device(first_device)
+            .is_some_and(|row| row.state == crate::RosterState::Active)
+        {
+            return Err(crate::app::invalid(
+                "identity",
+                "the device is absent from the active roster",
+            ));
+        }
         let mut bundles = Default::default();
         card.merge_bundles(&record, &mut bundles);
         Ok(Self {
@@ -50,6 +58,10 @@ impl BoardPerson {
 
     pub fn name(&self) -> &str {
         self.record.name().unwrap_or_default()
+    }
+
+    pub fn confirms(&self, device: DeviceId) -> bool {
+        self.record.confirms(device)
     }
 
     pub fn devices(&self) -> impl Iterator<Item = &RosterDevice> {
