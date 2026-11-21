@@ -365,6 +365,46 @@ fn a_read_invite_keeps_the_manager_daemon_available() {
 }
 
 #[test]
+fn a_request_cannot_enroll_its_device_on_a_second_board() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = dir.path().file_name().unwrap().to_str().unwrap();
+    let owner = host(network, "Ada", "Laptop", "Private work");
+    let guest = host(network, "Ben", "Phone", "Private travel");
+    owner.run(&["board", "new", "House"]);
+    owner.run(&["board", "new", "Garden"]);
+    let request = guest.json(&["board", "request"]);
+    let issued = grant(&owner, "House", "write", &request);
+    let error = common::task_error(
+        with_code(
+            &owner,
+            &[
+                "board", "invite", "-", "--board", "Garden", "--yes", "--json",
+            ],
+            request["request"].as_str().unwrap(),
+        ),
+        2,
+        "invalid_input",
+    );
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("already been used")
+    );
+    assert!(!owner.run(&["board", "members", "Garden"]).contains("Ben"));
+    let code = issued["grant"]["code"].as_str().unwrap();
+    guest.run(&["board", "join", code, "--timeout", "60s"]);
+    assert!(
+        guest
+            .run(&["board", "join", code])
+            .contains("Initial sync complete")
+    );
+    let state = std::fs::read_to_string(guest.data.join("local.json")).unwrap();
+    let state: Value = serde_json::from_str(&state).unwrap();
+    assert!(state["catalog"].get("board_request").is_none());
+}
+
+#[test]
 fn the_inviter_rejects_an_expired_member_bundle() {
     use data_encoding::BASE32_NOPAD_NOCASE;
     use pepino_app::BoardRequest;

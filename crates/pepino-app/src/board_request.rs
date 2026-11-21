@@ -95,6 +95,11 @@ impl BoardRequest {
             .min(issuance.at.saturating_add(LIFETIME_SECS)))
     }
 
+    pub fn consumption_key(&self) -> Result<String, AppError> {
+        let issuance = self.validate_issuance(SystemTime::now())?;
+        Ok(blake3::hash(&issuance.signature).to_hex().to_string())
+    }
+
     fn new(
         device: DeviceRequest,
         identity: IdentityCard,
@@ -188,6 +193,36 @@ async fn the_fingerprint_covers_the_identity_and_device_request() {
 }
 
 impl crate::App {
+    pub async fn consume_board_request(
+        &self,
+        board: pepino_core::BoardId,
+        request: &BoardRequest,
+    ) -> Result<(), AppError> {
+        let key = request.consumption_key()?;
+        let expiry = request.expires_at()?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| invalid("request", "invalid system time"))?
+            .as_secs();
+        self.try_update_local_state(move |local| {
+            let consumed = &mut local.catalog.consumed_board_requests;
+            consumed.retain(|_, (_, expires)| *expires > now);
+            if consumed
+                .get(&key)
+                .is_some_and(|(previous, _)| *previous != board)
+            {
+                return Err(invalid(
+                    "request",
+                    "This board request has already been used for another board.",
+                ));
+            }
+            consumed.insert(key, (board, expiry));
+            Ok(())
+        })
+        .await?;
+        Ok(())
+    }
+
     pub async fn request_board(
         &self,
         info: &pepino_node::MemberInfo,

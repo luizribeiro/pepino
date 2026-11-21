@@ -57,6 +57,7 @@ impl SyncEngine {
             .into());
         }
         let (owner, owner_device) = owner_card(&local, id)?;
+        self.app.consume_board_request(id, &request).await?;
         let admission = BoardAdmission {
             owner: owner.clone(),
             owner_device,
