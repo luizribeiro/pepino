@@ -63,6 +63,13 @@ pub(super) struct Record {
 }
 
 impl Record {
+    pub(super) fn sanitize_names(&mut self) {
+        self.display_name = crate::write::safe_roster_name(&self.display_name);
+        for device in self.devices.values_mut() {
+            device.name = crate::write::safe_roster_name(&device.name);
+        }
+    }
+
     pub(super) fn active_count(&self) -> usize {
         self.devices
             .values()

@@ -76,7 +76,11 @@ impl SignedEdit {
 }
 
 impl Edit {
-    fn digest(&self, board: BoardId, identity: IdentityId) -> Result<[u8; 32], AppError> {
+    pub(super) fn digest(
+        &self,
+        board: BoardId,
+        identity: IdentityId,
+    ) -> Result<[u8; 32], AppError> {
         let bytes = WireFormat::Cbor.encode(&(board, identity, self))?;
         Ok(blake3::derive_key(
             "Pepino identity catalog edit v1",

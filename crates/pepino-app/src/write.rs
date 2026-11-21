@@ -529,7 +529,23 @@ mod tests {
 }
 
 pub fn normalize_name(input: &str) -> Result<String, crate::AppError> {
+    if input.chars().any(invisible_name_character) {
+        return Err(crate::app::invalid(
+            "name",
+            "names cannot contain invisible formatting characters",
+        ));
+    }
     let title = normalize_title(input, "name")?;
+    if pepino_store::query::fold_text(&title) == "me"
+        || title.rsplit_once('#').is_some_and(|(_, suffix)| {
+            suffix.len() >= 4 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+    {
+        return Err(crate::app::invalid(
+            "name",
+            "the name uses reserved person notation",
+        ));
+    }
     pepino_core::Event::TaskCreated {
         title: title.clone(),
         fields: Default::default(),
@@ -539,6 +555,61 @@ pub fn normalize_name(input: &str) -> Result<String, crate::AppError> {
     Ok(title)
 }
 
+fn invisible_name_character(c: char) -> bool {
+    use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
+    c.is_control()
+        || c.general_category() == GeneralCategory::Format
+        || matches!(c, '\u{034F}' | '\u{115F}'..='\u{1160}' | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}' | '\u{2028}'..='\u{2029}' | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}' | '\u{FFA0}' | '\u{FFF0}'..='\u{FFF8}'
+            | '\u{E0000}'..='\u{E0FFF}')
+}
+
+pub(crate) fn safe_roster_name(input: &str) -> String {
+    if let Ok(name) = normalize_name(input) {
+        return name;
+    }
+    let mut cleaned = String::new();
+    for c in input.chars().filter(|&c| !invisible_name_character(c)) {
+        if cleaned.len() + c.len_utf8() > 1024 {
+            break;
+        }
+        cleaned.push(c);
+    }
+    normalize_name(&cleaned).unwrap_or_else(|_| "Unnamed".into())
+}
+
+pub(crate) fn legacy_roster_name(input: &str) -> bool {
+    let Ok(title) = normalize_title(input, "name") else {
+        return false;
+    };
+    title == input
+        && pepino_core::Event::TaskCreated {
+            title,
+            fields: Default::default(),
+        }
+        .validate()
+        .is_ok()
+}
+
+#[cfg(test)]
+#[test]
+fn roster_names_reject_reserved_and_invisible_text() {
+    for name in [
+        " mE ",
+        "Ada#01af",
+        "⚠ Ada#01af",
+        "Ada\u{202e}Tablet",
+        "Ada\u{034f}",
+        "Ada\x1b",
+        "Ada\nTablet",
+    ] {
+        assert!(normalize_name(name).is_err(), "{name:?}");
+        assert!(normalize_name(&safe_roster_name(name)).is_ok());
+    }
+    assert_eq!(safe_roster_name(&"é".repeat(1000)).len(), 1024);
+    assert!(normalize_name("Ada#42").is_ok());
+}
 #[cfg(test)]
 #[test]
 fn identity_names_follow_title_rules() {

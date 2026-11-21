@@ -60,14 +60,16 @@ impl LocalState {
         }
         if self.roster_root().is_none() {
             self.catalog.identity.root = Some(root);
-            self.catalog.identity.refresh();
+            self.catalog
+                .identity
+                .refresh(self.catalog_board(), self.identity_id);
         }
         if root == self.device_id && self.catalog.identity.record.is_none() {
             self.append_identity(
                 keys,
                 Change::Initialize {
-                    display_name: self.display_name.clone(),
-                    device_name: self.device_name.clone(),
+                    display_name: crate::write::safe_roster_name(&self.display_name),
+                    device_name: crate::write::safe_roster_name(&self.device_name),
                     added_ms: initialized_at,
                 },
             )?;
@@ -81,7 +83,7 @@ impl LocalState {
                         keys,
                         Change::Add {
                             device,
-                            name,
+                            name: crate::write::safe_roster_name(&name),
                             added_ms: None,
                         },
                     )?;

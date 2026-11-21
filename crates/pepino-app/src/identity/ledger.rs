@@ -8,7 +8,7 @@ use crate::{AppError, WireFormat};
 
 use super::{
     edit::{Change, Edit, SignedEdit, portable_scope},
-    fold::fold,
+    fold::{Fold, fold, valid_names},
     record::Record,
 };
 
@@ -28,6 +28,12 @@ impl IdentityCatalog {
         Self {
             root: Some(root),
             ..Self::default()
+        }
+    }
+
+    pub(crate) fn sanitize_names(&mut self) {
+        if let Some(record) = &mut self.record {
+            record.sanitize_names();
         }
     }
 
@@ -63,10 +69,13 @@ impl IdentityCatalog {
     ) -> Result<(), AppError> {
         let previous = self.edits.len();
         for signed in incoming {
-            if let Some(id) = signed
-                .id(portable_scope(), identity)?
-                .or(signed.id(board, identity)?)
-            {
+            if let Some(id) = signed.id(portable_scope(), identity)? {
+                if valid_names(&signed.edit.change, false) {
+                    self.edits.entry(id).or_insert(signed);
+                } else {
+                    self.invalid.insert(id);
+                }
+            } else if let Some(id) = signed.id(board, identity)? {
                 self.edits.entry(id).or_insert(signed);
             } else {
                 let bytes = WireFormat::Cbor.encode(&signed)?;
@@ -75,21 +84,33 @@ impl IdentityCatalog {
             }
         }
         if previous != self.edits.len() {
-            self.refresh();
+            self.refresh(board, identity);
         }
         Ok(())
     }
 
-    pub(super) fn refresh(&mut self) {
+    fn fold(&self, root: DeviceId, board: BoardId, identity: IdentityId) -> Fold<'_> {
+        fold(&self.edits, root, |id, edit| {
+            board != portable_scope()
+                && edit
+                    .digest(board, identity)
+                    .is_ok_and(|digest| id.as_bytes() == &digest)
+        })
+    }
+
+    pub(super) fn refresh(&mut self, board: BoardId, identity: IdentityId) {
         if let Some(root) = self.root {
-            let folded = fold(&self.edits, root);
-            self.record = Record::fold(
+            let folded = self.fold(root, board, identity);
+            let record = Record::fold(
                 folded
                     .ordered
                     .into_iter()
                     .map(|edit| (&edit.change, edit.writer)),
             );
-            self.rejected = folded.rejected;
+            let rejected = folded.rejected;
+            self.record = record;
+            self.rejected = rejected;
+            self.sanitize_names();
         }
     }
 
@@ -103,7 +124,7 @@ impl IdentityCatalog {
         let writer = keys.device_id();
         let parents = self
             .root
-            .map(|root| fold(&self.edits, root).heads)
+            .map(|root| self.fold(root, board, identity).heads)
             .unwrap_or_default();
         let generation = parents
             .iter()
@@ -175,4 +196,62 @@ fn new_roster_edits_can_be_verified_without_the_private_catalog() {
         .merge(other_board, identity, local.edits().cloned())
         .unwrap();
     assert_eq!(remote, local);
+}
+
+#[cfg(test)]
+#[test]
+fn timestamp_free_names_are_lax_only_in_private_legacy_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let keys = DeviceCredentials::load_or_create(dir.path().join("owner")).unwrap();
+    let board = BoardId::from_bytes([48; 32]);
+    let identity = IdentityId::from_bytes([49; 32]);
+    let root = keys.device_id();
+    let edit = Edit {
+        writer: root,
+        parents: Default::default(),
+        generation: 0,
+        change: Change::Initialize {
+            display_name: "Ada\u{202e} Gardener".into(),
+            device_name: "Garden\x1b tablet".into(),
+            added_ms: None,
+        },
+    };
+    let mut ledger = IdentityCatalog::with_root(root);
+    let portable = SignedEdit::sign(edit.clone(), portable_scope(), identity, &keys).unwrap();
+    ledger.merge(board, identity, [portable]).unwrap();
+    assert_eq!(ledger.name(), None);
+    assert_eq!(ledger.rejected_count(), 1);
+    let legacy = SignedEdit::sign(edit, board, identity, &keys).unwrap();
+    ledger.merge(board, identity, [legacy]).unwrap();
+    assert_eq!(ledger.name(), Some("Ada Gardener"));
+    assert_eq!(ledger.device(root).unwrap().name, "Garden tablet");
+
+    let mut portable = IdentityCatalog::with_root(root);
+    portable
+        .append(
+            board,
+            identity,
+            &keys,
+            Change::Initialize {
+                display_name: "Ada Gardener".into(),
+                device_name: "Laptop".into(),
+                added_ms: None,
+            },
+        )
+        .unwrap();
+    let device = DeviceId::from_bytes([79; 32]);
+    portable
+        .append(
+            board,
+            identity,
+            &keys,
+            Change::Add {
+                device,
+                name: "A".repeat(1025),
+                added_ms: None,
+            },
+        )
+        .unwrap();
+    assert!(portable.device(device).is_none());
+    assert_eq!(portable.rejected_count(), 1);
 }

@@ -14,7 +14,11 @@ pub(super) struct Fold<'a> {
     pub(super) rejected: BTreeSet<EventId>,
 }
 
-pub(super) fn fold(entries: &BTreeMap<EventId, SignedEdit>, root: DeviceId) -> Fold<'_> {
+pub(super) fn fold(
+    entries: &BTreeMap<EventId, SignedEdit>,
+    root: DeviceId,
+    legacy: impl Fn(EventId, &Edit) -> bool,
+) -> Fold<'_> {
     let mut ordered: Vec<_> = entries.iter().collect();
     ordered.sort_unstable_by_key(|(id, signed)| (signed.edit.generation, **id));
     let mut view = Fold::default();
@@ -82,7 +86,11 @@ pub(super) fn fold(entries: &BTreeMap<EventId, SignedEdit>, root: DeviceId) -> F
             .map(|id| entries[id].edit.generation + 1)
             .max()
             .unwrap_or(0);
-        if !authorized || edit.generation != generation || !valid_names(&edit.change) {
+        if !authorized
+            || edit.generation != generation
+            || !(valid_names(&edit.change, false)
+                || (legacy(id, edit) && valid_names(&edit.change, true)))
+        {
             view.rejected.insert(id);
             continue;
         }
@@ -95,22 +103,28 @@ pub(super) fn fold(entries: &BTreeMap<EventId, SignedEdit>, root: DeviceId) -> F
     view
 }
 
-fn valid_names(change: &Change) -> bool {
-    let valid = |name: &str| crate::normalize_name(name).is_ok_and(|value| value == name);
+pub(super) fn valid_names(change: &Change, legacy: bool) -> bool {
+    let valid = |name: &str| {
+        if legacy {
+            crate::write::legacy_roster_name(name)
+        } else {
+            crate::normalize_name(name).is_ok_and(|value| value == name)
+        }
+    };
     match change {
         Change::Initialize {
             display_name,
             device_name,
             added_ms,
         } => {
-            if added_ms.is_some() {
+            if !legacy || added_ms.is_some() {
                 valid(display_name) && valid(device_name)
             } else {
                 !display_name.trim().is_empty() && !device_name.trim().is_empty()
             }
         }
         Change::Add { name, added_ms, .. } => {
-            if added_ms.is_some() {
+            if !legacy || added_ms.is_some() {
                 valid(name)
             } else {
                 !name.trim().is_empty()
@@ -160,7 +174,7 @@ fn membership_is_checked_against_parents_even_after_a_later_admission() {
         }),
     ]
     .into();
-    let view = fold(&entries, root);
+    let view = fold(&entries, root, |_, _| false);
     assert_eq!(view.rejected, [id(11)].into());
     assert_eq!(view.heads, [id(15)].into());
     assert_eq!(view.ordered.len(), 5);

@@ -245,6 +245,20 @@ impl LocalState {
             version => return Err(storage("unsupported local state version", version, false)),
         }
         let mut local: Self = serde_json::from_value(value).map_err(decode_error)?;
+        local.display_name = crate::write::safe_roster_name(&local.display_name);
+        local.device_name = crate::write::safe_roster_name(&local.device_name);
+        for name in local.other_devices.values_mut() {
+            *name = crate::write::safe_roster_name(name);
+        }
+        local.catalog.identity.sanitize_names();
+        for person in local
+            .catalog
+            .people
+            .values_mut()
+            .flat_map(|people| people.values_mut())
+        {
+            person.sanitize_names();
+        }
         if version == 5 {
             local.stage_legacy_roster();
         }

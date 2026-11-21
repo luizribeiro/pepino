@@ -29,6 +29,10 @@ impl BoardPerson {
         })
     }
 
+    pub(crate) fn sanitize_names(&mut self) {
+        self.record.sanitize_names();
+    }
+
     pub fn name(&self) -> &str {
         self.record.name().unwrap_or_default()
     }
