@@ -795,11 +795,12 @@ fn a_reader_links_a_device_and_both_follow_person_roles_and_departure() {
             .run(&["board", "members", "House"])
             .contains("Ben (former member)")
     );
-    common::task_error(
-        linked.output(&["board", "forget", "House", "--json"]),
-        1,
-        "confirmation_required",
+    let confirmation = until(
+        || linked.output(&["board", "forget", "House", "--json"]),
+        |output| output.status.code() == Some(1),
+        WAIT,
     );
+    common::task_error(confirmation, 1, "confirmation_required");
     let busy = linked.output(&["board", "forget", "House", "--yes", "--json"]);
     assert!(!busy.status.success());
     assert!(
