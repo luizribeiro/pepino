@@ -45,7 +45,7 @@ printf 'Workspace wall time: %ss\nSlowest ten nextest tests:\n' "$elapsed"
 awk -F '[][]' '$1 ~ /^[[:space:]]*(PASS|FAIL|LEAK|TIMEOUT)[[:space:]]+$/ && $2 ~ /s$/ {
     sub(/^[[:space:]]+/, "", $2)
     sub(/^[[:space:]]+/, "", $3)
-    print $2, $3
+    if (!seen[$3]++) print $2, $3
 }' "$log" | sort -nr | sed -n '1,10p'
 
 if ((status != 0)); then
