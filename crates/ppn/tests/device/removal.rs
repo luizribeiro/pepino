@@ -173,11 +173,15 @@ fn a_daemon_resumes_an_offline_revocation_and_readmission_restores_the_gap() {
     link(&owner, &tablet, "Garden tablet");
     assert_eq!(id(&tablet), target);
     until(
-        || check_task(&tablet, "Record the winter harvest"),
-        |visible| *visible,
+        || {
+            (
+                check_task(&tablet, "Record the winter harvest"),
+                roster_state(&tablet, &target),
+            )
+        },
+        |(visible, row)| *visible && row.as_ref().is_some_and(|row| row["state"] == "active"),
         WAIT,
     );
-    assert_eq!(roster_state(&tablet, &target).unwrap()["state"], "active");
     assert!(!check_task(&owner, "Retired local draft"));
     assert!(!check_task(&tablet, "Retired local draft"));
 }
