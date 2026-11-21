@@ -10,7 +10,19 @@ use super::BoardWorkers;
 impl<T: Transport> BoardWorkers<T> {
     pub(super) async fn open_card_exchanges(&mut self, local: &LocalState) -> Result<(), Error> {
         for (&channel, &exchange) in local.card_exchanges() {
-            if self.handles.contains_key(&channel) || self.stopping.has_changed().is_err() {
+            let own = exchange.person == local.identity_id
+                && exchange
+                    .root
+                    .is_none_or(|root| root == local.own_person_key().1);
+            let manager = if let Some(board) = self.handle(exchange.board) {
+                board.manages(local.device_id).await
+            } else {
+                false
+            };
+            if !(own || manager)
+                || self.handles.contains_key(&channel)
+                || self.stopping.has_changed().is_err()
+            {
                 continue;
             }
             let board = self
@@ -56,16 +68,22 @@ async fn receive<A: Acknowledgement>(
     while let Some(delivery) = stream.next().await {
         let Ok(delivery) = delivery else { continue };
         let mut retry = Retry::new();
-        while let Some(BoardCards::Update(card)) = BoardCards::decode(&delivery.bytes) {
-            if card.id != exchange.person
-                || exchange.root.is_some_and(|root| root != card.root)
+        while let Some(cards) = BoardCards::decode(&delivery.bytes) {
+            let accepted = match &cards {
+                BoardCards::Update(card) => {
+                    card.id == exchange.person && exchange.root.is_none_or(|root| root == card.root)
+                }
+                BoardCards::Leave(request) => {
+                    request.leave.person.0 == exchange.person
+                        && exchange
+                            .root
+                            .is_none_or(|root| root == request.leave.person.1)
+                }
+                _ => false,
+            };
+            if !accepted
                 || app
-                    .receive_board_cards(
-                        exchange.board,
-                        delivery.signer,
-                        None,
-                        BoardCards::Update(card),
-                    )
+                    .receive_board_cards(exchange.board, delivery.signer, None, cards)
                     .await
                     .is_ok()
             {

@@ -235,6 +235,37 @@ async fn ingest_cards<B: TransportBoard>(
                 }
             }
         }
+        if let BoardCards::ReaderRoute {
+            channel,
+            person,
+            incarnation,
+        } = cards
+        {
+            let outcome = match handle.operation_role(delivery.operation).await {
+                Ok(Some(pepino_node::Role::Manage)) => app
+                    .register_card_exchange(
+                        channel,
+                        pepino_app::CardExchange {
+                            board,
+                            person: person.0,
+                            root: Some(person.1),
+                            incarnation,
+                        },
+                    )
+                    .await
+                    .map_err(Error::from),
+                Ok(_) => Ok(()),
+                Err(error) => Err(error.into()),
+            };
+            match outcome {
+                Ok(()) | Err(Error::App(pepino_app::AppError::InvalidInput { .. })) => break,
+                Err(error) => {
+                    record_error(status, board, format!("save reader route: {error}"));
+                    retry.wait().await;
+                    continue;
+                }
+            }
+        }
         let creator = if let BoardCards::Introduce(admission) = &cards {
             match handle.admitted_by(admission.device, delivery.signer).await {
                 Ok(true) if let Some(path) = authority => {
