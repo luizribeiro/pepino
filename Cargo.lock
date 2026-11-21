@@ -3399,6 +3399,7 @@ dependencies = [
  "p2panda-spaces",
  "p2panda-store",
  "pepino-core",
+ "proptest",
  "serde",
  "serde_bytes",
  "sqlx",

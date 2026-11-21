@@ -11,7 +11,9 @@ mod membership;
 mod membership_watch;
 mod node;
 mod receipt;
+mod relay;
 mod relay_control;
+mod relay_ledger;
 mod settings;
 mod spool;
 mod status;
@@ -25,6 +27,7 @@ pub use events::{BoardEvent, BoardEvents};
 pub use membership::{MemberInfo, MemberState, MemberStates, OperationRole, Role};
 pub use membership_watch::{MembershipChange, MembershipEvent, MembershipEvents};
 pub use node::Node;
+pub use relay::{Relay, RelayEnd, RelayMonitor, RelayStatus};
 pub use relay_control::{
     RelayAnswer, RelayChannel, RelayInstruction, RelayRevision, validate_relay_id,
 };

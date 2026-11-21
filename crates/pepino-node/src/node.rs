@@ -27,7 +27,18 @@ pub struct Node {
 
 impl Node {
     pub async fn spawn(settings: NodeSettings) -> Result<Self, Error> {
-        let builder = settings.builder()?;
+        Self::spawn_mode(settings, false).await
+    }
+
+    pub(crate) async fn spawn_relay(settings: NodeSettings) -> Result<Self, Error> {
+        Self::spawn_mode(settings, true).await
+    }
+
+    async fn spawn_mode(settings: NodeSettings, relay: bool) -> Result<Self, Error> {
+        let mut builder = settings.builder()?;
+        if relay {
+            builder = builder.ack_policy(p2panda::node::AckPolicy::Automatic);
+        }
         let publish_confirmation_timeout = settings.publish_confirmation_timeout;
         let boards = OpenBoards::default();
         let worker_boards = boards.clone();
@@ -36,7 +47,7 @@ impl Node {
         let worker_pool = worker.pool.clone();
         let started = worker
             .run(async move {
-                let pool = open_database(&settings.database_path).await?;
+                let pool = open_database(&settings.database_path, relay).await?;
                 worker_pool.set(pool.clone()).map_err(|_| Error::Closed)?;
                 p2panda_store::sqlite::run_pending_migrations(&pool)
                     .await
@@ -83,6 +94,10 @@ impl Node {
             status,
             publish_confirmation_timeout,
         })
+    }
+
+    pub(crate) fn pool(&self) -> Result<&sqlx::SqlitePool, Error> {
+        self.worker.pool.get().ok_or(Error::Closed)
     }
 
     /// Identifies this replication database across restarts.
@@ -156,7 +171,10 @@ async fn database_instance_id(pool: &sqlx::SqlitePool) -> Result<[u8; 16], Error
         .map_err(Error::storage)
 }
 
-pub(crate) async fn open_database(path: &std::path::Path) -> Result<sqlx::SqlitePool, Error> {
+pub(crate) async fn open_database(
+    path: &std::path::Path,
+    secure_delete: bool,
+) -> Result<sqlx::SqlitePool, Error> {
     let mut file = std::fs::OpenOptions::new();
     file.write(true).create(true).truncate(false);
     #[cfg(unix)]
@@ -183,10 +201,13 @@ pub(crate) async fn open_database(path: &std::path::Path) -> Result<sqlx::Sqlite
         }
     }
     drop(database);
-    let options = SqliteConnectOptions::new()
+    let mut options = SqliteConnectOptions::new()
         .filename(path)
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Full);
+    if secure_delete {
+        options = options.pragma("secure_delete", "ON");
+    }
     SqlitePoolOptions::new()
         .max_connections(16)
         .connect_with(options)
@@ -205,7 +226,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempfile::tempdir().unwrap();
-        let pool = open_database(&dir.path().join("node.sqlite"))
+        let pool = open_database(&dir.path().join("node.sqlite"), false)
             .await
             .unwrap();
         sqlx::query("CREATE TABLE test (id INTEGER PRIMARY KEY)")
@@ -231,7 +252,7 @@ mod tests {
             )
             .unwrap();
         }
-        let reopened = open_database(&dir.path().join("node.sqlite"))
+        let reopened = open_database(&dir.path().join("node.sqlite"), false)
             .await
             .unwrap();
         for file in files {
@@ -252,14 +273,14 @@ mod tests {
     async fn node_instance_follows_the_database() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("node.sqlite");
-        let pool = open_database(&path).await.unwrap();
+        let pool = open_database(&path, false).await.unwrap();
         let original = database_instance_id(&pool).await.unwrap();
         pool.close().await;
-        let pool = open_database(&path).await.unwrap();
+        let pool = open_database(&path, false).await.unwrap();
         assert_eq!(database_instance_id(&pool).await.unwrap(), original);
         pool.close().await;
         std::fs::remove_file(&path).unwrap();
-        let pool = open_database(&path).await.unwrap();
+        let pool = open_database(&path, false).await.unwrap();
         assert_ne!(database_instance_id(&pool).await.unwrap(), original);
     }
 

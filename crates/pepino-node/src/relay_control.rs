@@ -125,6 +125,18 @@ pub struct RelayChannel {
     rx: EphemeralStreamSubscription<Envelope>,
 }
 
+pub(crate) struct IncomingInstruction {
+    pub author: DeviceId,
+    pub challenge: [u8; 16],
+    envelope: Envelope,
+}
+
+impl IncomingInstruction {
+    pub fn open(&self, keys: &DeviceCredentials) -> Option<RelayInstruction> {
+        self.envelope.open(self.author, keys)
+    }
+}
+
 impl Node {
     pub async fn relay_channel(&self, relay: DeviceId) -> Result<RelayChannel, Error> {
         let node = self.inner.clone();
@@ -152,6 +164,20 @@ impl RelayChannel {
             .await
     }
 
+    pub(crate) async fn answer(
+        &self,
+        incoming: &IncomingInstruction,
+        answer: RelayAnswer,
+    ) -> Result<(), Error> {
+        self.send_message(
+            incoming.author,
+            incoming.challenge,
+            Direction::Answer,
+            &answer,
+        )
+        .await
+    }
+
     async fn send_message(
         &self,
         to: DeviceId,
@@ -176,6 +202,20 @@ impl RelayChannel {
                 && let Some(answer) = body.open(author, keys)
             {
                 return Some((body.challenge, answer));
+            }
+        }
+        None
+    }
+
+    pub(crate) async fn receive_instruction(&mut self) -> Option<IncomingInstruction> {
+        while let Some(message) = self.rx.next().await {
+            let body = message.body();
+            if body.to == self.id && body.direction == Direction::Instruction {
+                return Some(IncomingInstruction {
+                    author: DeviceId::from_bytes(*message.author().as_bytes()),
+                    challenge: body.challenge,
+                    envelope: body.clone(),
+                });
             }
         }
         None

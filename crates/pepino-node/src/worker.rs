@@ -214,7 +214,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("node.sqlite");
         let worker = start(&path).await.unwrap();
-        let pool = crate::node::open_database(&path).await.unwrap();
+        let pool = crate::node::open_database(&path, false).await.unwrap();
         worker.pool.set(pool.clone()).unwrap();
         let store = SqliteStore::from_pool(pool.clone());
         let (written, ready) = oneshot::channel();
@@ -244,7 +244,7 @@ mod tests {
         if let Err(error) = writing.await {
             assert!(error.is_cancelled(), "{error}");
         }
-        let reopened = crate::node::open_database(&path).await.unwrap();
+        let reopened = crate::node::open_database(&path, false).await.unwrap();
         let table: String =
             sqlx::query_scalar("SELECT name FROM sqlite_schema WHERE type = 'table'")
                 .fetch_one(&reopened)
