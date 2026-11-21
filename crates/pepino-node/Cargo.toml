@@ -25,3 +25,5 @@ tokio.workspace = true
 futures-util.workspace = true
 tokio-stream = { version = "0.1", features = ["sync"] }
 p2panda-net.workspace = true
+p2panda-encryption.workspace = true
+ed25519-dalek = "2.2"
