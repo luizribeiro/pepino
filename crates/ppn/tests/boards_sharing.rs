@@ -200,3 +200,166 @@ fn two_identities_share_one_board_and_edit_each_others_work() {
         "not_found",
     );
 }
+
+#[test]
+fn a_read_invitation_is_pending_offline_and_refuses_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = dir.path().file_name().unwrap().to_str().unwrap();
+    let owner = host(network, "Ada", "Laptop", "Private work");
+    let reader = host(network, "Ada", "Phone", "Private travel");
+    owner.run(&["board", "new", "House"]);
+    let task = owner.json(&["add", "--board", "House", "Repair the door"]);
+    let task = task["created"].as_str().unwrap();
+    owner.run(&["comment", "--board", "House", task, "Fitted the old latch"]);
+    let request = reader.json(&["board", "request"]);
+    let wrong = with_code(
+        &owner,
+        &[
+            "board",
+            "invite",
+            "-",
+            "--board",
+            "House",
+            "--fingerprint",
+            "wrong",
+            "--json",
+        ],
+        request["request"].as_str().unwrap(),
+    );
+    let error = common::task_error(wrong, 2, "invalid_input");
+    assert!(error["message"].as_str().unwrap().contains("fingerprint"));
+    let wrong_kind = with_code(
+        &reader,
+        &["board", "join", "-", "--json"],
+        request["request"].as_str().unwrap(),
+    );
+    common::task_error(wrong_kind, 2, "invalid_input");
+    let original = grant(&owner, "House", "read", &request);
+    let grant_code = original["grant"]["code"].as_str().unwrap();
+    let different = host(network, "Ben", "Tablet", "Private errands");
+    different.json(&["board", "request"]);
+    common::task_error(
+        with_code(&different, &["board", "join", "-", "--json"], grant_code),
+        2,
+        "invalid_input",
+    );
+    owner.stop();
+    common::task_error(
+        with_code(
+            &reader,
+            &["board", "join", "-", "--json", "--timeout", "250ms"],
+            grant_code,
+        ),
+        7,
+        "pending",
+    );
+    assert_eq!(board(&reader, "House")["shared"], true);
+    let denied = common::task_error(
+        reader.output(&[
+            "comment",
+            "--board",
+            "House",
+            "does-not-exist",
+            "-",
+            "--json",
+        ]),
+        5,
+        "permission_denied",
+    );
+    assert!(denied["message"].as_str().unwrap().contains("read role"));
+    assert!(denied["message"].as_str().unwrap().contains("House"));
+    owner.start();
+    until(
+        || board(&reader, "House"),
+        |value| value["membership"] == "joined",
+        WAIT,
+    );
+    let names = reader.json(&["show", "--board", "House", task])["names"].clone();
+    assert_eq!(
+        names,
+        owner.json(&["show", "--board", "House", task])["names"]
+    );
+    assert!(
+        reader
+            .run(&["show", "--board", "House", task])
+            .contains("Ada#")
+    );
+    assert!(
+        owner
+            .run(&["show", "--board", "House", task])
+            .contains("Ada#")
+    );
+    assert_eq!(reader.json(&["ls", "--board", "House"])["total"], 1);
+    assert!(
+        reader
+            .run(&["show", "--board", "House", task])
+            .contains("Fitted the old latch")
+    );
+    let ambiguous = common::task_error(
+        owner.output(&["assign", "--board", "House", task, "Ada", "--json"]),
+        4,
+        "ambiguous_id",
+    );
+    assert!(
+        ambiguous["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|candidate| candidate.as_str().unwrap().starts_with("Ada#"))
+    );
+    common::task_error(
+        owner.output(&["ls", "--board", "House", "assignee:Ada", "--json"]),
+        4,
+        "ambiguous_id",
+    );
+    let candidate = ambiguous["candidates"][0].as_str().unwrap();
+    owner.run(&["assign", "--board", "House", task, candidate]);
+    assert_eq!(
+        owner.json(&["ls", "--board", "House", &format!("assignee:{candidate}")])["total"],
+        1
+    );
+    reader.run(&["identity", "rename", "Ada Reader"]);
+    until(
+        || owner.json(&["board", "members", "House"]),
+        |result| {
+            result["people"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|person| person["name"] == "Ada Reader")
+        },
+        WAIT,
+    );
+}
+
+#[test]
+fn the_inviter_rejects_an_expired_member_bundle() {
+    use data_encoding::BASE32_NOPAD_NOCASE;
+    use pepino_app::BoardRequest;
+    use ppn::device_code::Kind;
+
+    let dir = tempfile::tempdir().unwrap();
+    let network = dir.path().file_name().unwrap().to_str().unwrap();
+    let owner = host(network, "Luiz", "Desktop", "Owner private");
+    let guest = host(network, "Ana", "Tablet", "Guest private");
+    owner.run(&["board", "new", "House"]);
+    let request = guest.json(&["board", "request"]);
+    let mut expired: BoardRequest = Kind::BoardRequest
+        .decode(request["request"].as_str().unwrap())
+        .unwrap();
+    let mut bundle = expired.device.member_info().unwrap().as_bytes().to_vec();
+    // p2panda packs the lifetime between the three public keys and the signatures.
+    bundle[97..105].copy_from_slice(&1_u64.to_be_bytes());
+    bundle[105..113].copy_from_slice(&2_u64.to_be_bytes());
+    expired.device.member_info = BASE32_NOPAD_NOCASE.encode(&bundle);
+    let expired = Kind::BoardRequest.encode(&expired).unwrap();
+    let rejected = with_code(
+        &owner,
+        &[
+            "board", "invite", "-", "--board", "House", "--yes", "--json",
+        ],
+        &expired,
+    );
+    let error = common::task_error(rejected, 2, "invalid_input");
+    assert!(error["message"].as_str().unwrap().contains("expired"));
+}
