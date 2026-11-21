@@ -24,6 +24,8 @@ pub struct RosterDevice {
     #[serde(with = "wire_id")]
     pub id: DeviceId,
     pub name: String,
+    #[serde(default)]
+    pub first_device: bool,
     #[serde(with = "wire_id::optional")]
     pub added_by: Option<DeviceId>,
     pub added_at: Option<crate::Hlc>,
@@ -44,6 +46,7 @@ impl RosterDevice {
         Self {
             id,
             name,
+            first_device: false,
             added_by: writer,
             added_at: added_ms.map(|wall_ms| crate::Hlc {
                 wall_ms,

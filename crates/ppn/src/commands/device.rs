@@ -42,7 +42,7 @@ enum Action {
         active: bool,
     },
 
-    /// Revoke another device from this identity and remove its board access.
+    /// Revoke another device from the first device and remove its board access.
     #[command(after_help = example_help(&["ppn device revoke 'Garden tablet'", "ppn device revoke 97ad97 --yes --json"]))]
     Revoke {
         /// Device name, full ID, or unambiguous ID prefix.
@@ -50,7 +50,7 @@ enum Action {
         device: String,
     },
 
-    /// Request retirement of the device running this command.
+    /// Request retirement from a linked device.
     #[command(after_help = example_help(&["ppn device leave", "ppn device leave --yes --json"]))]
     Leave,
 

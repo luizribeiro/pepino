@@ -84,7 +84,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "identity show" | "identity rename" => (
             "identity",
-            "identity Identity ID, display name, shared roster, cache status and rejected roster entry count",
+            "identity Identity ID, display name, shared roster with the first device marker, cache status and rejected roster entry count",
         ),
         "device request" => (
             "device_request",
@@ -112,7 +112,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "device ls" => (
             "devices",
-            "devices Local device observations including board counts and last seen time\nroster Shared roster with device IDs, names, admission metadata, revocations and pending leave requests",
+            "devices Local device observations including first_device, board counts and last seen time\nroster Shared roster with device IDs, names, first_device, admission metadata, revocations and pending leave requests",
         ),
         "view ls" => ("views", "views Saved filters ordered by name"),
         "view save" => (

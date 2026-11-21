@@ -14,6 +14,7 @@ struct Device {
     id: DeviceId,
     name: String,
     this_device: bool,
+    first_device: bool,
     state: &'static str,
     roster_state: RosterState,
     member_of: usize,
@@ -54,6 +55,7 @@ pub(super) fn run(context: &Context<'_>, active: bool) -> Result<CommandResult, 
                  name,
                  state: roster_state,
                  leave_requested_at,
+                 first_device,
                  ..
              }| {
                 let id = *id;
@@ -104,6 +106,7 @@ pub(super) fn run(context: &Context<'_>, active: bool) -> Result<CommandResult, 
                     member_of,
                     total_boards: boards.len(),
                     this_device,
+                    first_device: *first_device,
                     boards,
                     state: match (this_device, complete, seen_on_board) {
                         _ if revoked => "revoked",
@@ -159,6 +162,9 @@ impl Render for Devices {
                         state => state,
                     }
                 );
+                if device.first_device {
+                    text.push_str(" · first device");
+                }
                 if device.this_device {
                     text.push_str(" · this device");
                 }

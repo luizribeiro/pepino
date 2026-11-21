@@ -47,8 +47,14 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
                 "Expected identity details.",
             ));
         };
+        let first_device = identity
+            .roster
+            .iter()
+            .find(|device| device.first_device)
+            .map(|device| format!(" · {} (first device)", single_line(&device.name)))
+            .unwrap_or_default();
         Ok(format!(
-            "{} ({}) · {} devices",
+            "{} ({}) · {} devices{first_device}",
             single_line(&identity.display_name),
             short_id(&identity.id),
             identity.roster.len()

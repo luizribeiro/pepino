@@ -8,15 +8,21 @@ use super::record::RosterDevice;
 
 impl LocalState {
     pub fn roster(&self) -> BTreeMap<DeviceId, RosterDevice> {
-        if let Some(record) = &self.catalog.identity.record {
-            return record.devices.clone();
+        let mut devices = self.catalog.identity.record.as_ref().map_or_else(
+            || {
+                let mut devices = self.other_devices.clone();
+                devices.insert(self.device_id, self.device_name.clone());
+                devices
+                    .into_iter()
+                    .map(|(id, name)| (id, RosterDevice::active(id, name, None, None)))
+                    .collect()
+            },
+            |record| record.devices.clone(),
+        );
+        if let Some(root) = self.roster_root().and_then(|root| devices.get_mut(&root)) {
+            root.first_device = true;
         }
-        let mut devices = self.other_devices.clone();
-        devices.insert(self.device_id, self.device_name.clone());
         devices
-            .into_iter()
-            .map(|(id, name)| (id, RosterDevice::active(id, name, None, None)))
-            .collect()
     }
 
     pub fn display_name(&self) -> &str {

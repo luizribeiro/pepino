@@ -292,6 +292,35 @@ fn revoke_guards_the_current_device_and_confirms_another_device() {
     );
     let directory = sandbox.run(&["device", "ls", "--json"]);
     let directory = as_json(&directory);
+    for output in [&directory["roster"], &directory["devices"]] {
+        let rows = output.as_array().unwrap();
+        assert_eq!(
+            rows.iter().find(|row| row["id"] == own).unwrap()["first_device"],
+            true
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|row| row["id"] == peer.to_string())
+                .unwrap()["first_device"],
+            false
+        );
+    }
+    let identity = as_json(&sandbox.run(&["identity", "show", "--json"]));
+    assert_eq!(
+        identity["identity"]["roster"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == own)
+            .unwrap()["first_device"],
+        true,
+    );
+    assert!(
+        sandbox
+            .run(&["identity", "show"])
+            .contains("(first device)")
+    );
+    assert!(sandbox.run(&["device", "ls"]).contains(" · first device"));
     let target = directory["roster"]
         .as_array()
         .unwrap()
