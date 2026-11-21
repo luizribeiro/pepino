@@ -56,7 +56,7 @@ pub(super) fn for_command(command: &Command) -> Value {
                 "board remove" => "board_remove",
                 _ => "board_leave",
             },
-            "board Affected board with its full ID and name\nperson Identity ID, root key and display name\nrole Requested role or null\ncancelled Whether confirmation was declined\ndeparture Local departure state or null\nconsequences Removal or leave notice when applicable",
+            "board Affected board with its full ID and name\nperson Identity ID, root key and display name\nrole Requested role or null\ncancelled Whether confirmation was declined\ncomplete Whether the verified transport membership matches the request\ndeparture Local departure state or null\nconsequences Removal or leave notice when applicable",
         ),
         "board forget" => (
             "board_forget",

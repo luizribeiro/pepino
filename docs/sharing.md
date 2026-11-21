@@ -40,23 +40,36 @@ progress.
 | `manage` | Write and manage invitations, roles, and removals. Give this to trusted people who administer the board. |
 
 Recipients join under their existing identities. A manager's daemon
-adds each active linked device at the person's role and removes revoked
-devices. A new device shows **waiting for access** until a manager
-enrolls it. Every member can see each person's display name and device
-roster, including when devices were added or revoked.
+adds confirmed active devices at the person's role and removes revoked
+devices. Each device signs a confirmation that identifies the person
+by identity ID and root signing key. A new device shows **waiting for
+access** until a manager enrolls it. A device that confirms two people
+on the same board shows an **identity conflict** and loses access.
+
+Board members can see each person's display name and signed device roster,
+including device names, public IDs, and admission and revocation details.
+Identity cards also carry expiring device enrollment bundles with public
+signing and encryption material. A bundle only supplies the public
+credentials needed to enroll a device that has confirmed its identity.
+The card contains no private keys or private catalog capabilities.
 
 Use `ppn board members House` to see people, effective device membership,
 and membership history. **Device roles differ** indicates a role change
 that has yet to reach every device. **Removal pending** indicates a
 revoked device that still has transport access. `ppn log --board House`
 also shows invitations, role changes, removals, and completed leaves.
-Use `--json` for full IDs and timestamps.
+Records that lose to a concurrent removal appear as **superseded**. An
+invitation restores membership only if it follows every recorded removal
+for that person. A change that was declined because its author lost
+manager access or because it would leave the board without a manager
+appears as **not applied**. Use `--json` for full IDs and timestamps.
 
 A read member sends signed roster updates and leave requests through an
 encrypted channel. Managers receive and relay those records. They can
 delay or drop updates. A device signature protects each roster edit and
-leave request from forgery. Another manager can continue relaying when
-the inviter leaves.
+leave request from forgery. The departing manager hands the channel to
+another board manager before leaving. A blocked handoff is reported as
+an incomplete change.
 
 ## Manage members
 
@@ -71,7 +84,9 @@ ppn board leave --board House --yes
 ppn board forget House --yes
 ```
 
-Role changes and removals apply to the person's devices. A non-manager
+Role changes and removals apply to all confirmed devices. A command reports
+completion after checking the transport membership. An incomplete result
+explains what still needs to happen. A non-manager
 who leaves pauses board task sync locally while a manager's daemon
 processes the signed request. Use `ppn status` or `ppn board ls` to check
 its progress. A sole managing person must promote another person
@@ -79,9 +94,10 @@ before demoting themselves or leaving. Device revocation also checks
 for the last manager.
 
 Removing or demoting another manager requires `--yes` and
-`--i-understand-mutual-removal-risk`. If two managers concurrently remove
-or demote one another, their competing changes can leave the board
-unrecoverable. Coordinate manager changes before issuing these commands.
+`--i-understand-mutual-removal-risk`. A manager leaving a board with one
+other manager must also give this acknowledgement. Two managers can issue
+conflicting changes before they see one another's actions. The transport
+may apply both and leave the board unrecoverable. Coordinate manager changes before issuing these commands.
 
 Removing a person rotates the board's keys. The former member keeps
 everything they already decrypted, and the transport may still deliver
@@ -93,7 +109,10 @@ and assignees.
 
 After departure, the local history is read-only. `ppn board forget House
 --yes` deletes that host's application history and catalog entry for
-House. Run it on each device where you want to remove the local history.
+House. Stop the local daemon before forgetting a board. Run the command
+on each device where you want to remove the local history. A device-level
+removal leaves the person's board membership intact and cannot be used to
+forget the board.
 The node database can retain encrypted transport operations and
 membership metadata. Copies already exported or backed up must be
 deleted separately.
