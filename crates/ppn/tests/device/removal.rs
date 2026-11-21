@@ -13,9 +13,10 @@ fn link(owner: &Host, device: &Host, name: &str) {
 fn join(owner: &Host, device: &Host, request: &str) {
     let grant = owner.add(request, &[]);
     use std::{io::Write, process::Stdio};
+    let timeout = format!("{}s", WAIT.as_secs());
     let mut child = device
         .command()
-        .args(["device", "join", "-", "--timeout", "20s", "--json"])
+        .args(["device", "join", "-", "--timeout", &timeout, "--json"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -195,6 +196,7 @@ fn a_daemon_resumes_an_offline_revocation_and_readmission_restores_the_gap() {
     );
     assert_eq!(json["message"], message);
     assert_eq!(roster_state(&peer, &target).unwrap()["state"], "revoked");
+    peer.stop();
     join(&owner, &tablet, &request);
     assert_eq!(id(&tablet), target);
     until(
