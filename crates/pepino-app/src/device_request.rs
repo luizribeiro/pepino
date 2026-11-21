@@ -30,6 +30,7 @@ pub struct DeviceRequest {
 
 impl DeviceRequest {
     pub fn check_pending(directory: &Path) -> Result<(), AppError> {
+        crate::relay_role::require_device(directory)?;
         if !exists(&directory.join(FILE_NAME))? && exists(&directory.join(REQUEST))? {
             return Err(AppError::DeviceRequestPending);
         }
@@ -209,6 +210,7 @@ impl App {
     ) -> Result<DeviceRequest, AppError> {
         LocalState::prepare_directory(directory)?;
         let _guard = lock(directory, options.lock_timeout).await?;
+        crate::relay_role::require_device(directory)?;
         if exists(&directory.join(FILE_NAME))? || exists(&directory.join(PENDING))? {
             return Err(invalid(
                 "request",

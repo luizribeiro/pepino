@@ -97,6 +97,7 @@ impl App {
             .unwrap_or_else(|| directory.join("credentials.cbor"));
         let state_dir = directory.clone();
         let existing = worker("open local state", move || {
+            crate::relay_role::require_device(&state_dir)?;
             if exists(&state_dir.join(crate::state::FILE_NAME))? {
                 let local = LocalState::load_for_open(&state_dir, initialize)?;
                 missing_pair(&state_dir, initialize)?;

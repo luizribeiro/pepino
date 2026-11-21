@@ -36,6 +36,8 @@ pub use people_names::PersonKey;
 mod projection;
 mod protocol;
 mod read;
+mod relay_role;
+pub use relay_role::{RELAY_MARKER, init_relay, is_relay, relay_credentials};
 mod state;
 mod status;
 mod values;

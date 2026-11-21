@@ -16,6 +16,7 @@ impl App {
         grant: SignedGrant,
         options: OpenOptions,
     ) -> Result<LocalState, AppError> {
+        crate::relay_role::require_device(directory)?;
         let mismatch = || invalid("grant", "This grant does not match this device's request.");
         if !exists(&directory.join(REQUEST))? {
             return Err(mismatch());

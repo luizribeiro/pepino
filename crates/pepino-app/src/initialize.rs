@@ -133,6 +133,19 @@ enum Prepared {
 }
 
 pub(super) fn credentials(directory: &Path, path: &Path) -> Result<DeviceCredentials, AppError> {
+    validate_credentials_path(directory, path)?;
+    if let Some(parent) = path.parent() {
+        LocalState::prepare_directory(parent)?;
+    }
+    DeviceCredentials::load_or_create(path).map_err(|error| match error {
+        pepino_node::Error::CredentialIo(error) => {
+            path_io_error(path, "load or create credentials", error)
+        }
+        error => storage("load or create credentials", error, false),
+    })
+}
+
+pub(super) fn validate_credentials_path(directory: &Path, path: &Path) -> Result<(), AppError> {
     if path.starts_with(directory.join(STAGING))
         || [
             FILE_NAME,
@@ -146,6 +159,11 @@ pub(super) fn credentials(directory: &Path, path: &Path) -> Result<DeviceCredent
             "pepino.sqlite-shm",
             "local.lock",
             "node.lock",
+            "daemon.lock",
+            crate::RELAY_MARKER,
+            "relay.sqlite",
+            "relay.sqlite-wal",
+            "relay.sqlite-shm",
         ]
         .iter()
         .any(|name| path.starts_with(directory.join(name)))
@@ -155,15 +173,7 @@ pub(super) fn credentials(directory: &Path, path: &Path) -> Result<DeviceCredent
             "path conflicts with a Pepino data file",
         ));
     }
-    if let Some(parent) = path.parent() {
-        LocalState::prepare_directory(parent)?;
-    }
-    DeviceCredentials::load_or_create(path).map_err(|error| match error {
-        pepino_node::Error::CredentialIo(error) => {
-            path_io_error(path, "load or create credentials", error)
-        }
-        error => storage("load or create credentials", error, false),
-    })
+    Ok(())
 }
 
 async fn create_board(settings: NodeSettings) -> Result<BoardId, AppError> {
