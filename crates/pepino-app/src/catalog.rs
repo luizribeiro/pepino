@@ -20,8 +20,11 @@ pub(crate) struct CatalogState {
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(crate) invalid_board_cards: BTreeSet<pepino_core::EventId>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) pending_cards:
-        BTreeMap<BoardId, BTreeMap<pepino_core::EventId, crate::IdentityCard>>,
+    pub(crate) pending_cards: BTreeMap<BoardId, crate::board_card_wire::PendingCards>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) rejected_cards: BTreeMap<BoardId, std::collections::VecDeque<pepino_core::EventId>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) dropped_cards: BTreeMap<BoardId, usize>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) card_exchanges: BTreeMap<BoardId, crate::CardExchange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

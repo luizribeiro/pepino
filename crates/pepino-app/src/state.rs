@@ -11,7 +11,7 @@ use crate::AppError;
 use crate::app::invalid;
 use crate::views::SavedViews;
 
-pub(super) const VERSION: u32 = 6;
+pub(super) const VERSION: u32 = 7;
 pub(super) const FILE_NAME: &str = "local.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -265,7 +265,7 @@ impl LocalState {
                 );
                 fields.insert("version".into(), VERSION.into());
             }
-            4 | 5 => value["version"] = VERSION.into(),
+            4..=6 => value["version"] = VERSION.into(),
             version if version == u64::from(VERSION) => (),
             version => return Err(storage("unsupported local state version", version, false)),
         }
@@ -287,6 +287,20 @@ impl LocalState {
                     )
                 })
                 .collect();
+        }
+        if version < u64::from(VERSION) {
+            local.catalog.trim_card_queues(local.catalog_board());
+            if local.catalog.board_request.as_ref().is_some_and(|request| {
+                request.binding().is_ok_and(|binding| {
+                    local
+                        .catalog
+                        .joined_shares
+                        .values()
+                        .any(|share| share.binding == binding)
+                })
+            }) {
+                local.catalog.board_request = None;
+            }
         }
         if version == 5 {
             local.stage_legacy_roster();

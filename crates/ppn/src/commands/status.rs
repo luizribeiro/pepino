@@ -120,6 +120,7 @@ fn document(
         ""
     };
     let rejected_board_card_entries = local.rejected_board_cards();
+    let dropped_board_cards = local.dropped_board_cards();
     let boards = local
         .boards()
         .iter()
@@ -198,7 +199,7 @@ fn document(
                 .as_deref()
                 .unwrap_or("offline (daemon not running)");
             Ok(format!(
-                "Identity: {} ({}) · {} devices{roster_note}\nRejected roster entries: {}\nRejected board card entries: {rejected_board_card_entries}\nDevice: {} (node ID {}){notice}{contact}\nBoard: {} ({})\n{selected_line}\nMembership:\n  {membership_rows}\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}",
+                "Identity: {} ({}) · {} devices{roster_note}\nRejected roster entries: {}\nRejected board card entries: {rejected_board_card_entries}\nDropped board cards: {dropped_board_cards}\nDevice: {} (node ID {}){notice}{contact}\nBoard: {} ({})\n{selected_line}\nMembership:\n  {membership_rows}\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}",
                 single_line(&identity.display_name),
                 short_id(&identity.id),
                 identity.roster.len(),

@@ -30,6 +30,10 @@ impl BoardPerson {
         })
     }
 
+    pub(crate) fn trim_record(&mut self) -> usize {
+        self.record.trim_board_record(self.id)
+    }
+
     pub(crate) fn sanitize_names(&mut self) {
         self.record.sanitize_names();
     }

@@ -111,6 +111,23 @@ impl IdentityCatalog {
         })
     }
 
+    pub(crate) fn trim_board_record(&mut self, identity: IdentityId) -> usize {
+        let mut retained = Self {
+            root: self.root,
+            ..Self::default()
+        };
+        let accepted = self.portable_edits(identity);
+        if retained
+            .merge(portable_scope(), identity, accepted)
+            .is_err()
+        {
+            return 0;
+        }
+        let dropped = self.edits.len().saturating_sub(retained.edits.len()) + self.invalid.len();
+        *self = retained;
+        dropped
+    }
+
     pub(crate) fn fully_verified(&self, identity: IdentityId) -> bool {
         self.rejected_count() == 0
             && self.record.is_some()
