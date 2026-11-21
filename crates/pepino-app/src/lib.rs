@@ -48,7 +48,7 @@ pub use board_access::{BoardRole, SharedAccess};
 pub use board_admission::BoardAdmission;
 pub use board_card_exchange::CardExchange;
 pub use board_card_wire::BoardCards;
-pub use board_grant::BoardGrant;
+pub use board_grant::{BoardGrant, DEVICE_CODE_PAYLOAD_LIMIT};
 pub use board_membership::{
     BoardDeparture, BoardLeave, DeviceMembershipChange, MUTUAL_REMOVAL_RISK, ManagePerson,
     MembershipAction, MembershipChange, MembershipRecord, MembershipRefusal, SignedBoardLeave,

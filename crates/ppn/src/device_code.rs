@@ -1,12 +1,11 @@
 use data_encoding::BASE32_NOPAD_NOCASE;
-use pepino_app::DeviceRequest;
+use pepino_app::{DEVICE_CODE_PAYLOAD_LIMIT as MAX_PAYLOAD, DeviceRequest};
 
 use crate::error::{CliError, ErrorKind};
 use serde::{Serialize, de::DeserializeOwned};
 
 const VERSION: u8 = 2;
 const CHECKSUM_LEN: usize = 8;
-const MAX_PAYLOAD: usize = 64 * 1024;
 pub const MAX_CODE_TEXT: usize = 2 * (MAX_PAYLOAD + CHECKSUM_LEN) + "PPN-BOARD-REQUEST-".len();
 
 #[derive(Clone, Copy)]

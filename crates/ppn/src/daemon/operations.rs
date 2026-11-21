@@ -134,10 +134,13 @@ pub(super) async fn operate(
             board,
             request,
             role,
-        } => match engine.invite_board(board, *request, role).await {
-            Ok((owner, card_exchange)) => Outcome::BoardInvited {
-                owner,
-                card_exchange,
+            relay_url,
+        } => match engine
+            .invite_board_with_relay(board, *request, role, relay_url)
+            .await
+        {
+            Ok(grant) => Outcome::BoardInvited {
+                grant: Box::new(grant),
             },
             Err(Error::EnrollmentAccess { board }) => Outcome::MemberAccessDenied { board },
             Err(Error::App(error)) => {

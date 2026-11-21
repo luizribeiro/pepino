@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use pepino_app::{BoardGrant, BoardRequest, BoardRole, PeerHint};
+use pepino_app::{BoardRequest, BoardRole};
 use pepino_node::DeviceCredentials;
 use ppn::{
     app::AppClient,
@@ -63,15 +63,17 @@ pub(super) fn run(
                 board: board.id,
                 request: Box::new(request.clone()),
                 role,
+                relay_url: config
+                    .relay_urls
+                    .value
+                    .first()
+                    .map(|relay| relay.as_url().to_string()),
             },
             Duration::from_secs(20),
         )
         .map_err(unreachable)?;
-    let (owner, card_exchange) = match outcome {
-        Outcome::BoardInvited {
-            owner,
-            card_exchange,
-        } => (owner, card_exchange),
+    let grant = match outcome {
+        Outcome::BoardInvited { grant } => grant,
         Outcome::MemberAccessDenied { board } => {
             return Err(CliError::new(
                 ErrorKind::PermissionDenied,
@@ -87,22 +89,6 @@ pub(super) fn run(
         _ => return Err(unexpected_reply()),
     };
     request.device.secret = Some(secret);
-    let grant = BoardGrant {
-        recipient: request.device.id,
-        request: request.binding()?,
-        board: board.clone(),
-        role,
-        owner,
-        card_exchange,
-        peer: PeerHint {
-            id: keys.device_id(),
-            relay_url: config
-                .relay_urls
-                .value
-                .first()
-                .map(|relay| relay.as_url().to_string()),
-        },
-    };
     let signed = grant.issue(&request, &keys)?;
     let code = Kind::BoardGrant.encode(&signed).map_err(invalid_code)?;
     Ok(CommandResult::document(GrantCode {

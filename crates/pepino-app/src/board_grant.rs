@@ -7,6 +7,8 @@ use crate::{
     app::invalid,
 };
 
+pub const DEVICE_CODE_PAYLOAD_LIMIT: usize = 64 * 1024;
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoardGrant {
@@ -20,7 +22,20 @@ pub struct BoardGrant {
     pub card_exchange: Option<pepino_core::BoardId>,
 }
 
+impl std::fmt::Debug for BoardGrant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BoardGrant").finish_non_exhaustive()
+    }
+}
+
 impl BoardGrant {
+    pub fn check_code_size(&self) -> Result<(), AppError> {
+        if SignedGrant::encoded_size(self)? >= DEVICE_CODE_PAYLOAD_LIMIT {
+            return Err(invalid("grant", "the board grant is too large to encode"));
+        }
+        Ok(())
+    }
+
     pub fn issue(
         &self,
         request: &BoardRequest,
@@ -102,6 +117,15 @@ async fn board_grants_are_bound_to_the_original_request() {
             relay_url: None,
         },
     };
+    assert!(grant.check_code_size().is_ok());
+    let oversized = BoardGrant {
+        peer: PeerHint {
+            relay_url: Some("x".repeat(DEVICE_CODE_PAYLOAD_LIMIT)),
+            ..grant.peer.clone()
+        },
+        ..grant.clone()
+    };
+    assert!(oversized.check_code_size().is_err());
     let signed = grant.issue(&request, &keys).unwrap();
     let other = grant.issue(&request, &keys).unwrap();
     assert_eq!(

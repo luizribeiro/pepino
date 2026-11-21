@@ -1,5 +1,6 @@
 use pepino_app::{
-    AppError, BoardAdmission, BoardCards, BoardRequest, BoardRole, CardExchange, IdentityCard,
+    AppError, BoardAdmission, BoardCards, BoardGrant, BoardRequest, BoardRole, CardExchange,
+    IdentityCard, PeerHint,
 };
 use pepino_core::{BoardId, DeviceId};
 
@@ -18,6 +19,19 @@ impl SyncEngine {
         request: BoardRequest,
         role: BoardRole,
     ) -> Result<(IdentityCard, Option<BoardId>), Error> {
+        let grant = self
+            .invite_board_with_relay(id, request, role, None)
+            .await?;
+        Ok((grant.owner, grant.card_exchange))
+    }
+
+    pub async fn invite_board_with_relay(
+        &self,
+        id: BoardId,
+        request: BoardRequest,
+        role: BoardRole,
+        relay_url: Option<String>,
+    ) -> Result<BoardGrant, Error> {
         let member = request.member_info()?;
         request.name()?;
         let mut workers = self.boards.lock().await;
@@ -27,6 +41,7 @@ impl SyncEngine {
         local.check_person_id(request.identity.key())?;
         let board = local.resolve_board(&id.to_string(), "board")?;
         local.check_board_write(board)?;
+        let board = board.clone();
         let denied = || Error::EnrollmentAccess {
             board: board.name.clone(),
         };
@@ -116,6 +131,19 @@ impl SyncEngine {
             at: std::time::SystemTime::now().into(),
         };
         local.check_board_admission(id, local.device_id, creator, &admission)?;
+        let mut grant = BoardGrant {
+            recipient: request.device.id,
+            request: request.binding()?,
+            board,
+            role,
+            owner,
+            peer: PeerHint {
+                id: local.device_id,
+                relay_url,
+            },
+            card_exchange: Some(BoardId::from_bytes([0; 32])),
+        };
+        grant.check_code_size()?;
         let introduce = BoardCards::Introduce(admission.clone()).encode()?;
         self.app.consume_board_request(id, &request).await?;
         let incarnation = if !former && let Some(saved) = local.membership_incarnation(id, person) {
@@ -152,7 +180,8 @@ impl SyncEngine {
         handle.add_member(&member, role.into()).await?;
         handle.publish(introduce).await?;
         self.nudge();
-        Ok((owner, Some(channel)))
+        grant.card_exchange = Some(channel);
+        Ok(grant)
     }
 
     pub(super) async fn create_card_exchange(

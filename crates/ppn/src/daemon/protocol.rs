@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use pepino_app::{BoardJoinState, BoardRequest, BoardRole, DeviceRequest, IdentityCard, PeerHint};
+use pepino_app::{BoardGrant, BoardJoinState, BoardRequest, BoardRole, DeviceRequest, PeerHint};
 use pepino_core::{BoardId, DeviceId};
 use serde::{Deserialize, Serialize};
 
@@ -47,6 +47,8 @@ pub enum Operation {
         board: BoardId,
         request: Box<BoardRequest>,
         role: BoardRole,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relay_url: Option<String>,
     },
     BoardManage {
         board: BoardId,
@@ -121,9 +123,7 @@ pub enum Outcome {
         request: Box<BoardRequest>,
     },
     BoardInvited {
-        owner: IdentityCard,
-        #[serde(default)]
-        card_exchange: Option<BoardId>,
+        grant: Box<BoardGrant>,
     },
     BoardManaged {
         departure: Option<pepino_app::BoardDeparture>,

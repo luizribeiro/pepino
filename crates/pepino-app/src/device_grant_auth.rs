@@ -44,15 +44,22 @@ impl SignedGrant {
         secret: [u8; 32],
         keys: &DeviceCredentials,
     ) -> Result<Self, AppError> {
-        let mut body = Vec::new();
-        ciborium::into_writer(grant, &mut body)
-            .map_err(|_| invalid("grant", "could not encode grant body"))?;
+        let body = encode_grant_body(grant)?;
         let hash = grant_hash(&body);
         Ok(Self {
             body,
             mac: *blake3::keyed_hash(&secret, &hash).as_bytes(),
             signature: keys.sign(&hash),
         })
+    }
+
+    pub(crate) fn encoded_size(grant: &impl Serialize) -> Result<usize, AppError> {
+        let envelope = Self {
+            body: encode_grant_body(grant)?,
+            mac: [0; 32],
+            signature: [0; 64],
+        };
+        Ok(crate::WireFormat::Cbor.encode(&envelope)?.len())
     }
 
     pub fn verify(self, request: &DeviceRequest) -> Result<DeviceGrant, AppError> {
@@ -82,6 +89,13 @@ impl SignedGrant {
         }
         Ok(grant)
     }
+}
+
+fn encode_grant_body(grant: &impl Serialize) -> Result<Vec<u8>, AppError> {
+    let mut body = Vec::new();
+    ciborium::into_writer(grant, &mut body)
+        .map_err(|_| invalid("grant", "could not encode grant body"))?;
+    Ok(body)
 }
 
 fn grant_hash(body: &[u8]) -> [u8; 32] {
