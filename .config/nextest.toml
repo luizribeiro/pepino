@@ -1,6 +1,14 @@
 [profile.default]
 retries = 0
 
+[[profile.default.overrides]]
+# These fixtures start multiple node runtimes, daemon processes, or both.
+filter = '''
+binary(=network) | binary(=device) | binary(=boards_network) | binary(=daemon)
+| test(daemon::shutdown_tests::) | test(tests::network::)
+'''
+threads-required = 4
+
 [profile.ci]
 fail-fast = false
 retries = 0
