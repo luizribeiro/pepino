@@ -8,6 +8,7 @@ mod edge_key;
 mod edges;
 mod error;
 mod fold;
+mod forget;
 mod history;
 mod log;
 mod prefix;
