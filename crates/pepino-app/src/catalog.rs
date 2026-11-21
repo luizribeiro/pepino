@@ -33,6 +33,9 @@ pub(crate) struct CatalogState {
     pub(crate) consumed_board_requests: BTreeMap<String, (BoardId, u64)>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) joined_shares: BTreeMap<BoardId, crate::board_install::JoinedShare>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) membership:
+        BTreeMap<BoardId, BTreeMap<pepino_core::EventId, crate::MembershipRecord>>,
     joins: BTreeMap<BoardId, BoardJoinState>,
     created_here: BTreeSet<BoardId>,
     bundles: BTreeMap<DeviceId, String>,
