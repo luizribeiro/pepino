@@ -30,6 +30,7 @@ pub struct MembershipChange {
     pub person: PersonKey,
     pub action: MembershipAction,
     pub at: DateTime<Utc>,
+    // Retained for older peers. The signed parent links determine causal order.
     pub revision: u64,
     pub incarnation: Option<EventId>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
@@ -73,14 +74,6 @@ impl MembershipRecord {
     fn is_removal(&self) -> bool {
         self.change.action.role().is_none()
     }
-
-    fn order(&self) -> (u64, bool, EventId) {
-        (
-            self.change.revision,
-            self.change.action.role().is_none(),
-            self.operation,
-        )
-    }
 }
 
 impl LocalState {
@@ -119,32 +112,18 @@ impl LocalState {
     ) -> Option<&MembershipRecord> {
         let records = self.person_membership(board, person);
         if let Some(invitation) = current_invitation(&records) {
-            return records
-                .values()
-                .copied()
-                .filter(|record| {
-                    record.operation == invitation.operation
-                        || (matches!(record.change.action, MembershipAction::RoleChanged(_))
-                            && record.change.incarnation == Some(invitation.operation))
-                })
-                .max_by_key(|record| record.order());
+            return latest_matching(&records, |record| {
+                record.operation == invitation.operation
+                    || (matches!(record.change.action, MembershipAction::RoleChanged(_))
+                        && record.change.incarnation == Some(invitation.operation))
+            });
         }
-        if let Some(removal) = records
-            .values()
-            .copied()
-            .filter(|record| record.is_removal())
-            .max_by_key(|record| record.order())
-        {
-            return Some(removal);
-        }
-        records
-            .values()
-            .copied()
-            .filter(|record| {
+        latest_matching(&records, MembershipRecord::is_removal).or_else(|| {
+            latest_matching(&records, |record| {
                 matches!(record.change.action, MembershipAction::RoleChanged(_))
                     && record.change.incarnation.is_none()
             })
-            .max_by_key(|record| record.order())
+        })
     }
 
     pub fn membership_incarnation(&self, board: BoardId, person: PersonKey) -> Option<EventId> {
@@ -165,31 +144,45 @@ impl LocalState {
         }
     }
 
-    pub fn next_membership_revision(
-        &self,
-        board: BoardId,
-        person: PersonKey,
-    ) -> Result<u64, AppError> {
-        self.latest_membership(board, person)
-            .map_or(Some(1), |last| last.change.revision.checked_add(1))
-            .ok_or_else(|| crate::app::invalid("person", "membership revision limit reached"))
+    pub fn next_membership_revision(&self, board: BoardId, person: PersonKey) -> u64 {
+        // Older peers order records by this field. A new record follows the known heads.
+        self.person_membership(board, person).len() as u64 + 1
     }
 }
 
 fn current_invitation<'a>(
     records: &BTreeMap<EventId, &'a MembershipRecord>,
 ) -> Option<&'a MembershipRecord> {
-    records
+    latest_matching(records, |record| {
+        matches!(record.change.action, MembershipAction::Invited(_))
+            && records
+                .values()
+                .filter(|other| other.is_removal())
+                .all(|removal| follows(records, record, removal.operation))
+    })
+}
+
+fn latest_matching<'a>(
+    records: &BTreeMap<EventId, &'a MembershipRecord>,
+    matches: impl Fn(&MembershipRecord) -> bool,
+) -> Option<&'a MembershipRecord> {
+    let candidates: Vec<_> = records
         .values()
         .copied()
-        .filter(|record| {
-            matches!(record.change.action, MembershipAction::Invited(_))
-                && records
-                    .values()
-                    .filter(|other| other.is_removal())
-                    .all(|removal| follows(records, record, removal.operation))
-        })
-        .max_by_key(|record| record.order())
+        .filter(|record| matches(record))
+        .collect();
+    let mut superseded = BTreeSet::new();
+    for record in &candidates {
+        superseded.extend(
+            ancestors(records, record)
+                .into_iter()
+                .filter(|id| *id != record.operation),
+        );
+    }
+    candidates
+        .into_iter()
+        .rev()
+        .find(|record| !superseded.contains(&record.operation))
 }
 
 fn follows(
@@ -197,19 +190,23 @@ fn follows(
     record: &MembershipRecord,
     ancestor: EventId,
 ) -> bool {
+    ancestors(records, record).contains(&ancestor)
+}
+
+fn ancestors(
+    records: &BTreeMap<EventId, &MembershipRecord>,
+    record: &MembershipRecord,
+) -> BTreeSet<EventId> {
     let mut remaining: Vec<_> = record.change.parents.iter().copied().collect();
     let mut visited = BTreeSet::new();
     while let Some(parent) = remaining.pop() {
-        if parent == ancestor {
-            return true;
-        }
         if visited.insert(parent)
             && let Some(previous) = records.get(&parent)
         {
             remaining.extend(previous.change.parents.iter().copied());
         }
     }
-    false
+    visited
 }
 
 impl App {
@@ -316,11 +313,12 @@ mod tests {
             },
         });
         let removal = records[2].operation;
-        proptest!(|(saw_removal in any::<bool>(), leave in any::<bool>())| {
+        proptest!(|(saw_removal in any::<bool>(), leave in any::<bool>(), advisory_revisions in any::<[u64; 4]>())| {
             for manager_count in 2..=3 {
                 let mut records = records.clone();
                 for (index, record) in records.iter_mut().enumerate() {
                     record.actor = DeviceId::from_bytes([59 + (index % manager_count) as u8; 32]);
+                    record.change.revision = if index == 0 { u64::MAX } else { advisory_revisions[index] };
                 }
                 if leave {
                     records[2].change.action = MembershipAction::Left;
@@ -339,6 +337,7 @@ mod tests {
                     prop_assert_eq!(local.membership_superseded(board, &records[3]), !saw_removal);
                     prop_assert!(local.membership_superseded(board, &records[1]));
                     prop_assert_eq!(local.membership_history(board).count(), 4);
+                    prop_assert_eq!(local.next_membership_revision(board, person), 5);
                     local.catalog.membership.get_mut(&board).unwrap().remove(&records[3].operation);
                     prop_assert_eq!(local.latest_membership(board, person), Some(&records[2]));
                 }

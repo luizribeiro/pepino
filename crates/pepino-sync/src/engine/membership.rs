@@ -103,7 +103,7 @@ impl SyncEngine {
             Some(record)
                 if record.change.action.role() == membership_action.role()
                     && !record.relayed
-                    && (record.applied || members.get(&record.actor) == Some(&Role::Manage)) =>
+                    && members.get(&record.actor) == Some(&Role::Manage) =>
             {
                 record.operation
             }
