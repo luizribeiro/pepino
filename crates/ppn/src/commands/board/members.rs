@@ -20,7 +20,7 @@ pub(super) fn run(
         Some(reference) => local.resolve_board(reference, "board")?,
         None => app.selected_board()?.0,
     };
-    if local.waiting_for_access(board.id) {
+    if local.waiting_for_access(board.id) && local.board_departure(board.id).is_none() {
         return Err(CliError::new(
             ErrorKind::PermissionDenied,
             format!(
@@ -43,23 +43,34 @@ pub(super) fn run(
     let authors = local.author_devices(board.id);
     let mut people = Vec::new();
     for person in local.board_people(board.id) {
-        let admitted = person.invited_by.map(|_| person.first_device);
-        let rows = devices(person.devices(), &members, admitted);
-        let role = person
-            .devices()
-            .filter(|device| admitted.is_none_or(|id| id == device.id))
-            .filter_map(|device| role_name(members.get(&device.id)))
-            .max_by_key(|role| match *role {
-                "manage" => 3,
-                "write" => 2,
-                "read" => 1,
-                _ => 0,
-            });
+        let roster = local.membership_devices(board.id, person.key());
+        let roles: std::collections::BTreeSet<_> = roster
+            .iter()
+            .filter_map(|device| role_name(members.get(device)))
+            .collect();
+        let latest = local.latest_membership(board.id, person.key());
+        let former = latest.is_some_and(|record| record.change.action.role().is_none());
+        let rows = devices(
+            person
+                .devices()
+                .filter(|device| roster.contains(&device.id)),
+            &members,
+            former,
+        );
+        let role = if former {
+            None
+        } else if let Some(record) = latest {
+            record.change.action.role().map(|role| role.to_string())
+        } else {
+            role_name(members.get(&person.first_device))
+                .or_else(|| roles.iter().next().copied())
+                .map(str::to_string)
+        };
         let inviter = person.invited_by.and_then(|device| {
             let (key, _) = authors.get(&device)?;
             Some(json!({"id": key.0, "root": key.1, "name": labels.get(key), "device_id": device}))
         });
-        people.push(json!({"id": person.id, "root": person.key().1, "name": labels.get(&person.key()).map(String::as_str).unwrap_or_else(|| person.name()), "role": role, "devices": rows,
+        people.push(json!({"id": person.id, "root": person.key().1, "name": labels.get(&person.key()).map(String::as_str).unwrap_or_else(|| person.name()), "role": role, "mixed_roles": roles.len() > 1, "former_member": former, "devices": rows,
             "invited_at": person.invited_at, "invited_by": inviter, "invited_by_device_id": person.invited_by}));
     }
     if people.is_empty() {
@@ -68,11 +79,13 @@ pub(super) fn run(
             "role": local.shared_access(board.id).map_or("manage", |access| match access.role {
                 pepino_app::BoardRole::Read => "read", pepino_app::BoardRole::Write => "write", pepino_app::BoardRole::Manage => "manage",
             }),
-            "devices": devices(roster.values(), &members, None), "invited_at": null, "invited_by": null}));
+            "devices": devices(roster.values(), &members, false), "invited_at": null, "invited_by": null}));
     }
     Ok(CommandResult::document(Members {
         board: board.name.clone(),
         people,
+        history: super::history::records(local, board.id),
+        departure: local.board_departure(board.id),
     }))
 }
 
@@ -88,14 +101,15 @@ fn role_name(state: Option<&MemberState>) -> Option<&'static str> {
 fn devices<'a>(
     roster: impl Iterator<Item = &'a pepino_app::RosterDevice>,
     members: &MemberStates,
-    admitted: Option<pepino_core::DeviceId>,
+    former: bool,
 ) -> Vec<Value> {
     roster.map(|device| {
-        let state = members.get(&device.id).filter(|_| admitted.is_none_or(|id| id == device.id));
+        let state = members.get(&device.id);
         let membership = match state {
+            Some(MemberState::Member(_)) if former || device.state == pepino_app::RosterState::Revoked => "removal_pending",
             Some(MemberState::Member(_)) => "member",
             Some(MemberState::Removed) => "removed",
-            _ => "waiting_for_access",
+            _ => "waiting_for_manager",
         };
         let added_at = device.added_at.and_then(|time| {
             i64::try_from(time.wall_ms).ok().and_then(chrono::DateTime::from_timestamp_millis)
@@ -110,15 +124,27 @@ fn devices<'a>(
 struct Members {
     board: String,
     people: Vec<Value>,
+    history: Vec<Value>,
+    departure: Option<pepino_app::BoardDeparture>,
 }
 
 impl Render for Members {
     fn human(&self, _: &Terminal) -> String {
         let text = |value: &Value| single_line(value.as_str().unwrap_or_default());
         let mut lines = vec![format!("Members of {}", single_line(&self.board))];
+        if let Some(departure) = self.departure {
+            lines.push(format!("Membership {departure}. Showing local history."));
+        }
         for person in &self.people {
-            let role = person["role"].as_str().unwrap_or("waiting for access");
+            let role = if person["former_member"].as_bool() == Some(true) {
+                "former member"
+            } else {
+                person["role"].as_str().unwrap_or("waiting for a manager")
+            };
             let mut line = format!("{} ({role})", text(&person["name"]));
+            if person["mixed_roles"].as_bool() == Some(true) {
+                line.push_str(" · device roles differ");
+            }
             if let Some(at) = person["invited_at"].as_str() {
                 let by = person["invited_by"]["name"]
                     .as_str()
@@ -142,6 +168,7 @@ impl Render for Members {
                 lines.push(row);
             }
         }
+        lines.extend(self.history.iter().map(super::history::line));
         lines.join("\n")
     }
 
@@ -150,6 +177,8 @@ impl Render for Members {
             ("kind".into(), json!("board_members")),
             ("board".into(), json!(self.board)),
             ("people".into(), json!(self.people)),
+            ("membership_history".into(), json!(self.history)),
+            ("departure".into(), json!(self.departure)),
         ])
         .into_iter()
         .collect()

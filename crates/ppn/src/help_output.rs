@@ -28,7 +28,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "log" => (
             "log",
-            "titles Task titles by ID\nevents Ordered events\nunordered Events without a readable clock\nnames Display names keyed by identity or device ID",
+            "titles Task titles by ID\nevents Ordered task events\nunordered Events without a readable clock\nmembership_history Membership changes with their actor, person, role and time when present\nnames Display names keyed by identity or device ID",
         ),
         "init" | "status" => (
             "status",
@@ -48,7 +48,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "board members" => (
             "board_members",
-            "board Board name\npeople Identity IDs, display names, effective roles, device memberships and invitation details",
+            "board Board name\npeople Identity IDs, display names, effective roles, device memberships and invitation details\nmembership_history Invitations, role changes, removals and completed leaves\ndeparture Local departure state or null",
         ),
         "board ls" => (
             "boards",

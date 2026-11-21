@@ -30,11 +30,40 @@ pub struct Args {
 pub fn run(context: &Context<'_>, args: Args, verbose: bool) -> Result<CommandResult, CliError> {
     let mut client = AppClient::open(context)?;
     let authors = client.author_labels(verbose);
+    let history = if args.task.is_none() {
+        super::board::history::records(client.local_state(), client.selected_board()?.0.id)
+    } else {
+        Vec::new()
+    };
+    let history = if !args.all && history.len() > args.limit {
+        history[history.len() - args.limit..].to_vec()
+    } else {
+        history
+    };
+    let human_history = history.clone();
     let response = client.call(Request::Read(ReadRequest::Log {
         task: args.task,
         limit: (!args.all).then_some(args.limit),
     }))?;
-    CommandResult::app_document(context, response, move |response, settings| {
-        Ok(render::history(response.log()?, settings.dates(), authors))
-    })
+    CommandResult::app_document_with_json(
+        context,
+        response,
+        move |response, settings| {
+            let tasks = render::history(response.log()?, settings.dates(), authors);
+            if human_history.is_empty() {
+                return Ok(tasks);
+            }
+            let membership = human_history
+                .iter()
+                .map(super::board::history::line)
+                .collect::<Vec<_>>()
+                .join("\n");
+            Ok(format!("{tasks}\n{membership}"))
+        },
+        move |fields| {
+            if !history.is_empty() {
+                fields.insert("membership_history".into(), serde_json::json!(history));
+            }
+        },
+    )
 }

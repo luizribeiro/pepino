@@ -1,3 +1,4 @@
+pub(super) mod history;
 mod invite;
 mod join;
 mod members;
