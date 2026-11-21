@@ -51,7 +51,13 @@ pub(super) fn run(
             .filter_map(|device| role_name(members.get(device)))
             .collect();
         let latest = local.latest_membership(board.id, person.key());
-        let former = latest.is_some_and(|record| record.change.action.role().is_none());
+        let enrollment_blocked = local.membership_enrollment_blocked(board.id, person.key());
+        let former = latest.is_some_and(|record| record.change.action.role().is_none())
+            || (enrollment_blocked
+                && roles.is_empty()
+                && roster
+                    .iter()
+                    .any(|device| members.get(device) == Some(&MemberState::Removed)));
         let rows = devices(
             person
                 .devices()
@@ -76,7 +82,7 @@ pub(super) fn run(
             let (key, _) = authors.get(&device)?;
             Some(json!({"id": key.0, "root": key.1, "name": labels.get(key), "device_id": device}))
         });
-        people.push(json!({"id": person.id, "root": person.key().1, "name": labels.get(&person.key()).map(String::as_str).unwrap_or_else(|| person.name()), "role": role, "mixed_roles": roles.len() > 1, "former_member": former, "devices": rows,
+        people.push(json!({"id": person.id, "root": person.key().1, "name": labels.get(&person.key()).map(String::as_str).unwrap_or_else(|| person.name()), "role": role, "mixed_roles": roles.len() > 1, "former_member": former, "enrollment_blocked": enrollment_blocked, "devices": rows,
             "invited_at": person.invited_at, "invited_by": inviter, "invited_by_device_id": person.invited_by}));
     }
     if people.is_empty() {
@@ -178,6 +184,9 @@ impl Render for Members {
                 person["role"].as_str().unwrap_or("waiting for a manager")
             };
             let mut line = format!("{} ({role})", text(&person["name"]));
+            if person["enrollment_blocked"].as_bool() == Some(true) {
+                line.push_str(" · automatic enrollment paused until a manager invites again");
+            }
             if person["mixed_roles"].as_bool() == Some(true) {
                 line.push_str(" · device roles differ");
             }

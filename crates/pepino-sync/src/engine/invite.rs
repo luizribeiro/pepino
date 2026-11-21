@@ -52,6 +52,7 @@ impl SyncEngine {
         let former = local
             .latest_membership(id, person)
             .is_some_and(|record| record.change.action.role().is_none());
+        let enrollment_blocked = local.membership_enrollment_blocked(id, person);
         if former {
             let previous = local.membership_devices(id, person);
             if members.iter().any(|(device, _)| previous.contains(device)) {
@@ -67,6 +68,7 @@ impl SyncEngine {
         }
         if local.own_person_key() == person
             || (!former
+                && !enrollment_blocked
                 && local
                     .board_people(id)
                     .any(|known| known.key() == person && known.first_device != request.device.id))
@@ -116,7 +118,10 @@ impl SyncEngine {
             device: request.device.id,
             at: std::time::SystemTime::now().into(),
         };
-        let incarnation = if !former && let Some(saved) = local.membership_incarnation(id, person) {
+        let incarnation = if !former
+            && !enrollment_blocked
+            && let Some(saved) = local.membership_incarnation(id, person)
+        {
             saved
         } else {
             crate::board_membership::publish_change(
@@ -130,7 +135,9 @@ impl SyncEngine {
             .await?
         };
         local = self.app.fresh_local_state().await?;
-        if local.membership_incarnation(id, person) != Some(incarnation) {
+        if local.membership_incarnation(id, person) != Some(incarnation)
+            || local.membership_enrollment_blocked(id, person)
+        {
             return Err(Error::MembershipIncomplete(
                 "a removal superseded this invitation".into(),
             ));
