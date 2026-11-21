@@ -28,7 +28,24 @@ pub(super) fn fold(
     let indexes: Vec<_> = (0..history.len()).collect();
     let projection = project(root, &causal.ordered, &history, &indexes);
     causal.record = projection.record(&causal.ordered, &history, &indexes);
-    for &index in &projection.revocations {
+    let mut evidence = projection.revocations.clone();
+    if let Some(record) = &mut causal.record {
+        for &index in &projection.excluded {
+            let edit = causal.ordered[index];
+            // An ownership signature can identify an enrolled key for removal after its roster effect is void.
+            if matches!(edit.change, Change::ConfirmOwnership { .. })
+                && !record.confirmed.contains(&edit.writer)
+                && record
+                    .devices
+                    .get(&edit.writer)
+                    .is_some_and(|row| row.state == RosterState::Revoked)
+                && record.retirement_confirmations.insert(edit.writer)
+            {
+                evidence.insert(index);
+            }
+        }
+    }
+    for index in evidence {
         if let Change::Revoke { device, .. } = causal.ordered[index].change {
             causal.revoked_writers.insert(device);
         }

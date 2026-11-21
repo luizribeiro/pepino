@@ -27,7 +27,10 @@ pub fn reconcile_person(
 ) -> Vec<DeviceMembershipChange> {
     person
         .devices()
-        .filter(|row| devices.contains(&row.id) && person.confirms(row.id))
+        .filter(|row| {
+            devices.contains(&row.id)
+                && (person.confirms(row.id) || person.confirms_revoked_device(row.id))
+        })
         .filter_map(|row| {
             let current = members.get(&row.id).copied();
             if row.state == RosterState::Revoked || desired.is_none() {

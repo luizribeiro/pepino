@@ -64,6 +64,16 @@ impl BoardPerson {
         self.record.confirms(device)
     }
 
+    pub fn confirms_revoked_device(&self, device: DeviceId) -> bool {
+        self.record.confirms_revoked_device(device)
+    }
+
+    pub fn confirmed_revoked_devices(&self) -> impl Iterator<Item = DeviceId> {
+        self.devices()
+            .filter(|row| self.confirms_revoked_device(row.id))
+            .map(|row| row.id)
+    }
+
     pub fn devices(&self) -> impl Iterator<Item = &RosterDevice> {
         self.record.devices()
     }

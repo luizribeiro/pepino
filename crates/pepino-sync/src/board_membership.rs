@@ -173,7 +173,6 @@ impl Repairs {
 
             for saved in local.board_people(board.id) {
                 let mut person = saved.clone();
-                let devices = &local.membership_devices(board.id, person.key()) - &conflicts;
                 if person.key() == local.own_person_key() {
                     match local.identity_card() {
                         Ok(card) => {
@@ -184,6 +183,9 @@ impl Repairs {
                     }
                 }
 
+                let mut devices = local.membership_devices(board.id, person.key());
+                devices.extend(person.confirmed_revoked_devices());
+                let devices = &devices - &conflicts;
                 let members = handle.roles().await?;
                 let record = local.latest_membership(board.id, person.key());
                 if record.is_some_and(|record| record.relayed) {
@@ -422,8 +424,14 @@ pub(crate) fn device_mismatches(
             .map(|row| row.id)
             .collect()
     };
-    local
-        .membership_devices(board, person)
+    let mut devices = local.membership_devices(board, person);
+    for known in local
+        .board_people(board)
+        .filter(|known| known.key() == person)
+    {
+        devices.extend(known.confirmed_revoked_devices());
+    }
+    devices
         .into_iter()
         .filter(|device| {
             let expected = role.filter(|_| active.contains(device));

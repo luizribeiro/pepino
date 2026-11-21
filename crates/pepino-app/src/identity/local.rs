@@ -76,6 +76,7 @@ fn authoritative_names_supersede_names_from_the_grant() {
     local.catalog.identity.record = Some(Record {
         display_name: "Ada Workshop".into(),
         confirmed: [own].into(),
+        retirement_confirmations: Default::default(),
         devices: [(
             own,
             RosterDevice::active(own, "Titanium".into(), None, None),

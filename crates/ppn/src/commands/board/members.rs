@@ -59,9 +59,9 @@ pub(super) fn run(
                     .iter()
                     .any(|device| members.get(device) == Some(&MemberState::Removed)));
         let rows = devices(
-            person
-                .devices()
-                .filter(|device| roster.contains(&device.id)),
+            person.devices().filter(|device| {
+                roster.contains(&device.id) || person.confirms_revoked_device(device.id)
+            }),
             &members,
             former,
             &conflicts,

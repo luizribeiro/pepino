@@ -34,7 +34,7 @@ impl IdentityCatalog {
     }
 
     pub(crate) fn refresh_projection(&mut self, board: BoardId, identity: IdentityId) {
-        if self.projection_version < 2 && !self.edits.is_empty() {
+        if self.projection_version < 3 && !self.edits.is_empty() {
             self.refresh(board, identity);
         }
         self.sanitize_names();
@@ -75,6 +75,16 @@ impl IdentityCatalog {
         self.record
             .as_ref()
             .is_some_and(|record| record.confirmed.contains(&id) || self.root == Some(id))
+    }
+
+    pub(crate) fn confirms_revoked_device(&self, id: DeviceId) -> bool {
+        self.device(id)
+            .is_some_and(|row| row.state == crate::RosterState::Revoked)
+            && (self.confirms(id)
+                || self
+                    .record
+                    .as_ref()
+                    .is_some_and(|record| record.retirement_confirmations.contains(&id)))
     }
 
     pub(crate) fn device(&self, id: DeviceId) -> Option<&super::record::RosterDevice> {
@@ -194,7 +204,7 @@ impl IdentityCatalog {
             } = self.fold(root, board, identity);
             self.record = record;
             self.rejected = rejected;
-            self.projection_version = 2;
+            self.projection_version = 3;
             self.sanitize_names();
         }
     }

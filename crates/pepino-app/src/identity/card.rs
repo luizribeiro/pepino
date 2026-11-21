@@ -614,6 +614,7 @@ fn private_and_board_rosters_agree_on_concurrent_device_retirement() {
         },
     )
     .unwrap();
+    let mut before_phone_confirmation = None;
     for (keys, name) in [(&tablet, "Greenhouse tablet"), (&phone, "Garden phone")] {
         base.append(
             origin,
@@ -626,6 +627,9 @@ fn private_and_board_rosters_agree_on_concurrent_device_retirement() {
             },
         )
         .unwrap();
+        if keys.device_id() == phone.device_id() {
+            before_phone_confirmation = Some(base.clone());
+        }
         base.append(
             origin,
             identity,
@@ -635,8 +639,15 @@ fn private_and_board_rosters_agree_on_concurrent_device_retirement() {
         .unwrap();
     }
 
-    for (first, second) in [(&tablet, &phone), (&root, &tablet), (&tablet, &root)] {
-        let mut first_view = base.clone();
+    let before_phone_confirmation = before_phone_confirmation.unwrap();
+    for (first, second, first_roster, confirmation_is_concurrent) in [
+        (&tablet, &phone, &base, false),
+        (&root, &tablet, &base, false),
+        (&tablet, &root, &base, false),
+        (&tablet, &phone, &before_phone_confirmation, true),
+        (&root, &phone, &before_phone_confirmation, true),
+    ] {
+        let mut first_view = first_roster.clone();
         let mut second_view = base.clone();
         let at = chrono::DateTime::from_timestamp(1795145000, 0).unwrap();
         first_view
@@ -693,7 +704,16 @@ fn private_and_board_rosters_agree_on_concurrent_device_retirement() {
                 .devices()
                 .eq(private.devices())
         );
-        let devices = [anchor, tablet.device_id(), phone.device_id()].into();
+        let devices = board
+            .devices()
+            .filter(|row| board.confirms(row.id))
+            .map(|row| row.id)
+            .chain(board.confirmed_revoked_devices())
+            .collect();
+        if confirmation_is_concurrent {
+            assert!(!board.confirms(phone.device_id()));
+            assert!(board.confirms_revoked_device(phone.device_id()));
+        }
         let enrolled = [
             (anchor, Role::Write),
             (tablet.device_id(), Role::Write),

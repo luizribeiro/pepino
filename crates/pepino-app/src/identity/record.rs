@@ -64,6 +64,8 @@ pub(super) struct Record {
     pub(super) devices: BTreeMap<DeviceId, RosterDevice>,
     #[serde(default)]
     pub(super) confirmed: BTreeSet<DeviceId>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) retirement_confirmations: BTreeSet<DeviceId>,
 }
 
 impl Record {
@@ -103,6 +105,7 @@ impl Record {
                 record.get_or_insert_with(|| Self {
                     display_name: display_name.clone(),
                     confirmed: [writer].into(),
+                    retirement_confirmations: BTreeSet::new(),
                     devices: [(
                         writer,
                         RosterDevice::active(writer, device_name.clone(), None, *added_ms),
