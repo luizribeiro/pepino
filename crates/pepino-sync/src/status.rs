@@ -29,6 +29,7 @@ pub struct BoardFailure {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BoardStatus {
+    pub(crate) paused: bool,
     /// Unknown until the first successful scan.
     pub outbox_pending: Option<u64>,
     pub ingest_pending: bool,
@@ -72,16 +73,17 @@ impl Status {
     pub(crate) fn idle_with(&self, node: &NodeStatus) -> bool {
         self.restart_required.is_none()
             && self.boards.iter().all(|(id, board)| {
-                !board.closed
-                    && board.outbox_pending == Some(0)
-                    && !board.ingest_pending
-                    && !board.stream_retrying
-                    && node.boards.get(id).is_some_and(|signals| {
-                        !signals.replaying
-                            && signals.active_syncs.is_empty()
-                            && signals.pending_deliveries == 0
-                            && self.board_caught_up(*id, node)
-                    })
+                board.paused
+                    || (!board.closed
+                        && board.outbox_pending == Some(0)
+                        && !board.ingest_pending
+                        && !board.stream_retrying
+                        && node.boards.get(id).is_some_and(|signals| {
+                            !signals.replaying
+                                && signals.active_syncs.is_empty()
+                                && signals.pending_deliveries == 0
+                                && self.board_caught_up(*id, node)
+                        }))
             })
     }
 }

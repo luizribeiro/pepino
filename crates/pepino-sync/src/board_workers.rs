@@ -58,11 +58,12 @@ impl<T: Transport> BoardWorkers<T> {
     }
 
     pub async fn open_missing(&mut self, local: &LocalState) -> Result<(), Error> {
-        for board in local
-            .boards()
-            .iter()
-            .filter(|board| !local.waiting_for_access(board.id))
-        {
+        for board in local.boards().iter().filter(|board| {
+            !matches!(
+                local.board_departure(board.id),
+                Some(pepino_app::BoardDeparture::Left | pepino_app::BoardDeparture::Removed)
+            ) || local.needs_readmission_replay(board.id)
+        }) {
             if self.stopping.has_changed().is_err() {
                 return Ok(());
             }
@@ -180,7 +181,11 @@ async fn receive<B: TransportBoard>(
     use pepino_node::{Error as NodeError, MemberState};
     let mut membership = board.membership_events();
     match crate::inbox::run(app, id, board, stream, status, stopping.clone(), authority).await {
-        Err(Error::Node(NodeError::Removed)) => (),
+        Err(Error::Node(NodeError::Removed)) => {
+            if id != app.local_state().catalog_board() {
+                app.observe_board_removal(id, true).await?;
+            }
+        }
         result => return result,
     }
     let Some(changes) = &mut membership else {
@@ -194,6 +199,7 @@ async fn receive<B: TransportBoard>(
             .await?
             .is_some_and(|members| members.contains(&local.device_id))
         {
+            app.observe_board_removal(id, false).await?;
             app.record_readmission_replay(id, true).await?;
             return Err(Error::DeliveryStream("replay after readmission".into()));
         }

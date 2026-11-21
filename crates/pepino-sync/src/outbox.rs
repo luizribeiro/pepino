@@ -20,11 +20,31 @@ pub(crate) async fn run(
     let mut retry = Retry::new();
     loop {
         let generation = *nudges.borrow_and_update();
-        if !app
-            .fresh_local_state()
-            .await
-            .is_ok_and(|local| local.check_device_write().is_ok())
-        {
+        let writable = if let Ok(local) = app.fresh_local_state().await {
+            let board = local.boards().iter().find(|board| board.id == id);
+            let paused = board.is_none()
+                || local.board_departure(id).is_some()
+                || local.waiting_for_access(id)
+                || local.check_device_write().is_err();
+            let writable =
+                !paused && board.is_some_and(|board| local.check_board_write(board).is_ok());
+            status.send_if_modified(|state| {
+                let state = state.boards.entry(id).or_default();
+                let mut changed = state.paused != paused;
+                state.paused = paused;
+                if !writable {
+                    changed |= (state.outbox_pending, state.scan_generation)
+                        != (Some(0), Some(generation));
+                    state.outbox_pending = Some(0);
+                    state.scan_generation = Some(generation);
+                }
+                changed
+            });
+            writable
+        } else {
+            false
+        };
+        if !writable {
             if !wait(&mut nudges, poll_interval).await {
                 return;
             }

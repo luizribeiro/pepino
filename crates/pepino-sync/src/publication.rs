@@ -20,6 +20,7 @@ pub(crate) async fn publish(
             Err(pepino_node::Error::ReplayInProgress | pepino_node::Error::NotJoined) => {
                 retry.wait().await
             }
+            Err(pepino_node::Error::NotPermitted | pepino_node::Error::Removed) => return,
             Err(error) => {
                 record_error(status, id, format!("publish {}: {error}", event.id));
                 retry.wait().await;
