@@ -14,6 +14,8 @@ const PREFIX: &[u8] = b"pepino-board-catalog\0";
 pub(crate) struct CatalogState {
     revisions: BTreeMap<BoardId, Revision>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) relays: crate::board_relays::RelayCatalog,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) shared: BTreeMap<BoardId, crate::SharedAccess>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) people: BTreeMap<BoardId, BTreeMap<String, crate::BoardPerson>>,
@@ -68,6 +70,7 @@ impl CatalogState {
     pub(crate) fn forget_board(&mut self, board: BoardId) {
         self.forgotten_boards.insert(board);
         self.revisions.remove(&board);
+        self.relays.remove(&board);
         self.shared.remove(&board);
         self.people.remove(&board);
         self.pending_cards.remove(&board);
@@ -135,6 +138,8 @@ struct Announcement {
     board_leaves: BTreeMap<BoardId, BTreeMap<String, crate::SignedBoardLeave>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     own_membership: BTreeMap<BoardId, Vec<crate::MembershipRecord>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    relays: crate::board_relays::RelayCatalog,
 }
 
 impl LocalState {
@@ -157,6 +162,7 @@ impl LocalState {
             devices: BTreeMap::new(),
             roster: self.catalog.identity.edits().cloned().collect(),
             member: member.to_hex(),
+            relays: self.catalog.relays.clone(),
             shared: self.catalog.shared.clone(),
             reader_routes: self
                 .card_exchanges()
@@ -297,6 +303,9 @@ impl LocalState {
             }
         }
         let active_sender = self.active_roster_device(signer);
+        if active_sender {
+            self.merge_relays(announcement.relays);
+        }
         for (board, records) in announcement.own_membership {
             if active_sender && self.shared_access(board).is_some() {
                 let stored = self.catalog.membership.entry(board).or_default();
@@ -503,6 +512,7 @@ fn ignores_legacy_device_claims_even_from_a_bootstrap_sender() {
         reader_routes: Default::default(),
         board_leaves: Default::default(),
         own_membership: Default::default(),
+        relays: Default::default(),
     };
     local.merge_catalog(board, peer, announcement).unwrap();
     assert_eq!(local.devices()[&peer], "Ferrum");
@@ -550,6 +560,7 @@ async fn trusted_catalog_discovery_leaves_shared_access_with_the_joining_device(
         reader_routes: Default::default(),
         board_leaves: Default::default(),
         own_membership: Default::default(),
+        relays: Default::default(),
     };
     let private = local.catalog_board();
     let incoming = announcement();
@@ -609,6 +620,7 @@ fn the_bootstrap_catalog_sender_cannot_relay_own_membership() {
         reader_routes: Default::default(),
         board_leaves: Default::default(),
         own_membership: [(shared, vec![record])].into(),
+        relays: Default::default(),
     };
     local.merge_catalog(private, peer, announcement).unwrap();
     assert_eq!(local.membership_history(shared).count(), 0);
