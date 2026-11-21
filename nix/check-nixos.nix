@@ -43,7 +43,7 @@ let
   checkNode = config:
     let cfg = config.services.pepino;
     in hasLines config.systemd.units."pepino.service" [
-      "ConditionPathExists=${cfg.dataDir}/local.json"
+      "ExecStartPre=${cfg.package}/bin/ppn --config ${cfg.configFile} relay init"
       "ExecStart=${cfg.package}/bin/ppn --config ${cfg.configFile} daemon run"
       "User=${cfg.user}"
       "Group=${cfg.group}"
@@ -54,7 +54,7 @@ let
       "NoNewPrivileges=true"
       "PrivateTmp=true"
       "Restart=on-failure"
-    ] && hasLines config.systemd.units."pepino.path" [ "PathExists=${cfg.dataDir}/local.json" ];
+    ] && !(config.systemd.units ? "pepino.path");
 in
 assert lib.all (config: builtins.seq config.system.build.toplevel.drvPath true) [ client node both ];
 assert !(client.systemd.units ? "pepino.service");

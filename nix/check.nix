@@ -82,7 +82,7 @@ assert fullDarwin.launchd.agents.pepino.serviceConfig.KeepAlive.SuccessfulExit =
 assert lib.hasInfix (builtins.unsafeDiscardStringContext "${package}/bin/ppn daemon run")
   (builtins.elemAt fullDarwin.launchd.agents.pepino.serviceConfig.ProgramArguments 2);
 assert fullDarwin.launchd.daemons.pepino-node.serviceConfig.UserName == "pepino-relay";
-assert lib.hasInfix "test -f /srv/pepino/local.json"
+assert lib.hasInfix (builtins.unsafeDiscardStringContext "${package}/bin/ppn --config ${fullDarwin.services.pepino.configFile} relay init")
   (builtins.elemAt fullDarwin.launchd.daemons.pepino-node.serviceConfig.ProgramArguments 2);
 pkgs.runCommand "pepino-config-check"
 {
@@ -135,6 +135,10 @@ pkgs.runCommand "pepino-config-check"
     grep -qx 'credentials_file = "/run/secrets/pepino-node"' "$node"
     grep -qx 'data_dir = "/srv/pepino"' "$node"
     grep -qx 'port = 44123' "$node"
+    grep -qx 'max_boards = 24' "$node"
+    grep -qx 'max_boards = 64' "$typicalNode"
+    grep -Fq 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789' "$node"
+    ! grep -q '^max_boards' "$client"
     grep -qx 'port = 44124' "$client"
     if grep -Fxq '[ui]' "$node"; then
       exit 1

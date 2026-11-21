@@ -55,7 +55,7 @@ in
         /usr/bin/install -d -m 0700 -o ${quote node.user} -g ${quote node.group} -- ${quote node.dataDir}
       '';
       launchd.daemons.pepino-node.serviceConfig =
-        job "test -f ${quote "${node.dataDir}/local.json"}" (pepinoNodeArgs ++ [ "daemon" "run" ]) // {
+        job "${lib.escapeShellArgs (pepinoNodeArgs ++ [ "relay" "init" ])}" (pepinoNodeArgs ++ [ "daemon" "run" ]) // {
           UserName = node.user;
           GroupName = node.group;
           Umask = 63;

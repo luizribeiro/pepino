@@ -105,6 +105,7 @@ in
       dataDir = "/srv/pepino";
       openFirewall = true;
       port = 44123;
+      maxBoards = 24;
     };
   };
   invalidLinux = { services.pepino = { enable = true; openFirewall = true; }; };
@@ -127,6 +128,7 @@ in
     clientColor = typeError "programs.pepino.ui.color" { programs.pepino.ui.color = "sometimes"; };
     zeroPort = invalidPort 0;
     highPort = invalidPort 65536;
+    negativeCap = typeError "services.pepino.maxBoards" { services.pepino.maxBoards = -1; };
     stringPort = invalidPort "44123";
     readOnlyConfig = {
       settings.services.pepino.configFile = "/tmp/pepino.toml";

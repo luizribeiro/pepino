@@ -3,7 +3,6 @@ let
   client = config.programs.pepino;
   node = config.services.pepino;
   stateDir = lib.replaceStrings [ "%" ] [ "%%" ] node.dataDir;
-  stateFile = "${stateDir}/local.json";
 in
 {
   config = lib.mkMerge [
@@ -54,17 +53,12 @@ in
           runAs = [ "${pkgs.util-linux}/bin/runuser" "-u" node.user "-g" node.group "--" ];
         })
       ];
-      systemd.paths.pepino = {
-        description = "Start Pepino when the node is linked";
-        wantedBy = [ "multi-user.target" ];
-        pathConfig.PathExists = stateFile;
-      };
       systemd.services.pepino = {
-        description = "Pepino always-on sync node";
+        description = "Pepino always-on board relay";
         wantedBy = [ "multi-user.target" ];
         after = [ "network.target" "systemd-tmpfiles-setup.service" ];
-        unitConfig.ConditionPathExists = stateFile;
         serviceConfig = {
+          ExecStartPre = "${lib.escapeShellArgs pepinoNodeArgs} relay init";
           ExecStart = "${lib.escapeShellArgs pepinoNodeArgs} daemon run";
           User = node.user;
           Group = node.group;

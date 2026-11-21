@@ -61,7 +61,12 @@ in
     };
 
     options.services.pepino = nodeOptions // {
-      enable = mkEnableOption "the always-on Pepino node configuration";
+      enable = mkEnableOption "the always-on Pepino relay service";
+      maxBoards = mkOption {
+        type = types.ints.between 0 4294967295;
+        default = 64;
+        description = "Maximum number of boards the relay can carry. Zero refuses new boards.";
+      };
       package = packageOption pkgs;
       user = mkOption { type = types.nonEmptyStr; default = "pepino"; description = "Node account."; };
       group = mkOption { type = types.nonEmptyStr; default = "pepino"; description = "Node primary group."; };
@@ -118,6 +123,7 @@ in
         relay_urls = node.relayUrls;
         credentials_file = node.credentialsFile;
         trusted_devices = node.trustedDevices;
+        max_boards = node.maxBoards or null;
         bootstrap_nodes = if node.bootstrapNodes == null then null else
         map
           (node: { node_id = node.nodeId; relay_url = node.relayUrl; })
