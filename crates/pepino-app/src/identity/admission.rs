@@ -3,9 +3,30 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use pepino_core::DeviceId;
 use pepino_node::DeviceCredentials;
 
-use crate::{App, AppError, app::invalid, normalize_name};
+use crate::{App, AppError, LocalState, app::invalid, normalize_name};
 
 use super::{RosterState, edit::Change};
+
+impl LocalState {
+    pub fn check_device_admission(&self, id: DeviceId) -> Result<(), AppError> {
+        let identity = &self.catalog.identity;
+        if let Some(root) = identity.root
+            && root != self.device_id
+            && identity
+                .device(id)
+                .is_some_and(|row| row.state == RosterState::Revoked)
+        {
+            let name = identity
+                .device(root)
+                .map_or_else(|| root.to_string(), |row| row.name.clone());
+            return Err(AppError::PermissionDenied {
+                path: "device add".into(),
+                reason: format!("this device was revoked; link it again from {name}"),
+            });
+        }
+        Ok(())
+    }
+}
 
 impl App {
     pub async fn record_device_admission(
@@ -36,6 +57,7 @@ impl App {
                     "expected a different device and a synced identity roster",
                 ));
             }
+            local.check_device_admission(id)?;
             let change = match local.roster().get(&id) {
                 Some(device) if device.state == RosterState::Revoked => Change::Add {
                     device: id,
@@ -69,6 +91,10 @@ async fn readmission_reactivates_the_same_key_and_clears_the_current_revocation(
     let dir = tempfile::tempdir().unwrap();
     let app = App::init(dir.path(), 0).await.unwrap();
     let device = DeviceId::from_bytes([57; 32]);
+    let peer = DeviceId::from_bytes([58; 32]);
+    app.remember_device(peer, "Workshop phone".into(), None)
+        .await
+        .unwrap();
     app.remember_device(device, "Garden tablet".into(), None)
         .await
         .unwrap();
@@ -78,6 +104,19 @@ async fn readmission_reactivates_the_same_key_and_clears_the_current_revocation(
         .await
         .unwrap();
     assert_eq!(revoked.roster()[&device].state, RosterState::Revoked);
+    let mut linked = revoked.clone();
+    linked.device_id = peer;
+    assert!(matches!(
+        linked.check_device_admission(device),
+        Err(AppError::PermissionDenied { path, reason })
+            if path == "device add"
+                && reason == format!("this device was revoked; link it again from {}", revoked.device_name())
+    ));
+    assert!(
+        linked
+            .check_device_admission(DeviceId::from_bytes([59; 32]))
+            .is_ok()
+    );
     app.remember_device(device, "Tablet".into(), None)
         .await
         .unwrap();

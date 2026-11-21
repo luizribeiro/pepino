@@ -110,8 +110,13 @@ pub(super) fn run(
             ),
         ));
     }
-    if let Outcome::Error { message, .. } = outcome {
-        return Err(CliError::new(ErrorKind::Failure, message));
+    if let Outcome::Error { code, message } = outcome {
+        let kind = if code == "permission_denied" {
+            ErrorKind::PermissionDenied
+        } else {
+            ErrorKind::Failure
+        };
+        return Err(CliError::new(kind, message));
     }
     if !matches!(outcome, Outcome::MemberAdded) {
         return Err(unexpected_reply());

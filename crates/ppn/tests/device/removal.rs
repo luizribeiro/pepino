@@ -7,7 +7,11 @@ use crate::{
 };
 
 fn link(owner: &Host, device: &Host, name: &str) {
-    let grant = owner.add(&device.request(name), &[]);
+    join(owner, device, &device.request(name));
+}
+
+fn join(owner: &Host, device: &Host, request: &str) {
+    let grant = owner.add(request, &[]);
     use std::{io::Write, process::Stdio};
     let mut child = device
         .command()
@@ -170,7 +174,28 @@ fn a_daemon_resumes_an_offline_revocation_and_readmission_restores_the_gap() {
     )
     .unwrap();
     std::fs::copy(&clean_node, tablet.data.join("node.sqlite")).unwrap();
-    link(&owner, &tablet, "Garden tablet");
+    let peer = Host::new(network);
+    link(&owner, &peer, "Ferrum");
+    let request = tablet.request("Garden tablet");
+    until(
+        || roster_state(&peer, &target),
+        |row| row.as_ref().is_some_and(|row| row["state"] == "revoked"),
+        WAIT,
+    );
+    let args = ["device", "add", &request, "--yes"];
+    let message = "this device was revoked; link it again from Titanium";
+    let human = peer.output(&args);
+    assert_eq!(human.status.code(), Some(5));
+    assert!(human.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&human.stderr).contains(message));
+    let json = task_error(
+        peer.output(&[&args[..], &["--json"]].concat()),
+        5,
+        "permission_denied",
+    );
+    assert_eq!(json["message"], message);
+    assert_eq!(roster_state(&peer, &target).unwrap()["state"], "revoked");
+    join(&owner, &tablet, &request);
     assert_eq!(id(&tablet), target);
     until(
         || {

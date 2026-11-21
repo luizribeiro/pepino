@@ -348,6 +348,7 @@ impl SyncEngine {
         let mut boards = self.boards.lock().await;
         let local =
             crate::discover::reconcile_roster(&boards, self.app.fresh_local_state().await?).await?;
+        local.check_device_admission(device.id)?;
         local.check_device_write()?;
         boards.open_missing(&local).await?;
         let owner = self.node.device_id();

@@ -58,6 +58,9 @@ pub(super) async fn operate(
             Err(pepino_sync::Error::EnrollmentAccess { board }) => {
                 Outcome::MemberAccessDenied { board }
             }
+            Err(Error::App(pepino_app::AppError::PermissionDenied { reason, .. })) => {
+                Outcome::error("permission_denied", &crate::render::single_line(&reason))
+            }
             Err(error) => failure(
                 "add_member_failed",
                 "Could not grant board membership",

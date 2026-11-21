@@ -141,6 +141,7 @@ show stale data and accept local edits that cannot sync. `ppn status`
 shows how long it has had no contact with another device when that
 information is available. `ppn device ls --active` hides revoked devices.
 
+A revoked device can be linked again only from the first device.
 Readmission restores access to the full board history, including the
 interval when the device was removed. To re-link the same device key,
 stop its daemon and move its data directory aside. In the fresh data
