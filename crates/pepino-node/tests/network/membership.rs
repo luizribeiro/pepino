@@ -105,6 +105,14 @@ async fn the_first_publishes_after_removal_use_rotated_keys() {
     )
     .await;
     assert!(ben.admitted_by(removed, a.device_id()).await.unwrap());
+    assert_eq!(ben.operation_role(first).await.unwrap(), Some(Role::Manage));
+    assert_eq!(ben.operation_role(second).await.unwrap(), Some(Role::Write));
+    assert_eq!(
+        ben.operation_role(EventId::from_bytes([45; 32]))
+            .await
+            .unwrap(),
+        None
+    );
     b.shutdown().await.unwrap();
     a.shutdown().await.unwrap();
 }

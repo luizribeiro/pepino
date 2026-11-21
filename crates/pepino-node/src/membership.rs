@@ -1,12 +1,18 @@
 use std::{collections::BTreeMap, path::Path};
 
-use p2panda::{AccessLevel, Hash, operation::Extensions, spaces::MemberId};
+use p2panda::{
+    AccessLevel, Hash,
+    operation::{Extensions, ExtensionsVariantV1, Operation, SpacesHeaderArgs},
+    spaces::MemberId,
+};
+use p2panda_core::traits::Provenance;
 use p2panda_spaces::SpacesStoreState;
 use p2panda_store::{
     SqliteStore,
+    operations::OperationStore,
     spaces::{SpacesStore, SqliteSpacesStore},
 };
-use pepino_core::{BoardId, DeviceId};
+use pepino_core::{BoardId, DeviceId, EventId};
 use sqlx::{
     SqlitePool,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
@@ -265,18 +271,60 @@ fn keep_manager(actors: &[(MemberId, AccessLevel)], current: AccessLevel) -> Res
     Ok(())
 }
 
+type AuthGroup = p2panda_auth::group::GroupCrdt<
+    p2panda_spaces::ActorId,
+    p2panda_spaces::OperationId,
+    p2panda_spaces::AuthMessage<()>,
+    (),
+    p2panda_spaces::StrongRemoveResolver<()>,
+>;
+
 impl BoardHandle {
+    /// Read the author's role at the authorization heads signed by an application operation.
+    pub async fn operation_role(&self, operation: EventId) -> Result<Option<Role>, Error> {
+        let store = SqliteStore::from_pool(self.membership_pool.clone());
+        let id = Hash::from_bytes(*operation.as_bytes());
+        let Some(op) = <SqliteStore as OperationStore<Operation, Hash>>::get_operation(&store, &id)
+            .await
+            .map_err(Error::storage)?
+        else {
+            return Ok(None);
+        };
+        let ExtensionsVariantV1::Space(extension) = &op.header.extensions.variant else {
+            return Ok(None);
+        };
+        let SpacesHeaderArgs::Application {
+            space_id, proof, ..
+        } = &extension.args
+        else {
+            return Ok(None);
+        };
+        if space_id.as_bytes() != self.id().as_bytes() {
+            return Ok(None);
+        }
+        let spaces = SqliteSpacesStore::<Extensions>::new(store);
+        let Some(state): Option<SpacesStoreState<()>> = spaces
+            .get_space_state(space_id)
+            .await
+            .map_err(Error::storage)?
+        else {
+            return Ok(None);
+        };
+        let members = AuthGroup::members_at(
+            &state.groups_y,
+            proof.iter().copied().collect(),
+            state.group_id,
+        )
+        .map_err(Error::storage)?;
+        Ok(members.into_iter().find_map(|(member, access)| {
+            (member.as_bytes() == op.header.author().as_bytes())
+                .then(|| Role::from_level(access.level))
+        }))
+    }
+
     /// Check whether a device was admitted by the named manager in this board's history.
     pub async fn admitted_by(&self, device: DeviceId, manager: DeviceId) -> Result<bool, Error> {
         use p2panda_auth::group::{GroupAction, GroupMember};
-        type AuthGroup = p2panda_auth::group::GroupCrdt<
-            p2panda_spaces::ActorId,
-            p2panda_spaces::OperationId,
-            p2panda_spaces::AuthMessage<()>,
-            (),
-            p2panda_spaces::StrongRemoveResolver<()>,
-        >;
-
         let store = SqliteSpacesStore::<Extensions>::new(SqliteStore::from_pool(
             self.membership_pool.clone(),
         ));
