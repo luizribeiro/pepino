@@ -36,6 +36,10 @@ pub(crate) struct CatalogState {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) membership:
         BTreeMap<BoardId, BTreeMap<pepino_core::EventId, crate::MembershipRecord>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) board_leaves: BTreeMap<BoardId, BTreeMap<String, crate::SignedBoardLeave>>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(crate) observed_board_removals: BTreeSet<BoardId>,
     joins: BTreeMap<BoardId, BoardJoinState>,
     created_here: BTreeSet<BoardId>,
     bundles: BTreeMap<DeviceId, String>,

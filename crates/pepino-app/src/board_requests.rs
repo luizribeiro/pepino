@@ -18,6 +18,8 @@ pub struct BoardInfo {
     #[serde(default)]
     pub waiting_for_access: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub departure: Option<crate::BoardDeparture>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<crate::NamedRecord>,
 }
 
@@ -37,6 +39,7 @@ impl App {
             membership: self.local.board_join_state(board.id),
             shared: shared.is_some(),
             waiting_for_access: self.local.waiting_for_access(board.id),
+            departure: self.local.board_departure(board.id),
             owner,
         })
     }

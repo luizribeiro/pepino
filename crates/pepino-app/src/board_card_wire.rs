@@ -114,6 +114,8 @@ const PREFIX: &[u8] = b"pepino-board-people\0";
 pub enum BoardCards {
     Introduce(BoardAdmission),
     Update(IdentityCard),
+    Membership(crate::MembershipChange),
+    Leave(crate::SignedBoardLeave),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -169,7 +171,19 @@ impl App {
                     Err(error) => return Err(error),
                 }
             }
-            BoardCards::Introduce(_) => (),
+            BoardCards::Introduce(_) | BoardCards::Membership(_) => (),
+            BoardCards::Leave(request) => {
+                return self
+                    .record_board_leave(board, request)
+                    .await
+                    .or_else(|error| {
+                        if matches!(error, AppError::InvalidInput { .. }) {
+                            Ok(())
+                        } else {
+                            Err(error)
+                        }
+                    });
+            }
             BoardCards::Update(card) => {
                 return self.update_card(board, id, card).await;
             }

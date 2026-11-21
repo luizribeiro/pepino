@@ -50,7 +50,8 @@ pub use board_card_exchange::CardExchange;
 pub use board_card_wire::BoardCards;
 pub use board_grant::BoardGrant;
 pub use board_membership::{
-    DeviceMembershipChange, MembershipAction, MembershipChange, MembershipRecord, reconcile_person,
+    BoardDeparture, BoardLeave, DeviceMembershipChange, MembershipAction, MembershipChange,
+    MembershipRecord, SignedBoardLeave, reconcile_person,
 };
 pub use board_people::BoardPerson;
 pub use board_request::BoardRequest;
