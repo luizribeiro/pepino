@@ -9,6 +9,7 @@ mod join_progress;
 mod outbox;
 mod publication;
 mod reader_routes;
+mod relay_delivery;
 mod removal_notice;
 mod retry;
 mod revoke;

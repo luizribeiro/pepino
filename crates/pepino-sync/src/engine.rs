@@ -321,14 +321,22 @@ impl SyncEngine {
     ) -> Result<Self, Error> {
         let database = &settings.database_path;
         let directory = database.parent().unwrap_or_else(|| Path::new("."));
-        Self::start_with_authority(
+        let keys = settings.credentials.clone();
+        let mut engine = Self::start_with_authority(
             Settings::default(),
-            node,
+            node.clone(),
             directory,
             database.clone(),
-            Some(settings.credentials.clone()),
+            Some(keys.clone()),
         )
-        .await
+        .await?;
+        engine.workers.spawn(crate::relay_delivery::run(
+            node,
+            engine.app.clone(),
+            keys,
+            engine.stop.subscribe(),
+        ));
+        Ok(engine)
     }
 
     pub async fn add_member(
