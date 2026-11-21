@@ -403,3 +403,61 @@ async fn a_pending_leave_pauses_incoming_task_updates() {
     assert_eq!(app.store().statistics(board).await.unwrap().total, 0);
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn membership_authorization_is_retried_before_acknowledgment() {
+    use pepino_app::{App, BoardCards, MembershipAction, MembershipChange};
+    use pepino_node::Role;
+
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::init(dir.path(), 0).await.unwrap();
+    let local = app.local_state();
+    let board = BoardId::from_bytes([91; 32]);
+    let manager = DeviceId::from_bytes([92; 32]);
+    app.register_created_board(board, "Greenhouse")
+        .await
+        .unwrap();
+    let node = Arc::new(Stub::new(local.device_id));
+    let mut probes = node.watch_operation_roles();
+    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    let payload = BoardCards::Membership(MembershipChange {
+        person: local.own_person_key(),
+        action: MembershipAction::Removed,
+        at: std::time::UNIX_EPOCH.into(),
+        revision: 1,
+        incarnation: None,
+        parents: Default::default(),
+    })
+    .encode()
+    .unwrap();
+    let mut received = node.deliver(board, manager, payload);
+    tokio::time::timeout(WAIT, probes.wait_for(|queries| *queries >= 2))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!*received.borrow());
+    assert_eq!(
+        app.fresh_local_state()
+            .await
+            .unwrap()
+            .membership_history(board)
+            .count(),
+        0
+    );
+    node.set_operation_role(Role::Manage);
+    tokio::time::timeout(WAIT, received.wait_for(|acked| *acked))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        app.fresh_local_state()
+            .await
+            .unwrap()
+            .membership_history(board)
+            .count(),
+        1
+    );
+    engine.shutdown().await.unwrap();
+}

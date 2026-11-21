@@ -211,8 +211,8 @@ async fn ingest_cards<B: TransportBoard>(
     let mut retry = Retry::new();
     while let Some(cards) = BoardCards::decode(&delivery.bytes) {
         if let BoardCards::Membership(change) = cards {
-            let outcome = match handle.operation_role(delivery.operation).await {
-                Ok(Some(pepino_node::Role::Manage)) => app
+            let outcome = match handle.operation_role_state(delivery.operation).await {
+                Ok(pepino_node::OperationRole::Known(Some(pepino_node::Role::Manage))) => app
                     .record_membership(
                         board,
                         pepino_app::MembershipRecord {
@@ -223,7 +223,11 @@ async fn ingest_cards<B: TransportBoard>(
                     )
                     .await
                     .map_err(Error::from),
-                Ok(_) => Ok(()),
+                Ok(pepino_node::OperationRole::Known(_)) => Ok(()),
+                Ok(pepino_node::OperationRole::Pending) => {
+                    retry.wait().await;
+                    continue;
+                }
                 Err(error) => Err(error.into()),
             };
             match outcome {
@@ -241,8 +245,8 @@ async fn ingest_cards<B: TransportBoard>(
             incarnation,
         } = cards
         {
-            let outcome = match handle.operation_role(delivery.operation).await {
-                Ok(Some(pepino_node::Role::Manage)) => app
+            let outcome = match handle.operation_role_state(delivery.operation).await {
+                Ok(pepino_node::OperationRole::Known(Some(pepino_node::Role::Manage))) => app
                     .register_card_exchange(
                         channel,
                         pepino_app::CardExchange {
@@ -254,7 +258,11 @@ async fn ingest_cards<B: TransportBoard>(
                     )
                     .await
                     .map_err(Error::from),
-                Ok(_) => Ok(()),
+                Ok(pepino_node::OperationRole::Known(_)) => Ok(()),
+                Ok(pepino_node::OperationRole::Pending) => {
+                    retry.wait().await;
+                    continue;
+                }
                 Err(error) => Err(error.into()),
             };
             match outcome {

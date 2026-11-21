@@ -282,8 +282,9 @@ impl LocalState {
                 self.add_card_exchange(channel, route)?;
             }
         }
+        let active_sender = self.active_roster_device(signer);
         for (board, records) in announcement.own_membership {
-            if self.shared_access(board).is_some() {
+            if active_sender && self.shared_access(board).is_some() {
                 let stored = self.catalog.membership.entry(board).or_default();
                 for record in records
                     .into_iter()
@@ -531,4 +532,57 @@ async fn trusted_catalog_discovery_leaves_shared_access_with_the_joining_device(
     assert_eq!(local.resolve_board("House", "board").unwrap().id, house);
     assert!(local.waiting_for_access(house));
     assert!(local.shared_peers().next().is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn the_bootstrap_catalog_sender_cannot_relay_own_membership() {
+    let device = DeviceId::from_bytes([74; 32]);
+    let peer = DeviceId::from_bytes([75; 32]);
+    let private = BoardId::from_bytes([76; 32]);
+    let shared = BoardId::from_bytes([77; 32]);
+    let mut local = LocalState::new(
+        crate::OpenOptions::default().try_into().unwrap(),
+        device,
+        private,
+    )
+    .unwrap();
+    let person = local.own_person_key();
+    local.other_devices.insert(peer, "Bootstrap tablet".into());
+    local.catalog.shared.insert(
+        shared,
+        crate::SharedAccess {
+            owner: IdentityId::from_bytes([78; 32]),
+            owner_root: Some(DeviceId::from_bytes([79; 32])),
+            role: crate::BoardRole::Read,
+            admitted: device,
+        },
+    );
+    let record = crate::MembershipRecord {
+        operation: pepino_core::EventId::from_bytes([80; 32]),
+        actor: peer,
+        change: crate::MembershipChange {
+            person,
+            action: crate::MembershipAction::Removed,
+            at: std::time::UNIX_EPOCH.into(),
+            revision: 1,
+            incarnation: None,
+            parents: Default::default(),
+        },
+    };
+    let announcement = Announcement {
+        v: crate::PROTOCOL_VERSION,
+        identity: local.identity_id,
+        revisions: Default::default(),
+        devices: Default::default(),
+        roster: Default::default(),
+        member: String::new(),
+        shared: Default::default(),
+        reader_routes: Default::default(),
+        board_leaves: Default::default(),
+        own_membership: [(shared, vec![record])].into(),
+    };
+    local.merge_catalog(private, peer, announcement).unwrap();
+    assert_eq!(local.membership_history(shared).count(), 0);
+    assert_eq!(local.board_departure(shared), None);
 }

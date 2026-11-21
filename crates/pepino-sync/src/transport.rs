@@ -6,7 +6,9 @@ use std::{
 use futures_util::{StreamExt, TryStreamExt, stream::BoxStream};
 use pepino_app::LocalState;
 use pepino_core::{BoardId, DeviceId, EventId};
-use pepino_node::{Ack, BoardHandle, Error, MemberInfo, Node, NodeEvents, NodeStatus, Role};
+use pepino_node::{
+    Ack, BoardHandle, Error, MemberInfo, Node, NodeEvents, NodeStatus, OperationRole, Role,
+};
 
 use crate::Removal;
 
@@ -44,6 +46,18 @@ pub trait TransportBoard: Send + Sync + 'static {
         _operation: EventId,
     ) -> impl Future<Output = Result<Option<Role>, Error>> + Send {
         async { Ok(None) }
+    }
+
+    fn operation_role_state(
+        &self,
+        operation: EventId,
+    ) -> impl Future<Output = Result<OperationRole, Error>> + Send {
+        async move {
+            Ok(match self.operation_role(operation).await? {
+                None => OperationRole::Pending,
+                Some(role) => OperationRole::Known(Some(role)),
+            })
+        }
     }
 
     fn roles(&self) -> impl Future<Output = Result<BTreeMap<DeviceId, Role>, Error>> + Send {
@@ -172,6 +186,10 @@ impl TransportBoard for BoardHandle {
 
     async fn operation_role(&self, operation: EventId) -> Result<Option<Role>, Error> {
         BoardHandle::operation_role(self, operation).await
+    }
+
+    async fn operation_role_state(&self, operation: EventId) -> Result<OperationRole, Error> {
+        BoardHandle::operation_role_state(self, operation).await
     }
 
     async fn roles(&self) -> Result<BTreeMap<DeviceId, Role>, Error> {

@@ -6,7 +6,7 @@ use std::sync::{
 
 use futures_util::{StreamExt, stream};
 use pepino_core::{BoardId, DeviceId, EventId};
-use pepino_node::{Error, NodeEvent, NodeEvents, NodeStatus};
+use pepino_node::{Error, NodeEvent, NodeEvents, NodeStatus, Role};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio_stream::wrappers::{BroadcastStream, UnboundedReceiverStream};
 
@@ -21,6 +21,8 @@ struct Publisher {
     pause: Mutex<Option<watch::Sender<bool>>>,
     operations: Arc<Mutex<Vec<Vec<u8>>>>,
     next_fault: Mutex<Option<PublishFault>>,
+    operation_role: Mutex<Option<Role>>,
+    role_queries: Mutex<Option<watch::Sender<usize>>>,
 }
 
 #[derive(Clone, Copy)]
@@ -102,6 +104,16 @@ impl Receipt {
 }
 
 impl Stub {
+    pub(super) fn watch_operation_roles(&self) -> watch::Receiver<usize> {
+        let (sender, receiver) = watch::channel(0);
+        self.publisher.role_queries.lock().unwrap().replace(sender);
+        receiver
+    }
+
+    pub(super) fn set_operation_role(&self, role: Role) {
+        *self.publisher.operation_role.lock().unwrap() = Some(role);
+    }
+
     pub(super) fn stop_deliveries(&self) {
         self.queues.lock().unwrap().clear();
     }
@@ -256,6 +268,13 @@ impl TransportBoard for Board {
                 futures_util::future::ready((!delivery.ack.is_acked()).then_some(Ok(delivery)))
             })
             .boxed())
+    }
+
+    async fn operation_role(&self, _: EventId) -> Result<Option<Role>, Error> {
+        if let Some(sender) = &*self.publisher.role_queries.lock().unwrap() {
+            sender.send_modify(|queries| *queries += 1);
+        }
+        Ok(*self.publisher.operation_role.lock().unwrap())
     }
 
     async fn publish(&self, bytes: Vec<u8>) -> Result<EventId, Error> {

@@ -279,28 +279,41 @@ type AuthGroup = p2panda_auth::group::GroupCrdt<
     p2panda_spaces::StrongRemoveResolver<()>,
 >;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OperationRole {
+    Pending,
+    Known(Option<Role>),
+}
+
 impl BoardHandle {
     /// Read the author's role at the authorization heads signed by an application operation.
     pub async fn operation_role(&self, operation: EventId) -> Result<Option<Role>, Error> {
+        Ok(match self.operation_role_state(operation).await? {
+            OperationRole::Pending => None,
+            OperationRole::Known(role) => role,
+        })
+    }
+
+    pub async fn operation_role_state(&self, operation: EventId) -> Result<OperationRole, Error> {
         let store = SqliteStore::from_pool(self.membership_pool.clone());
         let id = Hash::from_bytes(*operation.as_bytes());
         let Some(op) = <SqliteStore as OperationStore<Operation, Hash>>::get_operation(&store, &id)
             .await
             .map_err(Error::storage)?
         else {
-            return Ok(None);
+            return Ok(OperationRole::Pending);
         };
         let ExtensionsVariantV1::Space(extension) = &op.header.extensions.variant else {
-            return Ok(None);
+            return Ok(OperationRole::Known(None));
         };
         let SpacesHeaderArgs::Application {
             space_id, proof, ..
         } = &extension.args
         else {
-            return Ok(None);
+            return Ok(OperationRole::Known(None));
         };
         if space_id.as_bytes() != self.id().as_bytes() {
-            return Ok(None);
+            return Ok(OperationRole::Known(None));
         }
         let spaces = SqliteSpacesStore::<Extensions>::new(store);
         let Some(state): Option<SpacesStoreState<()>> = spaces
@@ -308,7 +321,7 @@ impl BoardHandle {
             .await
             .map_err(Error::storage)?
         else {
-            return Ok(None);
+            return Ok(OperationRole::Pending);
         };
         let members = AuthGroup::members_at(
             &state.groups_y,
@@ -316,10 +329,12 @@ impl BoardHandle {
             state.group_id,
         )
         .map_err(Error::storage)?;
-        Ok(members.into_iter().find_map(|(member, access)| {
-            (member.as_bytes() == op.header.author().as_bytes())
-                .then(|| Role::from_level(access.level))
-        }))
+        Ok(OperationRole::Known(members.into_iter().find_map(
+            |(member, access)| {
+                (member.as_bytes() == op.header.author().as_bytes())
+                    .then(|| Role::from_level(access.level))
+            },
+        )))
     }
 
     /// Check whether a device was admitted by the named manager in this board's history.
