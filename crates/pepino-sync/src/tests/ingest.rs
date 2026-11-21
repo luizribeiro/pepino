@@ -323,14 +323,31 @@ async fn shutdown_commits_and_acknowledges_the_delivery_it_already_took() {
     let device = DeviceId::from_bytes([75; 32]);
     let app = directory::prepare(dir.path(), board, device).await;
     let node = Arc::new(Stub::new(device));
-    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
-        .await
-        .unwrap();
+    let engine = SyncEngine::start(
+        crate::Settings {
+            lock_timeout: Duration::ZERO,
+            ..Default::default()
+        },
+        node.clone(),
+        dir.path(),
+    )
+    .await
+    .unwrap();
     let lock = std::fs::File::open(dir.path().join("local.lock")).unwrap();
     lock.lock().unwrap();
     let ack = node.deliver(board, device, vec![0x82, 2, 0xf6]);
-    super::wait_for_status(&engine, |status| status.boards[&board].ingest_pending).await;
+    super::wait_for_status(&engine, |status| {
+        status.boards[&board]
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("holds the data directory"))
+    })
+    .await;
     let queued = node.deliver(board, device, vec![0x82, 2, 0xf5]);
+    // SQLite uses blocking I/O and can outlive the test's virtual retry interval.
+    tokio::time::pause();
+    let (release_clock, hold_clock) = std::sync::mpsc::channel::<()>();
+    let clock = tokio::task::spawn_blocking(move || hold_clock.recv_timeout(WAIT));
     let shutdown = engine.shutdown();
     tokio::pin!(shutdown);
     tokio::select! {
@@ -339,7 +356,15 @@ async fn shutdown_commits_and_acknowledges_the_delivery_it_already_took() {
         _ = std::future::ready(()) => (),
     }
     drop(lock);
-    shutdown.await.unwrap();
+    tokio::time::advance(Duration::from_millis(100)).await;
+    let result = shutdown.await;
+    drop(release_clock);
+    assert_eq!(
+        clock.await.unwrap(),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+    );
+    tokio::time::resume();
+    result.unwrap();
     assert!(*ack.borrow());
     assert!(!*queued.borrow());
     assert_eq!(
