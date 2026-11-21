@@ -93,11 +93,9 @@ impl Daemon {
         if signal == Signal::SIGKILL {
             assert_eq!(output.status.signal(), Some(signal as i32));
         } else {
-            assert!(
-                output.status.success() && output.stderr.is_empty(),
-                "{output:?}"
-            );
+            assert!(output.status.success(), "{output:?}");
         }
+        assert!(output.stderr.is_empty(), "{output:?}");
     }
 }
 
@@ -143,11 +141,16 @@ struct Pair {
 }
 
 impl Pair {
-    async fn enroll() -> (Self, pepino_app::DeviceRequest) {
+    async fn enroll(temporary_dir: Option<&Path>) -> (Self, pepino_app::DeviceRequest) {
         use pepino_app::{App, DeviceGrant, OpenOptions, PeerHint, SignedGrant};
 
-        let owner = tempfile::tempdir().unwrap();
-        let peer = tempfile::tempdir().unwrap();
+        let tempdir = || {
+            temporary_dir
+                .and_then(|dir| tempfile::tempdir_in(dir).ok())
+                .unwrap_or_else(|| tempfile::tempdir().unwrap())
+        };
+        let owner = tempdir();
+        let peer = tempdir();
         let name = owner.path().file_name().unwrap().to_string_lossy();
         let network = format!("pepino-recover-{name}");
         let owner_dir = owner.path().join("board");
@@ -227,7 +230,7 @@ impl Pair {
 }
 
 fn start_pair(rt: &tokio::runtime::Runtime) -> (Pair, Daemon, pepino_app::DeviceRequest) {
-    let (pair, device) = rt.block_on(Pair::enroll());
+    let (pair, device) = rt.block_on(Pair::enroll(None));
     let daemon = Daemon::start(pair.owner.path(), &pair.network);
     let client = pair.client(pair.owner.path());
     wait_for_daemon(&client);
@@ -343,17 +346,18 @@ fn write_board_tasks(
     });
 }
 
-fn seed_outbox(rt: &tokio::runtime::Runtime, pair: &Pair, range: std::ops::Range<usize>) {
+fn seed_outbox(
+    rt: &tokio::runtime::Runtime,
+    app: &pepino_app::App,
+    board: pepino_core::BoardId,
+    range: std::ops::Range<usize>,
+) {
     use pepino_core::{Clock, Envelope, Event, InitialFields};
 
     rt.block_on(async {
-        let app =
-            pepino_app::App::open_with_options(pair.owner.path().join("board"), 0, app_options())
-                .await
-                .unwrap();
         let author = app.local_state().device_id;
         let store = app.store();
-        let mut clock = Clock::from_hlc(store.latest_hlc(pair.board).await.unwrap().unwrap());
+        let mut clock = Clock::from_hlc(store.latest_hlc(board).await.unwrap().unwrap());
         let bytes: Vec<_> = range
             .map(|item| {
                 Envelope::new(
@@ -373,12 +377,8 @@ fn seed_outbox(rt: &tokio::runtime::Runtime, pair: &Pair, range: std::ops::Range
             .iter()
             .map(|event| (event.as_slice(), Some(author)))
             .collect();
-        store.append_batch(pair.board, &writes).await.unwrap();
+        store.append_batch(board, &writes).await.unwrap();
     });
-}
-
-fn wait_for_views(rt: &tokio::runtime::Runtime, pair: &Pair, count: usize) {
-    wait_for_board_views(rt, pair, pair.board, count);
 }
 
 fn wait_for_board_views(
@@ -398,12 +398,23 @@ fn wait_for_board_views(
     });
     let expected = rt.block_on(owner.store().tasks(board)).unwrap();
     assert_eq!(expected.len(), count);
+    wait_for_matching_views(rt, pair, board, peer.store(), &expected, WAIT);
+}
+
+fn wait_for_matching_views(
+    rt: &tokio::runtime::Runtime,
+    pair: &Pair,
+    board: pepino_core::BoardId,
+    peer: &pepino_store::Store,
+    expected: &[pepino_store::TaskRecord],
+    timeout: Duration,
+) {
     until(
-        || rt.block_on(peer.store().tasks(board)).unwrap(),
-        |tasks| tasks == &expected,
-        WAIT,
+        || rt.block_on(peer.tasks(board)).unwrap(),
+        |tasks| tasks.as_slice() == expected,
+        timeout,
     );
-    for home in paths {
+    let wait_for_idle = |home: &Path| {
         let client = pair.client(home);
         assert!(matches!(
             client
@@ -416,13 +427,25 @@ fn wait_for_board_views(
                 .unwrap(),
             super::protocol::Outcome::Synced { idle: true, .. }
         ));
-    }
+    };
+    std::thread::scope(|scope| {
+        let owner_idle = scope.spawn(|| wait_for_idle(pair.owner.path()));
+        wait_for_idle(pair.peer.path());
+        owner_idle.join().unwrap();
+    });
 }
 
-fn wait_for_spooled_task(rt: &tokio::runtime::Runtime, pair: &Pair, title: &str) {
+fn wait_for_delivery(
+    rt: &tokio::runtime::Runtime,
+    home: &Path,
+    board: pepino_core::BoardId,
+    title: &str,
+    query: &'static str,
+    timeout: Duration,
+) {
     use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 
-    let path = pair.peer.path().join("board/node.sqlite");
+    let path = home.join("board/node.sqlite");
     let options = SqliteConnectOptions::new().filename(path).read_only(true);
     let mut connection = rt
         .block_on(SqliteConnection::connect_with(&options))
@@ -430,18 +453,33 @@ fn wait_for_spooled_task(rt: &tokio::runtime::Runtime, pair: &Pair, title: &str)
     until(
         || {
             rt.block_on(
-                sqlx::query_scalar::<_, bool>(
-                    "SELECT EXISTS (SELECT 1 FROM pepino_delivery WHERE board = ? AND instr(item, ?) > 0)",
-                )
-                .bind(pair.board.as_bytes().as_slice())
-                .bind(title.as_bytes())
-                .fetch_one(&mut connection),
+                sqlx::query_scalar::<_, bool>(query)
+                    .bind(board.as_bytes().as_slice())
+                    .bind(title.as_bytes())
+                    .fetch_one(&mut connection),
             )
             .unwrap()
         },
-        |queued| *queued,
-        WAIT,
+        |delivered| *delivered,
+        timeout,
     );
+}
+
+async fn record_dequeued_deliveries(home: &Path) {
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+
+    let options = SqliteConnectOptions::new().filename(home.join("board/node.sqlite"));
+    let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+    sqlx::raw_sql(
+        "CREATE TABLE shutdown_test_dequeued (board BLOB NOT NULL, item BLOB NOT NULL);
+         CREATE TRIGGER record_dequeued_delivery AFTER DELETE ON pepino_delivery
+         BEGIN
+             INSERT INTO shutdown_test_dequeued VALUES (OLD.board, OLD.item);
+         END;",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
 }
 
 async fn verify_databases(pair: &Pair) {
@@ -461,60 +499,117 @@ async fn verify_databases(pair: &Pair) {
     }
 }
 
-fn recover_active_sync(signal: Signal) {
-    const AFTER_PUBLISH_RESTART: usize = 3;
-    // The node caches 64 deliveries in memory before leaving the rest in SQLite.
-    const AFTER_INGEST_RESTART: usize = AFTER_PUBLISH_RESTART + 67;
+fn recover_active_sync(signal: Signal, spill_to_disk: bool) {
+    const PUBLISHER_TASKS: usize = 3;
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
-    let (pair, owner, device) = start_pair(&rt);
-    grant_membership(&pair, device);
-    let peer = Daemon::start(pair.peer.path(), &pair.network);
-    pair.joined();
-    let sender = pair.client(pair.owner.path());
+    let temporary_dir =
+        (cfg!(target_os = "linux") && !spill_to_disk && std::env::var_os("TMPDIR").is_none())
+            .then(|| Path::new("/dev/shm"));
+    let (pair, device) = rt.block_on(Pair::enroll(temporary_dir));
     write_tasks(&rt, pair.owner.path(), 0..1);
-    sender.nudge().unwrap();
-    wait_for_views(&rt, &pair, 1);
-
-    write_tasks(&rt, pair.owner.path(), 1..AFTER_PUBLISH_RESTART);
-    let lock = std::fs::File::open(pair.owner.path().join("board/local.lock")).unwrap();
-    lock.lock().unwrap();
-    sender.nudge().unwrap();
-    let peer_app = rt
-        .block_on(pepino_app::App::open_with_options(
-            pair.peer.path().join("board"),
+    let [owner_app, peer_app] = [pair.owner.path(), pair.peer.path()].map(|home| {
+        rt.block_on(pepino_app::App::open_with_options(
+            home.join("board"),
             0,
             app_options(),
         ))
-        .unwrap();
+        .unwrap()
+    });
+    let owner_tasks = || rt.block_on(owner_app.store().tasks(pair.board)).unwrap();
+    let peer_tasks = || rt.block_on(peer_app.store().tasks(pair.board)).unwrap();
+    let baseline = owner_tasks();
+    assert_eq!(baseline.len(), 1);
+
+    let owner = Daemon::start(pair.owner.path(), &pair.network);
+    let peer = Daemon::start(pair.peer.path(), &pair.network);
+    let sender = pair.client(pair.owner.path());
+    wait_for_daemon(&sender);
+    grant_membership(&pair, device);
+    pair.joined();
+    wait_for_matching_views(&rt, &pair, pair.board, peer_app.store(), &baseline, WAIT);
+
+    rt.block_on(record_dequeued_deliveries(pair.owner.path()));
+    let lock = std::fs::File::open(pair.owner.path().join("board/local.lock")).unwrap();
+    lock.lock().unwrap();
+    seed_outbox(&rt, &owner_app, pair.board, 1..PUBLISHER_TASKS);
+    let mut expected = owner_tasks();
+    assert_eq!(expected.len(), PUBLISHER_TASKS);
+    sender.nudge_with(WAIT).unwrap();
     let first_pending = task_title(1);
     until(
-        || rt.block_on(peer_app.store().tasks(pair.board)).unwrap(),
+        peer_tasks,
         |tasks| tasks.iter().any(|task| task.title == first_pending),
         WAIT,
     );
-    drop(peer_app);
-    owner.interrupt(signal);
-    let lock_until_exit = (signal == Signal::SIGKILL).then_some(lock);
-    owner.wait_stopped(signal);
-    drop(lock_until_exit);
-    let owner = Daemon::start(pair.owner.path(), &pair.network);
-    wait_for_views(&rt, &pair, AFTER_PUBLISH_RESTART);
 
-    let lock = std::fs::File::open(pair.peer.path().join("board/local.lock")).unwrap();
-    lock.lock().unwrap();
-    seed_outbox(&rt, &pair, AFTER_PUBLISH_RESTART..AFTER_INGEST_RESTART);
-    sender.nudge().unwrap();
-    wait_for_spooled_task(&rt, &pair, &task_title(AFTER_INGEST_RESTART - 1));
-    peer.interrupt(signal);
-    let lock_until_exit = (signal == Signal::SIGKILL).then_some(lock);
-    peer.wait_stopped(signal);
-    drop(lock_until_exit);
-    let peer = Daemon::start(pair.peer.path(), &pair.network);
-    wait_for_views(&rt, &pair, AFTER_INGEST_RESTART);
+    // The owner is still recording its publication receipt when the peer sends it new work.
+    let incoming = PUBLISHER_TASKS;
+    let incoming_title = task_title(incoming);
+    seed_outbox(&rt, &peer_app, pair.board, incoming..incoming + 1);
+    pair.client(pair.peer.path()).nudge_with(WAIT).unwrap();
+    wait_for_delivery(
+        &rt,
+        pair.owner.path(),
+        pair.board,
+        &incoming_title,
+        "SELECT EXISTS (SELECT 1 FROM shutdown_test_dequeued WHERE board = ? AND instr(item, ?) > 0)",
+        WAIT,
+    );
+    owner.stop(signal);
+    assert_eq!(owner_tasks(), expected);
+    drop(lock);
+
+    expected.push(
+        peer_tasks()
+            .into_iter()
+            .find(|task| task.title == incoming_title)
+            .unwrap(),
+    );
+    expected.sort_unstable_by_key(|task| (task.created, task.id));
+    let owner = Daemon::start(pair.owner.path(), &pair.network);
+    until(owner_tasks, |tasks| tasks == &expected, WAIT);
+    wait_for_matching_views(&rt, &pair, pair.board, peer_app.store(), &expected, WAIT);
+
+    let peer = if spill_to_disk {
+        let scale_wait = WAIT * 3;
+        let lock = std::fs::File::open(pair.peer.path().join("board/local.lock")).unwrap();
+        lock.lock().unwrap();
+        // One delivery can be in the inbox, with 64 more in the node's memory buffer.
+        let start = incoming + 1;
+        let end = start + 67;
+        seed_outbox(&rt, &owner_app, pair.board, start..end);
+        let before_stop = owner_tasks();
+        assert_eq!(before_stop.len(), end);
+        sender.nudge_with(WAIT).unwrap();
+        wait_for_delivery(
+            &rt,
+            pair.peer.path(),
+            pair.board,
+            &task_title(end - 1),
+            "SELECT EXISTS (SELECT 1 FROM pepino_delivery WHERE board = ? AND instr(item, ?) > 0)",
+            scale_wait,
+        );
+        peer.stop(signal);
+        assert_eq!(peer_tasks(), expected);
+        drop(lock);
+        let peer = Daemon::start(pair.peer.path(), &pair.network);
+        wait_for_matching_views(
+            &rt,
+            &pair,
+            pair.board,
+            peer_app.store(),
+            &before_stop,
+            scale_wait,
+        );
+        assert_eq!(owner_tasks(), before_stop);
+        peer
+    } else {
+        peer
+    };
     peer.stop(Signal::SIGTERM);
     owner.stop(Signal::SIGTERM);
     rt.block_on(verify_databases(&pair));
@@ -522,10 +617,22 @@ fn recover_active_sync(signal: Signal) {
 
 #[test]
 fn sigterm_recovers_events_during_publishing_and_ingesting() {
-    recover_active_sync(Signal::SIGTERM);
+    recover_active_sync(Signal::SIGTERM, false);
 }
 
 #[test]
 fn sigkill_recovers_events_during_publishing_and_ingesting() {
-    recover_active_sync(Signal::SIGKILL);
+    recover_active_sync(Signal::SIGKILL, false);
+}
+
+#[test]
+#[ignore = "fills the node delivery buffer to exercise SQLite spool recovery"]
+fn sigterm_recovers_events_during_publishing_and_ingesting_at_scale() {
+    recover_active_sync(Signal::SIGTERM, true);
+}
+
+#[test]
+#[ignore = "fills the node delivery buffer to exercise SQLite spool recovery"]
+fn sigkill_recovers_events_during_publishing_and_ingesting_at_scale() {
+    recover_active_sync(Signal::SIGKILL, true);
 }

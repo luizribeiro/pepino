@@ -69,6 +69,10 @@ harness completes all iterations, prints each failed run's output, retains
 logs under `target/test-under-load.*`, and exits unsuccessfully if any run
 failed.
 
+On Linux, the default daemon publication and ingestion recovery tests use
+`/dev/shm` when it is available and `TMPDIR` is unset. The SQLite files
+remain available across daemon restarts.
+
 ### Scale tests
 
 Run these separately from the workspace suite. Each command selects one
@@ -78,7 +82,14 @@ ignored scale test.
 cargo nextest run -p pepino-node --test network --run-ignored ignored-only -E 'test(=scale::restart_skips_acknowledged_history_at_scale)'
 cargo nextest run -p pepino-node --lib --run-ignored ignored-only -E 'test(=delivery::tests::a_paused_consumer_resumes_with_the_queue_full_at_scale)'
 cargo nextest run -p pepino-store --lib --run-ignored ignored-only -E 'test(=edges::tests::loads_long_chains_in_adversarial_register_order_at_scale)'
+cargo nextest run -p ppn --lib --run-ignored ignored-only -E 'test(=daemon::shutdown_tests::sigterm_recovers_events_during_publishing_and_ingesting_at_scale)'
+cargo nextest run -p ppn --lib --run-ignored ignored-only -E 'test(=daemon::shutdown_tests::sigkill_recovers_events_during_publishing_and_ingesting_at_scale)'
 ```
+
+The daemon scale tests fill the receiver's memory buffer and interrupt it
+with a task still in the SQLite delivery spool. They give the full burst
+up to three minutes to reach the receiver and another three minutes to
+replay after restart.
 
 To sample more generated store histories, raise the property case count.
 
