@@ -68,8 +68,38 @@ async fn reconcile<T: Transport>(
     generation: u64,
 ) -> Result<(), Error> {
     let mut local = reconcile_roster(boards, boards.app.fresh_local_state().await?).await?;
+    if local.roster_ready()
+        && local.device_bundle(local.device_id).is_none()
+        && let Some(member) = boards.node.local_member_bundle().await?
+    {
+        boards.app.remember_member_bundle(&member).await?;
+        local = boards.app.fresh_local_state().await?;
+    }
     boards.open_missing(&local).await?;
     let node_status = boards.node.status();
+    for board in local.boards() {
+        if local.needs_readmission_replay(board.id)
+            && !boards.replaying.contains(&board.id)
+            && let Some(handle) = boards.handle(board.id)
+            && node_status
+                .boards
+                .get(&board.id)
+                .is_some_and(|node| node.joined)
+            && handle
+                .known_members(&local, false)
+                .await?
+                .is_some_and(|members| members.contains(&local.device_id))
+        {
+            boards.changes.send_modify(|status| {
+                status
+                    .restart_required
+                    .get_or_insert_with(|| crate::BoardFailure {
+                        board: board.id,
+                        cause: "replay after readmission".into(),
+                    });
+            });
+        }
+    }
     let finished: Vec<_> = {
         let status = boards.changes.borrow();
         boards
@@ -89,6 +119,7 @@ async fn reconcile<T: Transport>(
     for board in finished {
         boards.app.record_readmission_replay(board, false).await?;
         boards.replaying.remove(&board);
+        boards.changes.send_modify(|_| ());
     }
     let mut members = BTreeMap::new();
     let mut enrolled = BTreeMap::new();
@@ -102,7 +133,11 @@ async fn reconcile<T: Transport>(
         }
         if let Some(handle) = boards.handle(board.id) {
             let ids = handle
-                .known_members(&local, local.created_boards().contains(&board.id))
+                .known_members(
+                    &local,
+                    local.created_boards().contains(&board.id)
+                        && local.shared_access(board.id).is_none(),
+                )
                 .await?;
             if let Some(ids) = ids {
                 if local.created_boards().contains(&board.id) {
@@ -157,6 +192,9 @@ async fn reconcile<T: Transport>(
         && let Some(member) = boards.node.local_member_bundle().await?
     {
         let bytes = local.encode_catalog(&member)?;
+        if local.device_bundle(local.device_id).as_ref() != Some(&member) {
+            boards.app.remember_member_bundle(&member).await?;
+        }
         let peers = node_status.connected_peers.clone();
         if published
             .as_ref()
