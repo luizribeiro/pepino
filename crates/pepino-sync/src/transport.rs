@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, future::Future};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+};
 
 use futures_util::{StreamExt, TryStreamExt, stream::BoxStream};
 use pepino_app::LocalState;
@@ -41,6 +44,10 @@ pub trait TransportBoard: Send + Sync + 'static {
         _operation: EventId,
     ) -> impl Future<Output = Result<Option<Role>, Error>> + Send {
         async { Ok(None) }
+    }
+
+    fn roles(&self) -> impl Future<Output = Result<BTreeMap<DeviceId, Role>, Error>> + Send {
+        async { Ok(BTreeMap::new()) }
     }
 
     fn manages(&self, _device: DeviceId) -> impl Future<Output = bool> + Send {
@@ -158,6 +165,10 @@ impl TransportBoard for BoardHandle {
 
     async fn operation_role(&self, operation: EventId) -> Result<Option<Role>, Error> {
         BoardHandle::operation_role(self, operation).await
+    }
+
+    async fn roles(&self) -> Result<BTreeMap<DeviceId, Role>, Error> {
+        Ok(self.members().await?.into_iter().collect())
     }
 
     async fn manages(&self, device: DeviceId) -> bool {
