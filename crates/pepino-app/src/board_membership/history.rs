@@ -76,7 +76,68 @@ impl MembershipRecord {
     }
 }
 
+const MAX_REFUSED_MEMBERSHIP_RECORDS: usize = 128;
+
+impl crate::catalog::CatalogState {
+    fn track_membership_refusal(&mut self, board: BoardId, operation: EventId) {
+        let order = self.refused_membership_order.entry(board).or_default();
+        order.push_back(operation);
+        self.trim_refused_membership(board);
+    }
+
+    fn trim_refused_membership(&mut self, board: BoardId) {
+        let Some(order) = self.refused_membership_order.get_mut(&board) else {
+            return;
+        };
+        let excess = order.len().saturating_sub(MAX_REFUSED_MEMBERSHIP_RECORDS);
+        if excess > 0 {
+            if let Some(records) = self.membership.get_mut(&board) {
+                for oldest in order.drain(..excess) {
+                    records.remove(&oldest);
+                }
+            }
+            let dropped = self.dropped_membership_records.entry(board).or_default();
+            *dropped = dropped.saturating_add(excess);
+        }
+    }
+
+    pub(crate) fn load_refused_membership_order(&mut self) {
+        for (&board, records) in &self.membership {
+            if self.refused_membership_order.contains_key(&board) {
+                continue;
+            }
+            let mut refused: Vec<_> = records
+                .values()
+                .filter(|record| record.refusal.is_some())
+                .map(|record| (record.change.at, record.operation))
+                .collect();
+            if !refused.is_empty() {
+                refused.sort_unstable();
+                self.refused_membership_order.insert(
+                    board,
+                    refused
+                        .into_iter()
+                        .map(|(_, operation)| operation)
+                        .collect(),
+                );
+            }
+        }
+        let boards: Vec<_> = self.refused_membership_order.keys().copied().collect();
+        for board in boards {
+            self.trim_refused_membership(board);
+        }
+    }
+}
+
 impl LocalState {
+    pub fn dropped_membership_records(&self) -> usize {
+        self.catalog
+            .dropped_membership_records
+            .values()
+            .copied()
+            .fold(0, usize::saturating_add)
+    }
+
     pub fn membership_history(&self, board: BoardId) -> impl Iterator<Item = &MembershipRecord> {
         self.catalog
             .membership
@@ -219,18 +280,25 @@ impl App {
             if board != local.catalog_board()
                 && local.boards().iter().any(|known| known.id == board)
             {
-                local
-                    .catalog
-                    .membership
-                    .entry(board)
-                    .or_default()
-                    .entry(record.operation)
-                    .and_modify(|existing| {
-                        if existing.relayed {
-                            *existing = record.clone();
-                        }
-                    })
-                    .or_insert(record);
+                use std::collections::btree_map::Entry;
+
+                let operation = record.operation;
+                let refused = record.refusal.is_some();
+                let records = local.catalog.membership.entry(board).or_default();
+                match records.entry(operation) {
+                    Entry::Occupied(mut entry)
+                        if entry.get().relayed && entry.get().refusal.is_none() =>
+                    {
+                        entry.insert(record);
+                    }
+                    Entry::Occupied(_) => return,
+                    Entry::Vacant(entry) => {
+                        entry.insert(record);
+                    }
+                }
+                if refused {
+                    local.catalog.track_membership_refusal(board, operation);
+                }
             }
         })
         .await
@@ -252,6 +320,9 @@ impl App {
             {
                 record.applied = result.is_ok();
                 record.refusal = result.err();
+                if record.refusal.is_some() {
+                    local.catalog.track_membership_refusal(board, operation);
+                }
             }
         })
         .await
@@ -338,6 +409,87 @@ mod tests {
             local.membership_incarnation(board, person),
             Some(invitation)
         );
+    }
+
+    #[tokio::test]
+    async fn refused_membership_history_evicts_by_receipt_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
+        let board = BoardId::from_bytes([154; 32]);
+        let second = BoardId::from_bytes([155; 32]);
+        for id in [board, second] {
+            app.register_created_board(
+                id,
+                if id == board {
+                    "Garden workshop"
+                } else {
+                    "Tool shed"
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let person = app.local_state().own_person_key();
+        let id = |n: u16| {
+            let mut bytes = [0; 32];
+            bytes[..2].copy_from_slice(&n.to_be_bytes());
+            EventId::from_bytes(bytes)
+        };
+        let invite = MembershipRecord {
+            operation: id(0),
+            actor: app.local_state().device_id,
+            refusal: None,
+            applied: true,
+            relayed: false,
+            change: MembershipChange {
+                person,
+                action: MembershipAction::Invited(BoardRole::Read),
+                at: DateTime::UNIX_EPOCH,
+                revision: 1,
+                incarnation: None,
+                parents: Default::default(),
+            },
+        };
+        app.record_membership(board, invite.clone()).await.unwrap();
+        for number in (1..=300).rev() {
+            let record = MembershipRecord {
+                operation: id(number),
+                actor: DeviceId::from_bytes([156; 32]),
+                refusal: Some(MembershipRefusal::AuthorNoLongerManager),
+                applied: false,
+                change: MembershipChange {
+                    action: MembershipAction::Removed,
+                    parents: [invite.operation].into(),
+                    ..invite.change.clone()
+                },
+                ..invite.clone()
+            };
+            if number == 300 {
+                app.record_membership(second, record.clone()).await.unwrap();
+            }
+            app.record_membership(board, record).await.unwrap();
+        }
+        let local = app.fresh_local_state().await.unwrap();
+        let operations: BTreeSet<_> = local
+            .membership_history(board)
+            .map(|record| record.operation)
+            .collect();
+        assert_eq!(
+            operations,
+            (0..=MAX_REFUSED_MEMBERSHIP_RECORDS as u16)
+                .map(id)
+                .collect()
+        );
+        assert_eq!(local.membership_history(second).count(), 1);
+        assert_eq!(
+            local.dropped_membership_records(),
+            300 - MAX_REFUSED_MEMBERSHIP_RECORDS
+        );
+        assert_eq!(
+            local.membership_parents(board, person),
+            [invite.operation].into()
+        );
+        assert_eq!(local.latest_membership(board, person), Some(&invite));
     }
 
     #[tokio::test]

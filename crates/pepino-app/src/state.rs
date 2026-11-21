@@ -276,6 +276,7 @@ impl LocalState {
             *name = crate::write::safe_roster_name(name);
         }
         let catalog = local.catalog_board();
+        local.catalog.load_refused_membership_order();
         local.cap_card_exchanges();
         local
             .catalog

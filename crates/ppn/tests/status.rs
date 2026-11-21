@@ -11,6 +11,7 @@ fn status_renders_empty_local_state_through_the_binary() {
         "Identity:",
         "Rejected roster entries: 0",
         "Rejected board card entries: 0",
+        "Dropped refused membership records: 0",
         "Device:",
         "Board: Personal",
         "Personal: joined",
@@ -44,7 +45,7 @@ fn status_renders_empty_local_state_through_the_binary() {
             "counts":{"open":0,"closed":0,"events":0,"applied":0,"skipped":{
                 "unknown_version":0,"unknown_event":0,"unknown_value":0,"invalid":0,"forged_author":0
             }},
-            "protocol_version":1, "rejected_board_card_entries":0
+            "protocol_version":1, "rejected_board_card_entries":0, "dropped_membership_records":0
         })
     );
     for (kind, name) in [

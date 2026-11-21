@@ -37,6 +37,11 @@ pub(crate) struct CatalogState {
     pub(crate) membership:
         BTreeMap<BoardId, BTreeMap<pepino_core::EventId, crate::MembershipRecord>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) refused_membership_order:
+        BTreeMap<BoardId, std::collections::VecDeque<pepino_core::EventId>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) dropped_membership_records: BTreeMap<BoardId, usize>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) board_leaves: BTreeMap<BoardId, BTreeMap<String, crate::SignedBoardLeave>>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(crate) observed_board_removals: BTreeSet<BoardId>,
@@ -69,6 +74,8 @@ impl CatalogState {
         self.card_exchanges.retain(|_, route| route.board != board);
         self.joined_shares.remove(&board);
         self.membership.remove(&board);
+        self.refused_membership_order.remove(&board);
+        self.dropped_membership_records.remove(&board);
         self.board_leaves.remove(&board);
         self.observed_board_removals.remove(&board);
         self.joins.remove(&board);
