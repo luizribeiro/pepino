@@ -247,6 +247,18 @@ impl Repairs {
                         continue;
                     }
                 }
+                if let Err(error) = crate::reader_routes::handoff(
+                    workers,
+                    local,
+                    board.id,
+                    &*handle,
+                    &losing_manage,
+                )
+                .await
+                {
+                    crate::status::record_error(&workers.changes, board.id, error.to_string());
+                    continue;
+                }
                 changes.sort_by_key(|change| changes_own_device(change, local.device_id));
                 for change in changes {
                     let current = handle.roles().await?;

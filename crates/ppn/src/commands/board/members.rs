@@ -87,11 +87,32 @@ pub(super) fn run(
             }),
             "devices": devices(roster.values(), &members, false, &conflicts), "invited_at": null, "invited_by": null}));
     }
+    let reader_updates_unavailable = members.get(&local.device_id)
+        == Some(&MemberState::Member(Role::Read))
+        && local.board_departure(board.id).is_none()
+        && !local.card_exchanges().iter().any(|(&channel, route)| {
+            route.board == board.id
+                && local.is_current_exchange(route, local.own_person_key())
+                && crate::commands::device::runtime()
+                    .ok()
+                    .and_then(|runtime| {
+                        runtime
+                            .block_on(Node::persisted_members(&path, channel))
+                            .ok()
+                    })
+                    .is_some_and(|channel_members| {
+                        channel_members.iter().any(|(device, state)| {
+                            *state == MemberState::Member(Role::Manage)
+                                && members.get(device) == Some(&MemberState::Member(Role::Manage))
+                        })
+                    })
+        });
     Ok(CommandResult::document(Members {
         board: board.name.clone(),
         people,
         history: super::history::records(local, board.id),
         departure: local.board_departure(board.id),
+        reader_updates_unavailable,
     }))
 }
 
@@ -134,6 +155,7 @@ struct Members {
     people: Vec<Value>,
     history: Vec<Value>,
     departure: Option<pepino_app::BoardDeparture>,
+    reader_updates_unavailable: bool,
 }
 
 impl Render for Members {
@@ -142,6 +164,12 @@ impl Render for Members {
         let mut lines = vec![format!("Members of {}", single_line(&self.board))];
         if let Some(departure) = self.departure {
             lines.push(format!("Membership {departure}. Showing local history."));
+        }
+        if self.reader_updates_unavailable {
+            lines.push(
+                "Reader updates cannot be relayed until a board manager joins the update channel."
+                    .into(),
+            );
         }
         for person in &self.people {
             let role = if person["former_member"].as_bool() == Some(true) {
@@ -187,6 +215,10 @@ impl Render for Members {
             ("people".into(), json!(self.people)),
             ("membership_history".into(), json!(self.history)),
             ("departure".into(), json!(self.departure)),
+            (
+                "reader_updates_unavailable".into(),
+                json!(self.reader_updates_unavailable),
+            ),
         ])
         .into_iter()
         .collect()

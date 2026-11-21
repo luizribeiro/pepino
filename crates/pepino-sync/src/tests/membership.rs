@@ -12,6 +12,7 @@ use crate::{
     Transport, TransportBoard,
     board_membership::{Repairs, apply_change},
     board_workers::BoardWorkers,
+    reader_routes::reconcile_channel,
 };
 
 use super::stub::Stub;
@@ -117,6 +118,49 @@ async fn repairs_keep_a_manager_and_never_apply_a_former_managers_intent() {
     assert_eq!(local.board_departure(board), None);
     assert!(node.membership_changes().is_empty());
     workers.abort().await;
+}
+
+#[tokio::test]
+async fn reader_handoff_enrolls_the_successor_before_removing_the_inviter() {
+    let dir = tempfile::tempdir().unwrap();
+    let board_id = BoardId::from_bytes([24; 32]);
+    let channel_id = BoardId::from_bytes([25; 32]);
+    let (app, successor) = members(dir.path(), board_id).await;
+    let local = app.fresh_local_state().await.unwrap();
+    let inviter = local.device_id;
+    let successor = successor.local_state();
+    let transport = Stub::new(inviter);
+    let board = transport.open_board(board_id).await.unwrap();
+    let channel = transport.open_board(channel_id).await.unwrap();
+    transport.set_joined_members(
+        board_id,
+        [(inviter, Role::Manage), (successor.device_id, Role::Manage)].into(),
+    );
+    transport.set_joined_members(channel_id, [(inviter, Role::Manage)].into());
+
+    reconcile_channel(
+        &local,
+        board_id,
+        &channel,
+        &board,
+        successor.own_person_key(),
+        true,
+        &[inviter].into(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        transport.membership_changes(),
+        [
+            (channel_id, successor.device_id, Some(Role::Manage)),
+            (channel_id, inviter, None),
+        ]
+    );
+    assert_eq!(
+        channel.roles().await.unwrap(),
+        [(successor.device_id, Role::Manage)].into()
+    );
 }
 
 #[tokio::test]

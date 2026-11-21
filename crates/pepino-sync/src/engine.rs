@@ -45,6 +45,8 @@ pub enum Error {
     Worker(#[from] tokio::task::JoinError),
     #[error("Membership change incomplete. {0}")]
     MembershipIncomplete(String),
+    #[error("no successor could take over the reader update channel for {reader}")]
+    ReaderHandoff { reader: String },
     #[error("outbox poll interval must be positive")]
     PollInterval,
     #[error(transparent)]
