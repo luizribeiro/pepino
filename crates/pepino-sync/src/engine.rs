@@ -1,4 +1,5 @@
 mod invite;
+mod membership;
 use std::{path::Path, sync::Arc, time::Duration};
 
 use futures_util::{Stream, StreamExt};
@@ -219,6 +220,25 @@ impl<T: Transport> SyncEngine<T> {
         tokio::time::timeout(timeout, self.sync_once())
             .await
             .map_err(|_| Error::Timeout)?
+    }
+
+    pub async fn board_join_states(
+        &self,
+    ) -> Result<std::collections::BTreeMap<BoardId, pepino_app::BoardJoinState>, Error> {
+        use pepino_app::BoardJoinState;
+
+        let mut states = self.status().board_join_states();
+        let local = self.app.fresh_local_state().await?;
+        for board in local
+            .boards()
+            .iter()
+            .filter(|board| local.needs_readmission_replay(board.id))
+        {
+            states.entry(board.id).and_modify(|state| {
+                *state = (*state).min(BoardJoinState::WaitingForFirstSync);
+            });
+        }
+        Ok(states)
     }
 
     pub async fn wait_device_removal(
