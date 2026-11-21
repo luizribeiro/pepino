@@ -106,15 +106,6 @@ async fn ingest<A>(
     }
     let mut retry = Retry::new();
     loop {
-        match app.fresh_local_state().await {
-            Ok(local) if local.device_leave_requested_at().is_some() => return,
-            Ok(_) => (),
-            Err(error) => {
-                record_error(status, board, format!("read local roster: {error}"));
-                retry.wait().await;
-                continue;
-            }
-        }
         match app
             .append_received(board, &delivery.bytes, delivery.signer)
             .await
@@ -128,7 +119,7 @@ async fn ingest<A>(
                 });
                 return;
             }
-            Ok(AppendOutcome::Duplicate { .. }) => return,
+            Ok(AppendOutcome::Duplicate { .. }) | Err(SyncStoreError::BoardInactive) => return,
             Err(SyncStoreError::Store(StoreError::Decode(error))) => {
                 record_error(
                     status,
@@ -219,6 +210,31 @@ async fn ingest_cards<B: TransportBoard>(
     }
     let mut retry = Retry::new();
     while let Some(cards) = BoardCards::decode(&delivery.bytes) {
+        if let BoardCards::Membership(change) = cards {
+            let outcome = match handle.operation_role(delivery.operation).await {
+                Ok(Some(pepino_node::Role::Manage)) => app
+                    .record_membership(
+                        board,
+                        pepino_app::MembershipRecord {
+                            operation: delivery.operation,
+                            actor: delivery.signer,
+                            change,
+                        },
+                    )
+                    .await
+                    .map_err(Error::from),
+                Ok(_) => Ok(()),
+                Err(error) => Err(error.into()),
+            };
+            match outcome {
+                Ok(()) => break,
+                Err(error) => {
+                    record_error(status, board, format!("save membership change: {error}"));
+                    retry.wait().await;
+                    continue;
+                }
+            }
+        }
         let creator = if let BoardCards::Introduce(admission) = &cards {
             match handle.admitted_by(admission.device, delivery.signer).await {
                 Ok(true) if let Some(path) = authority => {
