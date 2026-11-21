@@ -764,3 +764,80 @@ fn a_reader_links_a_device_and_both_follow_person_roles_and_departure() {
             .contains("Ben (former member)")
     );
 }
+
+#[test]
+fn the_original_inviter_can_leave_after_promoting_a_successor() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = dir.path().file_name().unwrap().to_str().unwrap();
+    let owner = host(network, "Ada", "Laptop", "Owner private");
+    let manager = host(network, "Cora", "Tablet", "Manager private");
+    let reader = host(network, "Ben", "Phone", "Reader private");
+    owner.run(&["board", "new", "House"]);
+    join(&owner, &reader, "read");
+    common::task_error(
+        owner.output(&["board", "leave", "--board", "House", "--yes", "--json"]),
+        5,
+        "permission_denied",
+    );
+    common::task_error(
+        owner.output(&["board", "role", "me", "write", "--board", "House", "--json"]),
+        5,
+        "permission_denied",
+    );
+    join(&owner, &manager, "manage");
+    common::task_error(
+        owner.output(&[
+            "board", "role", "Cora", "read", "--board", "House", "--yes", "--json",
+        ]),
+        1,
+        "confirmation_required",
+    );
+    common::task_error(
+        owner.output(&[
+            "board", "remove", "Cora", "--board", "House", "--yes", "--json",
+        ]),
+        1,
+        "confirmation_required",
+    );
+    let result = owner.json(&["board", "leave", "--board", "House", "--yes"]);
+    assert_eq!(result["departure"], "left");
+    until(
+        || member(&manager, "Ada"),
+        |person| person["former_member"] == true,
+        WAIT,
+    );
+    until(
+        || member(&manager, "Ada"),
+        |person| person["devices"][0]["membership"] == "removed",
+        WAIT,
+    );
+    owner.stop();
+    reader.run(&["identity", "rename", "Ben Workshop"]);
+    until(
+        || member(&manager, "Ben Workshop"),
+        |person| person["role"] == "read",
+        WAIT,
+    );
+    common::task_error(
+        reader.output(&["board", "leave", "--board", "House", "--json"]),
+        1,
+        "confirmation_required",
+    );
+    let leave = reader.run(&["board", "leave", "--board", "House", "--yes"]);
+    assert!(leave.contains("leaving (waiting for a manager)"));
+    until(
+        || board(&reader, "House"),
+        |board| board["membership"] == "left",
+        WAIT,
+    );
+    let history = manager.run(&["log", "--board", "House", "--all"]);
+    assert!(history.contains("Ben Workshop left (processed by Cora)"));
+    let new_guest = host(network, "Dara", "Desktop", "New private");
+    join(&manager, &new_guest, "write");
+    assert_eq!(member(&manager, "Dara")["role"], "write");
+    assert!(
+        manager
+            .run(&["board", "remove", "Dara", "--board", "House", "--yes"])
+            .contains("Removal recorded")
+    );
+}
