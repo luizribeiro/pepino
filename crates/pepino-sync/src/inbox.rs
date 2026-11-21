@@ -2,6 +2,7 @@ use std::{future::poll_fn, task::Poll, time::Duration};
 
 use pepino_app::{App, BoardCards, SyncStoreError};
 use pepino_core::BoardId;
+use pepino_node::{OperationRole, Role};
 use pepino_store::{AppendOutcome, StoreError};
 use tokio::sync::watch;
 
@@ -197,6 +198,32 @@ async fn ingest_catalog<A>(
     }
 }
 
+enum ManagerAuthority {
+    Pending,
+    Unauthorized,
+    Former,
+    Current,
+}
+
+async fn manager_authority<B: TransportBoard>(
+    handle: &B,
+    delivery: &Delivery<B::Ack>,
+) -> Result<ManagerAuthority, Error> {
+    Ok(
+        match handle.operation_role_state(delivery.operation).await? {
+            OperationRole::Pending => ManagerAuthority::Pending,
+            OperationRole::Known(Some(Role::Manage)) => {
+                if handle.roles().await?.get(&delivery.signer) == Some(&Role::Manage) {
+                    ManagerAuthority::Current
+                } else {
+                    ManagerAuthority::Former
+                }
+            }
+            OperationRole::Known(_) => ManagerAuthority::Unauthorized,
+        },
+    )
+}
+
 async fn ingest_cards<B: TransportBoard>(
     app: &App,
     board: BoardId,
@@ -211,35 +238,28 @@ async fn ingest_cards<B: TransportBoard>(
     let mut retry = Retry::new();
     while let Some(cards) = BoardCards::decode(&delivery.bytes) {
         if let BoardCards::Membership(change) = cards {
-            let outcome = match handle.operation_role_state(delivery.operation).await {
-                Ok(pepino_node::OperationRole::Known(Some(pepino_node::Role::Manage))) => {
-                    async {
-                        let members = handle.roles().await?;
-                        let refusal = (members.get(&delivery.signer)
-                            != Some(&pepino_node::Role::Manage))
-                        .then_some(pepino_app::MembershipRefusal::AuthorNoLongerManager);
-                        app.record_membership(
-                            board,
-                            pepino_app::MembershipRecord {
-                                operation: delivery.operation,
-                                actor: delivery.signer,
-                                refusal,
-                                applied: false,
-                                relayed: false,
-                                change,
-                            },
-                        )
-                        .await?;
-                        Ok::<(), Error>(())
-                    }
+            let outcome = match manager_authority(handle, delivery).await {
+                Ok(authority @ (ManagerAuthority::Current | ManagerAuthority::Former)) => app
+                    .record_membership(
+                        board,
+                        pepino_app::MembershipRecord {
+                            operation: delivery.operation,
+                            actor: delivery.signer,
+                            refusal: matches!(authority, ManagerAuthority::Former)
+                                .then_some(pepino_app::MembershipRefusal::AuthorNoLongerManager),
+                            applied: false,
+                            relayed: false,
+                            change,
+                        },
+                    )
                     .await
-                }
-                Ok(pepino_node::OperationRole::Known(_)) => Ok(()),
-                Ok(pepino_node::OperationRole::Pending) => {
+                    .map_err(Error::from),
+                Ok(ManagerAuthority::Unauthorized) => Ok(()),
+                Ok(ManagerAuthority::Pending) => {
                     retry.wait().await;
                     continue;
                 }
-                Err(error) => Err(error.into()),
+                Err(error) => Err(error),
             };
             match outcome {
                 Ok(()) => break,
@@ -256,8 +276,8 @@ async fn ingest_cards<B: TransportBoard>(
             incarnation,
         } = cards
         {
-            let outcome = match handle.operation_role_state(delivery.operation).await {
-                Ok(pepino_node::OperationRole::Known(Some(pepino_node::Role::Manage))) => app
+            let outcome = match manager_authority(handle, delivery).await {
+                Ok(ManagerAuthority::Current) => app
                     .register_card_exchange(
                         channel,
                         pepino_app::CardExchange {
@@ -269,12 +289,12 @@ async fn ingest_cards<B: TransportBoard>(
                     )
                     .await
                     .map_err(Error::from),
-                Ok(pepino_node::OperationRole::Known(_)) => Ok(()),
-                Ok(pepino_node::OperationRole::Pending) => {
+                Ok(ManagerAuthority::Unauthorized | ManagerAuthority::Former) => Ok(()),
+                Ok(ManagerAuthority::Pending) => {
                     retry.wait().await;
                     continue;
                 }
-                Err(error) => Err(error.into()),
+                Err(error) => Err(error),
             };
             match outcome {
                 Ok(()) | Err(Error::App(pepino_app::AppError::InvalidInput { .. })) => break,

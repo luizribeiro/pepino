@@ -461,3 +461,47 @@ async fn membership_authorization_is_retried_before_acknowledgment() {
     assert!(history.next().is_none());
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn reader_routes_require_a_current_manager() {
+    use pepino_app::{App, BoardCards};
+    use pepino_node::Role;
+
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::init(dir.path(), 0).await.unwrap();
+    let local = app.local_state();
+    let board = BoardId::from_bytes([93; 32]);
+    let approved = BoardId::from_bytes([94; 32]);
+    let declined = BoardId::from_bytes([95; 32]);
+    let writer = DeviceId::from_bytes([96; 32]);
+    app.register_created_board(board, "Greenhouse")
+        .await
+        .unwrap();
+    let node = Arc::new(Stub::new(local.device_id));
+    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    node.set_joined_members(
+        board,
+        [(local.device_id, Role::Manage), (writer, Role::Write)].into(),
+    );
+    node.set_operation_role(Role::Manage);
+    for (signer, channel) in [(local.device_id, approved), (writer, declined)] {
+        let payload = BoardCards::ReaderRoute {
+            channel,
+            person: local.own_person_key(),
+            incarnation: None,
+        }
+        .encode()
+        .unwrap();
+        let mut received = node.deliver(board, signer, payload);
+        tokio::time::timeout(WAIT, received.wait_for(|acked| *acked))
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    let local = app.fresh_local_state().await.unwrap();
+    assert!(local.card_exchanges().contains_key(&approved));
+    assert!(!local.card_exchanges().contains_key(&declined));
+    engine.shutdown().await.unwrap();
+}
