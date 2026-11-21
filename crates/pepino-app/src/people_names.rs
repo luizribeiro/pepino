@@ -49,6 +49,52 @@ impl LocalState {
         disambiguate(self.person_names())
     }
 
+    pub fn resolve_board_person(
+        &self,
+        board: BoardId,
+        reference: &str,
+    ) -> Result<PersonKey, AppError> {
+        if reference == "me" {
+            return Ok(self.own_person_key());
+        }
+        let labels = self.person_labels();
+        let folded = fold_text(reference);
+        let prefixed = reference.rsplit_once('#');
+        let mut matches: Vec<_> = self
+            .board_people(board)
+            .filter(|person| {
+                let key = person.key();
+                reference == key.0.to_string()
+                    || fold_text(person.name()) == folded
+                    || labels
+                        .get(&key)
+                        .is_some_and(|label| fold_text(label.trim_start_matches("⚠ ")) == folded)
+                    || prefixed.is_some_and(|(name, id)| {
+                        id.len() >= 4
+                            && fold_text(name) == fold_text(person.name())
+                            && (key.0.to_string().starts_with(id)
+                                || key.1.to_string().starts_with(id))
+                    })
+            })
+            .collect();
+        match matches.len() {
+            0 => Err(AppError::NotFound {
+                field: "person".into(),
+                reference: crate::MissingReference::Person(reference.into()),
+            }),
+            1 => Ok(matches.remove(0).key()),
+            _ => Err(AppError::AmbiguousPerson {
+                reference: reference.into(),
+                field: "person".into(),
+                candidates: matches
+                    .iter()
+                    .filter_map(|person| labels.get(&person.key()).cloned())
+                    .collect(),
+                identity_ids: matches.iter().map(|person| person.id.to_string()).collect(),
+            }),
+        }
+    }
+
     pub fn board_owner_name(&self, board: BoardId, access: crate::SharedAccess) -> String {
         let owner = access
             .owner_root

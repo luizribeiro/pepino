@@ -479,6 +479,7 @@ pub enum MissingReference {
     View(String),
     Board(String),
     Device(String),
+    Person(String),
 }
 
 impl MissingReference {
@@ -503,6 +504,7 @@ impl std::fmt::Display for MissingReference {
             Self::View(view) => write!(f, "view {view}"),
             Self::Board(board) => write!(f, "board {board}"),
             Self::Device(device) => write!(f, "device {device}"),
+            Self::Person(value) => write!(f, "Person {value:?}"),
         }
     }
 }
