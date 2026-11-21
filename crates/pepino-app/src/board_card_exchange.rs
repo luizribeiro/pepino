@@ -26,7 +26,34 @@ impl CardExchange {
 impl LocalState {
     pub fn is_current_exchange(&self, route: &CardExchange, person: crate::PersonKey) -> bool {
         route.matches(person)
-            && route.incarnation == self.membership_incarnation(route.board, person)
+            && route.incarnation == self.device_update_incarnation(route.board, person)
+    }
+
+    pub(crate) fn device_update_incarnation(
+        &self,
+        board: BoardId,
+        person: crate::PersonKey,
+    ) -> Option<EventId> {
+        let effective = self.membership_incarnation(board, person);
+        if effective.is_some()
+            || self.membership_enrollment_blocked(board, person)
+            || self
+                .latest_membership(board, person)
+                .is_some_and(|record| record.change.action.role().is_none())
+        {
+            return effective;
+        }
+
+        // A manager may have approved the channel before the invitation was refused locally.
+        let mut known = self
+            .card_exchanges()
+            .values()
+            .filter(|route| route.board == board && route.matches(person))
+            .filter_map(|route| route.incarnation);
+        let incarnation = known.next()?;
+        known
+            .all(|other| other == incarnation)
+            .then_some(incarnation)
     }
 
     pub fn card_exchanges(&self) -> &BTreeMap<BoardId, CardExchange> {
@@ -161,4 +188,57 @@ async fn the_card_exchange_limit_is_per_board_and_allows_existing_routes_to_upda
 
     exchange.board = channel(246);
     assert!(local.add_card_exchange(overflow, exchange).is_ok());
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn a_saved_route_binds_updates_after_its_inviter_loses_manage() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = crate::write::fixture::open(directory.path(), 0)
+        .await
+        .unwrap();
+    let mut local = app.local_state().clone();
+    let board = BoardId::from_bytes([211; 32]);
+    let person = local.own_person_key();
+    let channel = BoardId::from_bytes([212; 32]);
+    let invitation = EventId::from_bytes([213; 32]);
+    let mut exchange = CardExchange {
+        board,
+        person: person.0,
+        root: Some(person.1),
+        incarnation: Some(invitation),
+    };
+    let record = crate::MembershipRecord {
+        operation: invitation,
+        actor: pepino_core::DeviceId::from_bytes([214; 32]),
+        change: crate::MembershipChange {
+            person,
+            action: crate::MembershipAction::Invited(crate::BoardRole::Read),
+            at: std::time::UNIX_EPOCH.into(),
+            revision: 1,
+            incarnation: None,
+            parents: Default::default(),
+        },
+        refusal: Some(crate::MembershipRefusal::AuthorNoLongerManager),
+        applied: false,
+        relayed: false,
+    };
+    local
+        .catalog
+        .membership
+        .entry(board)
+        .or_default()
+        .insert(invitation, record);
+    assert!(!local.is_current_exchange(&exchange, person));
+    local.add_card_exchange(channel, exchange).unwrap();
+    assert!(local.is_current_exchange(&exchange, person));
+    assert!(local.latest_membership(board, person).is_none());
+
+    let first = exchange;
+    exchange.incarnation = Some(EventId::from_bytes([215; 32]));
+    local
+        .add_card_exchange(BoardId::from_bytes([216; 32]), exchange)
+        .unwrap();
+    assert!(!local.is_current_exchange(&first, person));
+    assert!(!local.is_current_exchange(&exchange, person));
 }

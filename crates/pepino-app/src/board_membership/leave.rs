@@ -102,7 +102,7 @@ impl LocalState {
             .flat_map(|requests| requests.values())
             .filter(move |request| {
                 request.leave.incarnation
-                    == self.membership_incarnation(board, request.leave.person)
+                    == self.device_update_incarnation(board, request.leave.person)
                     && self.active_board_device(board, request.leave.person, request.leave.device)
             })
     }
@@ -141,7 +141,7 @@ impl App {
             person,
             device: keys.device_id(),
             at: std::time::SystemTime::now().into(),
-            incarnation: local.membership_incarnation(board, person),
+            incarnation: local.device_update_incarnation(board, person),
         }
         .sign(&keys)?;
         self.record_board_leave(board, request.clone()).await?;
