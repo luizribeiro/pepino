@@ -50,6 +50,14 @@ pub(super) fn for_command(command: &Command) -> Value {
             "board_members",
             "board Board name\npeople Identity IDs, display names, effective roles, device memberships and invitation details\nmembership_history Invitations, role changes, removals and completed leaves\ndeparture Local departure state or null",
         ),
+        "board role" | "board remove" | "board leave" => (
+            match name {
+                "board role" => "board_role",
+                "board remove" => "board_remove",
+                _ => "board_leave",
+            },
+            "board Affected board with its full ID and name\nperson Identity ID, root key and display name\nrole Requested role or null\ncancelled Whether confirmation was declined\ndeparture Local departure state or null\nconsequences Removal or leave notice when applicable",
+        ),
         "board ls" => (
             "boards",
             "boards Known boards with current marker, counts, membership and sync activity\nselected_board Board selected for this invocation and its source",

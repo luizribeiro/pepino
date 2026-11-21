@@ -330,6 +330,13 @@ fn a_read_invitation_is_pending_offline_and_refuses_writes() {
         4,
         "ambiguous_id",
     );
+    common::task_error(
+        owner.output(&[
+            "board", "role", "Ada", "write", "--board", "House", "--json",
+        ]),
+        4,
+        "ambiguous_id",
+    );
     let candidate = ambiguous["candidates"][0].as_str().unwrap();
     owner.run(&["assign", "--board", "House", task, candidate]);
     assert_eq!(
@@ -455,7 +462,7 @@ fn the_inviter_rejects_an_expired_member_bundle() {
 }
 
 #[test]
-fn a_waiting_device_can_revoke_the_device_that_accepted_a_share() {
+fn a_linked_device_can_revoke_the_device_that_accepted_a_share() {
     let dir = tempfile::tempdir().unwrap();
     let network = dir.path().file_name().unwrap().to_str().unwrap();
     let owner = host(network, "Ada", "Laptop", "Owner private");
@@ -480,7 +487,7 @@ fn a_waiting_device_can_revoke_the_device_that_accepted_a_share() {
     ]);
     until(
         || board(&linked, "House"),
-        |row| row["membership"] == "waiting_for_access",
+        |row| row["membership"] == "joined",
         WAIT,
     );
     let report = linked.json(&["device", "revoke", "Phone", "--yes", "--timeout", "60s"]);
@@ -489,14 +496,18 @@ fn a_waiting_device_can_revoke_the_device_that_accepted_a_share() {
         rows.iter()
             .any(|row| row["board"]["name"] == "Guest private" && row["result"] == "removed")
     );
-    assert!(
-        rows.iter()
-            .any(|row| row["board"]["name"] == "House" && row["result"] == "waiting_for_access")
-    );
-    assert!(
-        linked
-            .run(&["device", "revoke", "Phone", "--yes", "--timeout", "60s"])
-            .contains("waiting for access")
+    assert!(rows.iter().any(|row| row["board"]["name"] == "House"
+        && matches!(row["result"].as_str(), Some("manager_required" | "removed"))));
+    until(
+        || member(&owner, "Ben"),
+        |person| {
+            person["devices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|device| device["name"] == "Phone" && device["membership"] == "removed")
+        },
+        WAIT,
     );
 }
 
@@ -533,14 +544,9 @@ fn private_catalogs_and_device_links_remain_local_to_each_identity() {
         let request = linked.request("Linked tablet");
         let grant = source.add(&request, &[]);
         linked.run(&["device", "join", &grant, "--timeout", "60s"]);
-        let expected = if std::ptr::eq(source, &guest) {
-            "waiting_for_access"
-        } else {
-            "joined"
-        };
         until(
             || board(&linked, "House"),
-            |board| board["membership"] == expected,
+            |board| board["membership"] == "joined",
             WAIT,
         );
         let report = source.json(&[
@@ -588,4 +594,129 @@ fn private_catalogs_and_device_links_remain_local_to_each_identity() {
             .unwrap();
         assert!(private_board.tasks().is_empty());
     });
+}
+
+fn join(owner: &Host, guest: &Host, role: &str) {
+    let issued = grant(owner, "House", role, &guest.json(&["board", "request"]));
+    let output = guest.output(&[
+        "board",
+        "join",
+        issued["grant"]["code"].as_str().unwrap(),
+        "--timeout",
+        "60s",
+    ]);
+    assert!(
+        output.status.success(),
+        "board join failed {output:?}\n{}",
+        std::fs::read_to_string(guest.data.join("daemon.log")).unwrap_or_default()
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Initial sync complete"));
+}
+
+fn member(owner: &Host, name: &str) -> Value {
+    owner.json(&["board", "members", "House"])["people"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|person| person["name"] == name)
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+#[test]
+fn a_reader_links_a_device_and_both_follow_person_roles_and_departure() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = dir.path().file_name().unwrap().to_str().unwrap();
+    let owner = host(network, "Ada", "Laptop", "Owner private");
+    let guest = host(network, "Ben", "Phone", "Guest private");
+    let linked = Host::new(network);
+    owner.run(&["board", "new", "House"]);
+    let task = owner.json(&["add", "--board", "House", "Repair the window"]);
+    let id = task["created"].as_str().unwrap();
+    join(&owner, &guest, "read");
+    let request = linked.request("Linked tablet");
+    linked.run(&[
+        "device",
+        "join",
+        &guest.add(&request, &[]),
+        "--timeout",
+        "60s",
+    ]);
+    until(
+        || board(&linked, "House"),
+        |board| board["membership"] == "joined",
+        WAIT,
+    );
+    until(
+        || member(&owner, "Ben"),
+        |person| {
+            person["devices"].as_array().is_some_and(|devices| {
+                devices.len() == 2
+                    && devices
+                        .iter()
+                        .all(|device| device["membership"] == "member" && device["role"] == "read")
+            })
+        },
+        WAIT,
+    );
+    common::task_error(
+        guest.output(&["board", "role", "me", "write", "--board", "House", "--json"]),
+        5,
+        "permission_denied",
+    );
+    assert!(
+        owner
+            .run(&["board", "role", "Ben", "write", "--board", "House"])
+            .contains("write role")
+    );
+    until(
+        || {
+            [&guest, &linked].map(|host| {
+                host.json(&["status"])["boards"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|row| row["name"] == "House")
+                    .unwrap()["role"]
+                    .clone()
+            })
+        },
+        |roles| roles == &["write", "write"],
+        WAIT,
+    );
+    linked.run(&[
+        "comment",
+        "--board",
+        "House",
+        id,
+        "The replacement glass is ready",
+    ]);
+    owner.run(&["assign", "--board", "House", id, "Ben"]);
+    until(
+        || owner.run(&["show", "--board", "House", id]),
+        |task| task.contains("The replacement glass is ready"),
+        WAIT,
+    );
+    let changed = owner.json(&["board", "role", "Ben", "read", "--board", "House"]);
+    assert_eq!(changed["kind"], "board_role");
+    until(
+        || {
+            [&guest, &linked].map(|host| {
+                host.json(&["status"])["boards"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|row| row["name"] == "House")
+                    .unwrap()["role"]
+                    .clone()
+            })
+        },
+        |roles| roles == &["read", "read"],
+        WAIT,
+    );
+    common::task_error(
+        linked.output(&["add", "--board", "House", "Should fail", "--json"]),
+        5,
+        "permission_denied",
+    );
 }

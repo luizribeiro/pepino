@@ -1,6 +1,7 @@
 pub(super) mod history;
 mod invite;
 mod join;
+mod manage;
 mod members;
 mod request;
 use std::path::Path;
@@ -33,6 +34,18 @@ enum Operation {
         /// Board name or unambiguous ID prefix. Defaults to the selected board.
         #[arg(value_name = "BOARD")]
         reference: Option<String>,
+    },
+    /// Change the board role of a person and their devices.
+    #[command(after_help = example_help(&["ppn board role Ana write --board House"]))]
+    Role {
+        /// Person name, name#suffix, identity ID, or me.
+        person: String,
+        /// Role to grant.
+        #[arg(value_enum)]
+        role: InviteRole,
+        /// Acknowledge that concurrent mutual manager removal can destroy access.
+        #[arg(long)]
+        i_understand_mutual_removal_risk: bool,
     },
     /// Install a secret board grant and wait for membership and the first sync.
     #[command(after_help = example_help(&["ppn board join - --timeout 45s < grant.txt", "ppn board join --from-file grant.txt"]))]
@@ -110,6 +123,7 @@ impl Args {
         matches!(
             self.operation,
             Operation::Invite { .. }
+                | Operation::Role { .. }
                 | Operation::Join { .. }
                 | Operation::Request { .. }
                 | Operation::Use { .. }
@@ -128,6 +142,20 @@ pub fn run(
     let using = matches!(&args.operation, Operation::Use { .. });
     let (client, response, show_selection) = match args.operation {
         Operation::Members { reference } => return members::run(context, reference.as_deref()),
+        Operation::Role {
+            person,
+            role,
+            i_understand_mutual_removal_risk,
+        } => {
+            return manage::run(
+                context,
+                config_path,
+                allow_start,
+                &person,
+                pepino_app::ManagePerson::Role(role.into()),
+                i_understand_mutual_removal_risk,
+            );
+        }
         Operation::Join { input } => return join::run(context, &input.read(context)?, config_path),
         Operation::Request { name } => {
             return request::run(context, name, config_path, allow_start);
