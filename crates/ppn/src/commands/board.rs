@@ -47,6 +47,15 @@ enum Operation {
         #[arg(long)]
         i_understand_mutual_removal_risk: bool,
     },
+    /// Remove a person and their devices from the board.
+    #[command(after_help = example_help(&["ppn board remove Ana --board House --yes"]))]
+    Remove {
+        /// Person name, name#suffix, or identity ID.
+        person: String,
+        /// Acknowledge that concurrent mutual manager removal can destroy access.
+        #[arg(long)]
+        i_understand_mutual_removal_risk: bool,
+    },
     /// Install a secret board grant and wait for membership and the first sync.
     #[command(after_help = example_help(&["ppn board join - --timeout 45s < grant.txt", "ppn board join --from-file grant.txt"]))]
     Join {
@@ -124,6 +133,7 @@ impl Args {
             self.operation,
             Operation::Invite { .. }
                 | Operation::Role { .. }
+                | Operation::Remove { .. }
                 | Operation::Join { .. }
                 | Operation::Request { .. }
                 | Operation::Use { .. }
@@ -153,6 +163,19 @@ pub fn run(
                 allow_start,
                 &person,
                 pepino_app::ManagePerson::Role(role.into()),
+                i_understand_mutual_removal_risk,
+            );
+        }
+        Operation::Remove {
+            person,
+            i_understand_mutual_removal_risk,
+        } => {
+            return manage::run(
+                context,
+                config_path,
+                allow_start,
+                &person,
+                pepino_app::ManagePerson::Remove,
                 i_understand_mutual_removal_risk,
             );
         }

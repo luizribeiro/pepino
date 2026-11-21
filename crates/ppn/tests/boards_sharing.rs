@@ -719,4 +719,48 @@ fn a_reader_links_a_device_and_both_follow_person_roles_and_departure() {
         5,
         "permission_denied",
     );
+    let confirmation = common::task_error(
+        owner.output(&["board", "remove", "Ben", "--board", "House", "--json"]),
+        1,
+        "confirmation_required",
+    );
+    assert!(
+        confirmation["message"]
+            .as_str()
+            .unwrap()
+            .contains("full history")
+    );
+    let removed = owner.json(&["board", "remove", "Ben", "--board", "House", "--yes"]);
+    assert_eq!(removed["kind"], "board_remove");
+    for host in [&guest, &linked] {
+        until(
+            || board(host, "House"),
+            |board| board["membership"] == "removed",
+            WAIT,
+        );
+        common::task_error(
+            host.output(&["add", "--board", "House", "Should fail", "--json"]),
+            5,
+            "permission_denied",
+        );
+        let local = host.output(&["show", "--board", "House", id]);
+        assert!(local.status.success(), "{local:?}");
+        assert!(String::from_utf8_lossy(&local.stdout).contains("Repair the window"));
+        assert!(String::from_utf8_lossy(&local.stderr).contains("membership removed"));
+    }
+    let saved = owner.run(&["show", "--board", "House", id]);
+    assert!(saved.contains("former member") && saved.contains("The replacement glass is ready"));
+    let history = owner.json(&["log", "--board", "House", "--all"]);
+    assert!(
+        history["membership_history"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["action"] == "removed")
+    );
+    assert!(
+        owner
+            .run(&["board", "members", "House"])
+            .contains("Ben (former member)")
+    );
 }
