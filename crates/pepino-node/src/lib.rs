@@ -37,6 +37,8 @@ pub enum Error {
     MembershipLagged(u64),
     #[error("invalid member info: {0}")]
     Member(String),
+    #[error("device already has a different direct role")]
+    DifferentDirectRole,
     #[error("this device lacks permission for the board operation")]
     NotPermitted,
     #[error("the board must retain a manager")]

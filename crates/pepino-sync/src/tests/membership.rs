@@ -1,14 +1,18 @@
 use std::{sync::Arc, time::Duration};
 
 use pepino_app::{
-    App, BoardAdmission, BoardRole, MembershipAction, MembershipChange, MembershipRecord,
-    MembershipRefusal,
+    App, BoardAdmission, BoardRole, DeviceMembershipChange, MembershipAction, MembershipChange,
+    MembershipRecord, MembershipRefusal,
 };
 use pepino_core::{BoardId, EventId};
 use pepino_node::{Node, NodeSettings, Role};
 use tokio::sync::watch;
 
-use crate::{Transport, board_membership::Repairs, board_workers::BoardWorkers};
+use crate::{
+    Transport, TransportBoard,
+    board_membership::{Repairs, apply_change},
+    board_workers::BoardWorkers,
+};
 
 use super::stub::Stub;
 
@@ -113,4 +117,28 @@ async fn repairs_keep_a_manager_and_never_apply_a_former_managers_intent() {
     assert_eq!(local.board_departure(board), None);
     assert!(node.membership_changes().is_empty());
     workers.abort().await;
+}
+
+#[tokio::test]
+async fn a_concurrent_enrollment_is_rechecked_and_repaired_at_the_requested_role() {
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([26; 32]);
+    let (app, guest_app) = members(dir.path(), board).await;
+    let guest = guest_app.fresh_local_state().await.unwrap();
+    let transport = Stub::new(app.local_state().device_id);
+    let handle = transport.open_board(board).await.unwrap();
+    transport.set_joined_members(board, [(guest.device_id, Role::Read)].into());
+
+    let bundle = guest.device_bundle(guest.device_id).unwrap();
+    apply_change(
+        &handle,
+        DeviceMembershipChange::Enroll(Box::new(bundle), Role::Write),
+    )
+    .await
+    .unwrap();
+    assert_eq!(handle.roles().await.unwrap()[&guest.device_id], Role::Write);
+    assert_eq!(
+        transport.membership_changes(),
+        [(board, guest.device_id, Some(Role::Write))]
+    );
 }

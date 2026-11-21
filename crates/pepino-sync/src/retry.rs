@@ -10,7 +10,7 @@ impl Retry {
         Self(FIRST)
     }
 
-    fn next_delay(&mut self) -> Duration {
+    pub(crate) fn next_delay(&mut self) -> Duration {
         let delay = self.0;
         self.0 = (delay * 2).min(MAX);
         delay

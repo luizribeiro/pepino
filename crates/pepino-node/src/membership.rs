@@ -116,6 +116,16 @@ impl Node {
 
 impl BoardHandle {
     pub async fn add_member(&self, info: &MemberInfo, role: Role) -> Result<(), Error> {
+        match self.enroll_direct_member(info, role).await {
+            Err(Error::DifferentDirectRole) => {
+                Err(Error::Member(Error::DifferentDirectRole.to_string()))
+            }
+            result => result,
+        }
+    }
+
+    /// Enroll a direct member with a distinct error for an existing different role.
+    pub async fn enroll_direct_member(&self, info: &MemberInfo, role: Role) -> Result<(), Error> {
         let member = info.member()?;
         let id = member.id();
         let space = self.space_for_management()?;
@@ -127,9 +137,7 @@ impl BoardHandle {
             require_manager(&actors, node.id())?;
             match actors.into_iter().find(|(actor, _)| *actor == id) {
                 Some((_, level)) if level == role.level() => Ok(()),
-                Some(_) => Err(Error::Member(
-                    "device already has a different direct role".into(),
-                )),
+                Some(_) => Err(Error::DifferentDirectRole),
                 None => {
                     node.register_member(member).await.map_err(Error::node)?;
                     space.add(id, role.level()).await.map_err(Error::node)

@@ -210,7 +210,9 @@ impl TransportBoard for BoardHandle {
     ) -> Result<(), Error> {
         use pepino_app::DeviceMembershipChange;
         match change {
-            DeviceMembershipChange::Enroll(bundle, role) => self.add_member(&bundle, role).await,
+            DeviceMembershipChange::Enroll(bundle, role) => {
+                self.enroll_direct_member(&bundle, role).await
+            }
             DeviceMembershipChange::Remove(device) => self.remove_member(device, true).await,
             DeviceMembershipChange::SetRole(device, role) => self.set_role(device, role).await,
         }

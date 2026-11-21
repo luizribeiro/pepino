@@ -12,11 +12,12 @@ use pepino_core::{BoardId, DeviceId, EventId};
 use pepino_node::{Error as NodeError, NodeStatus, Role};
 use tokio::time::Instant;
 
-use crate::{Error, Transport, TransportBoard, board_workers::BoardWorkers};
+use crate::{Error, Transport, TransportBoard, board_workers::BoardWorkers, retry::Retry};
 
 #[derive(Default)]
 pub(crate) struct Repairs {
     notice_since: BTreeMap<EventId, Instant>,
+    failures: BTreeMap<(BoardId, DeviceId), (Instant, Retry)>,
 }
 
 pub(crate) async fn publish_change(
@@ -115,12 +116,15 @@ impl Repairs {
 
             let conflicts = local.membership_conflicts(board.id);
             for &device in &conflicts {
-                if members.contains_key(&device)
-                    && let Err(error) = handle
-                        .apply_device_change(DeviceMembershipChange::Remove(device))
-                        .await
-                {
-                    crate::status::record_error(&workers.changes, board.id, error.to_string());
+                if members.contains_key(&device) {
+                    let _ = self
+                        .apply(
+                            workers,
+                            board.id,
+                            &*handle,
+                            DeviceMembershipChange::Remove(device),
+                        )
+                        .await;
                 }
             }
             let members = handle.roles().await?;
@@ -251,21 +255,19 @@ impl Repairs {
                     {
                         break;
                     }
-                    if let Err(error) = handle.apply_device_change(change).await {
-                        if matches!(error, NodeError::LastManager)
-                            && let Some(record) = authorized.filter(|record| !record.applied)
-                        {
-                            workers
-                                .app
-                                .mark_membership_result(
-                                    board.id,
-                                    record.operation,
-                                    Err(MembershipRefusal::LastManager),
-                                )
-                                .await?;
-                            break;
-                        }
-                        crate::status::record_error(&workers.changes, board.id, error.to_string());
+                    if let Err(NodeError::LastManager) =
+                        self.apply(workers, board.id, &*handle, change).await
+                        && let Some(record) = authorized.filter(|record| !record.applied)
+                    {
+                        workers
+                            .app
+                            .mark_membership_result(
+                                board.id,
+                                record.operation,
+                                Err(MembershipRefusal::LastManager),
+                            )
+                            .await?;
+                        break;
                     }
                 }
                 if let Some(record) = authorized.filter(|record| !record.applied)
@@ -287,6 +289,71 @@ impl Repairs {
             }
         }
         Ok(())
+    }
+    async fn apply<T: Transport>(
+        &mut self,
+        workers: &BoardWorkers<T>,
+        board: BoardId,
+        handle: &T::Board,
+        change: DeviceMembershipChange,
+    ) -> Result<(), NodeError> {
+        let device = match &change {
+            DeviceMembershipChange::Enroll(info, _) => info.device_id()?,
+            DeviceMembershipChange::Remove(device) | DeviceMembershipChange::SetRole(device, _) => {
+                *device
+            }
+        };
+        let key = (board, device);
+        if self
+            .failures
+            .get(&key)
+            .is_some_and(|(ready, _)| *ready > Instant::now())
+        {
+            return Ok(());
+        }
+        match apply_change(handle, change).await {
+            Ok(()) => {
+                self.failures.remove(&key);
+                Ok(())
+            }
+            Err(error) => {
+                let (ready, delay) = self
+                    .failures
+                    .entry(key)
+                    .or_insert_with(|| (Instant::now(), Retry::new()));
+                *ready = Instant::now() + delay.next_delay();
+                crate::status::record_error(&workers.changes, board, error.to_string());
+                Err(error)
+            }
+        }
+    }
+}
+
+pub(crate) async fn apply_change(
+    handle: &impl TransportBoard,
+    change: DeviceMembershipChange,
+) -> Result<(), NodeError> {
+    let enrollment = match &change {
+        DeviceMembershipChange::Enroll(info, role) => Some((info.device_id()?, *role)),
+        _ => None,
+    };
+    match handle.apply_device_change(change).await {
+        Err(NodeError::DifferentDirectRole) if let Some((device, role)) = enrollment => {
+            if handle
+                .roles()
+                .await?
+                .get(&device)
+                .is_some_and(|current| *current != role)
+            {
+                handle
+                    .apply_device_change(DeviceMembershipChange::SetRole(device, role))
+                    .await
+            } else {
+                Ok(())
+            }
+        }
+        Err(NodeError::NotMember) => Ok(()),
+        result => result,
     }
 }
 

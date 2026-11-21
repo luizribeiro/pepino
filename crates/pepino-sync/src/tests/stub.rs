@@ -306,9 +306,7 @@ impl TransportBoard for Board {
             DeviceMembershipChange::Enroll(info, role) => {
                 let device = info.device_id()?;
                 if members.get(&device).is_some_and(|&current| current != role) {
-                    return Err(Error::Member(
-                        "device already has a different direct role".into(),
-                    ));
+                    return Err(Error::DifferentDirectRole);
                 }
                 (device, Some(role))
             }
