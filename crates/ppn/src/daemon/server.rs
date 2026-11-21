@@ -33,9 +33,29 @@ pub async fn serve(
     engine: &SyncEngine,
     started: Instant,
 ) -> io::Result<End> {
+    let restart = async {
+        let changes = engine.status_changes();
+        tokio::pin!(changes);
+        while let Some(status) = changes.next().await {
+            if status.restart_required.is_some() {
+                break;
+            }
+        }
+    };
+    serve_with(listener, started, restart, async |operation, started| {
+        operate(engine, operation, started).await
+    })
+    .await
+}
+
+pub(super) async fn serve_with(
+    listener: &UnixListener,
+    started: Instant,
+    restart: impl Future<Output = ()>,
+    handle: impl AsyncFn(Operation, Instant) -> Outcome,
+) -> io::Result<End> {
     let stop = Notify::new();
-    let changes = engine.status_changes();
-    tokio::pin!(changes);
+    tokio::pin!(restart);
     let mut reads = FuturesUnordered::new();
     let mut requests = FuturesUnordered::new();
     let mut waits = FuturesUnordered::new();
@@ -43,11 +63,7 @@ pub async fn serve(
         tokio::select! {
             biased;
             _ = stop.notified() => return Ok(End::Stopped),
-            status = changes.next() => {
-                if status.is_none_or(|status| status.restart_required.is_some()) {
-                    return Ok(End::Restart);
-                }
-            }
+            _ = &mut restart => return Ok(End::Restart),
             _ = requests.next(), if !requests.is_empty() => (),
             _ = waits.next(), if !waits.is_empty() => (),
             read = reads.next(), if !reads.is_empty() => {
@@ -55,13 +71,13 @@ pub async fn serve(
                 if let Some(Some((stream, operation))) = read {
                     if operation.as_ref().is_ok_and(|op| op.wait_ms().is_some()) {
                         if waits.len() < WAITS {
-                            waits.push(respond(stream, operation, &stop, engine, started));
+                            waits.push(respond(stream, operation, &stop, &handle, started));
                         } else {
                             let busy = Outcome::error("busy", "Too many outstanding control waits.");
-                            requests.push(respond(stream, Err(Box::new(busy)), &stop, engine, started));
+                            requests.push(respond(stream, Err(Box::new(busy)), &stop, &handle, started));
                         }
                     } else {
-                        requests.push(respond(stream, operation, &stop, engine, started));
+                        requests.push(respond(stream, operation, &stop, &handle, started));
                     }
                 }
             }
@@ -82,11 +98,11 @@ async fn respond(
     mut stream: UnixStream,
     operation: Decoded,
     stop: &Notify,
-    engine: &SyncEngine,
+    handle: &impl AsyncFn(Operation, Instant) -> Outcome,
     started: Instant,
 ) {
     let outcome = match operation {
-        Ok(operation) => operate(engine, operation, started).await,
+        Ok(operation) => handle(operation, started).await,
         Err(error) => *error,
     };
     let stopping = matches!(outcome, Outcome::Stopping);
