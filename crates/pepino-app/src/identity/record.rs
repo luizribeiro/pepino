@@ -142,7 +142,7 @@ impl Record {
                         device.name.clone_from(name);
                     }
                 }
-                Change::Initialize { .. } => (),
+                Change::Initialize { .. } | Change::ConfirmDevice => (),
             }
         }
         record

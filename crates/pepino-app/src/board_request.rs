@@ -262,7 +262,7 @@ impl crate::App {
                 });
                 if available
                     && local.catalog.board_request.as_ref().is_some_and(|saved| {
-                        saved.identity == identity
+                        saved.identity.same_roster(&identity)
                             && saved.device.id == local.device_id
                             && saved.device.name == name
                             && saved.device.reusable(now)
@@ -309,6 +309,7 @@ async fn board_requests_are_reused_without_replacing_the_existing_identity() {
         .unwrap();
     let info = node.member_info().await.unwrap();
     let first = app.request_board(&info, Some("Workshop")).await.unwrap();
+    app.remember_member_bundle(&info).await.unwrap();
     let second = app.request_board(&info, Some("Workshop")).await.unwrap();
     let renamed = app.request_board(&info, Some("Tablet")).await.unwrap();
     assert_eq!(first, second);

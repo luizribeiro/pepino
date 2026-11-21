@@ -1,4 +1,7 @@
+use std::collections::BTreeMap;
+
 use pepino_core::{DeviceId, IdentityId};
+use pepino_node::MemberInfo;
 use serde::{Deserialize, Serialize};
 
 use super::{IdentityCatalog, SignedEdit, edit::portable_scope};
@@ -10,11 +13,17 @@ pub struct IdentityCard {
     pub id: IdentityId,
     pub root: DeviceId,
     edits: Vec<SignedEdit>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) bundles: BTreeMap<DeviceId, String>,
 }
 
 impl IdentityCard {
     pub fn key(&self) -> crate::PersonKey {
         (self.id, self.root)
+    }
+
+    pub(crate) fn same_roster(&self, other: &Self) -> bool {
+        self.key() == other.key() && self.edits == other.edits
     }
 
     pub(crate) fn record(&self) -> Result<IdentityCatalog, AppError> {
@@ -47,6 +56,41 @@ impl IdentityCard {
             id,
             root: record.root.unwrap_or(fallback),
             edits: record.portable_edits(id),
+            bundles: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn merge_bundles(
+        &self,
+        record: &IdentityCatalog,
+        bundles: &mut BTreeMap<DeviceId, String>,
+    ) {
+        bundles.retain(|id, _| {
+            record
+                .device(*id)
+                .is_some_and(|row| row.state == RosterState::Active)
+        });
+        for (&id, encoded) in &self.bundles {
+            if !record
+                .device(id)
+                .is_some_and(|row| row.state == RosterState::Active)
+            {
+                continue;
+            }
+            if let Ok(info) = MemberInfo::from_hex(encoded)
+                && info.device_id().is_ok_and(|device| device == id)
+            {
+                let previous = bundles
+                    .get(&id)
+                    .and_then(|saved| MemberInfo::from_hex(saved).ok());
+                let order = |info: &MemberInfo| (info.expires_at().ok(), info.to_hex());
+                if previous
+                    .as_ref()
+                    .is_none_or(|saved| order(&info) > order(saved))
+                {
+                    bundles.insert(id, encoded.clone());
+                }
+            }
         }
     }
 
@@ -83,6 +127,18 @@ impl LocalState {
             id: self.identity_id,
             root,
             edits: self.catalog.identity.portable_edits(self.identity_id),
+            bundles: self
+                .catalog
+                .identity
+                .devices()
+                .filter_map(|row| {
+                    if row.state != RosterState::Active {
+                        return None;
+                    }
+                    self.device_bundle(row.id)
+                        .map(|info| (row.id, info.to_hex()))
+                })
+                .collect(),
         };
         if card.record()?.name() != Some(self.display_name()) {
             return Err(invalid(
@@ -92,6 +148,30 @@ impl LocalState {
         }
         card.name_for(self.device_id)?;
         Ok(card)
+    }
+}
+
+impl crate::App {
+    pub async fn confirm_roster_device(&self) -> Result<LocalState, AppError> {
+        let keys = self.identity_credentials()?;
+        self.try_update_local_state(move |local| {
+            local.check_device_write()?;
+            if !local.active_roster_device(keys.device_id()) {
+                return Err(invalid(
+                    "identity",
+                    "wait for this device's identity roster to sync",
+                ));
+            }
+            if !local.catalog.identity.authored_by(
+                portable_scope(),
+                local.identity_id,
+                keys.device_id(),
+            ) {
+                local.append_identity(&keys, super::edit::Change::ConfirmDevice)?;
+            }
+            Ok(())
+        })
+        .await
     }
 }
 
@@ -183,7 +263,7 @@ fn card_updates_converge_without_authorizing_an_edit_from_before_admission() {
         indices.sort_by_key(|&index| priority[index]);
         let mut record = IdentityCatalog::with_root(root);
         for index in indices {
-            IdentityCard { id, root, edits: vec![edits[index].clone()] }.merge_into(&mut record).unwrap();
+            IdentityCard { id, root, edits: vec![edits[index].clone()], bundles: Default::default() }.merge_into(&mut record).unwrap();
         }
         prop_assert_eq!(record.name(), Some("Renamed gardener"));
         prop_assert_eq!(record.rejected_count(), 1);

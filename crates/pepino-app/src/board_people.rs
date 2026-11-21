@@ -11,6 +11,8 @@ pub struct BoardPerson {
     pub invited_by: Option<DeviceId>,
     pub invited_at: Option<DateTime<Utc>>,
     record: IdentityCatalog,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    bundles: std::collections::BTreeMap<DeviceId, String>,
 }
 
 impl BoardPerson {
@@ -21,12 +23,15 @@ impl BoardPerson {
     ) -> Result<Self, AppError> {
         card.name_for(first_device)?;
         let record = card.verified_record()?;
+        let mut bundles = Default::default();
+        card.merge_bundles(&record, &mut bundles);
         Ok(Self {
             id: card.id,
             first_device,
             invited_by: invitation.map(|(device, _)| device),
             invited_at: invitation.map(|(_, at)| at),
             record,
+            bundles,
         })
     }
 
@@ -59,6 +64,7 @@ impl BoardPerson {
         if !record.fully_verified(self.id) {
             return Ok(false);
         }
+        card.merge_bundles(&record, &mut self.bundles);
         self.record = record;
         Ok(true)
     }
@@ -67,8 +73,16 @@ impl BoardPerson {
         self.record.rejected_count()
     }
 
+    pub fn device_bundle(&self, device: DeviceId) -> Option<pepino_node::MemberInfo> {
+        self.bundles
+            .get(&device)
+            .and_then(|value| pepino_node::MemberInfo::from_hex(value).ok())
+    }
+
     pub fn card(&self) -> IdentityCard {
-        IdentityCard::from_ledger(self.id, &self.record, self.first_device)
+        let mut card = IdentityCard::from_ledger(self.id, &self.record, self.first_device);
+        card.bundles.clone_from(&self.bundles);
+        card
     }
 }
 
