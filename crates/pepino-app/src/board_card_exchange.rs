@@ -36,7 +36,6 @@ impl LocalState {
     ) -> Option<EventId> {
         let effective = self.membership_incarnation(board, person);
         if effective.is_some()
-            || self.membership_enrollment_blocked(board, person)
             || self
                 .latest_membership(board, person)
                 .is_some_and(|record| record.change.action.role().is_none())

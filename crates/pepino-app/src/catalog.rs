@@ -178,7 +178,10 @@ impl LocalState {
                 .filter_map(|&board| {
                     let records: Vec<_> = self
                         .membership_history(board)
-                        .filter(|record| record.change.person == self.own_person_key())
+                        .filter(|record| {
+                            record.refusal.is_none()
+                                && record.change.person == self.own_person_key()
+                        })
                         .cloned()
                         .collect();
                     (!records.is_empty()).then_some((board, records))
@@ -289,7 +292,7 @@ impl LocalState {
                 let stored = self.catalog.membership.entry(board).or_default();
                 for mut record in records
                     .into_iter()
-                    .filter(|record| record.change.person == own)
+                    .filter(|record| record.refusal.is_none() && record.change.person == own)
                 {
                     record.relayed = true;
                     stored
@@ -300,7 +303,6 @@ impl LocalState {
                                 && existing.actor == record.actor
                             {
                                 existing.applied |= record.applied;
-                                existing.refusal = existing.refusal.or(record.refusal);
                             }
                         })
                         .or_insert(record);

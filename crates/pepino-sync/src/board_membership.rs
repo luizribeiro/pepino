@@ -211,9 +211,6 @@ impl Repairs {
                     Some(role)
                 };
                 let mut changes = reconcile_person(&person, &devices, &members, desired);
-                if local.membership_enrollment_blocked(board.id, person.key()) {
-                    changes.retain(|change| !matches!(change, DeviceMembershipChange::Enroll(..)));
-                }
                 let losing_manage: BTreeSet<_> = changes
                     .iter()
                     .filter_map(|change| match change {

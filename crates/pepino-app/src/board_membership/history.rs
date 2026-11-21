@@ -96,51 +96,9 @@ impl LocalState {
             .collect()
     }
 
-    fn refused_removals(
-        &self,
-        board: BoardId,
-        person: PersonKey,
-    ) -> impl Iterator<Item = &MembershipRecord> {
-        self.membership_history(board).filter(move |record| {
-            record.change.person == person
-                && record.is_removal()
-                && !record.relayed
-                && record.refusal == Some(MembershipRefusal::AuthorNoLongerManager)
-        })
-    }
-
-    pub fn membership_enrollment_blocked(&self, board: BoardId, person: PersonKey) -> bool {
-        let holds: BTreeSet<_> = self
-            .refused_removals(board, person)
-            .map(|record| record.operation)
-            .collect();
-        !holds.is_empty()
-            && invitation_after_holds(&self.person_membership(board, person), &holds).is_none()
-    }
-
-    fn membership_invitation<'a>(
-        &self,
-        board: BoardId,
-        person: PersonKey,
-        records: &BTreeMap<EventId, &'a MembershipRecord>,
-    ) -> Option<&'a MembershipRecord> {
-        let holds = self
-            .refused_removals(board, person)
-            .map(|record| record.operation)
-            .collect();
-        invitation_after_holds(records, &holds).or_else(|| current_invitation(records, |_| true))
-    }
-
     pub fn membership_parents(&self, board: BoardId, person: PersonKey) -> BTreeSet<EventId> {
         let records = self.person_membership(board, person);
-        let mut parents: BTreeSet<_> = records
-            .keys()
-            .copied()
-            .chain(
-                self.refused_removals(board, person)
-                    .map(|record| record.operation),
-            )
-            .collect();
+        let mut parents: BTreeSet<_> = records.keys().copied().collect();
         for record in records.values() {
             parents.retain(|parent| !record.change.parents.contains(parent));
         }
@@ -153,7 +111,7 @@ impl LocalState {
         person: PersonKey,
     ) -> Option<&MembershipRecord> {
         let records = self.person_membership(board, person);
-        if let Some(invitation) = self.membership_invitation(board, person, &records) {
+        if let Some(invitation) = current_invitation(&records) {
             return latest_matching(&records, |record| {
                 record.operation == invitation.operation
                     || (matches!(record.change.action, MembershipAction::RoleChanged(_))
@@ -169,8 +127,7 @@ impl LocalState {
     }
 
     pub fn membership_incarnation(&self, board: BoardId, person: PersonKey) -> Option<EventId> {
-        self.membership_invitation(board, person, &self.person_membership(board, person))
-            .map(|record| record.operation)
+        current_invitation(&self.person_membership(board, person)).map(|record| record.operation)
     }
 
     pub fn membership_superseded(&self, board: BoardId, record: &MembershipRecord) -> bool {
@@ -193,26 +150,11 @@ impl LocalState {
     }
 }
 
-fn invitation_after_holds<'a>(
-    records: &BTreeMap<EventId, &'a MembershipRecord>,
-    holds: &BTreeSet<EventId>,
-) -> Option<&'a MembershipRecord> {
-    current_invitation(records, |record| {
-        holds.is_empty()
-            || (!record.relayed
-                && holds
-                    .iter()
-                    .all(|&removal| follows(records, record, removal)))
-    })
-}
-
 fn current_invitation<'a>(
     records: &BTreeMap<EventId, &'a MembershipRecord>,
-    eligible: impl Fn(&MembershipRecord) -> bool,
 ) -> Option<&'a MembershipRecord> {
     latest_matching(records, |record| {
-        eligible(record)
-            && matches!(record.change.action, MembershipAction::Invited(_))
+        matches!(record.change.action, MembershipAction::Invited(_))
             && records
                 .values()
                 .filter(|other| other.is_removal())
@@ -338,16 +280,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn only_a_new_invitation_clears_a_refused_removals_enrollment_hold() {
+    async fn refused_removals_do_not_change_membership_or_parents() {
         let dir = tempfile::tempdir().unwrap();
         let app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
-        let mut local = app.local_state().clone();
         let board = BoardId::from_bytes([78; 32]);
-        let person = local.own_person_key();
-        let id = |byte| EventId::from_bytes([byte; 32]);
-        let mut record = MembershipRecord {
-            operation: id(9),
-            actor: local.device_id,
+        app.register_created_board(board, "Garden workshop")
+            .await
+            .unwrap();
+        let person = app.local_state().own_person_key();
+        let invitation = EventId::from_bytes([9; 32]);
+        let active = MembershipRecord {
+            operation: invitation,
+            actor: app.local_state().device_id,
             refusal: None,
             applied: true,
             relayed: false,
@@ -360,47 +304,40 @@ mod tests {
                 parents: BTreeSet::new(),
             },
         };
-        let save = |local: &mut LocalState, record: &MembershipRecord| {
-            local
-                .catalog
-                .membership
-                .entry(board)
-                .or_default()
-                .insert(record.operation, record.clone());
-        };
-        save(&mut local, &record);
-        assert!(!local.membership_enrollment_blocked(board, person));
-        record.operation = id(2);
-        record.actor = DeviceId::from_bytes([61; 32]);
-        record.applied = false;
-        record.refusal = Some(MembershipRefusal::LastManager);
-        record.change.action = MembershipAction::Removed;
-        record.change.parents = [id(9)].into();
-        save(&mut local, &record);
-        assert!(!local.membership_enrollment_blocked(board, person));
-        record.refusal = Some(MembershipRefusal::AuthorNoLongerManager);
-        save(&mut local, &record);
-        assert!(local.membership_enrollment_blocked(board, person));
+        app.record_membership(board, active.clone()).await.unwrap();
+        for (operation, refusal) in [
+            (EventId::from_bytes([2; 32]), MembershipRefusal::LastManager),
+            (
+                EventId::from_bytes([3; 32]),
+                MembershipRefusal::AuthorNoLongerManager,
+            ),
+        ] {
+            app.record_membership(
+                board,
+                MembershipRecord {
+                    operation,
+                    actor: DeviceId::from_bytes([61; 32]),
+                    applied: false,
+                    refusal: Some(refusal),
+                    change: MembershipChange {
+                        action: MembershipAction::Removed,
+                        parents: [invitation].into(),
+                        ..active.change.clone()
+                    },
+                    ..active.clone()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let local = app.fresh_local_state().await.unwrap();
+        assert_eq!(local.membership_history(board).count(), 3);
+        assert_eq!(local.latest_membership(board, person), Some(&active));
+        assert_eq!(local.membership_parents(board, person), [invitation].into());
         assert_eq!(
-            local.latest_membership(board, person).unwrap().operation,
-            id(9)
+            local.membership_incarnation(board, person),
+            Some(invitation)
         );
-
-        record.actor = local.device_id;
-        record.refusal = None;
-        record.operation = id(3);
-        record.change.action = MembershipAction::RoleChanged(BoardRole::Read);
-        record.change.parents = local.membership_parents(board, person);
-        assert!(record.change.parents.contains(&id(2)));
-        save(&mut local, &record);
-        assert!(local.membership_enrollment_blocked(board, person));
-
-        record.operation = id(4);
-        record.change.action = MembershipAction::Invited(BoardRole::Read);
-        record.change.parents = [id(2)].into();
-        save(&mut local, &record);
-        assert!(!local.membership_enrollment_blocked(board, person));
-        assert_eq!(local.membership_incarnation(board, person), Some(id(4)));
     }
 
     #[tokio::test]

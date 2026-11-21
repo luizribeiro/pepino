@@ -77,7 +77,8 @@ async fn repairs_keep_a_manager_and_never_apply_a_former_managers_intent() {
         applied: false,
         relayed: false,
     };
-    let stale = intent(20, former, MembershipAction::RoleChanged(BoardRole::Read));
+    let mut stale = intent(20, former, MembershipAction::RoleChanged(BoardRole::Manage));
+    stale.change.revision = u64::MAX;
     app.record_membership(board, stale.clone()).await.unwrap();
     let leaving = intent(21, me, MembershipAction::Left);
     app.record_membership(board, leaving.clone()).await.unwrap();
@@ -116,7 +117,89 @@ async fn repairs_keep_a_manager_and_never_apply_a_former_managers_intent() {
     );
     assert_eq!(records[1].refusal, Some(MembershipRefusal::LastManager));
     assert_eq!(local.board_departure(board), None);
+    assert!(
+        local
+            .membership_parents(board, local.own_person_key())
+            .is_empty()
+    );
+    assert_eq!(
+        local.next_membership_revision(board, local.own_person_key()),
+        1
+    );
     assert!(node.membership_changes().is_empty());
+    workers.abort().await;
+}
+
+#[tokio::test]
+async fn a_refused_removal_leaves_the_current_managers_enrollment_in_force() {
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([25; 32]);
+    let (app, invitee) = members(dir.path(), board).await;
+    let owner = app.local_state().device_id;
+    let guest = invitee.local_state().device_id;
+    let former = pepino_core::DeviceId::from_bytes([26; 32]);
+    let person = invitee.local_state().own_person_key();
+    let invitation = EventId::from_bytes([27; 32]);
+    let active = MembershipRecord {
+        operation: invitation,
+        actor: owner,
+        change: MembershipChange {
+            person,
+            action: MembershipAction::Invited(BoardRole::Read),
+            at: std::time::UNIX_EPOCH.into(),
+            revision: 1,
+            incarnation: None,
+            parents: Default::default(),
+        },
+        refusal: None,
+        applied: true,
+        relayed: false,
+    };
+    app.record_membership(board, active.clone()).await.unwrap();
+    app.record_membership(
+        board,
+        MembershipRecord {
+            operation: EventId::from_bytes([28; 32]),
+            actor: former,
+            change: MembershipChange {
+                action: MembershipAction::Removed,
+                parents: [invitation].into(),
+                ..active.change.clone()
+            },
+            applied: false,
+            refusal: Some(MembershipRefusal::AuthorNoLongerManager),
+            ..active
+        },
+    )
+    .await
+    .unwrap();
+
+    let node = Arc::new(Stub::new(owner));
+    let (changes, _) = watch::channel(Default::default());
+    let (_stop, stopping) = watch::channel(());
+    let (_close, closing) = watch::channel(());
+    let (_nudge, nudged) = watch::channel(0);
+    let mut workers = BoardWorkers::new(
+        node.clone(),
+        app.clone(),
+        changes,
+        (stopping, closing),
+        nudged,
+        Duration::from_secs(1),
+        [0; 16],
+    );
+    let local = app.fresh_local_state().await.unwrap();
+    workers.open_missing(&local).await.unwrap();
+    node.set_joined_members(board, [(owner, Role::Manage), (former, Role::Write)].into());
+    Repairs::default()
+        .reconcile(&workers, &local, &node.status())
+        .await
+        .unwrap();
+    assert_eq!(
+        node.membership_changes(),
+        [(board, guest, Some(Role::Read))]
+    );
+    assert_eq!(local.membership_parents(board, person), [invitation].into());
     workers.abort().await;
 }
 

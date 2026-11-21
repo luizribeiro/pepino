@@ -107,6 +107,10 @@ gives them the complete history, including work from the time they
 were away. Past tasks, comments, and assignments keep their authors
 and assignees.
 
+If a removal is interrupted because its author loses the Manage role, other
+managers do not complete it automatically. A current manager can run
+`ppn board remove` again.
+
 After departure, the local history is read-only. `ppn board forget House
 --yes` deletes that host's application history and catalog entry for
 House. Stop the local daemon before forgetting a board. Run the command
