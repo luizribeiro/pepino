@@ -299,6 +299,12 @@ impl TransportBoard for Board {
             .unwrap_or_default())
     }
 
+    async fn manages(&self, device: DeviceId) -> bool {
+        self.roles()
+            .await
+            .is_ok_and(|roles| roles.get(&device) == Some(&Role::Manage))
+    }
+
     async fn apply_device_change(&self, change: DeviceMembershipChange) -> Result<(), Error> {
         let mut boards = self.publisher.membership.lock().unwrap();
         let members = boards.entry(self.id).or_default();

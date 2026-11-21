@@ -101,9 +101,11 @@ impl LocalState {
             .into_iter()
             .flat_map(|requests| requests.values())
             .filter(move |request| {
-                request.leave.incarnation
-                    == self.device_update_incarnation(board, request.leave.person)
-                    && self.active_board_device(board, request.leave.person, request.leave.device)
+                self.matches_device_update_incarnation(
+                    board,
+                    request.leave.person,
+                    request.leave.incarnation,
+                ) && self.active_board_device(board, request.leave.person, request.leave.device)
             })
     }
     pub(crate) fn save_board_leave(&mut self, board: BoardId, request: SignedBoardLeave) {

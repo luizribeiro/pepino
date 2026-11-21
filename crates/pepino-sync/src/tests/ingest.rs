@@ -507,13 +507,22 @@ async fn membership_authorization_is_retried_before_acknowledgment() {
 }
 
 #[tokio::test]
-async fn reader_routes_require_a_current_manager() {
-    use pepino_app::{App, BoardCards};
+async fn a_reader_updates_their_card_after_a_former_manager_sent_unrelated_routes() {
+    use crate::Transport;
+    use pepino_app::{
+        App, BoardAdmission, BoardCards, BoardRole, MembershipAction, MembershipChange,
+        MembershipRecord, Request, WriteRequest,
+    };
+    use pepino_core::EventId;
     use pepino_node::Role;
 
     let dir = tempfile::tempdir().unwrap();
     let app = App::init(dir.path(), 0).await.unwrap();
     let local = app.local_state();
+    let mut reader = App::init(dir.path().join("reader"), 0).await.unwrap();
+    let reader_device = reader.local_state().device_id;
+    let reader_key = reader.local_state().own_person_key();
+    let invitation = EventId::from_bytes([98; 32]);
     let board = BoardId::from_bytes([93; 32]);
     let approved = BoardId::from_bytes([94; 32]);
     let declined = BoardId::from_bytes([95; 32]);
@@ -525,16 +534,72 @@ async fn reader_routes_require_a_current_manager() {
     let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
         .await
         .unwrap();
+    node.set_operation_role(Role::Manage);
+    let person = (pepino_core::IdentityId::from_bytes([97; 32]), writer);
     node.set_joined_members(
         board,
-        [(local.device_id, Role::Manage), (writer, Role::Write)].into(),
+        [(local.device_id, Role::Manage), (writer, Role::Manage)].into(),
     );
-    node.set_operation_role(Role::Manage);
+    for number in 0..160u8 {
+        let mut bytes = [number; 32];
+        bytes[31] = 249;
+        let payload = BoardCards::ReaderRoute {
+            channel: BoardId::from_bytes(bytes),
+            person,
+            incarnation: None,
+        }
+        .encode()
+        .unwrap();
+        let mut received = node.deliver(board, writer, payload);
+        tokio::time::timeout(WAIT, received.wait_for(|acked| *acked))
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    node.set_joined_members(board, [(local.device_id, Role::Manage)].into());
+    app.record_membership(
+        board,
+        MembershipRecord {
+            operation: invitation,
+            actor: local.device_id,
+            change: MembershipChange {
+                person: reader_key,
+                action: MembershipAction::Invited(BoardRole::Read),
+                at: std::time::UNIX_EPOCH.into(),
+                revision: 1,
+                incarnation: None,
+                parents: Default::default(),
+            },
+            refusal: None,
+            applied: true,
+            relayed: false,
+        },
+    )
+    .await
+    .unwrap();
+    app.record_board_admission(
+        board,
+        local.device_id,
+        local.device_id,
+        BoardAdmission {
+            owner: local.identity_card().unwrap(),
+            owner_device: local.device_id,
+            invitee: reader.local_state().identity_card().unwrap(),
+            device: reader_device,
+            at: std::time::UNIX_EPOCH.into(),
+        },
+    )
+    .await
+    .unwrap();
+    node.set_joined_members(
+        board,
+        [(local.device_id, Role::Manage), (reader_device, Role::Read)].into(),
+    );
     for (signer, channel) in [(local.device_id, approved), (writer, declined)] {
         let payload = BoardCards::ReaderRoute {
             channel,
-            person: local.own_person_key(),
-            incarnation: None,
+            person: reader_key,
+            incarnation: Some(invitation),
         }
         .encode()
         .unwrap();
@@ -547,5 +612,46 @@ async fn reader_routes_require_a_current_manager() {
     let local = app.fresh_local_state().await.unwrap();
     assert!(local.card_exchanges().contains_key(&approved));
     assert!(!local.card_exchanges().contains_key(&declined));
+    assert_eq!(local.card_exchanges().len(), 1);
+    engine.nudge();
+    super::until(
+        async || {
+            tokio::task::yield_now().await;
+            node.status().boards.contains_key(&approved)
+        },
+        |&open| open,
+        WAIT,
+    )
+    .await;
+    reader
+        .handle(
+            Request::Write(WriteRequest::IdentityRename {
+                name: "Greenhouse reader".into(),
+            }),
+            0,
+        )
+        .await
+        .unwrap();
+    let renamed = reader
+        .fresh_local_state()
+        .await
+        .unwrap()
+        .identity_card()
+        .unwrap();
+    let update = BoardCards::Update(renamed).encode().unwrap();
+    let mut received = node.deliver(approved, reader_device, update);
+    tokio::time::timeout(WAIT, received.wait_for(|acked| *acked))
+        .await
+        .unwrap()
+        .unwrap();
+    let local = app.fresh_local_state().await.unwrap();
+    assert_eq!(
+        local
+            .board_people(board)
+            .find(|person| person.key() == reader_key)
+            .unwrap()
+            .name(),
+        "Greenhouse reader"
+    );
     engine.shutdown().await.unwrap();
 }

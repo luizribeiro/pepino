@@ -108,14 +108,16 @@ impl SyncEngine {
             }
             .into());
         }
-        self.app.consume_board_request(id, &request).await?;
         let admission = BoardAdmission {
             owner: owner.clone(),
             owner_device,
-            invitee: request.identity,
+            invitee: request.identity.clone(),
             device: request.device.id,
             at: std::time::SystemTime::now().into(),
         };
+        local.check_board_admission(id, local.device_id, creator, &admission)?;
+        let introduce = BoardCards::Introduce(admission.clone()).encode()?;
+        self.app.consume_board_request(id, &request).await?;
         let incarnation = if !former && let Some(saved) = local.membership_incarnation(id, person) {
             saved
         } else {
@@ -135,12 +137,8 @@ impl SyncEngine {
                 "a removal superseded this invitation".into(),
             ));
         }
-        handle.add_member(&member, role.into()).await?;
         self.app
-            .record_board_admission(id, local.device_id, creator, admission.clone())
-            .await?;
-        handle
-            .publish(BoardCards::Introduce(admission.clone()).encode()?)
+            .record_board_admission(id, local.device_id, creator, admission)
             .await?;
         let exchange = CardExchange {
             board: id,
@@ -151,6 +149,8 @@ impl SyncEngine {
         let channel = self
             .create_card_exchange(&mut workers, &local, exchange, &member)
             .await?;
+        handle.add_member(&member, role.into()).await?;
+        handle.publish(introduce).await?;
         self.nudge();
         Ok((owner, Some(channel)))
     }
@@ -162,34 +162,55 @@ impl SyncEngine {
         exchange: CardExchange,
         member: &pepino_node::MemberInfo,
     ) -> Result<BoardId, Error> {
-        if let Some((&channel, _)) = local
-            .card_exchanges()
-            .iter()
-            .find(|(_, saved)| **saved == exchange)
-        {
+        let recipient = member.device_id()?;
+        if let Some(channel) = usable_card_exchange(workers, local, exchange, recipient).await {
             return Ok(channel);
         }
         let handle = self.node.create_board().await?;
         let channel = handle.id();
-        if member.device_id()? != local.device_id {
+        let route = exchange
+            .root
+            .map(|root| {
+                BoardCards::ReaderRoute {
+                    channel,
+                    person: (exchange.person, root),
+                    incarnation: exchange.incarnation,
+                }
+                .encode()
+            })
+            .transpose()?;
+        self.app.register_card_exchange(channel, exchange).await?;
+        workers.start_card_exchange(handle, channel)?;
+        if recipient != local.device_id {
+            let handle = workers
+                .handle(channel)
+                .ok_or(Error::Node(pepino_node::Error::Closed))?;
             handle.add_member(member, pepino_node::Role::Write).await?;
         }
-        self.app.register_card_exchange(channel, exchange).await?;
-        workers.start_card_exchange(handle, channel, exchange)?;
-        if let (Some(board), Some(root)) = (workers.handle(exchange.board), exchange.root) {
-            board
-                .publish(
-                    BoardCards::ReaderRoute {
-                        channel,
-                        person: (exchange.person, root),
-                        incarnation: exchange.incarnation,
-                    }
-                    .encode()?,
-                )
-                .await?;
+        if let (Some(board), Some(route)) = (workers.handle(exchange.board), route) {
+            board.publish(route).await?;
         }
         Ok(channel)
     }
+}
+
+async fn usable_card_exchange(
+    workers: &crate::board_workers::BoardWorkers<pepino_node::Node>,
+    local: &pepino_app::LocalState,
+    exchange: CardExchange,
+    recipient: DeviceId,
+) -> Option<BoardId> {
+    for (&channel, saved) in local.card_exchanges() {
+        if *saved == exchange
+            && let Some(handle) = workers.handle(channel)
+            && let Ok(members) = handle.members().await
+            && members.contains(&(local.device_id, pepino_node::Role::Manage))
+            && members.iter().any(|(device, _)| *device == recipient)
+        {
+            return Some(channel);
+        }
+    }
+    None
 }
 
 fn owner_card(

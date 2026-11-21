@@ -12,6 +12,8 @@ pub(crate) struct JoinedShare {
     relay_url: Option<String>,
     pub(crate) binding: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) card_exchange: Option<BoardId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     receipt: Option<String>,
 }
 
@@ -105,6 +107,7 @@ impl LocalState {
                 peer_id: grant.peer.id,
                 relay_url: grant.peer.relay_url.clone(),
                 binding: grant.request.clone(),
+                card_exchange: grant.card_exchange,
                 receipt: Some(receipt),
             },
         );

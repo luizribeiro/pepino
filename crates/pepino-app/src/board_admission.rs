@@ -24,6 +24,17 @@ impl LocalState {
             .flat_map(|people| people.values())
     }
 
+    pub fn check_board_admission(
+        &self,
+        board: BoardId,
+        manager: DeviceId,
+        creator: DeviceId,
+        admission: &BoardAdmission,
+    ) -> Result<(), AppError> {
+        self.clone()
+            .admit_person(board, manager, creator, admission)
+    }
+
     fn admit_person(
         &mut self,
         board: BoardId,

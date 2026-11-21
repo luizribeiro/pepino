@@ -288,7 +288,6 @@ impl LocalState {
             if route.person == own.0
                 && route.root.is_none_or(|root| root == own.1)
                 && self.shared_access(route.board).is_some()
-                && self.card_exchange_has_room(route.board, channel)
             {
                 self.add_card_exchange(channel, route)?;
             }

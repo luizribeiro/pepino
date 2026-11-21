@@ -33,6 +33,7 @@ impl App {
                 .into_iter()
                 .filter(|(board, _)| !local.catalog.forgotten_boards.contains(board));
             local.catalog.observed_members.extend(observed);
+            local.prune_card_exchanges();
             for (id, time) in last_seen {
                 let time = chrono::DateTime::<chrono::Utc>::from(time).timestamp_millis();
                 if local.knows_roster_device(id) {

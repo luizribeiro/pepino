@@ -60,10 +60,6 @@ impl SyncEngine {
             .into());
         }
         if matches!(action, ManagePerson::Role(BoardRole::Read))
-            && !local
-                .card_exchanges()
-                .values()
-                .any(|route| route.board == board && local.is_current_exchange(route, person))
             && let Some(bundle) = devices
                 .iter()
                 .filter(|device| members.contains_key(device))

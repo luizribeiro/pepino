@@ -277,7 +277,6 @@ impl LocalState {
         }
         let catalog = local.catalog_board();
         local.catalog.load_refused_membership_order();
-        local.cap_card_exchanges();
         local
             .catalog
             .identity
@@ -294,6 +293,7 @@ impl LocalState {
                 })
                 .collect();
         }
+        local.prune_card_exchanges();
         if version < u64::from(VERSION) {
             local.catalog.trim_card_queues(local.catalog_board());
             if local.catalog.board_request.as_ref().is_some_and(|request| {

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use futures_util::StreamExt;
-use pepino_app::{App, BoardCards, CardExchange, LocalState};
+use pepino_app::{App, BoardCards, LocalState};
 
 use crate::{Acknowledgement, DeliveryStream, Error, Transport, TransportBoard, retry::Retry};
 
@@ -29,7 +29,7 @@ impl<T: Transport> BoardWorkers<T> {
                 .node
                 .open_board_for_store(channel, self.store_instance)
                 .await?;
-            self.start_card_exchange(board, channel, exchange)?;
+            self.start_card_exchange(board, channel)?;
         }
         Ok(())
     }
@@ -38,7 +38,6 @@ impl<T: Transport> BoardWorkers<T> {
         &mut self,
         mut board: T::Board,
         channel: pepino_core::BoardId,
-        exchange: CardExchange,
     ) -> Result<(), Error> {
         let stream = board.deliveries()?;
         let board = Arc::new(board);
@@ -49,7 +48,7 @@ impl<T: Transport> BoardWorkers<T> {
         self.workers.spawn(async move {
             tokio::select! {
                 _ = stopping.changed() => (),
-                () = receive(&app, exchange, stream) => (),
+                () = receive(&app, channel, stream) => (),
             }
             let _ = closing.changed().await;
             let board = Arc::into_inner(board).ok_or(pepino_node::Error::Closed)?;
@@ -62,13 +61,23 @@ impl<T: Transport> BoardWorkers<T> {
 
 async fn receive<A: Acknowledgement>(
     app: &App,
-    exchange: CardExchange,
+    channel: pepino_core::BoardId,
     mut stream: DeliveryStream<A>,
 ) {
     while let Some(delivery) = stream.next().await {
         let Ok(delivery) = delivery else { continue };
         let mut retry = Retry::new();
         while let Some(cards) = BoardCards::decode(&delivery.bytes) {
+            let local = match app.fresh_local_state().await {
+                Ok(local) => local,
+                Err(_) => {
+                    retry.wait().await;
+                    continue;
+                }
+            };
+            let Some(exchange) = local.card_exchanges().get(&channel) else {
+                break;
+            };
             let accepted = match &cards {
                 BoardCards::Update(card) => {
                     card.id == exchange.person && exchange.root.is_none_or(|root| root == card.root)

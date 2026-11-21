@@ -20,6 +20,8 @@ impl Routes {
         local: &LocalState,
         network: &NodeStatus,
     ) -> Result<(), Error> {
+        self.announced
+            .retain(|channel| local.card_exchanges().contains_key(channel));
         for (&channel, exchange) in local.card_exchanges() {
             if !network
                 .boards
