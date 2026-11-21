@@ -25,13 +25,16 @@ pub(crate) fn records(local: &LocalState, board: BoardId) -> Vec<Value> {
             json!({
                 "operation_id": change.operation, "at": change.change.at, "action": action,
                 "person": {"id": key.0, "root": key.1, "name": people.get(&key)},
-                "actor": actor(change.actor), "role": change.change.action.role()
+                "actor": actor(change.actor), "role": change.change.action.role(),
+                "superseded": local.membership_superseded(board, change)
             }),
         ));
     }
     for person in local.board_people(board) {
-        if local.membership_incarnation(board, person.key()).is_none()
-            && let (Some(at), Some(by)) = (person.invited_at, person.invited_by)
+        if !local.membership_history(board).any(|record| {
+            record.change.person == person.key()
+                && matches!(record.change.action, MembershipAction::Invited(_))
+        }) && let (Some(at), Some(by)) = (person.invited_at, person.invited_by)
         {
             rows.push((at, json!({
                 "at": at, "action": "invited", "person": {"id": person.id, "root": person.key().1,
@@ -58,12 +61,17 @@ pub(crate) fn line(row: &Value) -> String {
     );
     let at = row["at"].as_str().unwrap_or_default();
     let role = row["role"].as_str().unwrap_or_default();
-    match row["action"].as_str() {
+    let line = match row["action"].as_str() {
         Some("invited") if role.is_empty() => format!("{at} · {by} invited {name}"),
         Some("invited") => format!("{at} · {by} invited {name} as {role}"),
         Some("role_changed") => format!("{at} · {by} changed {name}'s role to {role}"),
         Some("removed") => format!("{at} · {by} removed {name}"),
         _ if name == by => format!("{at} · {name} left"),
         _ => format!("{at} · {name} left (processed by {by})"),
+    };
+    if row["superseded"].as_bool() == Some(true) {
+        format!("{line} · superseded")
+    } else {
+        line
     }
 }

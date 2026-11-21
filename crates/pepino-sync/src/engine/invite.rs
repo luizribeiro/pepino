@@ -116,13 +116,6 @@ impl SyncEngine {
             device: request.device.id,
             at: std::time::SystemTime::now().into(),
         };
-        handle.add_member(&member, role.into()).await?;
-        self.app
-            .record_board_admission(id, local.device_id, creator, admission.clone())
-            .await?;
-        handle
-            .publish(BoardCards::Introduce(admission.clone()).encode()?)
-            .await?;
         let incarnation = if !former && let Some(saved) = local.membership_incarnation(id, person) {
             saved
         } else {
@@ -136,6 +129,19 @@ impl SyncEngine {
             )
             .await?
         };
+        local = self.app.fresh_local_state().await?;
+        if local.membership_incarnation(id, person) != Some(incarnation) {
+            return Err(Error::MembershipIncomplete(
+                "a removal superseded this invitation".into(),
+            ));
+        }
+        handle.add_member(&member, role.into()).await?;
+        self.app
+            .record_board_admission(id, local.device_id, creator, admission.clone())
+            .await?;
+        handle
+            .publish(BoardCards::Introduce(admission.clone()).encode()?)
+            .await?;
         let exchange = CardExchange {
             board: id,
             person: person.0,

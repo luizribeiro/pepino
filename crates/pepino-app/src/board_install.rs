@@ -82,7 +82,6 @@ impl LocalState {
         if existing.is_some() || forgotten {
             self.catalog.observed_board_removals.remove(&id);
             self.catalog.board_leaves.remove(&id);
-            self.catalog.membership.remove(&id);
             self.catalog
                 .card_exchanges
                 .retain(|_, route| route.board != id);

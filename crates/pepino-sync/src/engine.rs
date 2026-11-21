@@ -43,6 +43,8 @@ pub enum Error {
     BoardAuthority(#[from] crate::catalog_authority::Error),
     #[error(transparent)]
     Worker(#[from] tokio::task::JoinError),
+    #[error("Membership change incomplete. {0}")]
+    MembershipIncomplete(String),
     #[error("outbox poll interval must be positive")]
     PollInterval,
     #[error(transparent)]

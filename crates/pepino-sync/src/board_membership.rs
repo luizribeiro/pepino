@@ -29,6 +29,7 @@ pub(crate) async fn publish_change(
         at: std::time::SystemTime::now().into(),
         revision: local.next_membership_revision(board, person)?,
         incarnation: local.membership_incarnation(board, person),
+        parents: local.membership_parents(board, person),
     };
     let operation = handle
         .publish(BoardCards::Membership(change.clone()).encode()?)
