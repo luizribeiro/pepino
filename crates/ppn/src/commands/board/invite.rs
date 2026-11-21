@@ -37,6 +37,7 @@ pub(super) fn run(
     local.check_invitable(board.id)?;
     local.check_person_id(request.identity.key())?;
     let fingerprint = request.fingerprint()?;
+    let binding = request.binding()?;
     let notice = format!(
         "Inviting {} ({}), device {}, fingerprint {fingerprint}, to board {} as {role}",
         single_line(&name),
@@ -72,7 +73,7 @@ pub(super) fn run(
             Duration::from_secs(20),
         )
         .map_err(unreachable)?;
-    let grant = match outcome {
+    let mut grant = match outcome {
         Outcome::BoardInvited { grant } => grant,
         Outcome::MemberAccessDenied { board } => {
             return Err(CliError::new(
@@ -89,6 +90,8 @@ pub(super) fn run(
         _ => return Err(unexpected_reply()),
     };
     request.device.secret = Some(secret);
+    // The request's secret contributes to the binding, which has a fixed encoded size.
+    grant.request = binding;
     let signed = grant.issue(&request, &keys)?;
     let code = Kind::BoardGrant.encode(&signed).map_err(invalid_code)?;
     Ok(CommandResult::document(GrantCode {
