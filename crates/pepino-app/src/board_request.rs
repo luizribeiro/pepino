@@ -1,4 +1,17 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use pepino_node::DeviceCredentials;
 use serde::{Deserialize, Serialize};
+
+const LIFETIME_SECS: u64 = 7 * 24 * 60 * 60;
+
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct Issuance {
+    at: u64,
+    nonce: [u8; 32],
+    #[serde(with = "serde_bytes")]
+    signature: [u8; 64],
+}
 
 use crate::{AppError, DeviceRequest, IdentityCard, WireFormat, app::invalid};
 
@@ -7,6 +20,8 @@ use crate::{AppError, DeviceRequest, IdentityCard, WireFormat, app::invalid};
 pub struct BoardRequest {
     pub device: DeviceRequest,
     pub identity: IdentityCard,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) issuance: Option<Issuance>,
 }
 
 impl std::fmt::Debug for BoardRequest {
@@ -17,13 +32,91 @@ impl std::fmt::Debug for BoardRequest {
 
 impl BoardRequest {
     pub fn member_info(&self) -> Result<pepino_node::MemberInfo, AppError> {
-        self.device.member_info_with(|error| match error {
+        let info = self.device.member_info_with(|error| match error {
             pepino_node::Error::MemberExpired => invalid(
                 "request",
                 "The board request has expired. Run ppn board request again.",
             ),
             other => crate::device_request::request_info_error(other),
-        })
+        })?;
+        self.validate_issuance(SystemTime::now())?;
+        if crate::normalize_name(&self.device.name)? != self.device.name {
+            return Err(invalid("request", "the device name is not normalized"));
+        }
+        Ok(info)
+    }
+
+    fn unsigned_issuance(&self, at: u64, nonce: [u8; 32]) -> Result<[u8; 32], AppError> {
+        let mut device = self.device.clone();
+        device.secret = None;
+        let bytes = WireFormat::Cbor.encode(&(device.binding(), &self.identity, at, nonce))?;
+        Ok(blake3::derive_key(
+            "Pepino board request issuance v1",
+            &bytes,
+        ))
+    }
+
+    fn validate_issuance(&self, now: SystemTime) -> Result<&Issuance, AppError> {
+        let expired = || {
+            invalid(
+                "request",
+                "The board request has expired. Run ppn board request again.",
+            )
+        };
+        let issuance = self.issuance.as_ref().ok_or_else(expired)?;
+        let now = now
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| expired())?
+            .as_secs();
+        if now >= issuance.at.saturating_add(LIFETIME_SECS) {
+            return Err(expired());
+        }
+        if issuance.at > now.saturating_add(5 * 60)
+            || self
+                .device
+                .secret
+                .is_some_and(|secret| blake3::hash(&secret).as_bytes() != &issuance.nonce)
+            || !DeviceCredentials::verify(
+                self.device.id,
+                &self.unsigned_issuance(issuance.at, issuance.nonce)?,
+                &issuance.signature,
+            )
+        {
+            return Err(invalid("request", "invalid board request issuance"));
+        }
+        Ok(issuance)
+    }
+
+    pub fn expires_at(&self) -> Result<u64, AppError> {
+        let issuance = self.validate_issuance(SystemTime::now())?;
+        Ok(self
+            .device
+            .expires_at()?
+            .min(issuance.at.saturating_add(LIFETIME_SECS)))
+    }
+
+    fn new(
+        device: DeviceRequest,
+        identity: IdentityCard,
+        keys: &DeviceCredentials,
+        now: SystemTime,
+    ) -> Result<Self, AppError> {
+        let mut request = Self {
+            device,
+            identity,
+            issuance: None,
+        };
+        let at = now
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| invalid("request", "invalid system time"))?
+            .as_secs();
+        let nonce = *blake3::hash(&request.secret()?).as_bytes();
+        request.issuance = Some(Issuance {
+            at,
+            nonce,
+            signature: keys.sign(&request.unsigned_issuance(at, nonce)?),
+        });
+        Ok(request)
     }
 
     pub fn name(&self) -> Result<String, AppError> {
@@ -35,6 +128,9 @@ impl BoardRequest {
         let mut digest = blake3::Hasher::new_derive_key("Pepino board request fingerprint v1");
         digest.update(self.device.binding().as_bytes());
         digest.update(&WireFormat::Cbor.encode(&self.identity)?);
+        if let Some(issuance) = &self.issuance {
+            digest.update(&issuance.signature);
+        }
         Ok(digest.finalize())
     }
 
@@ -75,6 +171,7 @@ async fn the_fingerprint_covers_the_identity_and_device_request() {
             secret: Some([72; 32]),
         },
         identity: local.identity_card().unwrap(),
+        issuance: None,
     };
     let mut changed = original.clone();
     changed.identity.id = IdentityId::from_bytes([91; 32]);
@@ -96,6 +193,7 @@ impl crate::App {
         info: &pepino_node::MemberInfo,
         name: Option<&str>,
     ) -> Result<BoardRequest, AppError> {
+        let keys = self.identity_credentials()?;
         let info = info.clone();
         let name = name.map(crate::normalize_name).transpose()?;
         let local = self
@@ -113,6 +211,7 @@ impl crate::App {
                 }
                 let identity = local.identity_card()?;
                 let name = name.as_deref().unwrap_or_else(|| local.device_name());
+                let now = SystemTime::now();
                 let saved_binding = local
                     .catalog
                     .board_request
@@ -131,7 +230,8 @@ impl crate::App {
                         saved.identity == identity
                             && saved.device.id == local.device_id
                             && saved.device.name == name
-                            && saved.device.reusable(std::time::SystemTime::now())
+                            && saved.device.reusable(now)
+                            && saved.validate_issuance(now).is_ok()
                     })
                 {
                     return Ok(());
@@ -142,7 +242,8 @@ impl crate::App {
                 })?;
                 let device =
                     DeviceRequest::from_member_bytes(name.into(), info.as_bytes(), secret)?;
-                local.catalog.board_request = Some(BoardRequest { device, identity });
+                local.catalog.board_request =
+                    Some(BoardRequest::new(device, identity, &keys, now)?);
                 Ok(())
             })
             .await?;
@@ -176,6 +277,18 @@ async fn board_requests_are_reused_without_replacing_the_existing_identity() {
     let second = app.request_board(&info, Some("Workshop")).await.unwrap();
     let renamed = app.request_board(&info, Some("Tablet")).await.unwrap();
     assert_eq!(first, second);
+    let issued = first.issuance.as_ref().unwrap().at;
+    assert_eq!(first.expires_at().unwrap(), issued + LIFETIME_SECS);
+    let before_expiry = UNIX_EPOCH + std::time::Duration::from_secs(issued + LIFETIME_SECS - 1);
+    assert!(first.validate_issuance(before_expiry).is_ok());
+    assert!(
+        first
+            .validate_issuance(before_expiry + std::time::Duration::from_secs(1))
+            .is_err()
+    );
+    let mut changed = first.clone();
+    changed.issuance.as_mut().unwrap().at += 1;
+    assert!(changed.validate_issuance(before_expiry).is_err());
     assert_ne!(first.binding().unwrap(), renamed.binding().unwrap());
     assert_eq!(renamed.identity.id, app.local_state().identity_id);
     node.shutdown().await.unwrap();

@@ -37,7 +37,7 @@ pub(super) fn run(
     };
     let code = Kind::BoardRequest.encode(&request).map_err(invalid_code)?;
     let fingerprint = request.fingerprint()?;
-    let expires_at = chrono::DateTime::from_timestamp(request.device.expires_at()? as i64, 0)
+    let expires_at = chrono::DateTime::from_timestamp(request.expires_at()? as i64, 0)
         .ok_or_else(|| CliError::new(ErrorKind::InvalidInput, "Invalid board request expiry."))?;
     let settings = context.render_settings()?;
     let expiry = settings.dates().timestamp(expires_at, &settings.terminal);

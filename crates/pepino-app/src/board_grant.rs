@@ -87,6 +87,7 @@ async fn board_grants_are_bound_to_the_original_request() {
             secret: Some([87; 32]),
         },
         identity: local.identity_card().unwrap(),
+        issuance: None,
     };
     let grant = BoardGrant {
         recipient: request.device.id,

@@ -16,6 +16,15 @@ pub struct SignedGrant {
 }
 
 impl SignedGrant {
+    pub(crate) fn receipt(&self) -> String {
+        let mut digest = blake3::Hasher::new_derive_key("Pepino accepted board grant v1");
+        digest
+            .update(&self.mac)
+            .update(&self.signature)
+            .update(&self.body);
+        digest.finalize().to_hex().to_string()
+    }
+
     pub fn issue(
         grant: &DeviceGrant,
         request: &DeviceRequest,

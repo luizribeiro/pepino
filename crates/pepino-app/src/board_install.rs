@@ -11,6 +11,8 @@ pub(crate) struct JoinedShare {
     peer_id: pepino_core::DeviceId,
     relay_url: Option<String>,
     pub(crate) binding: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    receipt: Option<String>,
 }
 
 impl LocalState {
@@ -21,15 +23,14 @@ impl LocalState {
         })
     }
 
-    fn install_share(&mut self, grant: &BoardGrant) -> Result<(), AppError> {
+    fn install_share(&mut self, grant: &BoardGrant, receipt: String) -> Result<(), AppError> {
         let id = grant.board.id;
         self.check_invitable(id)?;
-        let request = self
+        if self
             .catalog
             .board_request
             .as_ref()
-            .ok_or_else(|| invalid("grant", "Run ppn board request first"))?;
-        if request.identity.id != self.identity_id
+            .is_none_or(|request| request.identity.id != self.identity_id)
             || grant.recipient != self.device_id
             || grant.owner.id == self.identity_id
         {
@@ -77,8 +78,10 @@ impl LocalState {
                 peer_id: grant.peer.id,
                 relay_url: grant.peer.relay_url.clone(),
                 binding: grant.request.clone(),
+                receipt: Some(receipt),
             },
         );
+        self.catalog.board_request = None;
         Ok(())
     }
 }
@@ -90,11 +93,29 @@ impl App {
     ) -> Result<(BoardId, PeerHint, BoardJoinState), AppError> {
         self.identity_credentials()?;
         let before = self.fresh_local_state().await?;
+        before.check_device_write()?;
+        let receipt = signed.receipt();
+        if let Some((&board, share)) = before
+            .catalog
+            .joined_shares
+            .iter()
+            .find(|(_, share)| share.receipt.as_ref() == Some(&receipt))
+        {
+            return Ok((
+                board,
+                PeerHint {
+                    id: share.peer_id,
+                    relay_url: share.relay_url.clone(),
+                },
+                before.board_join_state(board),
+            ));
+        }
         let request = before
             .catalog
             .board_request
             .as_ref()
             .ok_or_else(|| invalid("grant", "Run ppn board request first"))?;
+        request.member_info()?;
         let grant = BoardGrant::verify(signed, request)?;
         let board = grant.board.id;
         let peer = grant.peer.clone();
@@ -102,6 +123,14 @@ impl App {
         let local = self
             .try_update_local_state(move |local| {
                 local.check_device_write()?;
+                if local
+                    .catalog
+                    .joined_shares
+                    .get(&board)
+                    .is_some_and(|saved| saved.receipt.as_ref() == Some(&receipt))
+                {
+                    return Ok(());
+                }
                 if local
                     .catalog
                     .board_request
@@ -116,7 +145,7 @@ impl App {
                         "this grant does not match the saved request",
                     ));
                 }
-                local.install_share(&grant)
+                local.install_share(&grant, receipt)
             })
             .await?;
         Ok((board, peer, local.board_join_state(board)))
@@ -146,6 +175,7 @@ async fn joining_adds_one_board_to_the_existing_local_catalog() {
             secret: Some([81; 32]),
         },
         identity: card.clone(),
+        issuance: None,
     });
     let mut owner = card;
     owner.id = IdentityId::from_bytes([82; 32]);
@@ -165,13 +195,13 @@ async fn joining_adds_one_board_to_the_existing_local_catalog() {
             relay_url: None,
         },
     };
-    local.install_share(&grant).unwrap();
-    local.install_share(&grant).unwrap();
+    local.install_share(&grant, "grant digest".into()).unwrap();
+    assert!(local.catalog.board_request.is_none());
     assert_eq!(local.boards().len(), 2);
     assert_eq!(local.catalog_board(), private);
     assert_eq!(local.card_exchanges().values().next().unwrap().board, id);
     assert_eq!(local.board_join_state(id), BoardJoinState::WaitingToBeAdded);
     assert!(local.shared_peers().next() == Some(grant.peer.clone()));
     grant.board.id = BoardId::from_bytes([85; 32]);
-    assert!(local.install_share(&grant).is_err());
+    assert!(local.install_share(&grant, "other digest".into()).is_err());
 }
