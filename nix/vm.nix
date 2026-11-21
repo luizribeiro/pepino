@@ -56,6 +56,11 @@ pkgs.testers.runNixOSTest {
     service = "pepino.service"
     deadline = timedelta(seconds=90)
 
+    def boot(machine):
+        machine.start()
+        # The guest shell connection only allows five minutes for boot.
+        machine.wait_for_console_text(r"Started backdoor\.service\.", timeout=timedelta(minutes=10))
+
     def user_ready(machine):
         machine.wait_until_succeeds("systemctl is-active user@1000.service", timeout=deadline)
 
@@ -65,7 +70,7 @@ pkgs.testers.runNixOSTest {
         machine.wait_until_succeeds(f"{ppn} daemon status | grep -q 'Daemon running'", timeout=deadline)
 
     def relay_ready():
-        server.wait_for_unit(service)
+        server.wait_until_succeeds(f"systemctl is-active {service}", timeout=deadline)
         server.wait_until_succeeds(f"{node} daemon status | grep -q 'Daemon running'", timeout=deadline)
 
     def relaying(machine, state):
@@ -87,7 +92,7 @@ pkgs.testers.runNixOSTest {
             timeout=deadline,
         )
 
-    server.start(allow_reboot=True)
+    boot(server)
     relay_ready()
     relay = json.loads(server.succeed(f"{node} relay show --json"))
     address = quote(relay["address"])
@@ -95,13 +100,13 @@ pkgs.testers.runNixOSTest {
     server.fail(f"{node} ls")
     assert json.loads(server.succeed(f"{node} status --json"))["relay"]["max_boards"] == 1
 
-    tablet.start(allow_reboot=True)
+    boot(tablet)
     user_ready(tablet)
     tablet.fail(f"{ada} systemctl --user is-active {service}")
     request = json.loads(tablet.succeed(f"{ppn} device request --name Tablet --json"))
     tablet.shutdown()
 
-    laptop.start(allow_reboot=True)
+    boot(laptop)
     user_ready(laptop)
     laptop.fail(f"{ada} systemctl --user is-active {service}")
     initialized = json.loads(laptop.succeed(f"{ppn} init --name Ada --device Laptop --board Greenhouse --json"))
@@ -128,7 +133,7 @@ pkgs.testers.runNixOSTest {
     status = json.loads(server.succeed(f"{node} status --json"))
     assert status["relay"]["boards_by_device"] == {device: 1}, status
 
-    tablet.start()
+    boot(tablet)
     user_ready(tablet)
     join = f"printf '%s' {quote(grant)} | {ppn} device join - --timeout 60s --json"
     joined = json.loads(tablet.wait_until_succeeds(join, timeout=deadline))
@@ -141,7 +146,7 @@ pkgs.testers.runNixOSTest {
     stored(tablet, second)
     tablet.shutdown()
 
-    laptop.start()
+    boot(laptop)
     ready(laptop)
     laptop.wait_until_succeeds(f"{ppn} ls --json | grep -Fq {quote(second)}", timeout=deadline)
     server.fail(f"grep -arF {quote(first)} /var/lib/pepino")
