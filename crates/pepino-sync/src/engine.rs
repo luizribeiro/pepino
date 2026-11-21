@@ -390,7 +390,14 @@ impl SyncEngine {
         let local = match self.app.register_created_board(id, name).await {
             Ok(local) => local,
             Err(error) => {
-                let _ = handle.close().await;
+                if let Ok(local) = self.app.fresh_local_state().await
+                    && local.boards().iter().any(|board| board.id == id)
+                {
+                    boards.start_board(&local, id, handle)?;
+                    self.nudge();
+                } else {
+                    let _ = handle.close().await;
+                }
                 return Err(error.into());
             }
         };

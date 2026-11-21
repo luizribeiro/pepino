@@ -333,6 +333,38 @@ fn a_read_invitation_is_pending_offline_and_refuses_writes() {
 }
 
 #[test]
+fn a_read_invite_keeps_the_manager_daemon_available() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = dir.path().file_name().unwrap().to_str().unwrap();
+    let owner = host(network, "Ada", "Laptop", "Private work");
+    let reader = host(network, "Ben", "Phone", "Private travel");
+    let writer = host(network, "Cora", "Tablet", "Private errands");
+    let hosts = [&owner, &reader, &writer];
+    let pids = hosts.map(|host| host.json(&["daemon", "status"])["pid"].as_u64().unwrap());
+    owner.run(&["board", "new", "House"]);
+    for (guest, role) in [(&reader, "read"), (&writer, "write")] {
+        let issued = grant(&owner, "House", role, &guest.json(&["board", "request"]));
+        guest.run(&[
+            "board",
+            "join",
+            issued["grant"]["code"].as_str().unwrap(),
+            "--timeout",
+            "60s",
+        ]);
+    }
+    reader.run(&["identity", "rename", "Ben Reader"]);
+    until(
+        || owner.run(&["board", "members", "House"]),
+        |people| people.contains("Ben Reader (read)"),
+        WAIT,
+    );
+    assert_eq!(
+        hosts.map(|host| host.json(&["daemon", "status"])["pid"].as_u64().unwrap()),
+        pids
+    );
+}
+
+#[test]
 fn the_inviter_rejects_an_expired_member_bundle() {
     use data_encoding::BASE32_NOPAD_NOCASE;
     use pepino_app::BoardRequest;

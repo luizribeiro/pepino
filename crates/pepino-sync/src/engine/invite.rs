@@ -77,7 +77,10 @@ impl SyncEngine {
                 board: id,
                 person: admission.invitee.id,
             };
-            Some(self.create_card_exchange(&local, exchange, &member).await?)
+            Some(
+                self.create_card_exchange(&mut workers, &local, exchange, &member)
+                    .await?,
+            )
         } else {
             None
         };
@@ -87,6 +90,7 @@ impl SyncEngine {
 
     async fn create_card_exchange(
         &self,
+        workers: &mut crate::board_workers::BoardWorkers<pepino_node::Node>,
         local: &pepino_app::LocalState,
         exchange: CardExchange,
         member: &pepino_node::MemberInfo,
@@ -100,11 +104,9 @@ impl SyncEngine {
         }
         let handle = self.node.create_board().await?;
         let channel = handle.id();
-        let enroll = handle.add_member(member, pepino_node::Role::Write).await;
-        let closed = handle.close().await;
-        enroll?;
-        closed?;
+        handle.add_member(member, pepino_node::Role::Write).await?;
         self.app.register_card_exchange(channel, exchange).await?;
+        workers.start_card_exchange(handle, channel, exchange)?;
         Ok(channel)
     }
 }

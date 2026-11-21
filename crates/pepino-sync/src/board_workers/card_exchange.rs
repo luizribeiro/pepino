@@ -13,27 +13,37 @@ impl<T: Transport> BoardWorkers<T> {
             if self.handles.contains_key(&channel) || self.stopping.has_changed().is_err() {
                 continue;
             }
-            let mut board = self
+            let board = self
                 .node
                 .open_board_for_store(channel, self.store_instance)
                 .await?;
-            let stream = board.deliveries()?;
-            let board = Arc::new(board);
-            self.handles.insert(channel, Arc::downgrade(&board));
-            let mut stopping = self.stopping.clone();
-            let mut closing = self.closing.clone();
-            let app = self.app.clone();
-            self.workers.spawn(async move {
-                tokio::select! {
-                    _ = stopping.changed() => (),
-                    () = receive(&app, exchange, stream) => (),
-                }
-                let _ = closing.changed().await;
-                let board = Arc::into_inner(board).ok_or(pepino_node::Error::Closed)?;
-                board.close().await?;
-                Ok(())
-            });
+            self.start_card_exchange(board, channel, exchange)?;
         }
+        Ok(())
+    }
+
+    pub(crate) fn start_card_exchange(
+        &mut self,
+        mut board: T::Board,
+        channel: pepino_core::BoardId,
+        exchange: CardExchange,
+    ) -> Result<(), Error> {
+        let stream = board.deliveries()?;
+        let board = Arc::new(board);
+        self.handles.insert(channel, Arc::downgrade(&board));
+        let mut stopping = self.stopping.clone();
+        let mut closing = self.closing.clone();
+        let app = self.app.clone();
+        self.workers.spawn(async move {
+            tokio::select! {
+                _ = stopping.changed() => (),
+                () = receive(&app, exchange, stream) => (),
+            }
+            let _ = closing.changed().await;
+            let board = Arc::into_inner(board).ok_or(pepino_node::Error::Closed)?;
+            board.close().await?;
+            Ok(())
+        });
         Ok(())
     }
 }
