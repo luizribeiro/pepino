@@ -1,4 +1,5 @@
 mod board_cards;
+mod board_membership;
 mod board_workers;
 mod catalog_authority;
 mod discover;

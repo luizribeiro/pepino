@@ -20,7 +20,7 @@ pub(crate) async fn run<T: Transport>(
         let mut poll = tokio::time::interval(poll);
         let mut published = None;
         let mut cards = Default::default();
-        let mut revocations = crate::revoke::Repairs::default();
+        let mut repairs = Repairs::default();
         loop {
             let generation = *nudges.borrow_and_update();
             let mut workers = boards.lock().await;
@@ -28,7 +28,7 @@ pub(crate) async fn run<T: Transport>(
                 &mut workers,
                 &mut published,
                 &mut cards,
-                &mut revocations,
+                &mut repairs,
                 generation,
             )
             .await
@@ -55,6 +55,12 @@ pub(crate) async fn run<T: Transport>(
     Ok(())
 }
 
+#[derive(Default)]
+struct Repairs {
+    revocations: crate::revoke::Repairs,
+    membership: crate::board_membership::Repairs,
+}
+
 struct Publication {
     bytes: Vec<u8>,
     peers: BTreeSet<DeviceId>,
@@ -64,7 +70,7 @@ async fn reconcile<T: Transport>(
     boards: &mut BoardWorkers<T>,
     published: &mut Option<Publication>,
     cards: &mut crate::board_cards::Publications,
-    revocations: &mut crate::revoke::Repairs,
+    repairs: &mut Repairs,
     generation: u64,
 ) -> Result<(), Error> {
     let mut local = reconcile_roster(boards, boards.app.fresh_local_state().await?).await?;
@@ -181,6 +187,10 @@ async fn reconcile<T: Transport>(
     }
 
     crate::board_cards::publish(boards, &local, &node_status, cards).await?;
+    repairs
+        .membership
+        .reconcile(boards, &local, &node_status)
+        .await?;
     let catalog = local.catalog_board();
     if local.device_revocation().is_none()
         && local.devices().len() > 1
@@ -205,7 +215,10 @@ async fn reconcile<T: Transport>(
         *published = Some(Publication { bytes, peers });
     }
     if published.is_some() && local.check_device_write().is_ok() {
-        revocations.reconcile(boards, &local, &node_status).await;
+        repairs
+            .revocations
+            .reconcile(boards, &local, &node_status)
+            .await;
     }
     boards.changes.send_if_modified(|status| {
         let advanced = status.catalog_generation != generation;
