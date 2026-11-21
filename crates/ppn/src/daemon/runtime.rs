@@ -25,7 +25,7 @@ use super::{
     socket::{Socket, lease},
 };
 
-const STARTUP_LIMIT: Duration = Duration::from_secs(8);
+pub(super) const STARTUP_LIMIT: Duration = Duration::from_secs(8);
 
 pub fn run(config: &Config, level: LogLevel) -> Result<(), CliError> {
     let runtime = Builder::new_current_thread()
@@ -51,7 +51,12 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
     } else {
         None
     };
-    let settings = node::settings(config).await?;
+    let relay = pepino_app::is_relay(directory)?;
+    let settings = if relay {
+        node::relay_settings(config)?
+    } else {
+        node::settings(config).await?
+    };
     let _lease = match _lease {
         Some(lock) => lock,
         None => lease(&lock).map_err(socket_error)?,
@@ -62,15 +67,28 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
     prepare_parent(config, &path).map_err(socket_error)?;
     let socket = Socket::bind(path).await.map_err(socket_error)?;
     loop {
-        let outcome = cycle(
-            &socket.listener,
-            &settings,
-            level,
-            started,
-            &mut terminate,
-            &mut interrupt,
-        )
-        .await?;
+        let outcome = if relay {
+            super::relay::cycle(
+                &socket.listener,
+                &settings,
+                config,
+                level,
+                started,
+                &mut terminate,
+                &mut interrupt,
+            )
+            .await?
+        } else {
+            cycle(
+                &socket.listener,
+                &settings,
+                level,
+                started,
+                &mut terminate,
+                &mut interrupt,
+            )
+            .await?
+        };
         if matches!(outcome, End::Stopped) {
             log(level, LogLevel::Info, "daemon stopped");
             return Ok(());
@@ -78,7 +96,11 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         log(
             level,
             LogLevel::Warn,
-            "sync worker failed; restarting the engine and node",
+            if relay {
+                "restarting the relay node"
+            } else {
+                "sync worker failed; restarting the engine and node"
+            },
         );
         tokio::select! {
             _ = terminate.recv() => return Ok(()),
@@ -138,20 +160,20 @@ async fn cycle(
     engine_stop.and(outcome)
 }
 
-fn shutdown_failure(component: &str, error: impl std::fmt::Display) -> CliError {
+pub(super) fn shutdown_failure(component: &str, error: impl std::fmt::Display) -> CliError {
     CliError::new(
         ErrorKind::Failure,
         format!("Could not stop {component}. {error}"),
     )
 }
 
-fn log(configured: LogLevel, level: LogLevel, message: &str) {
+pub(super) fn log(configured: LogLevel, level: LogLevel, message: &str) {
     if configured >= level {
         let _ = writeln!(io::stderr().lock(), "{level:?} {message}");
     }
 }
 
-fn socket_error(error: io::Error) -> CliError {
+pub(super) fn socket_error(error: io::Error) -> CliError {
     let (kind, message) = match error.kind() {
         io::ErrorKind::AddrInUse => (
             ErrorKind::Busy,
@@ -169,7 +191,7 @@ fn socket_error(error: io::Error) -> CliError {
     CliError::new(kind, message)
 }
 
-fn failure(message: &str) -> CliError {
+pub(super) fn failure(message: &str) -> CliError {
     CliError::new(ErrorKind::Failure, message)
 }
 

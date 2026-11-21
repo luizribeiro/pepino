@@ -27,7 +27,36 @@ pub async fn settings(config: &Config) -> Result<NodeSettings, CliError> {
             "The configured credentials do not match the local device.",
         ));
     }
-    let mut settings = NodeSettings::new(credentials, data.join("node.sqlite"));
+    let mut settings = common_settings(config, credentials, "node.sqlite");
+    let local = app.local_state();
+    for peer in local.peer_hint().into_iter().chain(local.shared_peers()) {
+        if let Some(relay_url) = peer.relay_url
+            && !settings
+                .bootstrap_nodes
+                .iter()
+                .any(|entry| entry.device_id == peer.id && entry.relay_url == relay_url)
+        {
+            settings.bootstrap_nodes.push(BootstrapNode {
+                device_id: peer.id,
+                relay_url,
+            });
+        }
+    }
+    Ok(settings)
+}
+
+pub(super) fn relay_settings(config: &Config) -> Result<NodeSettings, CliError> {
+    let keys = pepino_app::relay_credentials(
+        config.data_dir.value.as_path(),
+        config.credentials_file.value.as_path(),
+    )?;
+    let mut settings = common_settings(config, keys, "relay.sqlite");
+    settings.relay_urls.truncate(1);
+    Ok(settings)
+}
+
+fn common_settings(config: &Config, keys: DeviceCredentials, database: &str) -> NodeSettings {
+    let mut settings = NodeSettings::new(keys, config.data_dir.value.as_path().join(database));
     settings.network_name = config.network.value.as_str().to_owned();
     settings.relay_urls = config
         .relay_urls
@@ -44,20 +73,6 @@ pub async fn settings(config: &Config) -> Result<NodeSettings, CliError> {
             relay_url: entry.relay_url.as_url().as_str().to_owned(),
         })
         .collect();
-    let local = app.local_state();
-    for peer in local.peer_hint().into_iter().chain(local.shared_peers()) {
-        if let Some(relay_url) = peer.relay_url
-            && !settings
-                .bootstrap_nodes
-                .iter()
-                .any(|entry| entry.device_id == peer.id && entry.relay_url == relay_url)
-        {
-            settings.bootstrap_nodes.push(BootstrapNode {
-                device_id: peer.id,
-                relay_url,
-            });
-        }
-    }
     settings.mdns = if config.mdns.value {
         MdnsMode::Active
     } else {
@@ -69,7 +84,7 @@ pub async fn settings(config: &Config) -> Result<NodeSettings, CliError> {
         settings.bind_ip_v4 = Some(std::net::Ipv4Addr::LOCALHOST);
         settings.bind_ip_v6 = Some(std::net::Ipv6Addr::LOCALHOST);
     }
-    Ok(settings)
+    settings
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ pub mod node;
 mod operations;
 pub mod process;
 pub mod protocol;
+mod relay;
 pub mod report;
 pub mod runtime;
 pub mod server;

@@ -149,6 +149,8 @@ pub struct DaemonStatus {
     pub pid: u32,
     pub uptime_ms: u64,
     pub network: Network,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay: Option<pepino_node::RelayStatus>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

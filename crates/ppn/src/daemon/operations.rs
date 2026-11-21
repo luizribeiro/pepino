@@ -32,6 +32,7 @@ pub(super) async fn operate(
                 pid: std::process::id(),
                 uptime_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
                 network: snapshot(engine.status()),
+                relay: None,
             },
         },
         Operation::WaitIdle { timeout_ms } => {
