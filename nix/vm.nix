@@ -56,8 +56,11 @@ pkgs.testers.runNixOSTest {
     service = "pepino.service"
     deadline = timedelta(seconds=90)
 
+    def user_ready(machine):
+        machine.wait_until_succeeds("systemctl is-active user@1000.service", timeout=deadline)
+
     def ready(machine):
-        machine.wait_for_unit("user@1000.service")
+        user_ready(machine)
         machine.wait_until_succeeds(f"{ada} systemctl --user is-active {service}", timeout=deadline)
         machine.wait_until_succeeds(f"{ppn} daemon status | grep -q 'Daemon running'", timeout=deadline)
 
@@ -93,13 +96,13 @@ pkgs.testers.runNixOSTest {
     assert json.loads(server.succeed(f"{node} status --json"))["relay"]["max_boards"] == 1
 
     tablet.start(allow_reboot=True)
-    tablet.wait_for_unit("user@1000.service")
+    user_ready(tablet)
     tablet.fail(f"{ada} systemctl --user is-active {service}")
     request = json.loads(tablet.succeed(f"{ppn} device request --name Tablet --json"))
     tablet.shutdown()
 
     laptop.start(allow_reboot=True)
-    laptop.wait_for_unit("user@1000.service")
+    user_ready(laptop)
     laptop.fail(f"{ada} systemctl --user is-active {service}")
     initialized = json.loads(laptop.succeed(f"{ppn} init --name Ada --device Laptop --board Greenhouse --json"))
     device = initialized["device"]["id"]
@@ -126,7 +129,7 @@ pkgs.testers.runNixOSTest {
     assert status["relay"]["boards_by_device"] == {device: 1}, status
 
     tablet.start()
-    tablet.wait_for_unit("user@1000.service")
+    user_ready(tablet)
     join = f"printf '%s' {quote(grant)} | {ppn} device join - --timeout 60s --json"
     joined = json.loads(tablet.wait_until_succeeds(join, timeout=deadline))
     assert joined["joined"], joined
