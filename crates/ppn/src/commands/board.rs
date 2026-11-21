@@ -124,7 +124,8 @@ pub fn run(
     config_path: Option<&Path>,
     allow_start: bool,
 ) -> Result<CommandResult, CliError> {
-    let operation = match args.operation {
+    let using = matches!(&args.operation, Operation::Use { .. });
+    let (client, response, show_selection) = match args.operation {
         Operation::Members { reference } => return members::run(context, reference.as_deref()),
         Operation::Join { input } => return join::run(context, &input.read(context)?, config_path),
         Operation::Request { name } => {
@@ -144,42 +145,34 @@ pub fn run(
                 allow_start,
             );
         }
-        operation => operation,
-    };
-    let mut client = AppClient::open(context)?;
-    let using = matches!(operation, Operation::Use { .. });
-    let (response, show_selection) = match operation {
-        Operation::Request { .. }
-        | Operation::Invite { .. }
-        | Operation::Join { .. }
-        | Operation::Members { .. } => {
-            unreachable!()
-        }
-        Operation::Ls => (client.call(Request::Read(ReadRequest::BoardList))?, true),
-        Operation::Show { reference: board } => (
-            client.call(Request::Read(ReadRequest::BoardShow { board }))?,
+        Operation::Ls => local(context, Request::Read(ReadRequest::BoardList), true)?,
+        Operation::Show { reference: board } => local(
+            context,
+            Request::Read(ReadRequest::BoardShow { board }),
             true,
-        ),
-        Operation::Use { reference: board } => (
-            client.call_unscoped(Request::Write(WriteRequest::BoardUse { board }))?,
+        )?,
+        Operation::Use { reference: board } => local(
+            context,
+            Request::Write(WriteRequest::BoardUse { board }),
             false,
-        ),
+        )?,
         Operation::New { name } => {
+            AppClient::open(context)?;
             let board = create(context, &name, config_path, allow_start)?;
-            client = AppClient::open(context)?;
-            (
-                client
-                    .call_unscoped(Request::Read(ReadRequest::BoardShow { board: Some(board) }))?,
+            local(
+                context,
+                Request::Read(ReadRequest::BoardShow { board: Some(board) }),
                 false,
-            )
+            )?
         }
         Operation::Rename {
             reference: board,
             name,
-        } => (
-            client.call_unscoped(Request::Write(WriteRequest::BoardRename { board, name }))?,
+        } => local(
+            context,
+            Request::Write(WriteRequest::BoardRename { board, name }),
             false,
-        ),
+        )?,
     };
     let selection = show_selection
         .then(|| client.selected_board())
@@ -198,6 +191,20 @@ pub fn run(
         }]);
     }
     Ok(result)
+}
+
+fn local(
+    context: &Context<'_>,
+    request: Request,
+    show_selection: bool,
+) -> Result<(AppClient, Response, bool), CliError> {
+    let mut client = AppClient::open(context)?;
+    let response = if show_selection {
+        client.call(request)?
+    } else {
+        client.call_unscoped(request)?
+    };
+    Ok((client, response, show_selection))
 }
 
 pub(super) fn daemon_network(context: &Context<'_>) -> Result<Option<Network>, CliError> {
