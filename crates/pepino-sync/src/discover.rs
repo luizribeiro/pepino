@@ -59,6 +59,7 @@ pub(crate) async fn run<T: Transport>(
 struct Repairs {
     revocations: crate::revoke::Repairs,
     membership: crate::board_membership::Repairs,
+    routes: crate::reader_routes::Routes,
 }
 
 struct Publication {
@@ -187,6 +188,10 @@ async fn reconcile<T: Transport>(
     }
 
     crate::board_cards::publish(boards, &local, &node_status, cards).await?;
+    repairs
+        .routes
+        .reconcile(boards, &local, &node_status)
+        .await?;
     repairs
         .membership
         .reconcile(boards, &local, &node_status)

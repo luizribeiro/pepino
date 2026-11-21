@@ -8,6 +8,7 @@ mod inbox;
 mod join_progress;
 mod outbox;
 mod publication;
+mod reader_routes;
 mod removal_notice;
 mod retry;
 mod revoke;
