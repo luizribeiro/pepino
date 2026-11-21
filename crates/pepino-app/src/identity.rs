@@ -18,3 +18,5 @@ mod revoke;
 
 #[cfg(test)]
 mod property;
+
+pub(crate) use edit::portable_scope;

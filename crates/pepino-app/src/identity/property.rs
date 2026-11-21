@@ -71,6 +71,7 @@ fn arrival_order_preserves_concurrent_adds_renames_and_rejections() {
         left.record.as_ref().unwrap().devices[&ferrum.device_id()].leave_requested_at,
         Some(at)
     );
+    let mut offline = left.clone();
     append(
         &mut left,
         &titanium,
@@ -84,7 +85,14 @@ fn arrival_order_preserves_concurrent_adds_renames_and_rejections() {
         &ferrum,
         Change::RenameIdentity("Revoked draft".into()),
     );
+    let unconfirmed = DeviceId::from_bytes([62; 32]);
+    append(&mut offline, &ferrum, add(unconfirmed, "Offline tablet"));
+    append(&mut offline, &ferrum, Change::Revoke { device: root, at });
+    left.merge(board, identity, offline.edits.into_values())
+        .unwrap();
     let record = left.record.as_ref().unwrap();
+    assert!(!record.devices.contains_key(&unconfirmed));
+    assert_eq!(record.devices[&root].state, super::RosterState::Active);
     let revocation = record.devices[&ferrum.device_id()]
         .revocation
         .as_ref()
@@ -104,7 +112,7 @@ fn arrival_order_preserves_concurrent_adds_renames_and_rejections() {
         record.display_name.as_str(),
         "Ada Workshop" | "Ada Greenhouse"
     ));
-    assert_eq!(left.rejected_count(), 2);
+    assert_eq!(left.rejected_count(), 4);
     let expected = left.record;
     let edits = left.edits.into_values().collect::<Vec<_>>();
     proptest!(|(order in proptest::collection::vec(any::<u16>(), edits.len()))| {
@@ -115,6 +123,6 @@ fn arrival_order_preserves_concurrent_adds_renames_and_rejections() {
             replica.merge(board, identity, [edit.clone()]).unwrap();
         }
         prop_assert_eq!(&replica.record, &expected);
-        prop_assert_eq!(replica.rejected_count(), 2);
+        prop_assert_eq!(replica.rejected_count(), 4);
     });
 }

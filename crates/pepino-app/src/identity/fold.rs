@@ -21,14 +21,37 @@ pub(super) fn fold(
 ) -> Fold<'_> {
     let mut ordered: Vec<_> = entries.iter().collect();
     ordered.sort_unstable_by_key(|(id, signed)| (signed.edit.generation, **id));
+    let (causal, ancestors) = fold_causal(entries, &ordered, root, &legacy, &BTreeSet::new());
+    let excluded = revocation_exclusions(root, &causal.ordered, &ancestors);
+    if excluded.is_empty() {
+        causal
+    } else {
+        fold_causal(entries, &ordered, root, &legacy, &excluded).0
+    }
+}
+
+struct AcceptedEdit {
+    id: EventId,
+    ancestors: BTreeSet<usize>,
+}
+
+fn fold_causal<'a>(
+    entries: &'a BTreeMap<EventId, SignedEdit>,
+    ordered: &[(&EventId, &'a SignedEdit)],
+    root: DeviceId,
+    legacy: &impl Fn(EventId, &Edit) -> bool,
+    excluded: &BTreeSet<EventId>,
+) -> (Fold<'a>, Vec<AcceptedEdit>) {
     let mut view = Fold::default();
-    let mut accepted: BTreeMap<EventId, BTreeSet<usize>> = BTreeMap::new();
-    for (&id, signed) in ordered {
+    let mut accepted = BTreeMap::<EventId, usize>::new();
+    let mut history = Vec::<AcceptedEdit>::new();
+    for &(&id, signed) in ordered {
         let edit = &signed.edit;
-        if edit
-            .parents
-            .iter()
-            .any(|parent| view.rejected.contains(parent))
+        if excluded.contains(&id)
+            || edit
+                .parents
+                .iter()
+                .any(|parent| view.rejected.contains(parent))
             || edit
                 .parents
                 .iter()
@@ -45,10 +68,13 @@ pub(super) fn fold(
         {
             continue;
         }
-        let mut ancestors: BTreeSet<_> = edit
+        let ancestors: BTreeSet<_> = edit
             .parents
             .iter()
-            .flat_map(|id| accepted[id].iter().copied())
+            .flat_map(|id| {
+                let index = accepted[id];
+                history[index].ancestors.iter().copied().chain([index])
+            })
             .collect();
         let record = Record::fold(ancestors.iter().map(|&index| {
             let ancestor = view.ordered[index];
@@ -96,11 +122,67 @@ pub(super) fn fold(
         }
         view.heads.retain(|head| !edit.parents.contains(head));
         view.heads.insert(id);
-        ancestors.insert(view.ordered.len());
+        accepted.insert(id, view.ordered.len());
         view.ordered.push(edit);
-        accepted.insert(id, ancestors);
+        history.push(AcceptedEdit { id, ancestors });
     }
-    view
+    (view, history)
+}
+
+fn revocation_exclusions(
+    root: DeviceId,
+    edits: &[&Edit],
+    history: &[AcceptedEdit],
+) -> BTreeSet<EventId> {
+    let mut candidates = BTreeMap::<usize, BTreeSet<usize>>::new();
+    for (index, edit) in edits.iter().enumerate() {
+        let Change::Revoke { device, .. } = edit.change else {
+            continue;
+        };
+        let past = &history[index].ancestors;
+        let mut excluded = BTreeSet::new();
+        for (other, edit) in edits.iter().enumerate() {
+            if (edit.writer == device && !past.contains(&other))
+                || !history[other].ancestors.is_disjoint(&excluded)
+            {
+                excluded.insert(other);
+            }
+        }
+        candidates.insert(index, excluded);
+    }
+
+    let mut excluded = BTreeSet::new();
+    while let Some((&first, _)) = candidates.first_key_value() {
+        // A competing revocation may itself be void. Prefer unopposed revocations.
+        // Resolve a cycle in favor of the pinned root, then by generation and edit ID.
+        let chosen = candidates
+            .keys()
+            .copied()
+            .find(|index| candidates.values().all(|blocked| !blocked.contains(index)))
+            .unwrap_or_else(|| {
+                candidates
+                    .keys()
+                    .copied()
+                    .find(|&index| edits[index].writer == root)
+                    .unwrap_or(first)
+            });
+        let Some(mut blocked) = candidates.remove(&chosen) else {
+            break;
+        };
+        blocked.extend(
+            candidates
+                .iter()
+                .filter_map(|(&index, others)| others.contains(&chosen).then_some(index)),
+        );
+        for (index, edit) in history.iter().enumerate() {
+            if !edit.ancestors.is_disjoint(&blocked) {
+                blocked.insert(index);
+            }
+        }
+        candidates.retain(|index, _| !blocked.contains(index));
+        excluded.extend(blocked.into_iter().map(|index| history[index].id));
+    }
+    excluded
 }
 
 pub(super) fn valid_names(change: &Change, legacy: bool) -> bool {

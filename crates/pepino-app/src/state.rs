@@ -275,7 +275,11 @@ impl LocalState {
         for name in local.other_devices.values_mut() {
             *name = crate::write::safe_roster_name(name);
         }
-        local.catalog.identity.sanitize_names();
+        let catalog = local.catalog_board();
+        local
+            .catalog
+            .identity
+            .refresh_projection(catalog, local.identity_id);
         for people in local.catalog.people.values_mut() {
             *people = std::mem::take(people)
                 .into_values()

@@ -39,6 +39,16 @@ impl LocalState {
         keys: &DeviceCredentials,
         change: Change,
     ) -> Result<(), AppError> {
+        if self.catalog.identity.has_revoked_writer(
+            self.catalog_board(),
+            self.identity_id,
+            keys.device_id(),
+        ) {
+            return Err(crate::app::invalid(
+                "device",
+                "this key was revoked and can no longer sign roster edits",
+            ));
+        }
         self.catalog
             .identity
             .append(self.catalog_board(), self.identity_id, keys, change)

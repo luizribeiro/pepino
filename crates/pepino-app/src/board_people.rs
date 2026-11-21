@@ -40,7 +40,8 @@ impl BoardPerson {
     }
 
     pub(crate) fn sanitize_names(&mut self) {
-        self.record.sanitize_names();
+        self.record
+            .refresh_projection(crate::identity::portable_scope(), self.id);
     }
 
     pub fn key(&self) -> crate::PersonKey {
@@ -59,11 +60,13 @@ impl BoardPerson {
         if self.id != card.id || self.record.root != Some(card.root) {
             return Ok(false);
         }
+        match card.verified_record() {
+            Ok(_) => (),
+            Err(AppError::InvalidInput { .. }) => return Ok(false),
+            Err(error) => return Err(error),
+        }
         let mut record = self.record.clone();
         card.merge_into(&mut record)?;
-        if !record.fully_verified(self.id) {
-            return Ok(false);
-        }
         card.merge_bundles(&record, &mut self.bundles);
         self.record = record;
         Ok(true)

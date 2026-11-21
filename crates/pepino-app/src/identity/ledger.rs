@@ -14,6 +14,8 @@ use super::{
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct IdentityCatalog {
+    #[serde(default)]
+    projection_version: u8,
     pub(crate) root: Option<DeviceId>,
     pub(super) edits: BTreeMap<EventId, SignedEdit>,
     invalid: BTreeSet<EventId>,
@@ -31,7 +33,27 @@ impl IdentityCatalog {
         }
     }
 
-    pub(crate) fn sanitize_names(&mut self) {
+    pub(crate) fn refresh_projection(&mut self, board: BoardId, identity: IdentityId) {
+        if self.projection_version == 0 && !self.edits.is_empty() {
+            self.refresh(board, identity);
+        }
+        self.sanitize_names();
+    }
+
+    pub(crate) fn has_revoked_writer(
+        &self,
+        board: BoardId,
+        identity: IdentityId,
+        device: DeviceId,
+    ) -> bool {
+        self.root.is_some_and(|root| {
+            self.fold(root, board, identity).ordered.iter().any(|edit| {
+            matches!(edit.change, Change::Revoke { device: revoked, .. } if revoked == device)
+        })
+        })
+    }
+
+    fn sanitize_names(&mut self) {
         if let Some(record) = &mut self.record {
             record.sanitize_names();
         }
@@ -162,6 +184,7 @@ impl IdentityCatalog {
             let rejected = folded.rejected;
             self.record = record;
             self.rejected = rejected;
+            self.projection_version = 1;
             self.sanitize_names();
         }
     }
