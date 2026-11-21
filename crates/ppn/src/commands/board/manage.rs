@@ -99,7 +99,11 @@ pub(super) fn run(
     let departure = if !confirmed {
         None
     } else if matches!(action, ManagePerson::Leave) && previous.is_some() {
-        previous
+        if local.board_departure_confirmed(board.id) {
+            previous
+        } else {
+            Some(BoardDeparture::Leaving)
+        }
     } else {
         let daemon = super::request::running(context, config_path, allow_start)?;
         match daemon
@@ -128,14 +132,19 @@ pub(super) fn run(
         let name = single_line(&name);
         match action {
             ManagePerson::Role(role) => {
-                format!("{name} will have the {role} role on {board_name}.")
+                format!("{name} has the {role} role on {board_name}.")
             }
             ManagePerson::Remove => {
-                format!("Removal recorded for {name} on {board_name}. {REMOVAL}")
+                format!("Removed {name} from {board_name}. {REMOVAL}")
             }
             ManagePerson::Leave => {
                 let state = departure.unwrap_or(BoardDeparture::Leaving);
-                format!("{board_name} · {state}. {LEAVE}")
+                let pending = if state == BoardDeparture::Leaving {
+                    " · membership change incomplete"
+                } else {
+                    ""
+                };
+                format!("{board_name} · {state}{pending}. {LEAVE}")
             }
         }
     };
@@ -157,6 +166,10 @@ pub(super) fn run(
                 }),
             ),
             ("cancelled".into(), json!(!confirmed)),
+            (
+                "complete".into(),
+                json!(confirmed && departure != Some(BoardDeparture::Leaving)),
+            ),
             ("departure".into(), json!(departure)),
             ("consequences".into(), json!(notice)),
         ]),

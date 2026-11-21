@@ -161,6 +161,9 @@ pub(super) async fn operate(
                 .await
             {
                 Ok(departure) => Outcome::BoardManaged { departure },
+                Err(error @ Error::MembershipIncomplete(_)) => {
+                    Outcome::error("membership_incomplete", &error.to_string())
+                }
                 Err(Error::App(error)) => {
                     let error = crate::error::CliError::from(error);
                     Outcome::error(error.kind().code(), &error.to_string())

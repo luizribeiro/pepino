@@ -898,7 +898,7 @@ fn the_original_inviter_can_leave_after_promoting_a_successor() {
     assert!(
         manager
             .run(&["board", "remove", "Dara", "--board", "House", "--yes"])
-            .contains("Removal recorded")
+            .contains("Removed Dara")
     );
     assert!(
         reader

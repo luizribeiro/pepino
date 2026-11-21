@@ -45,7 +45,17 @@ pub(crate) async fn remove(handle: &BoardHandle, own: DeviceId, device: DeviceId
         return result;
     }
     match handle.remove_member(device, true).await {
-        Ok(()) => Removal::Removed,
+        Ok(()) => match handle.member_states().await {
+            Ok(states)
+                if !matches!(
+                    states.get(&device),
+                    Some(pepino_node::MemberState::Member(_))
+                ) =>
+            {
+                Removal::Removed
+            }
+            _ => Removal::Unavailable,
+        },
         Err(Error::LastManager) => Removal::LastManager,
         Err(Error::NotPermitted) => Removal::ManagerRequired,
         Err(_) => Removal::Unavailable,
@@ -138,7 +148,25 @@ impl Repairs {
                             .get(&board.id)
                             .is_some_and(|signals| signals.joined) =>
                     {
-                        handle.remove_revoked(local.device_id, row.id).await
+                        if local.shared_access(board.id).is_some()
+                            && let Err(error) = crate::reader_routes::handoff(
+                                workers,
+                                local,
+                                board.id,
+                                &*handle,
+                                &[row.id].into(),
+                            )
+                            .await
+                        {
+                            crate::status::record_error(
+                                &workers.changes,
+                                board.id,
+                                error.to_string(),
+                            );
+                            Removal::Unavailable
+                        } else {
+                            handle.remove_revoked(local.device_id, row.id).await
+                        }
                     }
                     _ => Removal::Unavailable,
                 };

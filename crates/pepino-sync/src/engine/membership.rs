@@ -1,10 +1,16 @@
+use std::time::Duration;
+
 use pepino_app::{
     AppError, BoardDeparture, BoardRole, CardExchange, ManagePerson, MembershipAction, PersonKey,
 };
 use pepino_core::BoardId;
 use pepino_node::Role;
 
-use crate::{Error, SyncEngine, TransportBoard, board_membership::publish_change};
+use crate::{
+    Error, SyncEngine, TransportBoard,
+    board_membership::{device_mismatches, publish_change},
+    retry::Retry,
+};
 
 impl SyncEngine {
     pub async fn manage_person(
@@ -17,8 +23,14 @@ impl SyncEngine {
         let mut workers = self.boards.lock().await;
         let local = self.app.fresh_local_state().await?;
         let known = local.resolve_board(&board.to_string(), "board")?;
-        if matches!(action, ManagePerson::Leave) && local.board_departure(board).is_some() {
-            return Ok(local.board_departure(board));
+        if matches!(action, ManagePerson::Leave)
+            && let Some(departure) = local.board_departure(board)
+        {
+            return Ok(Some(if local.board_departure_confirmed(board) {
+                departure
+            } else {
+                BoardDeparture::Leaving
+            }));
         }
         local.check_invitable(board)?;
         let handle = workers
@@ -75,58 +87,84 @@ impl SyncEngine {
             self.create_card_exchange(&mut workers, &local, exchange, &bundle)
                 .await?;
         }
-        if action.affects_managers(&devices, &members)
-            && members.get(&local.device_id) == Some(&Role::Manage)
-        {
-            let network = workers.node.status();
-            crate::reader_routes::Routes::default()
-                .reconcile(&workers, &local, &network)
-                .await?;
-        }
-        match action {
-            ManagePerson::Role(role) => {
-                if !latest.is_some_and(|record| record.change.action.role() == Some(role)) {
-                    publish_change(
-                        &self.app,
-                        &local,
-                        &*handle,
-                        board,
-                        person,
-                        MembershipAction::RoleChanged(role),
-                    )
-                    .await?;
-                }
-            }
-            ManagePerson::Remove => {
-                if !latest.is_some_and(|record| record.change.action.role().is_none()) {
-                    publish_change(
-                        &self.app,
-                        &local,
-                        &*handle,
-                        board,
-                        person,
-                        MembershipAction::Removed,
-                    )
-                    .await?;
-                }
-            }
+        let membership_action = match action {
+            ManagePerson::Role(role) => MembershipAction::RoleChanged(role),
+            ManagePerson::Remove => MembershipAction::Removed,
             ManagePerson::Leave => {
-                if members.get(&local.device_id) == Some(&Role::Manage) {
-                    publish_change(
-                        &self.app,
-                        &local,
-                        &*handle,
-                        board,
-                        person,
-                        MembershipAction::Left,
-                    )
-                    .await?;
-                } else {
+                if members.get(&local.device_id) != Some(&Role::Manage) {
                     self.app.request_board_leave(board).await?;
+                    self.nudge();
+                    return Ok(Some(BoardDeparture::Leaving));
                 }
+                MembershipAction::Left
+            }
+        };
+        let operation = match latest {
+            Some(record) if record.change.action.role() == membership_action.role() => {
+                record.operation
+            }
+            _ => {
+                publish_change(
+                    &self.app,
+                    &local,
+                    &*handle,
+                    board,
+                    person,
+                    membership_action,
+                )
+                .await?
+            }
+        };
+        drop(workers);
+        self.nudge();
+
+        let mut retry = Retry::new();
+        let desired = membership_action.role().map(Into::into);
+        let completion = async {
+            loop {
+                let local = self.app.fresh_local_state().await?;
+                if let Some(record) = local
+                    .membership_history(board)
+                    .find(|record| record.operation == operation)
+                {
+                    if let Some(reason) = record.refusal {
+                        return Err(Error::MembershipIncomplete(reason.to_string()));
+                    }
+                    if local.membership_superseded(board, record) {
+                        return Err(Error::MembershipIncomplete(
+                            "a removal superseded this change".into(),
+                        ));
+                    }
+                }
+                if device_mismatches(&local, board, person, desired, &handle.roles().await?)
+                    .is_empty()
+                {
+                    return Ok(local.board_departure(board));
+                }
+                retry.wait().await;
+            }
+        };
+        match tokio::time::timeout(Duration::from_secs(15), completion).await {
+            Ok(result) => result,
+            Err(_) => {
+                let local = self.app.fresh_local_state().await?;
+                let missing =
+                    device_mismatches(&local, board, person, desired, &handle.roles().await?);
+                let detail = self
+                    .status()
+                    .boards
+                    .get(&board)
+                    .and_then(|status| status.last_error.clone())
+                    .unwrap_or_else(|| {
+                        "some confirmed devices still need a manager or a current member bundle"
+                            .into()
+                    });
+                let devices: Vec<_> = missing.iter().map(ToString::to_string).collect();
+                Err(Error::MembershipIncomplete(format!(
+                    "{detail}. Pending devices: {}",
+                    devices.join(", ")
+                )))
             }
         }
-        self.nudge();
-        Ok(self.app.fresh_local_state().await?.board_departure(board))
     }
 }

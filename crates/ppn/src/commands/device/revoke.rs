@@ -69,6 +69,12 @@ pub(super) fn run(context: &Context<'_>, reference: &str) -> Result<CommandResul
         _ => local
             .boards()
             .iter()
+            .filter(|board| {
+                local.shared_access(board.id).is_none()
+                    || local
+                        .membership_devices(board.id, local.own_person_key())
+                        .contains(&target.id)
+            })
             .cloned()
             .map(|board| BoardRemoval {
                 result: if local.waiting_for_access(board.id) {
@@ -90,11 +96,27 @@ struct Report {
     boards: Vec<BoardRemoval>,
 }
 
+impl Report {
+    fn complete(&self) -> bool {
+        self.confirmed
+            && self
+                .boards
+                .iter()
+                .all(|board| board.result == Removal::Removed)
+    }
+}
+
 impl Render for Report {
     fn human(&self, _: &Terminal) -> String {
-        let mut text = if self.confirmed {
+        let mut text = if self.complete() {
             format!(
                 "Revoked {} ({}).",
+                self.name,
+                short_id(&self.device.to_string())
+            )
+        } else if self.confirmed {
+            format!(
+                "Revocation recorded for {} ({}). Transport removal incomplete.",
                 self.name,
                 short_id(&self.device.to_string())
             )
@@ -134,6 +156,7 @@ impl Render for Report {
             ("device_id".into(), json!(self.device)),
             ("name".into(), json!(self.name)),
             ("confirmed".into(), json!(self.confirmed)),
+            ("complete".into(), json!(self.complete())),
             ("boards".into(), json!(self.boards)),
         ])
     }
