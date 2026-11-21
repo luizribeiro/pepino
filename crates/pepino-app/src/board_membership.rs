@@ -69,10 +69,186 @@ impl LocalState {
     }
 }
 
+pub const MUTUAL_REMOVAL_RISK: &str = "Concurrent mutual removal or demotion by managers can leave the board without a manager and permanently destroy access.";
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagePerson {
+    Role(BoardRole),
+    Remove,
+    Leave,
+}
+
+use crate::{AppError, BoardRole};
+use pepino_node::Role::Manage;
+
+impl ManagePerson {
+    pub fn check(
+        self,
+        local: &LocalState,
+        board: BoardId,
+        target: PersonKey,
+        devices: &BTreeSet<DeviceId>,
+        members: &BTreeMap<DeviceId, Role>,
+        accept_risk: bool,
+    ) -> Result<(), AppError> {
+        local.check_device_write()?;
+        local.check_invitable(board)?;
+        let deny = |reason: &str| AppError::PermissionDenied {
+            path: "board membership".into(),
+            reason: reason.into(),
+        };
+        if let Some(departure) = local.board_departure(board) {
+            return Err(deny(&format!("your board membership is {departure}")));
+        }
+        let own = target == local.own_person_key();
+        let requesting_leave = matches!(self, Self::Leave);
+        if requesting_leave && !own {
+            return Err(deny("a leave request must target your own identity"));
+        }
+        let current = members.get(&local.device_id).copied();
+        let declared = local
+            .latest_membership(board, local.own_person_key())
+            .and_then(|record| record.change.action.role())
+            .map(Role::from);
+        let current_level = current.map_or(0, level);
+        let person_level = declared.map_or(current_level, level).min(current_level);
+        if own
+            && let Self::Role(role) = self
+            && level(role.into()) > person_level
+        {
+            return Err(deny("you cannot raise your own board role"));
+        }
+        if !requesting_leave && person_level < level(Manage) {
+            return Err(deny("this device needs the manage role"));
+        }
+        if requesting_leave && current.is_none() {
+            return Err(deny(
+                "this device needs access to the board to request leave",
+            ));
+        }
+        if self.affects_managers(devices, members)
+            && !members
+                .iter()
+                .any(|(device, role)| *role == Manage && !devices.contains(device))
+        {
+            return Err(deny(
+                "this change would leave the board with no manager. Promote another person first",
+            ));
+        }
+        if !accept_risk && self.requires_risk_ack(local, board, target, devices, members) {
+            return Err(deny(MUTUAL_REMOVAL_RISK));
+        }
+        Ok(())
+    }
+
+    pub fn requires_risk_ack(
+        self,
+        local: &LocalState,
+        board: BoardId,
+        target: PersonKey,
+        devices: &BTreeSet<DeviceId>,
+        members: &BTreeMap<DeviceId, Role>,
+    ) -> bool {
+        target != local.own_person_key()
+            && !matches!(self, Self::Role(BoardRole::Manage))
+            && (self.affects_managers(devices, members)
+                || local
+                    .latest_membership(board, target)
+                    .is_some_and(|record| record.change.action.role() == Some(BoardRole::Manage)))
+    }
+
+    pub fn affects_managers(
+        self,
+        devices: &BTreeSet<DeviceId>,
+        members: &BTreeMap<DeviceId, Role>,
+    ) -> bool {
+        !matches!(self, Self::Role(BoardRole::Manage))
+            && members
+                .iter()
+                .any(|(device, role)| *role == Manage && devices.contains(device))
+    }
+}
+
+fn level(role: Role) -> u8 {
+    match role {
+        Role::Read => 1,
+        Role::Write => 2,
+        Manage => 3,
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[tokio::test]
+    async fn management_guards_apply_to_every_device_of_a_person() {
+        let directory = tempfile::tempdir().unwrap();
+        let app = crate::write::fixture::open(directory.path(), 0)
+            .await
+            .unwrap();
+        let local = app.local_state();
+        let board = BoardId::from_bytes([64; 32]);
+        let laptop = local.device_id;
+        let phone = DeviceId::from_bytes([65; 32]);
+        let tablet = DeviceId::from_bytes([66; 32]);
+        let other_manager = DeviceId::from_bytes([67; 32]);
+        let me = local.own_person_key();
+        let other = (pepino_core::IdentityId::from_bytes([68; 32]), tablet);
+        let mine = [phone, laptop].into();
+        let theirs = [tablet, other_manager].into();
+        let mut memberships = [(laptop, Manage), (phone, Manage), (tablet, Role::Read)].into();
+        for action in [
+            ManagePerson::Leave,
+            ManagePerson::Remove,
+            ManagePerson::Role(BoardRole::Read),
+        ] {
+            let error = action
+                .check(local, board, me, &mine, &memberships, true)
+                .unwrap_err();
+            assert!(error.to_string().contains("no manager"));
+        }
+        memberships.insert(other_manager, Manage);
+        assert!(
+            ManagePerson::Leave
+                .check(local, board, me, &mine, &memberships, false)
+                .is_ok()
+        );
+        for action in [ManagePerson::Remove, ManagePerson::Role(BoardRole::Write)] {
+            let error = action
+                .check(local, board, other, &theirs, &memberships, false)
+                .unwrap_err();
+            assert!(error.to_string().contains("mutual"));
+            assert!(
+                action
+                    .check(local, board, other, &theirs, &memberships, true)
+                    .is_ok()
+            );
+        }
+        memberships.insert(laptop, Role::Read);
+        assert!(
+            ManagePerson::Role(BoardRole::Manage)
+                .check(local, board, me, &mine, &memberships, true)
+                .unwrap_err()
+                .to_string()
+                .contains("raise your own")
+        );
+        assert!(
+            ManagePerson::Remove
+                .check(local, board, other, &theirs, &memberships, true)
+                .unwrap_err()
+                .to_string()
+                .contains("needs the manage role")
+        );
+        assert!(
+            ManagePerson::Leave
+                .check(local, local.catalog_board(), me, &mine, &memberships, true)
+                .is_err()
+        );
+    }
 
     #[tokio::test]
     async fn competing_manager_plans_repair_reordered_enrollments_and_removals() {
