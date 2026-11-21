@@ -36,6 +36,13 @@ pub trait TransportBoard: Send + Sync + 'static {
         None
     }
 
+    fn operation_role(
+        &self,
+        _operation: EventId,
+    ) -> impl Future<Output = Result<Option<Role>, Error>> + Send {
+        async { Ok(None) }
+    }
+
     fn manages(&self, _device: DeviceId) -> impl Future<Output = bool> + Send {
         async { false }
     }
@@ -147,6 +154,10 @@ impl TransportBoard for BoardHandle {
 
     fn membership_events(&self) -> Option<pepino_node::MembershipEvents> {
         Some(BoardHandle::membership_events(self))
+    }
+
+    async fn operation_role(&self, operation: EventId) -> Result<Option<Role>, Error> {
+        BoardHandle::operation_role(self, operation).await
     }
 
     async fn manages(&self, device: DeviceId) -> bool {
