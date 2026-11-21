@@ -21,6 +21,8 @@ pub enum SyncStoreError {
     Lock(#[from] AppError),
     #[error(transparent)]
     Store(#[from] StoreError),
+    #[error("board sync is paused on this device")]
+    BoardInactive,
 }
 
 pub struct App {
@@ -187,6 +189,13 @@ impl App {
         signer: DeviceId,
     ) -> Result<AppendOutcome, SyncStoreError> {
         let _guard = lock(&self.directory, self.lock_timeout).await?;
+        let local = self.fresh_local_state().await?;
+        if local.device_leave_requested_at().is_some()
+            || local.catalog.forgotten_boards.contains(&board)
+            || (local.board_departure(board).is_some() && !local.needs_readmission_replay(board))
+        {
+            return Err(SyncStoreError::BoardInactive);
+        }
         Ok(self.store.append(board, bytes, Some(signer)).await?)
     }
 
@@ -198,6 +207,15 @@ impl App {
         bytes: &[u8],
     ) -> Result<(), SyncStoreError> {
         let _guard = lock(&self.directory, self.lock_timeout).await?;
+        if self
+            .fresh_local_state()
+            .await?
+            .catalog
+            .forgotten_boards
+            .contains(&board)
+        {
+            return Ok(());
+        }
         Ok(self.store.record_undecodable(board, signer, bytes).await?)
     }
 
@@ -221,10 +239,21 @@ impl App {
         node_instance: Option<[u8; 16]>,
     ) -> Result<(), SyncStoreError> {
         let _guard = lock(&self.directory, self.lock_timeout).await?;
-        Ok(self
+        let saved = self
             .store
             .mark_published_for(board, event, operation, node_instance)
-            .await?)
+            .await;
+        if saved.is_err()
+            && self
+                .fresh_local_state()
+                .await?
+                .catalog
+                .forgotten_boards
+                .contains(&board)
+        {
+            return Ok(());
+        }
+        Ok(saved?)
     }
 
     pub async fn handle(&mut self, request: Request, now: u64) -> Result<Response, AppError> {

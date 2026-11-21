@@ -58,6 +58,25 @@ pub(crate) struct CatalogState {
 }
 
 impl CatalogState {
+    pub(crate) fn forget_board(&mut self, board: BoardId) {
+        self.forgotten_boards.insert(board);
+        self.revisions.remove(&board);
+        self.shared.remove(&board);
+        self.people.remove(&board);
+        self.pending_cards.remove(&board);
+        self.rejected_cards.remove(&board);
+        self.dropped_cards.remove(&board);
+        self.card_exchanges.retain(|_, route| route.board != board);
+        self.joined_shares.remove(&board);
+        self.membership.remove(&board);
+        self.board_leaves.remove(&board);
+        self.observed_board_removals.remove(&board);
+        self.joins.remove(&board);
+        self.created_here.remove(&board);
+        self.observed_members.remove(&board);
+        self.readmission_replays.remove(&board);
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self == &Self::default()
     }

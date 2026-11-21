@@ -1,3 +1,4 @@
+mod forget;
 mod history;
 mod leave;
 

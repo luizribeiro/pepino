@@ -29,7 +29,10 @@ impl App {
             return Ok(());
         }
         self.update_local(move |local| {
-            local.catalog.observed_members.extend(members);
+            let observed = members
+                .into_iter()
+                .filter(|(board, _)| !local.catalog.forgotten_boards.contains(board));
+            local.catalog.observed_members.extend(observed);
             for (id, time) in last_seen {
                 let time = chrono::DateTime::<chrono::Utc>::from(time).timestamp_millis();
                 if local.knows_roster_device(id) {
