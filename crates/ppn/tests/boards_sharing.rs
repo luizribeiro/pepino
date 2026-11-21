@@ -768,6 +768,13 @@ fn a_reader_links_a_device_and_both_follow_person_roles_and_departure() {
         1,
         "confirmation_required",
     );
+    let busy = linked.output(&["board", "forget", "House", "--yes", "--json"]);
+    assert!(!busy.status.success());
+    assert!(
+        String::from_utf8_lossy(&busy.stderr).contains("Stop the daemon")
+            || String::from_utf8_lossy(&busy.stdout).contains("Stop the daemon")
+    );
+    linked.stop();
     assert_eq!(
         linked.json(&["board", "forget", "House", "--yes"])["forgotten"],
         true
@@ -900,6 +907,7 @@ fn the_original_inviter_can_leave_after_promoting_a_successor() {
             .run(&["board", "remove", "Dara", "--board", "House", "--yes"])
             .contains("Removed Dara")
     );
+    reader.stop();
     assert!(
         reader
             .run(&["board", "forget", "House", "--yes"])

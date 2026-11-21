@@ -1,17 +1,14 @@
 use pepino_core::BoardId;
 
 use crate::{
-    App, AppError, BoardDeparture, LocalState,
+    App, AppError, LocalState,
     app::{lock, store_error, worker},
 };
 
 impl LocalState {
     pub fn check_can_forget(&self, board: BoardId) -> Result<(), AppError> {
         self.check_invitable(board)?;
-        if !matches!(
-            self.board_departure(board),
-            Some(BoardDeparture::Left | BoardDeparture::Removed)
-        ) {
+        if !self.board_departure_confirmed(board) {
             return Err(AppError::PermissionDenied {
                 path: "board".into(),
                 reason: "leave the board before forgetting its local history".into(),
@@ -42,4 +39,19 @@ impl App {
         })
         .await?
     }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn a_board_ejection_does_not_establish_person_departure() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::init(dir.path(), 0).await.unwrap();
+    let board = BoardId::from_bytes([82; 32]);
+    app.register_created_board(board, "Greenhouse")
+        .await
+        .unwrap();
+    app.observe_board_removal(board, true).await.unwrap();
+    let local = app.fresh_local_state().await.unwrap();
+    assert_eq!(local.board_departure(board), None);
+    assert!(local.check_can_forget(board).is_err());
 }

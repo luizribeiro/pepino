@@ -81,18 +81,9 @@ impl LocalState {
                 _ => (),
             }
         }
-        let requested = self
-            .board_leave_requests(board)
-            .any(|request| request.leave.person == self.own_person_key());
-        match (
-            self.catalog.observed_board_removals.contains(&board),
-            requested,
-        ) {
-            (true, true) => Some(BoardDeparture::Left),
-            (true, false) => Some(BoardDeparture::Removed),
-            (false, true) => Some(BoardDeparture::Leaving),
-            (false, false) => None,
-        }
+        self.board_leave_requests(board)
+            .any(|request| request.leave.person == self.own_person_key())
+            .then_some(BoardDeparture::Leaving)
     }
 
     pub fn board_departure_confirmed(&self, board: BoardId) -> bool {

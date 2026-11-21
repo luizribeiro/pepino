@@ -71,12 +71,13 @@ impl LocalState {
 
     pub fn waiting_for_access(&self, board: BoardId) -> bool {
         self.shared_access(board).is_some_and(|access| {
-            access.admitted != self.device_id
-                && !self
-                    .catalog
-                    .observed_members
-                    .get(&board)
-                    .is_some_and(|members| members.contains(&self.device_id))
+            self.catalog.observed_board_removals.contains(&board)
+                || (access.admitted != self.device_id
+                    && !self
+                        .catalog
+                        .observed_members
+                        .get(&board)
+                        .is_some_and(|members| members.contains(&self.device_id)))
         })
     }
 

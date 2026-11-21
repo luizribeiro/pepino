@@ -185,6 +185,20 @@ pub(super) fn forget(context: &Context<'_>, reference: &str) -> Result<CommandRe
         single_line(&board.name)
     ))?;
     if confirmed {
+        let directory = &context.config()?.config.data_dir.value;
+        let _lease = ppn::daemon::socket::lease(&directory.as_path().join("daemon.lock")).map_err(
+            |error| {
+                if error.kind() == std::io::ErrorKind::AddrInUse {
+                    CliError::new(
+                        ErrorKind::Busy,
+                        "Stop the daemon before forgetting a board.",
+                    )
+                    .with_hint("Run ppn daemon stop, then retry board forget.")
+                } else {
+                    unreachable(error)
+                }
+            },
+        )?;
         app.forget_board(board.id)?;
     }
     Ok(CommandResult::document(ResultDocument {
