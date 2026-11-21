@@ -587,3 +587,139 @@ async fn competing_manager_plans_repair_reordered_enrollments_and_removals() {
     .unwrap();
     tablet.shutdown().await.unwrap();
 }
+
+#[cfg(test)]
+#[test]
+fn private_and_board_rosters_agree_on_concurrent_device_retirement() {
+    use super::edit::Change;
+    use crate::{BoardPerson, DeviceMembershipChange, reconcile_person};
+    use pepino_node::{DeviceCredentials, Role};
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = DeviceCredentials::load_or_create(dir.path().join("laptop")).unwrap();
+    let tablet = DeviceCredentials::load_or_create(dir.path().join("tablet")).unwrap();
+    let phone = DeviceCredentials::load_or_create(dir.path().join("phone")).unwrap();
+    let anchor = root.device_id();
+    let identity = IdentityId::from_bytes([60; 32]);
+    let origin = portable_scope();
+    let mut base = IdentityCatalog::with_root(anchor);
+    base.append(
+        origin,
+        identity,
+        &root,
+        Change::Initialize {
+            display_name: "Ada Gardener".into(),
+            device_name: "Laptop".into(),
+            added_ms: None,
+        },
+    )
+    .unwrap();
+    for (keys, name) in [(&tablet, "Greenhouse tablet"), (&phone, "Garden phone")] {
+        base.append(
+            origin,
+            identity,
+            &root,
+            Change::Add {
+                device: keys.device_id(),
+                name: name.into(),
+                added_ms: None,
+            },
+        )
+        .unwrap();
+        base.append(
+            origin,
+            identity,
+            keys,
+            Change::ConfirmOwnership { root: anchor },
+        )
+        .unwrap();
+    }
+
+    for (first, second) in [(&tablet, &phone), (&root, &tablet), (&tablet, &root)] {
+        let mut first_view = base.clone();
+        let mut second_view = base.clone();
+        let at = chrono::DateTime::from_timestamp(1795145000, 0).unwrap();
+        first_view
+            .append(
+                origin,
+                identity,
+                first,
+                Change::RenameDevice(first.device_id(), "Work device".into()),
+            )
+            .unwrap();
+        first_view
+            .append(
+                origin,
+                identity,
+                first,
+                Change::Revoke {
+                    device: second.device_id(),
+                    at,
+                },
+            )
+            .unwrap();
+        second_view
+            .append(
+                origin,
+                identity,
+                second,
+                Change::Revoke {
+                    device: first.device_id(),
+                    at,
+                },
+            )
+            .unwrap();
+        let card = |record| IdentityCard::from_ledger(identity, record, anchor);
+
+        let mut private = first_view.clone();
+        private
+            .merge(origin, identity, second_view.edits().cloned())
+            .unwrap();
+        let mut reversed = second_view.clone();
+        reversed
+            .merge(origin, identity, first_view.edits().cloned())
+            .unwrap();
+        assert_eq!(private, reversed);
+
+        let mut board = BoardPerson::introduced(&card(&base), anchor, None).unwrap();
+        assert!(board.merge(&card(&first_view)).unwrap());
+        assert!(board.merge(&card(&second_view)).unwrap());
+        assert!(board.devices().eq(private.devices()));
+        assert!(
+            board
+                .card()
+                .verified_record()
+                .unwrap()
+                .devices()
+                .eq(private.devices())
+        );
+        let devices = [anchor, tablet.device_id(), phone.device_id()].into();
+        let enrolled = [
+            (anchor, Role::Write),
+            (tablet.device_id(), Role::Write),
+            (phone.device_id(), Role::Write),
+        ]
+        .into();
+        assert_eq!(
+            reconcile_person(&board, &devices, &enrolled, Some(Role::Write)),
+            private
+                .devices()
+                .filter(|row| row.state == RosterState::Revoked)
+                .map(|row| DeviceMembershipChange::Remove(row.id))
+                .collect::<Vec<_>>(),
+        );
+
+        for keys in [first, second] {
+            let row = private.device(keys.device_id()).unwrap();
+            if keys.device_id() == anchor {
+                assert_eq!(row.state, RosterState::Active);
+            } else {
+                assert_eq!(row.state, RosterState::Revoked);
+                assert_eq!(
+                    row.revocation.as_ref().unwrap().mutual,
+                    first.device_id() != anchor && second.device_id() != anchor
+                );
+            }
+        }
+    }
+}

@@ -34,7 +34,7 @@ impl IdentityCatalog {
     }
 
     pub(crate) fn refresh_projection(&mut self, board: BoardId, identity: IdentityId) {
-        if self.projection_version == 0 && !self.edits.is_empty() {
+        if self.projection_version < 2 && !self.edits.is_empty() {
             self.refresh(board, identity);
         }
         self.sanitize_names();
@@ -47,9 +47,9 @@ impl IdentityCatalog {
         device: DeviceId,
     ) -> bool {
         self.root.is_some_and(|root| {
-            self.fold(root, board, identity).ordered.iter().any(|edit| {
-            matches!(edit.change, Change::Revoke { device: revoked, .. } if revoked == device)
-        })
+            self.fold(root, board, identity)
+                .revoked_writers
+                .contains(&device)
         })
     }
 
@@ -128,13 +128,21 @@ impl IdentityCatalog {
 
     pub(crate) fn portable_edits(&self, identity: IdentityId) -> Vec<SignedEdit> {
         self.root.map_or_else(Vec::new, |root| {
-            self.fold(root, portable_scope(), identity)
+            let folded = self.fold(root, portable_scope(), identity);
+            let portable_id = |edit: &Edit| {
+                edit.digest(portable_scope(), identity)
+                    .ok()
+                    .map(EventId::from_bytes)
+            };
+            folded
                 .ordered
                 .into_iter()
-                .filter_map(|edit| {
-                    let id = EventId::from_bytes(edit.digest(portable_scope(), identity).ok()?);
-                    self.edits.get(&id).cloned()
-                })
+                .filter_map(|edit| self.edits.get(&portable_id(edit)?))
+                .chain(folded.evidence.iter().filter_map(|id| {
+                    let signed = self.edits.get(id)?;
+                    (portable_id(&signed.edit) == Some(*id)).then_some(signed)
+                }))
+                .cloned()
                 .collect()
         })
     }
@@ -157,10 +165,11 @@ impl IdentityCatalog {
     }
 
     pub(crate) fn fully_verified(&self, identity: IdentityId) -> bool {
-        self.rejected_count() == 0
+        self.invalid.is_empty()
             && self.record.is_some()
             && self.root.is_some_and(|root| {
-                self.fold(root, portable_scope(), identity).ordered.len() == self.edits.len()
+                let folded = self.fold(root, portable_scope(), identity);
+                folded.ordered.len() + folded.evidence.len() == self.edits.len()
             })
     }
 
@@ -180,17 +189,12 @@ impl IdentityCatalog {
 
     pub(super) fn refresh(&mut self, board: BoardId, identity: IdentityId) {
         if let Some(root) = self.root {
-            let folded = self.fold(root, board, identity);
-            let record = Record::fold(
-                folded
-                    .ordered
-                    .into_iter()
-                    .map(|edit| (&edit.change, edit.writer)),
-            );
-            let rejected = folded.rejected;
+            let Fold {
+                record, rejected, ..
+            } = self.fold(root, board, identity);
             self.record = record;
             self.rejected = rejected;
-            self.projection_version = 1;
+            self.projection_version = 2;
             self.sanitize_names();
         }
     }

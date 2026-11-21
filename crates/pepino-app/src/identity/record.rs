@@ -17,6 +17,8 @@ pub struct Revocation {
     #[serde(with = "wire_id")]
     pub by: DeviceId,
     pub at: chrono::DateTime<chrono::Utc>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mutual: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -79,6 +81,14 @@ impl Record {
             .count()
     }
 
+    pub(super) fn revoke(&mut self, device: DeviceId, revocation: Revocation) {
+        if let Some(row) = self.devices.get_mut(&device) {
+            row.state = RosterState::Revoked;
+            row.leave_requested_at = None;
+            row.revocation = Some(revocation);
+        }
+    }
+
     pub(super) fn fold<'a>(
         edits: impl IntoIterator<Item = (&'a Change, DeviceId)>,
     ) -> Option<Self> {
@@ -127,17 +137,14 @@ impl Record {
                     }
                 }
                 Change::Revoke { device, at } => {
-                    if current.active_count() > 1
-                        && let Some(row) = current.devices.get_mut(device)
-                        && row.state == RosterState::Active
-                    {
-                        row.state = RosterState::Revoked;
-                        row.leave_requested_at = None;
-                        row.revocation = Some(Revocation {
+                    current.revoke(
+                        *device,
+                        Revocation {
                             by: writer,
                             at: *at,
-                        });
-                    }
+                            mutual: false,
+                        },
+                    );
                 }
                 Change::RenameIdentity(name) => current.display_name.clone_from(name),
                 Change::RenameDevice(device, name) => {

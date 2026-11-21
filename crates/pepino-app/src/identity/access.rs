@@ -69,7 +69,11 @@ impl App {
             local
                 .catalog
                 .observed_catalog_removal
-                .get_or_insert(Revocation { by, at });
+                .get_or_insert(Revocation {
+                    by,
+                    at,
+                    mutual: false,
+                });
         })
         .await
     }

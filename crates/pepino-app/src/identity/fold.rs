@@ -4,7 +4,7 @@ use pepino_core::{DeviceId, EventId};
 
 use super::{
     edit::{Change, Edit, SignedEdit},
-    record::{Record, RosterState},
+    record::{Record, Revocation, RosterState},
 };
 
 #[derive(Default)]
@@ -12,6 +12,9 @@ pub(super) struct Fold<'a> {
     pub(super) ordered: Vec<&'a Edit>,
     pub(super) heads: BTreeSet<EventId>,
     pub(super) rejected: BTreeSet<EventId>,
+    pub(super) evidence: BTreeSet<EventId>,
+    pub(super) revoked_writers: BTreeSet<DeviceId>,
+    pub(super) record: Option<Record>,
 }
 
 pub(super) fn fold(
@@ -21,13 +24,40 @@ pub(super) fn fold(
 ) -> Fold<'_> {
     let mut ordered: Vec<_> = entries.iter().collect();
     ordered.sort_unstable_by_key(|(id, signed)| (signed.edit.generation, **id));
-    let (causal, ancestors) = fold_causal(entries, &ordered, root, &legacy, &BTreeSet::new());
-    let excluded = revocation_exclusions(root, &causal.ordered, &ancestors);
-    if excluded.is_empty() {
-        causal
-    } else {
-        fold_causal(entries, &ordered, root, &legacy, &excluded).0
+    let (mut causal, history) = fold_causal(entries, &ordered, root, &legacy);
+    let indexes: Vec<_> = (0..history.len()).collect();
+    let projection = project(root, &causal.ordered, &history, &indexes);
+    causal.record = projection.record(&causal.ordered, &history, &indexes);
+    for &index in &projection.revocations {
+        if let Change::Revoke { device, .. } = causal.ordered[index].change {
+            causal.revoked_writers.insert(device);
+        }
+        causal.evidence.extend(
+            history[index]
+                .ancestors
+                .iter()
+                .chain([&index])
+                .filter(|ancestor| projection.excluded.contains(ancestor))
+                .map(|&ancestor| history[ancestor].id),
+        );
     }
+    causal.heads.clear();
+    causal.ordered = causal
+        .ordered
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, edit)| {
+            let id = history[index].id;
+            if projection.excluded.contains(&index) {
+                causal.rejected.insert(id);
+                return None;
+            }
+            causal.heads.retain(|head| !edit.parents.contains(head));
+            causal.heads.insert(id);
+            Some(edit)
+        })
+        .collect();
+    causal
 }
 
 struct AcceptedEdit {
@@ -40,18 +70,16 @@ fn fold_causal<'a>(
     ordered: &[(&EventId, &'a SignedEdit)],
     root: DeviceId,
     legacy: &impl Fn(EventId, &Edit) -> bool,
-    excluded: &BTreeSet<EventId>,
 ) -> (Fold<'a>, Vec<AcceptedEdit>) {
     let mut view = Fold::default();
     let mut accepted = BTreeMap::<EventId, usize>::new();
     let mut history = Vec::<AcceptedEdit>::new();
     for &(&id, signed) in ordered {
         let edit = &signed.edit;
-        if excluded.contains(&id)
-            || edit
-                .parents
-                .iter()
-                .any(|parent| view.rejected.contains(parent))
+        if edit
+            .parents
+            .iter()
+            .any(|parent| view.rejected.contains(parent))
             || edit
                 .parents
                 .iter()
@@ -76,10 +104,13 @@ fn fold_causal<'a>(
                 history[index].ancestors.iter().copied().chain([index])
             })
             .collect();
-        let record = Record::fold(ancestors.iter().map(|&index| {
-            let ancestor = view.ordered[index];
-            (&ancestor.change, ancestor.writer)
-        }));
+        let indexes: Vec<_> = ancestors.iter().copied().collect();
+        let projection = project(root, &view.ordered, &history, &indexes);
+        if !projection.excluded.is_empty() {
+            view.rejected.insert(id);
+            continue;
+        }
+        let record = projection.record(&view.ordered, &history, &indexes);
         let active = |id| {
             record
                 .as_ref()
@@ -123,8 +154,6 @@ fn fold_causal<'a>(
             view.rejected.insert(id);
             continue;
         }
-        view.heads.retain(|head| !edit.parents.contains(head));
-        view.heads.insert(id);
         accepted.insert(id, view.ordered.len());
         view.ordered.push(edit);
         history.push(AcceptedEdit { id, ancestors });
@@ -132,60 +161,177 @@ fn fold_causal<'a>(
     (view, history)
 }
 
-fn revocation_exclusions(
+#[derive(Default)]
+struct Projection {
+    revocations: BTreeSet<usize>,
+    excluded: BTreeSet<usize>,
+}
+
+impl Projection {
+    fn record(
+        &self,
+        edits: &[&Edit],
+        history: &[AcceptedEdit],
+        indexes: &[usize],
+    ) -> Option<Record> {
+        let mut record = Record::fold(
+            indexes
+                .iter()
+                .filter(|index| !self.excluded.contains(index))
+                .map(|&index| (&edits[index].change, edits[index].writer)),
+        )?;
+        let current: Vec<_> = self.revocations.iter().copied().filter(|&index| {
+            let Change::Revoke { device, .. } = edits[index].change else {
+                return false;
+            };
+            !indexes.iter().any(|other| {
+                !self.excluded.contains(other)
+                    && history[*other].ancestors.contains(&index)
+                    && matches!(edits[*other].change, Change::Add { device: added, .. } if added == device)
+            })
+        }).collect();
+        let mut revocations = BTreeMap::<DeviceId, Revocation>::new();
+        for &index in &current {
+            let edit = edits[index];
+            let Change::Revoke { device, at } = edit.change else {
+                continue;
+            };
+            let mutual = current.iter().copied().any(|other| {
+                edits[other].writer == device
+                    && !history[index].ancestors.contains(&other)
+                    && !history[other].ancestors.contains(&index)
+                    && matches!(edits[other].change, Change::Revoke { device: target, .. } if target == edit.writer)
+            });
+            let next = Revocation {
+                by: edit.writer,
+                at,
+                mutual,
+            };
+            let existing = revocations.entry(device).or_insert_with(|| next.clone());
+            if (!next.mutual, next.by, next.at) < (!existing.mutual, existing.by, existing.at) {
+                *existing = next;
+            }
+        }
+        for (device, revocation) in revocations {
+            record.revoke(device, revocation);
+        }
+        Some(record)
+    }
+}
+
+fn project(
     root: DeviceId,
     edits: &[&Edit],
     history: &[AcceptedEdit],
-) -> BTreeSet<EventId> {
+    indexes: &[usize],
+) -> Projection {
     let mut candidates = BTreeMap::<usize, BTreeSet<usize>>::new();
-    for (index, edit) in edits.iter().enumerate() {
-        let Change::Revoke { device, .. } = edit.change else {
+    for &index in indexes {
+        let Change::Revoke { device, .. } = edits[index].change else {
             continue;
         };
         let past = &history[index].ancestors;
-        let mut excluded = BTreeSet::new();
-        for (other, edit) in edits.iter().enumerate() {
-            if (edit.writer == device && !past.contains(&other))
-                || !history[other].ancestors.is_disjoint(&excluded)
+        let mut blocked = BTreeSet::new();
+        for &other in indexes {
+            if (edits[other].writer == device && !past.contains(&other))
+                || !history[other].ancestors.is_disjoint(&blocked)
             {
-                excluded.insert(other);
+                blocked.insert(other);
             }
         }
-        candidates.insert(index, excluded);
+        candidates.insert(index, blocked);
     }
-
+    let revocations = resolve_revocations(root, edits, history, &candidates);
     let mut excluded = BTreeSet::new();
-    while let Some((&first, _)) = candidates.first_key_value() {
-        // A competing revocation may itself be void. Prefer unopposed revocations.
-        // Resolve a cycle in favor of the pinned root, then by generation and edit ID.
-        let chosen = candidates
-            .keys()
-            .copied()
-            .find(|index| candidates.values().all(|blocked| !blocked.contains(index)))
-            .unwrap_or_else(|| {
-                candidates
-                    .keys()
-                    .copied()
-                    .find(|&index| edits[index].writer == root)
-                    .unwrap_or(first)
-            });
-        let Some(mut blocked) = candidates.remove(&chosen) else {
-            break;
+    for &index in indexes {
+        let edit = edits[index];
+        let void = if candidates.contains_key(&index) {
+            !revocations.contains(&index)
+        } else {
+            revocations.iter().any(|&other| {
+                matches!(edits[other].change, Change::Revoke { device, .. } if device == edit.writer)
+                    && !history[other].ancestors.contains(&index)
+            })
         };
-        blocked.extend(
-            candidates
-                .iter()
-                .filter_map(|(&index, others)| others.contains(&chosen).then_some(index)),
-        );
-        for (index, edit) in history.iter().enumerate() {
-            if !edit.ancestors.is_disjoint(&blocked) {
-                blocked.insert(index);
-            }
+        if void || !history[index].ancestors.is_disjoint(&excluded) {
+            excluded.insert(index);
         }
-        candidates.retain(|index, _| !blocked.contains(index));
-        excluded.extend(blocked.into_iter().map(|index| history[index].id));
     }
-    excluded
+    Projection {
+        revocations,
+        excluded,
+    }
+}
+
+fn resolve_revocations(
+    root: DeviceId,
+    edits: &[&Edit],
+    history: &[AcceptedEdit],
+    candidates: &BTreeMap<usize, BTreeSet<usize>>,
+) -> BTreeSet<usize> {
+    let mut remaining: BTreeSet<_> = candidates.keys().copied().collect();
+    let mut accepted = BTreeSet::new();
+    while !remaining.is_empty() {
+        let reach: BTreeMap<_, _> = remaining
+            .iter()
+            .map(|&index| (index, reachable(&remaining, candidates, index)))
+            .collect();
+        let losing_root_contests: BTreeSet<_> = remaining
+            .iter()
+            .copied()
+            .filter(|index| {
+                matches!(edits[*index].change, Change::Revoke { device, .. } if device == root)
+                    && remaining.iter().any(|other| {
+                        edits[*other].writer == root
+                            && reach[index].contains(other)
+                            && reach[other].contains(index)
+                    })
+            })
+            .collect();
+        if !losing_root_contests.is_empty() {
+            remaining.retain(|index| {
+                !losing_root_contests.contains(index)
+                    && history[*index].ancestors.is_disjoint(&losing_root_contests)
+            });
+            continue;
+        }
+
+        // A cycle retains its revocation effects even when another fence voids its writers.
+        let selected: BTreeSet<_> = remaining
+            .iter()
+            .copied()
+            .filter(|index| {
+                let mut incoming = remaining
+                    .iter()
+                    .filter(|other| candidates[*other].contains(index))
+                    .peekable();
+                incoming.peek().is_none() || incoming.any(|other| reach[index].contains(other))
+            })
+            .collect();
+        remaining.retain(|index| {
+            !selected.contains(index)
+                && selected
+                    .iter()
+                    .all(|other| !candidates[other].contains(index))
+        });
+        accepted.extend(selected);
+    }
+    accepted
+}
+
+fn reachable(
+    remaining: &BTreeSet<usize>,
+    candidates: &BTreeMap<usize, BTreeSet<usize>>,
+    start: usize,
+) -> BTreeSet<usize> {
+    let mut visited = BTreeSet::new();
+    let mut pending = vec![start];
+    while let Some(index) = pending.pop() {
+        if visited.insert(index) {
+            pending.extend(candidates[&index].intersection(remaining).copied());
+        }
+    }
+    visited
 }
 
 pub(super) fn valid_names(change: &Change, legacy: bool) -> bool {
@@ -266,4 +412,87 @@ fn membership_is_checked_against_parents_even_after_a_later_admission() {
     assert_eq!(view.rejected, [id(11)].into());
     assert_eq!(view.heads, [id(15)].into());
     assert_eq!(view.ordered.len(), 5);
+}
+
+#[cfg(test)]
+#[test]
+fn concurrent_revocation_decisions_depend_only_on_the_causal_graph() {
+    use proptest::prelude::*;
+
+    let device = |n| DeviceId::from_bytes([n; 32]);
+    proptest!(|(
+        roster_size in 3u8..12,
+        reversed in any::<bool>(),
+        at in 0i64..1_900_000_000,
+        first_generation in any::<u64>(),
+        second_generation in any::<u64>(),
+        concurrent_work in proptest::collection::vec((1u8..=3, any::<bool>(), any::<u8>()), 0..12),
+    )| {
+        for (root_seat, reversals, expected) in [
+            (0, vec![(1, 2), (2, 1)], vec![1, 2]),
+            (0, vec![(1, 2), (2, 1), (3, 1)], vec![1, 2]),
+            (1, vec![(1, 2), (2, 1)], vec![2]),
+            (2, vec![(1, 2), (2, 1)], vec![1]),
+            (0, vec![(1, 2), (2, 3), (3, 1)], vec![1, 2, 3]),
+            (0, vec![(1, 2), (2, 3)], vec![2]),
+            (1, vec![(2, 1)], vec![1]),
+        ] {
+            let mut revocations: Vec<_> = reversals.into_iter().map(|(actor, target)| Edit {
+                writer: device(actor),
+                parents: Default::default(),
+                generation: if actor == 1 { first_generation } else { second_generation },
+                change: Change::Revoke {
+                    device: device(target),
+                    at: chrono::DateTime::from_timestamp(at, 0).unwrap(),
+                },
+            }).collect();
+            let mut roster: Vec<_> = (1..=roster_size).map(|id| Edit {
+                writer: device(root_seat),
+                parents: Default::default(),
+                generation: 0,
+                change: Change::Add { device: device(id), name: "Garden tablet".into(), added_ms: None },
+            }).collect();
+            if reversed {
+                revocations.reverse();
+            }
+            roster.append(&mut revocations);
+            let ordinary_start = roster.len();
+            roster.extend(concurrent_work.iter().enumerate().map(|(index, &(author, add, _))| Edit {
+                writer: device(author),
+                parents: Default::default(),
+                generation: 1,
+                change: if add {
+                    Change::Add { device: device(64 + index as u8), name: "Workshop laptop".into(), added_ms: None }
+                } else {
+                    Change::ConfirmOwnership { root: device(root_seat) }
+                },
+            }));
+            let edits: Vec<_> = roster.iter().collect();
+            let history = edits.iter().enumerate().map(|(index, _)| AcceptedEdit {
+                id: EventId::from_bytes([index as u8; 32]),
+                ancestors: if index < usize::from(roster_size) {
+                    BTreeSet::new()
+                } else if index < ordinary_start {
+                    (0..usize::from(roster_size)).collect()
+                } else {
+                    let (_, _, subset) = concurrent_work[index - ordinary_start];
+                    (0..usize::from(roster_size))
+                        .filter(|slot| (subset.rotate_right(*slot as u32) & 1) == 1)
+                        .collect()
+                },
+            }).collect::<Vec<_>>();
+            let projection = project(device(root_seat), &edits, &history, &(0..edits.len()).collect::<Vec<_>>());
+            let revoked = projection.revocations.iter().filter_map(|&index| {
+                match edits[index].change {
+                    Change::Revoke { device, .. } => Some(device),
+                    _ => None,
+                }
+            }).collect::<BTreeSet<_>>();
+            let expected: BTreeSet<_> = expected.into_iter().map(device).collect();
+            prop_assert_eq!(&revoked, &expected);
+            for (index, edit) in edits.iter().enumerate().skip(ordinary_start) {
+                prop_assert_eq!(projection.excluded.contains(&index), expected.contains(&edit.writer));
+            }
+        }
+    });
 }

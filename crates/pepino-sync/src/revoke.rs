@@ -221,6 +221,7 @@ async fn restart_revisits_a_durable_revocation_even_without_the_first_scan() {
     let device = DeviceId::from_bytes([51; 32]);
     let revocation = pepino_app::Revocation {
         by: DeviceId::from_bytes([52; 32]),
+        mutual: false,
         at: std::time::SystemTime::UNIX_EPOCH.into(),
     };
     let mut restarted = Repairs::default();
