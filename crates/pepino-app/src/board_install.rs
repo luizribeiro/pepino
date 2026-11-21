@@ -32,7 +32,10 @@ impl LocalState {
             .as_ref()
             .is_none_or(|request| request.identity.key() != self.own_person_key())
             || grant.recipient != self.device_id
-            || grant.owner.id == self.identity_id
+            || (grant.owner.id == self.identity_id
+                && (grant.owner.key() != self.own_person_key()
+                    || (self.shared_access(id).is_none()
+                        && !self.catalog.forgotten_boards.contains(&id))))
         {
             return Err(invalid(
                 "grant",
@@ -51,8 +54,19 @@ impl LocalState {
                 Err(invalid("grant", "this board request has already been used"))
             };
         }
-        if self.boards().iter().any(|board| board.id == id) {
-            return Err(invalid("grant", "this board is already in your catalog"));
+        let existing = self.shared_access(id);
+        if self.boards().iter().any(|board| board.id == id)
+            && existing.is_none_or(|access| {
+                access.owner != grant.owner.id
+                    || access
+                        .owner_root
+                        .is_some_and(|root| root != grant.owner.root)
+            })
+        {
+            return Err(invalid(
+                "grant",
+                "the board grant conflicts with the board's pinned owner",
+            ));
         }
         self.catalog.shared.insert(
             id,
@@ -63,7 +77,18 @@ impl LocalState {
                 admitted: self.device_id,
             },
         );
+        let forgotten = self.catalog.forgotten_boards.remove(&id);
         self.name_board(id, &grant.board.name);
+        if existing.is_some() || forgotten {
+            self.catalog.observed_board_removals.remove(&id);
+            self.catalog.board_leaves.remove(&id);
+            self.catalog.membership.remove(&id);
+            self.catalog
+                .card_exchanges
+                .retain(|_, route| route.board != id);
+            self.catalog.wait_for_board_join(id);
+            self.catalog.readmission_replays.insert(id);
+        }
         if let Some(channel) = grant.card_exchange {
             self.add_card_exchange(
                 channel,
@@ -71,6 +96,7 @@ impl LocalState {
                     board: id,
                     person: self.identity_id,
                     root: Some(self.own_person_key().1),
+                    incarnation: None,
                 },
             )?;
         }

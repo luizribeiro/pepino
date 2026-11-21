@@ -41,10 +41,7 @@ impl BoardGrant {
         grant.check_request(request)?;
         grant.owner.verified_record()?;
         crate::App::validate_board_name(&grant.board.name)?;
-        if grant
-            .card_exchange
-            .is_some_and(|id| id == grant.board.id || grant.role != BoardRole::Read)
-        {
+        if grant.card_exchange.is_some_and(|id| id == grant.board.id) {
             return Err(invalid("grant", "invalid identity update channel"));
         }
         if let Some(url) = grant.peer.relay_url.as_deref() {

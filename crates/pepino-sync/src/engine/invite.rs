@@ -95,6 +95,7 @@ impl SyncEngine {
                 board: id,
                 person: admission.invitee.id,
                 root: Some(admission.invitee.root),
+                incarnation: None,
             };
             Some(
                 self.create_card_exchange(&mut workers, &local, exchange, &member)

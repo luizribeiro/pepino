@@ -116,6 +116,11 @@ pub enum BoardCards {
     Update(IdentityCard),
     Membership(crate::MembershipChange),
     Leave(crate::SignedBoardLeave),
+    ReaderRoute {
+        channel: BoardId,
+        person: crate::PersonKey,
+        incarnation: Option<EventId>,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -171,7 +176,9 @@ impl App {
                     Err(error) => return Err(error),
                 }
             }
-            BoardCards::Introduce(_) | BoardCards::Membership(_) => (),
+            BoardCards::Introduce(_)
+            | BoardCards::Membership(_)
+            | BoardCards::ReaderRoute { .. } => (),
             BoardCards::Leave(request) => {
                 return self
                     .record_board_leave(board, request)

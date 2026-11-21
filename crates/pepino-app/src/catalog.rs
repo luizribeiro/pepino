@@ -40,6 +40,8 @@ pub(crate) struct CatalogState {
     pub(crate) board_leaves: BTreeMap<BoardId, BTreeMap<String, crate::SignedBoardLeave>>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(crate) observed_board_removals: BTreeSet<BoardId>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(crate) forgotten_boards: BTreeSet<BoardId>,
     joins: BTreeMap<BoardId, BoardJoinState>,
     created_here: BTreeSet<BoardId>,
     bundles: BTreeMap<DeviceId, String>,
@@ -62,6 +64,10 @@ impl CatalogState {
 
     pub(crate) fn join(&self, id: BoardId) -> Option<BoardJoinState> {
         self.joins.get(&id).copied()
+    }
+
+    pub(crate) fn wait_for_board_join(&mut self, id: BoardId) {
+        self.joins.insert(id, BoardJoinState::WaitingToBeAdded);
     }
 
     pub(crate) fn record_joins(&mut self, progress: &BTreeMap<BoardId, BoardJoinState>) {
@@ -93,6 +99,12 @@ struct Announcement {
     member: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     shared: BTreeMap<BoardId, crate::SharedAccess>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    reader_routes: BTreeMap<BoardId, crate::CardExchange>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    board_leaves: BTreeMap<BoardId, BTreeMap<String, crate::SignedBoardLeave>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    own_membership: BTreeMap<BoardId, Vec<crate::MembershipRecord>>,
 }
 
 impl LocalState {
@@ -116,6 +128,43 @@ impl LocalState {
             roster: self.catalog.identity.edits().cloned().collect(),
             member: member.to_hex(),
             shared: self.catalog.shared.clone(),
+            reader_routes: self
+                .card_exchanges()
+                .iter()
+                .filter(|(_, route)| {
+                    route.person == self.identity_id
+                        && route
+                            .root
+                            .is_none_or(|root| root == self.own_person_key().1)
+                })
+                .map(|(&channel, &route)| (channel, route))
+                .collect(),
+            board_leaves: self
+                .catalog
+                .board_leaves
+                .iter()
+                .filter_map(|(&board, requests)| {
+                    let requests: BTreeMap<_, _> = requests
+                        .iter()
+                        .filter(|(_, request)| request.leave.person == self.own_person_key())
+                        .map(|(key, request)| (key.clone(), request.clone()))
+                        .collect();
+                    (!requests.is_empty()).then_some((board, requests))
+                })
+                .collect(),
+            own_membership: self
+                .catalog
+                .shared
+                .keys()
+                .filter_map(|&board| {
+                    let records: Vec<_> = self
+                        .membership_history(board)
+                        .filter(|record| record.change.person == self.own_person_key())
+                        .cloned()
+                        .collect();
+                    (!records.is_empty()).then_some((board, records))
+                })
+                .collect(),
         };
         let mut bytes = PREFIX.to_vec();
         bytes.extend(WireFormat::Cbor.encode(&announcement)?);
@@ -139,7 +188,8 @@ impl LocalState {
     }
 
     fn merge_board(&mut self, id: BoardId, revision: Revision) {
-        if revision.name.trim().is_empty()
+        if self.catalog.forgotten_boards.contains(&id)
+            || revision.name.trim().is_empty()
             || self
                 .catalog
                 .revisions
@@ -201,6 +251,38 @@ impl LocalState {
                 let saved = self.catalog.shared.entry(id).or_insert(access);
                 if saved.owner == access.owner && saved.owner_root.is_none() {
                     saved.owner_root = access.owner_root;
+                }
+            }
+        }
+        let own = self.own_person_key();
+        for (channel, route) in announcement.reader_routes {
+            if route.person == own.0
+                && route.root.is_none_or(|root| root == own.1)
+                && self.shared_access(route.board).is_some()
+            {
+                self.add_card_exchange(channel, route)?;
+            }
+        }
+        for (board, records) in announcement.own_membership {
+            if self.shared_access(board).is_some() {
+                let stored = self.catalog.membership.entry(board).or_default();
+                for record in records
+                    .into_iter()
+                    .filter(|record| record.change.person == own)
+                {
+                    stored.entry(record.operation).or_insert(record);
+                }
+            }
+        }
+        for (board, requests) in announcement.board_leaves {
+            if self.shared_access(board).is_some() {
+                for request in requests.into_values() {
+                    if request.leave.person == own
+                        && request.leave.board == board
+                        && request.verify()?
+                    {
+                        self.save_board_leave(board, request);
+                    }
                 }
             }
         }
@@ -373,6 +455,9 @@ fn ignores_legacy_device_claims_even_from_a_bootstrap_sender() {
         roster: Vec::new(),
         member: String::new(),
         shared: BTreeMap::new(),
+        reader_routes: Default::default(),
+        board_leaves: Default::default(),
+        own_membership: Default::default(),
     };
     local.merge_catalog(board, peer, announcement).unwrap();
     assert_eq!(local.devices()[&peer], "Ferrum");
@@ -417,6 +502,9 @@ async fn trusted_catalog_discovery_leaves_shared_access_with_the_joining_device(
         roster: Vec::new(),
         member: String::new(),
         shared: [(house, access)].into(),
+        reader_routes: Default::default(),
+        board_leaves: Default::default(),
+        own_membership: Default::default(),
     };
     let private = local.catalog_board();
     let incoming = announcement();
