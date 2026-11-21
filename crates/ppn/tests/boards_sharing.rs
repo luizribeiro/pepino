@@ -363,3 +363,93 @@ fn the_inviter_rejects_an_expired_member_bundle() {
     let error = common::task_error(rejected, 2, "invalid_input");
     assert!(error["message"].as_str().unwrap().contains("expired"));
 }
+
+#[test]
+fn private_catalogs_and_device_links_remain_local_to_each_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = dir.path().file_name().unwrap().to_str().unwrap();
+    let owner = host(network, "Luiz", "Desktop", "Owner private");
+    let guest = host(network, "Ana", "Tablet", "Guest private");
+    let guest_private = guest.json(&["board", "new", "Guest notes"]);
+    let private_id = guest_private["board"]["id"].as_str().unwrap();
+    guest.run(&[
+        "add",
+        "--board",
+        "Guest notes",
+        "Private family appointments",
+    ]);
+    owner.run(&["board", "new", "House"]);
+    let request = guest.json(&["board", "request"]);
+    let code = grant(&owner, "House", "write", &request);
+    assert!(
+        guest
+            .run(&[
+                "board",
+                "join",
+                code["grant"]["code"].as_str().unwrap(),
+                "--timeout",
+                "60s"
+            ])
+            .contains("Initial sync complete")
+    );
+    for source in [&guest, &owner] {
+        let linked = Host::new(network);
+        let request = linked.request("Linked tablet");
+        let grant = source.add(&request, &[]);
+        linked.run(&["device", "join", &grant, "--timeout", "60s"]);
+        let expected = if std::ptr::eq(source, &guest) {
+            "waiting_for_access"
+        } else {
+            "joined"
+        };
+        until(
+            || board(&linked, "House"),
+            |board| board["membership"] == expected,
+            WAIT,
+        );
+        let report = source.json(&[
+            "device",
+            "revoke",
+            "Linked tablet",
+            "--yes",
+            "--timeout",
+            "60s",
+        ]);
+        assert_eq!(report["kind"], "device_revoke");
+    }
+    let listing = owner.json(&["ls", "--all-boards"]).to_string();
+    assert!(!listing.contains("Private family appointments"));
+    assert!(
+        !owner
+            .json(&["board", "ls"])
+            .to_string()
+            .contains(private_id)
+    );
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+        let mut db = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(owner.data.join("node.sqlite"))
+                .read_only(true),
+        )
+        .await
+        .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM spaces_v1 WHERE id = ?")
+            .bind(private_id)
+            .fetch_one(&mut db)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        let app = pepino_app::App::open(&owner.data, 0).await.unwrap();
+        let private_board = app
+            .store()
+            .board(private_id.parse().unwrap())
+            .await
+            .unwrap();
+        assert!(private_board.tasks().is_empty());
+    });
+}
