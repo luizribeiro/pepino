@@ -77,6 +77,19 @@ impl AppClient {
         })
     }
 
+    pub fn set_board_relay(
+        &self,
+        boards: Vec<pepino_core::BoardId>,
+        peer: pepino_app::PeerHint,
+        carry: bool,
+    ) -> Result<pepino_app::LocalState, CliError> {
+        let local =
+            self.runtime
+                .block_on(self.app.set_board_relay(boards, peer, carry, self.now_ms))?;
+        self.wrote.set(true);
+        Ok(local)
+    }
+
     pub fn forget_board(&mut self, board: pepino_core::BoardId) -> Result<(), CliError> {
         self.runtime.block_on(self.app.forget_board(board))?;
         Ok(())

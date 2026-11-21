@@ -68,7 +68,11 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "board show" => (
             "board",
-            "board Board with current marker, counts, membership and sync activity\nselected_board Board selected for this invocation and its source",
+            "board Board with current marker, counts, membership, sync activity and relay requests\nselected_board Board selected for this invocation and its source",
+        ),
+        "board relay add" | "board relay rm" | "board relay ls" => (
+            "board_relays",
+            "boards Board names with relay IDs, state, requesting device, connection hint and refusal reason",
         ),
         "relay init" | "relay show" => (
             "relay",

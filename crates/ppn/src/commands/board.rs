@@ -3,6 +3,7 @@ mod invite;
 mod join;
 mod manage;
 mod members;
+mod relay;
 mod request;
 use std::path::Path;
 
@@ -28,6 +29,7 @@ pub struct Args {
 
 #[derive(clap::Subcommand)]
 enum Operation {
+    Relay(relay::Args),
     /// Show people, invite details, and current device membership.
     #[command(after_help = example_help(&["ppn board members House", "ppn board members --json"]))]
     Members {
@@ -142,6 +144,9 @@ impl From<InviteRole> for pepino_app::BoardRole {
 
 impl Args {
     pub(crate) fn writes(&self) -> bool {
+        if let Operation::Relay(args) = &self.operation {
+            return args.writes();
+        }
         matches!(
             self.operation,
             Operation::Invite { .. }
@@ -165,6 +170,7 @@ pub fn run(
 ) -> Result<CommandResult, CliError> {
     let using = matches!(&args.operation, Operation::Use { .. });
     let (client, response, show_selection) = match args.operation {
+        Operation::Relay(args) => return relay::run(context, args),
         Operation::Members { reference } => return members::run(context, reference.as_deref()),
         Operation::Role {
             person,
@@ -257,7 +263,13 @@ pub fn run(
         .then(|| client.selected_board())
         .transpose()?;
     let network = daemon_network(context)?;
-    let mut result = document(context, response, selection, network.as_ref())?;
+    let mut result = document(
+        context,
+        response,
+        selection,
+        network.as_ref(),
+        client.local_state(),
+    )?;
     if using
         && context
             .board_env
@@ -300,6 +312,7 @@ fn document(
     response: Response,
     selection: Option<(&pepino_app::LocalBoard, &str)>,
     network: Option<&Network>,
+    local: &pepino_app::LocalState,
 ) -> Result<CommandResult, CliError> {
     let boards = match &response {
         Response::Board { board } => std::slice::from_ref(board),
@@ -358,6 +371,13 @@ fn document(
             json!(state)
         };
         record["sync"] = json!(sync);
+        if matches!(response, Response::Board { .. }) {
+            let relays = relay::entries(local, info.board.id);
+            for relay in &relays {
+                rows.push(format!("  Relay {}", relay.human()));
+            }
+            record["relays"] = json!(relays);
+        }
         records.push(record);
     }
     let selected = selection.map(|(board, source)| {
