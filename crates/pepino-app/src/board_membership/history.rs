@@ -451,6 +451,7 @@ mod tests {
             },
         };
         app.record_membership(board, invite.clone()).await.unwrap();
+        let mut local = app.fresh_local_state().await.unwrap();
         for number in (1..=300).rev() {
             let record = MembershipRecord {
                 operation: id(number),
@@ -465,10 +466,26 @@ mod tests {
                 ..invite.clone()
             };
             if number == 300 {
-                app.record_membership(second, record.clone()).await.unwrap();
+                local
+                    .catalog
+                    .membership
+                    .entry(second)
+                    .or_default()
+                    .insert(record.operation, record.clone());
+                local
+                    .catalog
+                    .track_membership_refusal(second, record.operation);
             }
-            app.record_membership(board, record).await.unwrap();
+            let operation = record.operation;
+            local
+                .catalog
+                .membership
+                .entry(board)
+                .or_default()
+                .insert(operation, record);
+            local.catalog.track_membership_refusal(board, operation);
         }
+        local.replace(dir.path()).unwrap();
         let local = app.fresh_local_state().await.unwrap();
         let operations: BTreeSet<_> = local
             .membership_history(board)
