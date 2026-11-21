@@ -100,7 +100,11 @@ impl SyncEngine {
             }
         };
         let operation = match latest {
-            Some(record) if record.change.action.role() == membership_action.role() => {
+            Some(record)
+                if record.change.action.role() == membership_action.role()
+                    && !record.relayed
+                    && (record.applied || members.get(&record.actor) == Some(&Role::Manage)) =>
+            {
                 record.operation
             }
             _ => {

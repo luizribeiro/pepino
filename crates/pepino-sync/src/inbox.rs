@@ -212,20 +212,28 @@ async fn ingest_cards<B: TransportBoard>(
     while let Some(cards) = BoardCards::decode(&delivery.bytes) {
         if let BoardCards::Membership(change) = cards {
             let outcome = match handle.operation_role_state(delivery.operation).await {
-                Ok(pepino_node::OperationRole::Known(Some(pepino_node::Role::Manage))) => app
-                    .record_membership(
-                        board,
-                        pepino_app::MembershipRecord {
-                            operation: delivery.operation,
-                            actor: delivery.signer,
-                            refusal: None,
-                            applied: false,
-                            relayed: false,
-                            change,
-                        },
-                    )
+                Ok(pepino_node::OperationRole::Known(Some(pepino_node::Role::Manage))) => {
+                    async {
+                        let members = handle.roles().await?;
+                        let refusal = (members.get(&delivery.signer)
+                            != Some(&pepino_node::Role::Manage))
+                        .then_some(pepino_app::MembershipRefusal::AuthorNoLongerManager);
+                        app.record_membership(
+                            board,
+                            pepino_app::MembershipRecord {
+                                operation: delivery.operation,
+                                actor: delivery.signer,
+                                refusal,
+                                applied: false,
+                                relayed: false,
+                                change,
+                            },
+                        )
+                        .await?;
+                        Ok::<(), Error>(())
+                    }
                     .await
-                    .map_err(Error::from),
+                }
                 Ok(pepino_node::OperationRole::Known(_)) => Ok(()),
                 Ok(pepino_node::OperationRole::Pending) => {
                     retry.wait().await;

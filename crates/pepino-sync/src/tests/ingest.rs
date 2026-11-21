@@ -446,18 +446,18 @@ async fn membership_authorization_is_retried_before_acknowledgment() {
             .count(),
         0
     );
+    node.set_joined_members(
+        board,
+        [(local.device_id, Role::Manage), (manager, Role::Manage)].into(),
+    );
     node.set_operation_role(Role::Manage);
     tokio::time::timeout(WAIT, received.wait_for(|acked| *acked))
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(
-        app.fresh_local_state()
-            .await
-            .unwrap()
-            .membership_history(board)
-            .count(),
-        1
-    );
+    let state = app.fresh_local_state().await.unwrap();
+    let mut history = state.membership_history(board);
+    assert_eq!(history.next().unwrap().refusal, None);
+    assert!(history.next().is_none());
     engine.shutdown().await.unwrap();
 }

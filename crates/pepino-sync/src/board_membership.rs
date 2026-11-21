@@ -28,6 +28,11 @@ pub(crate) async fn publish_change(
     person: PersonKey,
     action: MembershipAction,
 ) -> Result<EventId, Error> {
+    if handle.roles().await?.get(&local.device_id) != Some(&Role::Manage) {
+        return Err(Error::MembershipIncomplete(
+            MembershipRefusal::AuthorNoLongerManager.to_string(),
+        ));
+    }
     let change = MembershipChange {
         person,
         action,
@@ -39,12 +44,14 @@ pub(crate) async fn publish_change(
     let operation = handle
         .publish(BoardCards::Membership(change.clone()).encode()?)
         .await?;
+    let refusal = (handle.roles().await?.get(&local.device_id) != Some(&Role::Manage))
+        .then_some(MembershipRefusal::AuthorNoLongerManager);
     app.record_membership(
         board,
         MembershipRecord {
             operation,
             actor: local.device_id,
-            refusal: None,
+            refusal,
             applied: false,
             relayed: false,
             change,
@@ -94,13 +101,13 @@ impl Repairs {
             {
                 let target = record.change.person;
                 let desired = record.change.action.role().map(Into::into);
-                let result = if !local.membership_devices(board.id, target).is_empty()
+                let result = if members.get(&record.actor) != Some(&Role::Manage) {
+                    Err(MembershipRefusal::AuthorNoLongerManager)
+                } else if !local.membership_devices(board.id, target).is_empty()
                     && !local.membership_superseded(board.id, record)
                     && device_mismatches(local, board.id, target, desired, &members).is_empty()
                 {
                     Ok(())
-                } else if members.get(&record.actor) != Some(&Role::Manage) {
-                    Err(MembershipRefusal::AuthorNoLongerManager)
                 } else {
                     continue;
                 };
@@ -259,7 +266,11 @@ impl Repairs {
                     crate::status::record_error(&workers.changes, board.id, error.to_string());
                     continue;
                 }
-                changes.sort_by_key(|change| changes_own_device(change, local.device_id));
+                changes.sort_by_key(|change| {
+                    changes_own_device(change, local.device_id)
+                        || authorized.is_some_and(|record| changes_own_device(change, record.actor))
+                });
+                let mut applied_to_author = false;
                 for change in changes {
                     let current = handle.roles().await?;
                     if authorized
@@ -267,36 +278,39 @@ impl Repairs {
                     {
                         break;
                     }
-                    if let Err(NodeError::LastManager) =
-                        self.apply(workers, board.id, &*handle, change).await
-                        && let Some(record) = authorized.filter(|record| !record.applied)
-                    {
-                        workers
-                            .app
-                            .mark_membership_result(
-                                board.id,
-                                record.operation,
-                                Err(MembershipRefusal::LastManager),
-                            )
-                            .await?;
-                        break;
+                    let changes_author =
+                        authorized.is_some_and(|record| changes_own_device(&change, record.actor));
+                    match self.apply(workers, board.id, &*handle, change).await {
+                        Ok(true) => applied_to_author |= changes_author,
+                        Err(NodeError::LastManager)
+                            if let Some(record) = authorized.filter(|record| !record.applied) =>
+                        {
+                            workers
+                                .app
+                                .mark_membership_result(
+                                    board.id,
+                                    record.operation,
+                                    Err(MembershipRefusal::LastManager),
+                                )
+                                .await?;
+                            break;
+                        }
+                        _ => (),
                     }
                 }
-                if let Some(record) = authorized.filter(|record| !record.applied)
-                    && device_mismatches(
-                        local,
-                        board.id,
-                        person.key(),
-                        desired,
-                        &handle.roles().await?,
-                    )
-                    .is_empty()
-                {
-                    self.notice_since.remove(&record.operation);
-                    workers
-                        .app
-                        .mark_membership_result(board.id, record.operation, Ok(()))
-                        .await?;
+                if let Some(record) = authorized.filter(|record| !record.applied) {
+                    let current = handle.roles().await?;
+                    // An authorized change can itself end its author's manager role.
+                    if (applied_to_author || current.get(&record.actor) == Some(&Role::Manage))
+                        && device_mismatches(local, board.id, person.key(), desired, &current)
+                            .is_empty()
+                    {
+                        self.notice_since.remove(&record.operation);
+                        workers
+                            .app
+                            .mark_membership_result(board.id, record.operation, Ok(()))
+                            .await?;
+                    }
                 }
             }
         }
@@ -308,7 +322,7 @@ impl Repairs {
         board: BoardId,
         handle: &T::Board,
         change: DeviceMembershipChange,
-    ) -> Result<(), NodeError> {
+    ) -> Result<bool, NodeError> {
         let device = match &change {
             DeviceMembershipChange::Enroll(info, _) => info.device_id()?,
             DeviceMembershipChange::Remove(device) | DeviceMembershipChange::SetRole(device, _) => {
@@ -321,12 +335,12 @@ impl Repairs {
             .get(&key)
             .is_some_and(|(ready, _)| *ready > Instant::now())
         {
-            return Ok(());
+            return Ok(false);
         }
         match apply_change(handle, change).await {
             Ok(()) => {
                 self.failures.remove(&key);
-                Ok(())
+                Ok(true)
             }
             Err(error) => {
                 let (ready, delay) = self
