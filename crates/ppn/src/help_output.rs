@@ -58,6 +58,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             },
             "board Affected board with its full ID and name\nperson Identity ID, root key and display name\nrole Requested role or null\ncancelled Whether confirmation was declined\ndeparture Local departure state or null\nconsequences Removal or leave notice when applicable",
         ),
+        "board forget" => (
+            "board_forget",
+            "board Board with its full ID and name\nforgotten Whether the local application history was deleted",
+        ),
         "board ls" => (
             "boards",
             "boards Known boards with current marker, counts, membership and sync activity\nselected_board Board selected for this invocation and its source",

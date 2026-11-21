@@ -77,6 +77,11 @@ impl AppClient {
         })
     }
 
+    pub fn forget_board(&mut self, board: pepino_core::BoardId) -> Result<(), CliError> {
+        self.runtime.block_on(self.app.forget_board(board))?;
+        Ok(())
+    }
+
     pub fn local_state(&self) -> &pepino_app::LocalState {
         self.app.local_state()
     }

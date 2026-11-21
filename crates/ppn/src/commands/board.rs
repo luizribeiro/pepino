@@ -20,7 +20,7 @@ use serde_json::json;
 
 #[derive(clap::Args)]
 #[command(about = "Create, share, and select boards.",
-    long_about = "Create, share, and select boards. A joined member can read the board's entire history. The invitee's linked devices see the board while waiting for access. Changing a person's role, removal, and leaving are reserved for a later release.", after_help = example_help(&["ppn board ls", "ppn board show Workshop"]))]
+    long_about = "Create, share, and select boards. A joined member can read the board's entire history. Managers enroll linked devices and manage access for each person.", after_help = example_help(&["ppn board ls", "ppn board show Workshop"]))]
 pub struct Args {
     #[command(subcommand)]
     operation: Operation,
@@ -59,6 +59,12 @@ enum Operation {
     /// Leave the board on all your devices.
     #[command(after_help = example_help(&["ppn board leave --board House --yes"]))]
     Leave,
+    /// Delete this host's local history of a board you left or were removed from.
+    #[command(after_help = example_help(&["ppn board forget House --yes"]))]
+    Forget {
+        /// Board name or unambiguous ID prefix.
+        board: String,
+    },
     /// Install a secret board grant and wait for membership and the first sync.
     #[command(after_help = example_help(&["ppn board join - --timeout 45s < grant.txt", "ppn board join --from-file grant.txt"]))]
     Join {
@@ -193,6 +199,7 @@ pub fn run(
                 false,
             );
         }
+        Operation::Forget { board } => return manage::forget(context, &board),
         Operation::Join { input } => return join::run(context, &input.read(context)?, config_path),
         Operation::Request { name } => {
             return request::run(context, name, config_path, allow_start);

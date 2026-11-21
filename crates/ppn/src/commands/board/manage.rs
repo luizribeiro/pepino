@@ -166,6 +166,31 @@ pub(super) fn run(
     }))
 }
 
+pub(super) fn forget(context: &Context<'_>, reference: &str) -> Result<CommandResult, CliError> {
+    let mut app = AppClient::open(context)?;
+    let board = app.local_state().resolve_board(reference, "board")?.clone();
+    app.local_state().check_can_forget(board.id)?;
+    let confirmed = context.confirm(&format!(
+        "Delete the local task and membership history for {}?",
+        single_line(&board.name)
+    ))?;
+    if confirmed {
+        app.forget_board(board.id)?;
+    }
+    Ok(CommandResult::document(ResultDocument {
+        human: if confirmed {
+            format!("Forgot {} on this device.", single_line(&board.name))
+        } else {
+            "Forget cancelled.".into()
+        },
+        fields: Map::from_iter([
+            ("kind".into(), json!("board_forget")),
+            ("board".into(), json!(board)),
+            ("forgotten".into(), json!(confirmed)),
+        ]),
+    }))
+}
+
 struct ResultDocument {
     human: String,
     fields: Map<String, Value>,

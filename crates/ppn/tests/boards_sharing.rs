@@ -763,6 +763,54 @@ fn a_reader_links_a_device_and_both_follow_person_roles_and_departure() {
             .run(&["board", "members", "House"])
             .contains("Ben (former member)")
     );
+    common::task_error(
+        linked.output(&["board", "forget", "House", "--json"]),
+        1,
+        "confirmation_required",
+    );
+    assert_eq!(
+        linked.json(&["board", "forget", "House", "--yes"])["forgotten"],
+        true
+    );
+    common::task_error(
+        linked.output(&["board", "show", "House", "--json"]),
+        3,
+        "not_found",
+    );
+    owner.run(&[
+        "add",
+        "--board",
+        "House",
+        "Replace the sill while Ben is away",
+    ]);
+    until(
+        || member(&owner, "Ben"),
+        |person| {
+            person["devices"].as_array().is_some_and(|devices| {
+                devices
+                    .iter()
+                    .all(|device| device["membership"] == "removed")
+            })
+        },
+        WAIT,
+    );
+    join(&owner, &guest, "read");
+    until(
+        || {
+            let output = guest.output(&["ls", "--board", "House"]);
+            (
+                output.status.success(),
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            )
+        },
+        |(success, listing, diagnostics)| {
+            *success
+                && listing.contains("Replace the sill while Ben is away")
+                && diagnostics.is_empty()
+        },
+        WAIT,
+    );
 }
 
 #[test]
@@ -839,5 +887,10 @@ fn the_original_inviter_can_leave_after_promoting_a_successor() {
         manager
             .run(&["board", "remove", "Dara", "--board", "House", "--yes"])
             .contains("Removal recorded")
+    );
+    assert!(
+        reader
+            .run(&["board", "forget", "House", "--yes"])
+            .contains("Forgot House")
     );
 }
