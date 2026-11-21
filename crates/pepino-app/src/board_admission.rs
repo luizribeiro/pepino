@@ -32,7 +32,10 @@ impl LocalState {
         admission: &BoardAdmission,
     ) -> Result<(), AppError> {
         self.check_invitable(board)?;
-        if admission.owner.key() == admission.invitee.key() || admission.device == manager {
+        if self.catalog.forgotten_boards.contains(&board) {
+            return Ok(());
+        }
+        if admission.device == manager {
             return Err(invalid(
                 "person",
                 "the invite must introduce another identity",
