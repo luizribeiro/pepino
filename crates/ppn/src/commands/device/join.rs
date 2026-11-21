@@ -78,15 +78,23 @@ pub(crate) fn wait_for_boards(
     loop {
         let remaining = wait.saturating_sub(start.elapsed());
         let outcome = client
-            .call(Operation::RegisterPeerHint { peer: peer.clone() })
+            .call_with(
+                Operation::RegisterPeerHint { peer: peer.clone() },
+                remaining
+                    .min(Duration::from_secs(5))
+                    .max(Duration::from_millis(250)),
+            )
             .and_then(|outcome| match outcome {
-                Outcome::PeerHintRegistered => client.call_with(
-                    Operation::BoardJoinState {
-                        board,
-                        timeout_ms: remaining.as_millis().try_into().unwrap_or(0),
-                    },
-                    remaining + Duration::from_secs(2),
-                ),
+                Outcome::PeerHintRegistered => {
+                    let remaining = wait.saturating_sub(start.elapsed());
+                    client.call_with(
+                        Operation::BoardJoinState {
+                            board,
+                            timeout_ms: remaining.as_millis().try_into().unwrap_or(0),
+                        },
+                        remaining + Duration::from_secs(2),
+                    )
+                }
                 response @ Outcome::Error { .. } => Ok(response),
                 _ => Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,

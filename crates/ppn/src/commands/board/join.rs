@@ -6,7 +6,7 @@ use ppn::{
         address::socket_path,
         client::Client,
         process,
-        protocol::{Operation, Outcome, wait_millis},
+        protocol::{Outcome, wait_millis},
     },
     device_code::Kind,
     error::{CliError, ErrorKind},
@@ -39,11 +39,16 @@ pub(super) fn run(
             path: socket_path(config),
         };
         if config.daemon.autostart.value {
-            ensure_running(&daemon, context, config_path, true)?;
+            if let Err(error) = ensure_running(&daemon, context, config_path, true)
+                && (error.kind() != ErrorKind::DaemonUnreachable
+                    || process::wait_for_service(&daemon, process::START_LIMIT).is_err())
+            {
+                return Err(error);
+            }
         } else {
             process::wait_for_service(&daemon, process::START_LIMIT).map_err(unreachable)?;
         }
-        daemon.call(Operation::Nudge).map_err(unreachable)?;
+        let _ = daemon.nudge();
         let Outcome::BoardJoinState { boards } = wait_for_boards(&daemon, peer, wait, Some(board))?
         else {
             return Err(unexpected_reply());

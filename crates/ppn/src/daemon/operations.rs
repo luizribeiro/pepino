@@ -87,8 +87,8 @@ pub(super) async fn operate(
             let changes = engine.status_changes();
             tokio::pin!(changes);
             let complete = async {
-                while let Some(status) = changes.next().await {
-                    let states = select(status.board_join_states());
+                while changes.next().await.is_some() {
+                    let states = select(engine.board_join_states().await?);
                     if board.is_none_or(|id| states.contains_key(&id))
                         && states
                             .values()
@@ -97,10 +97,26 @@ pub(super) async fn operate(
                         break;
                     }
                 }
+                Ok::<_, Error>(())
             };
-            let _ = tokio::time::timeout(Duration::from_millis(timeout_ms), complete).await;
-            Outcome::BoardJoinState {
-                boards: select(engine.status().board_join_states()),
+            if let Ok(Err(error)) =
+                tokio::time::timeout(Duration::from_millis(timeout_ms), complete).await
+            {
+                return failure(
+                    "join_state_failed",
+                    "Could not read board join state",
+                    &error,
+                );
+            }
+            match engine.board_join_states().await {
+                Ok(states) => Outcome::BoardJoinState {
+                    boards: select(states),
+                },
+                Err(error) => failure(
+                    "join_state_failed",
+                    "Could not read board join state",
+                    &error,
+                ),
             }
         }
         Operation::BoardRequest { name } => match engine.request_board(name.as_deref()).await {
@@ -124,8 +140,9 @@ pub(super) async fn operate(
                 card_exchange,
             },
             Err(Error::EnrollmentAccess { board }) => Outcome::MemberAccessDenied { board },
-            Err(Error::App(error @ pepino_app::AppError::InvalidInput { .. })) => {
-                Outcome::error("invalid_input", &error.to_string())
+            Err(Error::App(error)) => {
+                let error = crate::error::CliError::from(error);
+                Outcome::error(error.kind().code(), &error.to_string())
             }
             Err(error) => failure(
                 "invite_failed",
@@ -133,6 +150,34 @@ pub(super) async fn operate(
                 &error,
             ),
         },
+        Operation::BoardManage {
+            board,
+            person,
+            action,
+            accept_risk,
+        } => {
+            match engine
+                .manage_person(board, person, action, accept_risk)
+                .await
+            {
+                Ok(departure) => Outcome::BoardManaged { departure },
+                Err(Error::App(error)) => {
+                    let error = crate::error::CliError::from(error);
+                    Outcome::error(error.kind().code(), &error.to_string())
+                }
+                Err(Error::Node(
+                    pepino_node::Error::NotPermitted | pepino_node::Error::LastManager,
+                )) => Outcome::error(
+                    "permission_denied",
+                    "This device needs manage access and the board must keep a manager.",
+                ),
+                Err(error) => failure(
+                    "membership_failed",
+                    "Could not change board membership",
+                    &error,
+                ),
+            }
+        }
         Operation::Stop => Outcome::Stopping,
     }
 }

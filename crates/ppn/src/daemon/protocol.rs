@@ -48,6 +48,12 @@ pub enum Operation {
         request: Box<BoardRequest>,
         role: BoardRole,
     },
+    BoardManage {
+        board: BoardId,
+        person: pepino_app::PersonKey,
+        action: pepino_app::ManagePerson,
+        accept_risk: bool,
+    },
     Stop,
 }
 
@@ -118,6 +124,9 @@ pub enum Outcome {
         owner: IdentityCard,
         #[serde(default)]
         card_exchange: Option<BoardId>,
+    },
+    BoardManaged {
+        departure: Option<pepino_app::BoardDeparture>,
     },
     Stopping,
     Error {

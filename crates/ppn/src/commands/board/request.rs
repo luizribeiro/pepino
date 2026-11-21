@@ -56,11 +56,11 @@ pub(super) fn run(
 }
 
 pub(super) fn control_error(code: &str, message: String) -> CliError {
-    let kind = if code == "invalid_input" {
-        ErrorKind::InvalidInput
-    } else {
-        ErrorKind::Failure
-    };
+    let kind = ErrorKind::all()
+        .iter()
+        .copied()
+        .find(|kind| kind.code() == code)
+        .unwrap_or(ErrorKind::Failure);
     CliError::new(kind, message)
 }
 
