@@ -95,7 +95,7 @@ impl Relay {
         cap: usize,
         stream_ended: &Arc<Notify>,
     ) -> Result<(RelayChannel, Ledger, watch::Sender<RelayStatus>), Error> {
-        let ledger = Ledger::new(trusted, cap);
+        let ledger = Ledger::load(node.pool()?.clone(), trusted, cap).await?;
         for board in ledger.records.values().filter_map(|record| record.board) {
             node.carry_board(board, stream_ended.clone()).await?;
         }
@@ -136,12 +136,12 @@ impl Relay {
         incoming: &IncomingInstruction,
     ) -> Result<Option<RelayAnswer>, Error> {
         let answer = if !self.ledger.is_trusted(incoming.author) {
-            self.ledger.reject()
+            self.ledger.reject().await?
         } else {
             let Some(instruction) = incoming.open(&self.keys) else {
                 return Ok(None);
             };
-            let answer = self.ledger.apply(incoming.author, instruction);
+            let answer = self.ledger.apply(incoming.author, instruction).await?;
             if answer == RelayAnswer::Carrying {
                 match self
                     .node

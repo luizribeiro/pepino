@@ -3,8 +3,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use p2panda::Hash;
 use pepino_core::{BoardId, DeviceId};
 use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
 
-use crate::relay_control::{RelayAnswer, RelayInstruction, RelayRevision};
+use crate::{
+    Error,
+    relay_control::{RelayAnswer, RelayInstruction, RelayRevision},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(super) struct Record {
@@ -57,25 +61,42 @@ pub(super) struct Ledger {
     pub(super) rejected: u64,
     trusted: BTreeSet<DeviceId>,
     cap: usize,
+    pool: SqlitePool,
 }
 
 impl Ledger {
-    pub(super) fn new(trusted: BTreeSet<DeviceId>, cap: usize) -> Self {
-        Self {
-            records: BTreeMap::new(),
-            rejected: 0,
+    pub(super) async fn load(
+        pool: SqlitePool,
+        trusted: BTreeSet<DeviceId>,
+        cap: usize,
+    ) -> Result<Self, Error> {
+        let records = load_records(&pool).await?;
+        let rejected = sqlx::query_scalar::<_, i64>("SELECT rejected FROM pepino_relay_stats")
+            .fetch_one(&pool)
+            .await
+            .map_err(Error::storage)?;
+        Ok(Self {
+            records,
+            rejected: rejected as u64,
             trusted,
             cap,
-        }
+            pool,
+        })
     }
 
     pub(super) fn is_trusted(&self, id: DeviceId) -> bool {
         self.trusted.contains(&id)
     }
 
-    pub(super) fn reject(&mut self) -> RelayAnswer {
-        self.rejected = self.rejected.saturating_add(1);
-        RelayAnswer::NotTrusted
+    pub(super) async fn reject(&mut self) -> Result<RelayAnswer, Error> {
+        sqlx::query(
+            "UPDATE pepino_relay_stats SET rejected = MIN(rejected + 1, 9223372036854775807)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(Error::storage)?;
+        self.rejected = (self.rejected + 1).min(i64::MAX as u64);
+        Ok(RelayAnswer::NotTrusted)
     }
 
     pub(super) fn counts(&self) -> BTreeMap<DeviceId, usize> {
@@ -90,9 +111,13 @@ impl Ledger {
         counts
     }
 
-    pub(super) fn apply(&mut self, writer: DeviceId, instruction: RelayInstruction) -> RelayAnswer {
+    pub(super) async fn apply(
+        &mut self,
+        writer: DeviceId,
+        instruction: RelayInstruction,
+    ) -> Result<RelayAnswer, Error> {
         if !self.is_trusted(writer) {
-            return self.reject();
+            return self.reject().await;
         }
         let key = Hash::digest(instruction.board.as_bytes());
         let key = key.as_bytes().as_slice();
@@ -109,10 +134,44 @@ impl Ledger {
             below_capacity,
         );
         if let Some(next) = next {
+            sqlx::query("INSERT OR REPLACE INTO pepino_relay_ledger VALUES (?, ?)")
+                .bind(key)
+                .bind(encode(&next)?)
+                .execute(&self.pool)
+                .await
+                .map_err(Error::storage)?;
             self.records.insert(key.to_vec(), next);
         }
-        answer
+        Ok(answer)
     }
+}
+
+pub(super) async fn prepare(pool: &SqlitePool) -> Result<(), Error> {
+    sqlx::raw_sql(
+        "CREATE TABLE IF NOT EXISTS pepino_relay_ledger (key BLOB PRIMARY KEY, record BLOB NOT NULL) STRICT;
+         CREATE TABLE IF NOT EXISTS pepino_relay_stats (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), rejected INTEGER NOT NULL) STRICT;
+         INSERT OR IGNORE INTO pepino_relay_stats VALUES (1, 0);"
+    ).execute(pool).await.map_err(Error::storage)?;
+    Ok(())
+}
+
+async fn load_records(pool: &SqlitePool) -> Result<BTreeMap<Vec<u8>, Record>, Error> {
+    sqlx::query_as::<_, (Vec<u8>, Vec<u8>)>("SELECT key, record FROM pepino_relay_ledger")
+        .fetch_all(pool)
+        .await
+        .map_err(Error::storage)?
+        .into_iter()
+        .map(|(key, record)| {
+            p2panda_core::cbor::decode_cbor_strict(record.as_slice())
+                .map(|record| (key, record))
+                .map_err(|_| Error::Storage("invalid relay ledger record".into()))
+        })
+        .collect()
+}
+
+pub(super) fn encode(record: &Record) -> Result<Vec<u8>, Error> {
+    p2panda_core::cbor::encode_cbor(record)
+        .map_err(|_| Error::Storage("could not encode relay ledger record".into()))
 }
 
 #[cfg(test)]
@@ -143,5 +202,51 @@ mod tests {
             let old_add = RelayInstruction { board, sequence: 3, carry: true };
             prop_assert_eq!(Record::next(Some(record), authors[0], old_add, true), (None, RelayAnswer::Superseded));
         }
+    }
+
+    #[tokio::test]
+    async fn trust_and_capacity_gate_durable_admission() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::node::open_database(&dir.path().join("relay.sqlite"), true)
+            .await
+            .unwrap();
+        p2panda_store::sqlite::run_pending_migrations(&pool)
+            .await
+            .unwrap();
+        prepare(&pool).await.unwrap();
+        let trusted = DeviceId::from_bytes([17; 32]);
+        let stranger = DeviceId::from_bytes([27; 32]);
+        let mut ledger = Ledger::load(pool.clone(), [trusted].into(), 1)
+            .await
+            .unwrap();
+        let add = |byte| RelayInstruction {
+            board: BoardId::from_bytes([byte; 32]),
+            sequence: 1,
+            carry: true,
+        };
+        assert_eq!(
+            ledger.apply(stranger, add(57)).await.unwrap(),
+            RelayAnswer::NotTrusted
+        );
+        assert!(ledger.records.is_empty());
+        assert_eq!(
+            ledger.apply(trusted, add(57)).await.unwrap(),
+            RelayAnswer::Carrying
+        );
+        assert_eq!(
+            ledger.apply(trusted, add(58)).await.unwrap(),
+            RelayAnswer::AtCapacity
+        );
+        assert_eq!(
+            ledger.apply(trusted, add(57)).await.unwrap(),
+            RelayAnswer::Carrying
+        );
+        let restored = Ledger::load(pool.clone(), [trusted].into(), 1)
+            .await
+            .unwrap();
+        assert_eq!(restored.counts(), [(trusted, 1)].into());
+        assert_eq!(restored.rejected, 1);
+        let empty = Ledger::load(pool, [].into(), 64).await.unwrap();
+        assert!(!empty.is_trusted(trusted));
     }
 }

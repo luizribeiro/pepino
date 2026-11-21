@@ -52,6 +52,9 @@ impl Node {
                 p2panda_store::sqlite::run_pending_migrations(&pool)
                     .await
                     .map_err(Error::storage)?;
+                if relay {
+                    crate::relay_ledger::prepare(&pool).await?;
+                }
                 let instance_id = database_instance_id(&pool).await?;
                 let acks = AckStore::create(pool.clone()).await?;
                 let inner = builder
