@@ -17,7 +17,8 @@ use ppn::{
 use serde_json::json;
 
 #[derive(clap::Args)]
-#[command(about = "Manage this identity's boards.", after_help = example_help(&["ppn board ls", "ppn board show Workshop"]))]
+#[command(about = "Create, share, and select boards.",
+    long_about = "Create, share, and select boards. A joined member can read the board's entire history. The invitee's linked devices see the board while waiting for access. Changing a person's role, removal, and leaving are reserved for a later release.", after_help = example_help(&["ppn board ls", "ppn board show Workshop"]))]
 pub struct Args {
     #[command(subcommand)]
     operation: Operation,

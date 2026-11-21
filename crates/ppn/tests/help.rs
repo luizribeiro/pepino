@@ -389,3 +389,20 @@ fn linking_help_describes_private_inputs_and_verified_outputs() {
     let join = as_json(&run_ppn(&["help", "device", "join", "--json"]));
     assert!(join["output"]["fields"]["grantor"].is_string());
 }
+
+#[test]
+fn board_sharing_help_covers_confirmation_role_and_private_input() {
+    let help = run_ppn(&["board", "invite", "--help"]);
+    for flag in [
+        "--fingerprint",
+        "--from-file",
+        "--board",
+        "read",
+        "write",
+        "manage",
+    ] {
+        assert!(help.contains(flag), "{help}");
+    }
+    let help = run_ppn(&["board", "join", "--help"]);
+    assert!(help.contains("--timeout"));
+}
