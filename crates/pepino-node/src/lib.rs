@@ -14,6 +14,7 @@ mod receipt;
 mod relay;
 mod relay_control;
 mod relay_ledger;
+mod relay_purge;
 mod settings;
 mod spool;
 mod status;

@@ -152,7 +152,8 @@ pub(super) async fn prepare(pool: &SqlitePool) -> Result<(), Error> {
          CREATE TABLE IF NOT EXISTS pepino_relay_stats (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), rejected INTEGER NOT NULL) STRICT;
          INSERT OR IGNORE INTO pepino_relay_stats VALUES (1, 0);"
     ).execute(pool).await.map_err(Error::storage)?;
-    Ok(())
+    let records = load_records(pool).await?;
+    super::relay_purge::pending(pool, records).await
 }
 
 async fn load_records(pool: &SqlitePool) -> Result<BTreeMap<Vec<u8>, Record>, Error> {
