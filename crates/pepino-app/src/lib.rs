@@ -49,7 +49,9 @@ pub use board_admission::BoardAdmission;
 pub use board_card_exchange::CardExchange;
 pub use board_card_wire::BoardCards;
 pub use board_grant::BoardGrant;
-pub use board_membership::{MembershipAction, MembershipChange, MembershipRecord};
+pub use board_membership::{
+    DeviceMembershipChange, MembershipAction, MembershipChange, MembershipRecord, reconcile_person,
+};
 pub use board_people::BoardPerson;
 pub use board_request::BoardRequest;
 pub use board_requests::BoardInfo;
