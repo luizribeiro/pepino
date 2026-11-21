@@ -52,6 +52,7 @@ pub enum Error {
     EnrollmentIncomplete {
         enrolled: Vec<String>,
         failed: Vec<String>,
+        causes: Vec<String>,
     },
     #[error("timed out closing sync workers")]
     ShutdownTimeout,
@@ -332,14 +333,10 @@ impl SyncEngine {
                         board: board.name.clone(),
                     };
                     let handle = handle.ok_or_else(denied)?;
-                    handle
-                        .wait_until_joined(Duration::from_secs(5))
-                        .await
-                        .map_err(|_| denied())?;
+                    handle.wait_until_joined(Duration::from_secs(5)).await?;
                     let role = handle
                         .members()
-                        .await
-                        .map_err(|_| denied())?
+                        .await?
                         .into_iter()
                         .find_map(|(id, role)| {
                             (id == owner && role == Role::Manage).then_some(role)
@@ -369,7 +366,7 @@ impl SyncEngine {
         let results =
             futures_util::future::join_all(allowed.into_iter().map(|(name, handle, role)| {
                 let member = &member;
-                async move { (name, handle.add_member(member, role).await.is_ok()) }
+                async move { (name, handle.add_member(member, role).await) }
             }))
             .await;
         check_enrollment(results)?;
@@ -439,19 +436,25 @@ async fn observe_node<T: Transport>(
     }
 }
 
-fn check_enrollment(results: Vec<(&str, bool)>) -> Result<(), Error> {
-    let (mut enrolled, mut failed) = (Vec::new(), Vec::new());
-    for (name, succeeded) in results {
-        if succeeded {
-            enrolled.push(name.to_owned());
-        } else {
-            failed.push(name.to_owned());
+fn check_enrollment(results: Vec<(&str, Result<(), pepino_node::Error>)>) -> Result<(), Error> {
+    let (mut enrolled, mut failed, mut causes) = (Vec::new(), Vec::new(), Vec::new());
+    for (name, result) in results {
+        match result {
+            Ok(()) => enrolled.push(name.to_owned()),
+            Err(error) => {
+                failed.push(name.to_owned());
+                causes.push(error.to_string());
+            }
         }
     }
     if failed.is_empty() {
         Ok(())
     } else {
-        Err(Error::EnrollmentIncomplete { enrolled, failed })
+        Err(Error::EnrollmentIncomplete {
+            enrolled,
+            failed,
+            causes,
+        })
     }
 }
 
@@ -459,13 +462,13 @@ fn check_enrollment(results: Vec<(&str, bool)>) -> Result<(), Error> {
 #[test]
 fn reports_each_board_outcome_when_enrollment_partially_fails() {
     let result = check_enrollment(vec![
-        ("Greenhouse", true),
-        ("Workshop", false),
-        ("Kitchen", true),
+        ("Greenhouse", Ok(())),
+        ("Workshop", Err(pepino_node::Error::NotJoined)),
+        ("Kitchen", Ok(())),
     ]);
     assert!(
-        matches!(result, Err(Error::EnrollmentIncomplete { enrolled, failed })
-        if enrolled == ["Greenhouse", "Kitchen"] && failed == ["Workshop"])
+        matches!(result, Err(Error::EnrollmentIncomplete { enrolled, failed, causes })
+        if enrolled == ["Greenhouse", "Kitchen"] && failed == ["Workshop"] && causes == [pepino_node::Error::NotJoined.to_string()])
     );
-    assert!(check_enrollment(vec![("Greenhouse", true), ("Workshop", true)]).is_ok());
+    assert!(check_enrollment(vec![("Greenhouse", Ok(())), ("Workshop", Ok(()))]).is_ok());
 }

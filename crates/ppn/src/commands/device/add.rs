@@ -71,7 +71,12 @@ pub(super) fn run(
             Duration::from_secs(20),
         )
         .map_err(unreachable)?;
-    if let Outcome::MemberAddIncomplete { enrolled, failed } = &outcome {
+    if let Outcome::MemberAddIncomplete {
+        enrolled,
+        failed,
+        causes,
+    } = &outcome
+    {
         let rows = |names: &[String]| {
             names
                 .iter()
@@ -79,7 +84,7 @@ pub(super) fn run(
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let message = format!(
+        let mut message = format!(
             "Could not enroll the device on {}. Enrollment succeeded on {}.",
             rows(failed),
             if enrolled.is_empty() {
@@ -88,9 +93,13 @@ pub(super) fn run(
                 rows(enrolled)
             }
         );
+        for (board, cause) in failed.iter().zip(causes) {
+            message.push_str(&format!(" {}: {}", single_line(board), single_line(cause)));
+        }
         return Err(CliError::new(ErrorKind::Failure, message)
             .with_detail("enrolled_boards", json!(enrolled))
-            .with_detail("failed_boards", json!(failed)));
+            .with_detail("failed_boards", json!(failed))
+            .with_detail("causes", json!(causes)));
     }
     if let Outcome::MemberAccessDenied { board } = &outcome {
         return Err(CliError::new(
@@ -100,6 +109,9 @@ pub(super) fn run(
                 single_line(board)
             ),
         ));
+    }
+    if let Outcome::Error { message, .. } = outcome {
+        return Err(CliError::new(ErrorKind::Failure, message));
     }
     if !matches!(outcome, Outcome::MemberAdded) {
         return Err(unexpected_reply());

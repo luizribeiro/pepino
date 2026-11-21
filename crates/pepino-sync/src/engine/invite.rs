@@ -3,7 +3,7 @@ use pepino_app::{
 };
 use pepino_core::{BoardId, DeviceId};
 
-use crate::{Error, SyncEngine, TransportBoard};
+use crate::{Error, SyncEngine};
 
 impl SyncEngine {
     pub async fn request_board(&self, name: Option<&str>) -> Result<BoardRequest, Error> {
@@ -29,7 +29,8 @@ impl SyncEngine {
         };
         workers.open_missing(&local).await?;
         let handle = workers.handle(id).ok_or_else(denied)?;
-        if !handle.manages(local.device_id).await {
+        let members = handle.members().await?;
+        if !members.contains(&(local.device_id, pepino_node::Role::Manage)) {
             return Err(denied());
         }
         if local.identity_id == request.identity.id
@@ -44,9 +45,7 @@ impl SyncEngine {
             }
             .into());
         }
-        if handle
-            .members()
-            .await?
+        if members
             .iter()
             .any(|(device, existing)| *device == request.device.id && *existing != role.into())
         {

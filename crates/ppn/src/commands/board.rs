@@ -346,6 +346,7 @@ fn create(
         .map_err(super::daemon::unreachable)?
     {
         Outcome::BoardCreated { board } => Ok(board.to_string()),
+        Outcome::Error { code, message } => Err(request::control_error(&code, message)),
         _ => Err(CliError::new(
             ErrorKind::Failure,
             "Could not create the board.",

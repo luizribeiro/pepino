@@ -42,6 +42,7 @@ impl Client {
     pub fn nudge_with(&self, limit: Duration) -> io::Result<()> {
         match self.call_with(Operation::Nudge, limit)? {
             Outcome::Nudged => Ok(()),
+            Outcome::Error { message, .. } => Err(io::Error::other(message)),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Expected a daemon nudge receipt",
@@ -52,6 +53,7 @@ impl Client {
     pub fn status(&self) -> io::Result<Option<DaemonStatus>> {
         match self.call(Operation::Status) {
             Ok(Outcome::Status { status }) => Ok(Some(status)),
+            Ok(Outcome::Error { message, .. }) => Err(io::Error::other(message)),
             Ok(_) => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Expected daemon status",
@@ -86,10 +88,7 @@ async fn exchange(path: &Path, operation: Operation) -> io::Result<Outcome> {
             "Unsupported daemon protocol version",
         ));
     }
-    match response.result {
-        Outcome::Error { message, .. } => Err(io::Error::other(message)),
-        outcome => Ok(outcome),
-    }
+    Ok(response.result)
 }
 
 #[cfg(test)]

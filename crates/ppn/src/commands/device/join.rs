@@ -87,12 +87,16 @@ pub(crate) fn wait_for_boards(
                     },
                     remaining + Duration::from_secs(2),
                 ),
+                response @ Outcome::Error { .. } => Ok(response),
                 _ => Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "Expected a peer hint acknowledgement",
                 )),
             });
         match outcome {
+            Ok(Outcome::Error { message, .. }) => {
+                return Err(CliError::new(ErrorKind::Failure, message));
+            }
             Ok(outcome) => return Ok(outcome),
             Err(error)
                 if !remaining.is_zero()

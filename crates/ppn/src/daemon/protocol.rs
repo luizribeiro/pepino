@@ -98,6 +98,8 @@ pub enum Outcome {
     MemberAddIncomplete {
         enrolled: Vec<String>,
         failed: Vec<String>,
+        #[serde(default)]
+        causes: Vec<String>,
     },
     MemberAccessDenied {
         board: String,

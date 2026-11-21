@@ -17,7 +17,11 @@ pub(super) async fn operate(
     match operation {
         Operation::CreateBoard { name } => match engine.create_board(&name).await {
             Ok(board) => Outcome::BoardCreated { board },
-            Err(_) => Outcome::BoardCreationFailed,
+            Err(error) => failure(
+                "board_creation_failed",
+                "Could not create the board",
+                &error,
+            ),
         },
         Operation::Nudge => {
             engine.nudge();
@@ -37,20 +41,27 @@ pub(super) async fn operate(
                     idle: idle.is_ok(),
                     network: snapshot(engine.status()),
                 },
-                Err(_) => Outcome::error("sync_unavailable", "Sync is restarting."),
+                Err(error) => failure("sync_unavailable", "Could not wait for sync", &error),
             }
         }
         Operation::AddMember { device, name } => match engine.add_member(device, name).await {
             Ok(()) => Outcome::MemberAdded,
-            Err(pepino_sync::Error::EnrollmentIncomplete { enrolled, failed }) => {
-                Outcome::MemberAddIncomplete { enrolled, failed }
-            }
+            Err(pepino_sync::Error::EnrollmentIncomplete {
+                enrolled,
+                failed,
+                causes,
+            }) => Outcome::MemberAddIncomplete {
+                enrolled,
+                failed,
+                causes,
+            },
             Err(pepino_sync::Error::EnrollmentAccess { board }) => {
                 Outcome::MemberAccessDenied { board }
             }
-            Err(_) => Outcome::error(
+            Err(error) => failure(
                 "add_member_failed",
-                "Could not grant board membership. Check that this device has joined every board.",
+                "Could not grant board membership",
+                &error,
             ),
         },
         Operation::DeviceRemoval { device, timeout_ms } => Outcome::DeviceRemoval {
@@ -60,9 +71,10 @@ pub(super) async fn operate(
         },
         Operation::RegisterPeerHint { peer } => match engine.register_peer_hint(peer).await {
             Ok(()) => Outcome::PeerHintRegistered,
-            Err(_) => Outcome::error(
+            Err(error) => failure(
                 "peer_hint_failed",
-                "Could not register the granting device's connection hint.",
+                "Could not register the granting device's connection hint",
+                &error,
             ),
         },
         Operation::BoardJoinState { timeout_ms, board } => {
@@ -96,7 +108,11 @@ pub(super) async fn operate(
                 request: Box::new(request),
             },
             Err(Error::App(error)) => Outcome::error("invalid_input", &error.to_string()),
-            Err(_) => Outcome::error("request_failed", "Could not prepare the board request."),
+            Err(error) => failure(
+                "request_failed",
+                "Could not prepare the board request",
+                &error,
+            ),
         },
         Operation::BoardInvite {
             board,
@@ -111,11 +127,46 @@ pub(super) async fn operate(
             Err(Error::App(error @ pepino_app::AppError::InvalidInput { .. })) => {
                 Outcome::error("invalid_input", &error.to_string())
             }
-            Err(_) => Outcome::error(
+            Err(error) => failure(
                 "invite_failed",
-                "Could not enroll the device and publish its identity card.",
+                "Could not enroll the device and publish its identity card",
+                &error,
             ),
         },
         Operation::Stop => Outcome::Stopping,
     }
+}
+
+fn failure(code: &str, operation: &str, error: &Error) -> Outcome {
+    let cause = std::error::Error::source(error).map_or_else(
+        || error.to_string(),
+        |source| {
+            let message = error.to_string();
+            let source = source.to_string();
+            if message.contains(&source) {
+                message
+            } else {
+                format!("{message}: {source}")
+            }
+        },
+    );
+    Outcome::error(
+        code,
+        &format!("{operation}: {}", crate::render::single_line(&cause)),
+    )
+}
+
+#[cfg(test)]
+#[test]
+fn control_errors_preserve_the_transport_failure() {
+    let result = failure(
+        "invite_failed",
+        "Could not invite",
+        &Error::Node(pepino_node::Error::BoardRestartRequired(
+            pepino_core::BoardId::from_bytes([41; 32]),
+        )),
+    );
+    assert!(
+        matches!(result, Outcome::Error { code, message } if code == "invite_failed" && message.contains("restart"))
+    );
 }

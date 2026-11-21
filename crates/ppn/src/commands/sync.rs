@@ -48,8 +48,10 @@ pub fn run(
     let outcome = client
         .call_with(operation, wait.saturating_add(Duration::from_secs(2)))
         .map_err(unreachable)?;
-    let Outcome::Synced { idle, network } = outcome else {
-        return Err(protocol_error());
+    let (idle, network) = match outcome {
+        Outcome::Synced { idle, network } => (idle, network),
+        Outcome::Error { message, .. } => return Err(CliError::new(ErrorKind::Failure, message)),
+        _ => return Err(protocol_error()),
     };
     let devices = pepino_app::LocalState::load(config.data_dir.value.as_path())
         .map(|local| local.devices())
