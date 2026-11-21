@@ -100,6 +100,7 @@ impl RenderSettings {
 pub struct Context<'a> {
     pub terminal: Terminal,
     pub(crate) wrote: std::rc::Rc<std::cell::Cell<bool>>,
+    pub(crate) board_notice: std::rc::Rc<std::cell::RefCell<Option<crate::output::Warning>>>,
     config: OnceCell<Result<LoadedConfig, CliError>>,
     load_config: Box<dyn Fn() -> Result<LoadedConfig, CliError> + 'a>,
     pub yes: bool,
@@ -121,6 +122,7 @@ impl<'a> Context<'a> {
             terminal,
             config: OnceCell::new(),
             wrote: Default::default(),
+            board_notice: Default::default(),
             load_config: Box::new(load_config),
             yes,
             timeout,
@@ -149,6 +151,10 @@ impl<'a> Context<'a> {
                     })
             })
             .transpose()
+    }
+
+    pub fn take_board_notice(&self) -> Option<crate::output::Warning> {
+        self.board_notice.take()
     }
 
     pub fn wrote(&self) -> bool {

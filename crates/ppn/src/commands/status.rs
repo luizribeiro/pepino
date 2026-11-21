@@ -143,13 +143,17 @@ fn document(
                 access.map_or(pepino_app::BoardRole::Manage, |access| access.role),
                 owner,
                 waiting,
+                local.board_departure(board.id),
             )
         })
         .collect::<Vec<_>>();
     let membership_rows = boards
         .iter()
-        .map(|(board, state, sync, role, owner, waiting)| {
-            let state = if *waiting {
+        .map(|(board, state, sync, role, owner, waiting, departure)| {
+            let departure = departure.map(|state| state.to_string());
+            let state = if let Some(departure) = departure.as_deref() {
+                departure
+            } else if *waiting {
                 "waiting for access"
             } else {
                 membership(*state)
@@ -167,7 +171,11 @@ fn document(
             format!(
                 "{}: {state} ({}) · {role}{sharing}",
                 single_line(&board.name),
-                sync.replace('_', " ")
+                if departure.is_some() {
+                    "paused".into()
+                } else {
+                    sync.replace('_', " ")
+                }
             )
         })
         .collect::<Vec<_>>()
@@ -223,9 +231,9 @@ fn document(
             ))
         },
         move |fields| {
-            let boards = boards.into_iter().map(|(board, state, sync, role, owner, waiting)| {
-                let membership = if waiting { serde_json::json!("waiting_for_access") } else { serde_json::json!(state) };
-                serde_json::json!({"id": board.id, "name": board.name, "membership": membership, "sync": sync, "role": role, "shared": owner.is_some(), "owner": owner})
+            let boards = boards.into_iter().map(|(board, state, sync, role, owner, waiting, departure)| {
+                let membership = if let Some(departure) = departure { serde_json::json!(departure) } else if waiting { serde_json::json!("waiting_for_access") } else { serde_json::json!(state) };
+                serde_json::json!({"id": board.id, "name": board.name, "membership": membership, "sync": if departure.is_some() { "paused" } else { sync }, "role": role, "shared": owner.is_some(), "owner": owner})
             }).collect::<Vec<_>>();
             fields.insert(
                 "rejected_board_card_entries".into(),

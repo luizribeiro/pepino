@@ -15,6 +15,7 @@ pub struct InvocationTime {
 pub struct AppClient {
     app: App,
     wrote: std::rc::Rc<std::cell::Cell<bool>>,
+    board_notice: std::rc::Rc<std::cell::RefCell<Option<crate::output::Warning>>>,
     runtime: Runtime,
     now_ms: u64,
     board_override: Result<Option<(String, &'static str)>, CliError>,
@@ -70,6 +71,7 @@ impl AppClient {
                     .map(|board| board.map(|(reference, source)| (reference.into(), source)))
             },
             wrote: context.wrote.clone(),
+            board_notice: context.board_notice.clone(),
             runtime,
             now_ms,
         })
@@ -85,7 +87,7 @@ impl AppClient {
             .selected_board()
             .map_or(local.board_id(), |(board, _)| board.id);
         let devices = local.author_devices(board);
-        let people = local.person_labels();
+        let people = local.board_person_labels(board);
         move |id| author_label(id, &devices, &people, verbose)
     }
 
@@ -140,6 +142,21 @@ impl AppClient {
                 .as_ref()
                 .map(|(reference, source)| (reference.as_str(), *source))
         };
+        if !identity_local && !all_boards && matches!(&request, Request::Read(_)) {
+            let selected = self.selected_board()?.0;
+            if let Some(state) = self.local_state().board_departure(selected.id) {
+                self.board_notice.replace(Some(crate::output::Warning {
+                    message: format!(
+                        "Board {:?} membership {state}. Showing local data.",
+                        selected.name
+                    ),
+                    details: serde_json::Map::from_iter([(
+                        "departure".into(),
+                        serde_json::json!(state),
+                    )]),
+                }));
+            }
+        }
         let response =
             self.runtime
                 .block_on(self.app.handle_on(request, self.now_ms, board, all_boards))?;

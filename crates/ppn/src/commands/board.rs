@@ -236,6 +236,11 @@ fn document(
     let mut records = Vec::new();
     for (info, id) in boards.iter().zip(&ids) {
         let (state, sync) = board_activity(info.board.id, info.membership, network);
+        let sync = if info.departure.is_some() {
+            "paused"
+        } else {
+            sync
+        };
         let activity = sync.replace('_', " ");
         let sharing = if info.shared {
             info.owner
@@ -248,7 +253,10 @@ fn document(
         } else {
             String::new()
         };
-        let member = if info.waiting_for_access {
+        let departure = info.departure.map(|state| state.to_string());
+        let member = if let Some(departure) = departure.as_deref() {
+            departure
+        } else if info.waiting_for_access {
             "waiting for access"
         } else {
             membership(state)
@@ -263,7 +271,9 @@ fn document(
             member,
         ));
         let mut record = json!(info);
-        record["membership"] = if info.waiting_for_access {
+        record["membership"] = if let Some(departure) = info.departure {
+            json!(departure)
+        } else if info.waiting_for_access {
             json!("waiting_for_access")
         } else {
             json!(state)
