@@ -23,6 +23,7 @@ pub(crate) struct BoardWorkers<T: Transport> {
     pub poll: Duration,
     pub store_instance: [u8; 16],
     handles: BTreeMap<BoardId, Weak<T::Board>>,
+    card_workers: BTreeMap<BoardId, card_exchange::CardWorker>,
     workers: JoinSet<Result<(), Error>>,
     pub(crate) replaying: std::collections::BTreeSet<BoardId>,
 }
@@ -48,6 +49,7 @@ impl<T: Transport> BoardWorkers<T> {
             poll,
             store_instance,
             handles: BTreeMap::new(),
+            card_workers: BTreeMap::new(),
             workers: JoinSet::new(),
             replaying: Default::default(),
         }

@@ -1,8 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use pepino_app::{
-    App, BoardAdmission, BoardRole, DeviceMembershipChange, MembershipAction, MembershipChange,
-    MembershipRecord, MembershipRefusal,
+    App, BoardAdmission, BoardCards, BoardRole, DeviceMembershipChange, MembershipAction,
+    MembershipChange, MembershipRecord, MembershipRefusal,
 };
 use pepino_core::{BoardId, EventId};
 use pepino_node::{Node, NodeSettings, Role};
@@ -15,7 +15,7 @@ use crate::{
     reader_routes::reconcile_channel,
 };
 
-use super::stub::Stub;
+use super::{WAIT, stub::Stub};
 
 async fn members(dir: &std::path::Path, board: BoardId) -> (Arc<App>, App) {
     let owner = Arc::new(App::init(dir.join("owner"), 0).await.unwrap());
@@ -53,6 +53,77 @@ async fn members(dir: &std::path::Path, board: BoardId) -> (Arc<App>, App) {
         .await
         .unwrap();
     (owner, guest)
+}
+
+#[tokio::test]
+async fn reader_route_bursts_open_only_the_four_newest_channels_per_person() {
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([20; 32]);
+    let (app, manager) = members(dir.path(), board).await;
+    let local = app.fresh_local_state().await.unwrap();
+    let person = local.own_person_key();
+    let manager = manager.local_state().own_person_key();
+    let node = Arc::new(Stub::new(local.device_id));
+    let (changes, _) = watch::channel(Default::default());
+    let (_stop, stopping) = watch::channel(());
+    let (_close, closing) = watch::channel(());
+    let (_nudge, nudged) = watch::channel(0);
+    let mut workers = BoardWorkers::new(
+        node.clone(),
+        app.clone(),
+        changes,
+        (stopping, closing),
+        nudged,
+        Duration::from_secs(1),
+        [0; 16],
+    );
+    workers.open_missing(&local).await.unwrap();
+    node.set_joined_members(
+        board,
+        [(local.device_id, Role::Manage), (manager.1, Role::Manage)].into(),
+    );
+    node.set_operation_role(Role::Manage);
+    let send = |channel, person| {
+        let payload = BoardCards::ReaderRoute {
+            channel,
+            person,
+            incarnation: None,
+        }
+        .encode()
+        .unwrap();
+        let mut receipt = node.deliver(board, manager.1, payload);
+        async move {
+            tokio::time::timeout(WAIT, receipt.wait_for(|done| *done))
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    };
+    let other = BoardId::from_bytes([250; 32]);
+    send(other, manager).await;
+    let channel = |index: u8| BoardId::from_bytes([241 - index; 32]);
+    for batch in [0..110, 110..220] {
+        let newest = batch.end - 4..batch.end;
+        for index in batch {
+            send(channel(index), person).await;
+        }
+        let local = app.fresh_local_state().await.unwrap();
+        let expected: BTreeSet<_> = newest.map(channel).chain([other]).collect();
+        assert_eq!(
+            local
+                .card_exchanges()
+                .keys()
+                .copied()
+                .collect::<BTreeSet<_>>(),
+            expected
+        );
+        workers.open_missing(&local).await.unwrap();
+        let mut opened: BTreeSet<_> = node.status().boards.into_keys().collect();
+        opened.remove(&local.catalog_board());
+        opened.remove(&board);
+        assert_eq!(opened, expected);
+    }
+    workers.abort().await;
 }
 
 #[tokio::test]

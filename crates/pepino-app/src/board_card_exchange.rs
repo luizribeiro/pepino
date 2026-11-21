@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{App, AppError, LocalState, app::invalid};
 
+const MAX_ROUTES_PER_PERSON: usize = 4;
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CardExchange {
     pub board: BoardId,
@@ -102,10 +104,10 @@ impl LocalState {
             })
     }
 
-    fn retain_card_exchange(&self, route: &CardExchange) -> bool {
+    fn retained_card_exchange_person(&self, route: &CardExchange) -> Option<crate::PersonKey> {
         let board = route.board;
         if board == self.catalog_board() || !self.boards().iter().any(|known| known.id == board) {
-            return false;
+            return None;
         }
         let own = self.own_person_key();
         let person = route
@@ -116,30 +118,50 @@ impl LocalState {
                 self.board_people(board)
                     .find(|known| route.matches(known.key()))
                     .map(crate::BoardPerson::key)
-            });
-        let Some(person) = person else { return false };
+            })?;
         if person == own && self.needs_readmission_replay(board) {
-            return true;
+            return Some(person);
         }
         if let Some(record) = self.latest_membership(board, person) {
             if record.change.action.role().is_none() {
                 // Keep the route available while a manager removes channel access.
-                return !record.applied;
+                return (!record.applied).then_some(person);
             }
-            return route.incarnation.is_none_or(|incarnation| {
+            let current = route.incarnation.is_none_or(|incarnation| {
                 self.membership_incarnation(board, person)
                     .is_none_or(|current| current == incarnation)
             });
+            return current.then_some(person);
         }
         self.card_exchange_person_is_known(board, person)
+            .then_some(person)
     }
 
     pub(crate) fn prune_card_exchanges(&mut self) {
-        let routes = std::mem::take(&mut self.catalog.card_exchanges);
-        self.catalog.card_exchanges = routes
+        let mut routes = std::mem::take(&mut self.catalog.card_exchanges);
+        let order = std::mem::take(&mut self.catalog.card_exchange_order);
+        // Stores without receipt order fall back to channel IDs.
+        let legacy_order: Vec<_> = routes.keys().copied().collect();
+        let mut counts = BTreeMap::new();
+        for channel in order
             .into_iter()
-            .filter(|(_, route)| self.retain_card_exchange(route))
-            .collect();
+            .rev()
+            .chain(legacy_order.into_iter().rev())
+        {
+            let Some(route) = routes.remove(&channel) else {
+                continue;
+            };
+            let Some(person) = self.retained_card_exchange_person(&route) else {
+                continue;
+            };
+            let count = counts.entry((route.board, person)).or_insert(0);
+            if *count < MAX_ROUTES_PER_PERSON {
+                *count += 1;
+                self.catalog.card_exchanges.insert(channel, route);
+                self.catalog.card_exchange_order.push(channel);
+            }
+        }
+        self.catalog.card_exchange_order.reverse();
     }
 
     pub(crate) fn add_card_exchange(
@@ -165,16 +187,17 @@ impl LocalState {
                 "the identity update channel is already in use",
             ));
         }
-        if !self.retain_card_exchange(&exchange) {
+        if self.retained_card_exchange_person(&exchange).is_none() {
             return Ok(());
         }
-        let current = self
-            .catalog
-            .card_exchanges
-            .entry(channel)
-            .or_insert(exchange);
-        current.root = current.root.or(exchange.root);
-        current.incarnation = current.incarnation.or(exchange.incarnation);
+        if let Some(current) = self.catalog.card_exchanges.get_mut(&channel) {
+            current.root = current.root.or(exchange.root);
+            current.incarnation = current.incarnation.or(exchange.incarnation);
+        } else {
+            self.catalog.card_exchanges.insert(channel, exchange);
+            self.catalog.card_exchange_order.push(channel);
+        }
+        self.prune_card_exchanges();
         Ok(())
     }
 }

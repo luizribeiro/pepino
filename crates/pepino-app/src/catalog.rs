@@ -27,6 +27,8 @@ pub(crate) struct CatalogState {
     pub(crate) dropped_cards: BTreeMap<BoardId, usize>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) card_exchanges: BTreeMap<BoardId, crate::CardExchange>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) card_exchange_order: Vec<BoardId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) board_request: Option<crate::BoardRequest>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -72,6 +74,8 @@ impl CatalogState {
         self.rejected_cards.remove(&board);
         self.dropped_cards.remove(&board);
         self.card_exchanges.retain(|_, route| route.board != board);
+        self.card_exchange_order
+            .retain(|channel| self.card_exchanges.contains_key(channel));
         self.joined_shares.remove(&board);
         self.membership.remove(&board);
         self.refused_membership_order.remove(&board);

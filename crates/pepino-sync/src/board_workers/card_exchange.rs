@@ -2,13 +2,27 @@ use std::sync::Arc;
 
 use futures_util::StreamExt;
 use pepino_app::{App, BoardCards, LocalState};
+use pepino_core::BoardId;
+use tokio::sync::oneshot;
 
 use crate::{Acknowledgement, DeliveryStream, Error, Transport, TransportBoard, retry::Retry};
 
 use super::BoardWorkers;
 
+pub(super) struct CardWorker {
+    evict: oneshot::Sender<()>,
+    closed: oneshot::Receiver<()>,
+}
+
 impl<T: Transport> BoardWorkers<T> {
     pub(super) async fn open_card_exchanges(&mut self, local: &LocalState) -> Result<(), Error> {
+        for (channel, worker) in self.card_workers.extract_if(.., |channel, _| {
+            !local.card_exchanges().contains_key(channel)
+        }) {
+            self.handles.remove(&channel);
+            let _ = worker.evict.send(());
+            let _ = worker.closed.await;
+        }
         for (&channel, &exchange) in local.card_exchanges() {
             let own = exchange.person == local.identity_id
                 && exchange
@@ -25,10 +39,16 @@ impl<T: Transport> BoardWorkers<T> {
             {
                 continue;
             }
-            let board = self
+            let board = match self
                 .node
                 .open_board_for_store(channel, self.store_instance)
-                .await?;
+                .await
+            {
+                Ok(board) => board,
+                // A reannounced channel may have been evicted in this node session.
+                Err(pepino_node::Error::BoardRestartRequired(_)) => continue,
+                Err(error) => return Err(error.into()),
+            };
             self.start_card_exchange(board, channel)?;
         }
         Ok(())
@@ -37,7 +57,7 @@ impl<T: Transport> BoardWorkers<T> {
     pub(crate) fn start_card_exchange(
         &mut self,
         mut board: T::Board,
-        channel: pepino_core::BoardId,
+        channel: BoardId,
     ) -> Result<(), Error> {
         let stream = board.deliveries()?;
         let board = Arc::new(board);
@@ -45,15 +65,29 @@ impl<T: Transport> BoardWorkers<T> {
         let mut stopping = self.stopping.clone();
         let mut closing = self.closing.clone();
         let app = self.app.clone();
+        let (evict, evicted) = oneshot::channel();
+        let (finished, closed) = oneshot::channel();
+        self.card_workers
+            .insert(channel, CardWorker { evict, closed });
         self.workers.spawn(async move {
             tokio::select! {
-                _ = stopping.changed() => (),
-                () = receive(&app, channel, stream) => (),
+                _ = evicted => (),
+                () = async {
+                    tokio::select! {
+                        _ = stopping.changed() => (),
+                        () = receive(&app, channel, stream) => (),
+                    }
+                    let _ = closing.changed().await;
+                } => (),
             }
-            let _ = closing.changed().await;
-            let board = Arc::into_inner(board).ok_or(pepino_node::Error::Closed)?;
-            board.close().await?;
-            Ok(())
+            let result = async {
+                let board = Arc::into_inner(board).ok_or(pepino_node::Error::Closed)?;
+                board.close().await?;
+                Ok(())
+            }
+            .await;
+            let _ = finished.send(());
+            result
         });
         Ok(())
     }
