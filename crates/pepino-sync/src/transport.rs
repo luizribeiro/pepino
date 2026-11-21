@@ -50,6 +50,13 @@ pub trait TransportBoard: Send + Sync + 'static {
         async { Ok(BTreeMap::new()) }
     }
 
+    fn apply_device_change(
+        &self,
+        _change: pepino_app::DeviceMembershipChange,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
+        async { Ok(()) }
+    }
+
     fn manages(&self, _device: DeviceId) -> impl Future<Output = bool> + Send {
         async { false }
     }
@@ -169,6 +176,18 @@ impl TransportBoard for BoardHandle {
 
     async fn roles(&self) -> Result<BTreeMap<DeviceId, Role>, Error> {
         Ok(self.members().await?.into_iter().collect())
+    }
+
+    async fn apply_device_change(
+        &self,
+        change: pepino_app::DeviceMembershipChange,
+    ) -> Result<(), Error> {
+        use pepino_app::DeviceMembershipChange;
+        match change {
+            DeviceMembershipChange::Enroll(bundle, role) => self.add_member(&bundle, role).await,
+            DeviceMembershipChange::Remove(device) => self.remove_member(device, true).await,
+            DeviceMembershipChange::SetRole(device, role) => self.set_role(device, role).await,
+        }
     }
 
     async fn manages(&self, device: DeviceId) -> bool {
