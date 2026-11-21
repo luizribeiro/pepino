@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{App, AppError, LocalState, app::invalid};
 
+const MAX_CARD_EXCHANGES_PER_BOARD: usize = 128;
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CardExchange {
     pub board: BoardId,
@@ -31,6 +33,25 @@ impl LocalState {
         &self.catalog.card_exchanges
     }
 
+    pub(crate) fn card_exchange_has_room(&self, board: BoardId, channel: BoardId) -> bool {
+        self.card_exchanges().contains_key(&channel)
+            || self
+                .card_exchanges()
+                .values()
+                .filter(|route| route.board == board)
+                .count()
+                < MAX_CARD_EXCHANGES_PER_BOARD
+    }
+
+    pub(crate) fn cap_card_exchanges(&mut self) {
+        let mut counts = BTreeMap::<_, usize>::new();
+        self.catalog.card_exchanges.retain(|_, route| {
+            let count = counts.entry(route.board).or_default();
+            *count += 1;
+            *count <= MAX_CARD_EXCHANGES_PER_BOARD
+        });
+    }
+
     pub(crate) fn add_card_exchange(
         &mut self,
         channel: BoardId,
@@ -52,6 +73,12 @@ impl LocalState {
             return Err(invalid(
                 "grant",
                 "the identity update channel is already in use",
+            ));
+        }
+        if !self.card_exchange_has_room(exchange.board, channel) {
+            return Err(invalid(
+                "grant",
+                "too many identity update channels for this board",
             ));
         }
         let current = self
@@ -98,4 +125,40 @@ async fn card_exchanges_are_retained_without_becoming_visible_boards() {
     assert_eq!(saved.card_exchanges()[&channel], exchange);
     assert!(saved.boards().iter().all(|entry| entry.id != channel));
     assert!(app.register_card_exchange(board, exchange).await.is_err());
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn the_card_exchange_limit_is_per_board_and_allows_existing_routes_to_update() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = crate::write::fixture::open(directory.path(), 0)
+        .await
+        .unwrap();
+    let mut local = app.local_state().clone();
+    let channel = |n| {
+        let mut bytes = [n; 32];
+        bytes[0] = 219;
+        BoardId::from_bytes(bytes)
+    };
+    let mut exchange = CardExchange {
+        board: channel(245),
+        root: None,
+        incarnation: None,
+        person: IdentityId::from_bytes([73; 32]),
+    };
+    for i in 0..MAX_CARD_EXCHANGES_PER_BOARD {
+        local.add_card_exchange(channel(i as u8), exchange).unwrap();
+    }
+    let overflow = channel(MAX_CARD_EXCHANGES_PER_BOARD as u8);
+    assert!(local.add_card_exchange(overflow, exchange).is_err());
+    local.catalog.card_exchanges.insert(overflow, exchange);
+    local.cap_card_exchanges();
+    assert!(!local.card_exchanges().contains_key(&overflow));
+
+    exchange.root = Some(local.device_id);
+    local.add_card_exchange(channel(0), exchange).unwrap();
+    assert_eq!(local.card_exchanges()[&channel(0)].root, exchange.root);
+
+    exchange.board = channel(246);
+    assert!(local.add_card_exchange(overflow, exchange).is_ok());
 }
