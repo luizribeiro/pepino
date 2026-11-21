@@ -71,8 +71,12 @@ pub(super) fn run(context: &Context<'_>, reference: &str) -> Result<CommandResul
             .iter()
             .cloned()
             .map(|board| BoardRemoval {
+                result: if local.waiting_for_access(board.id) {
+                    Removal::WaitingForAccess
+                } else {
+                    Removal::Unavailable
+                },
                 board,
-                result: Removal::Unavailable,
             })
             .collect(),
     };
@@ -103,6 +107,9 @@ impl Render for Report {
                 Removal::ManagerRequired => "pending, this device needs Manage",
                 Removal::LastManager => {
                     "pending, grant Manage to another device on this board first"
+                }
+                Removal::WaitingForAccess => {
+                    "pending, this device is waiting for access. A board manager can remove it"
                 }
                 Removal::Unavailable => "pending, daemon or board unavailable",
             };

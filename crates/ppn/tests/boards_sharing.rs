@@ -397,6 +397,52 @@ fn the_inviter_rejects_an_expired_member_bundle() {
 }
 
 #[test]
+fn a_waiting_device_can_revoke_the_device_that_accepted_a_share() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = dir.path().file_name().unwrap().to_str().unwrap();
+    let owner = host(network, "Ada", "Laptop", "Owner private");
+    let guest = host(network, "Ben", "Phone", "Guest private");
+    let linked = Host::new(network);
+    owner.run(&["board", "new", "House"]);
+    let code = grant(&owner, "House", "write", &guest.json(&["board", "request"]));
+    guest.run(&[
+        "board",
+        "join",
+        code["grant"]["code"].as_str().unwrap(),
+        "--timeout",
+        "60s",
+    ]);
+    let request = linked.request("Linked tablet");
+    linked.run(&[
+        "device",
+        "join",
+        &guest.add(&request, &[]),
+        "--timeout",
+        "60s",
+    ]);
+    until(
+        || board(&linked, "House"),
+        |row| row["membership"] == "waiting_for_access",
+        WAIT,
+    );
+    let report = linked.json(&["device", "revoke", "Phone", "--yes", "--timeout", "60s"]);
+    let rows = report["boards"].as_array().unwrap();
+    assert!(
+        rows.iter()
+            .any(|row| row["board"]["name"] == "Guest private" && row["result"] == "removed")
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row["board"]["name"] == "House" && row["result"] == "waiting_for_access")
+    );
+    assert!(
+        linked
+            .run(&["device", "revoke", "Phone", "--yes", "--timeout", "60s"])
+            .contains("waiting for access")
+    );
+}
+
+#[test]
 fn private_catalogs_and_device_links_remain_local_to_each_identity() {
     let dir = tempfile::tempdir().unwrap();
     let network = dir.path().file_name().unwrap().to_str().unwrap();

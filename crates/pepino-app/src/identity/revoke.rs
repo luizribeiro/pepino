@@ -66,7 +66,7 @@ impl App {
             ));
         }
         let boards = local.boards().to_vec();
-        for board in &boards {
+        for board in local.identity_owned_boards() {
             let states = Node::persisted_members(&self.directory.join(NODE_DATABASE), board.id)
                 .await
                 .ok()

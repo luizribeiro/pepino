@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 pub enum Removal {
     Removed,
     ManagerRequired,
+    WaitingForAccess,
     LastManager,
     Unavailable,
 }
@@ -123,8 +124,9 @@ impl Repairs {
                 continue;
             }
             let mut outcomes = Vec::new();
-            for board in local.identity_owned_boards().rev() {
+            for board in local.boards().iter().rev() {
                 let result = match workers.handle(board.id) {
+                    _ if local.waiting_for_access(board.id) => Removal::WaitingForAccess,
                     Some(handle)
                         if network
                             .boards
