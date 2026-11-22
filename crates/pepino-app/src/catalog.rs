@@ -168,7 +168,7 @@ impl LocalState {
 
     pub fn encode_catalog(&self, member: &MemberInfo) -> Result<Vec<u8>, AppError> {
         let mut preferences = self.catalog.preferences.clone();
-        preferences.discard_future(unix_ms());
+        preferences.retain_valid(unix_ms());
         let announcement = Announcement {
             v: crate::PROTOCOL_VERSION,
             identity: self.identity_id,

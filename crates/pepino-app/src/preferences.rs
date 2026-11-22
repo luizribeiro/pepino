@@ -8,7 +8,7 @@ use crate::{AppError, app::invalid};
 const MAX_LIVE: usize = 256;
 const MAX_TOMBSTONES: usize = 1024;
 const MAX_KEY_BYTES: usize = 128;
-const MAX_VALUE_BYTES: usize = 4096;
+const MAX_VALUE_BYTES: usize = 1024;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(transparent)]
@@ -49,6 +49,13 @@ impl Preference {
     fn acceptable_clock(&self, now: u64) -> bool {
         Clock::new().observe(self.hlc, now) == ObserveOutcome::Accepted
             && crate::Hlc::from(self.hlc).utc().is_some()
+    }
+
+    fn valid(&self, key: &str, now: u64) -> bool {
+        let value = self.value.as_deref();
+        validate(key, value).is_ok()
+            && self.acceptable_clock(now)
+            && self.id == Self::event_id(key, value, self.writer, self.hlc)
     }
 
     fn revision(&self) -> (Hlc, EventId) {
@@ -118,16 +125,13 @@ impl Preferences {
         Ok(())
     }
 
-    pub(crate) fn discard_future(&mut self, now: u64) {
-        self.0.retain(|_, entry| entry.acceptable_clock(now));
+    pub(crate) fn retain_valid(&mut self, now: u64) {
+        self.0.retain(|key, entry| entry.valid(key, now));
     }
 
     pub(crate) fn merge(&mut self, incoming: Self, now: u64) {
         for (key, entry) in incoming.0 {
-            let value = entry.value.as_deref();
-            if validate(&key, value).is_ok()
-                && entry.acceptable_clock(now)
-                && entry.id == Preference::event_id(&key, value, entry.writer, entry.hlc)
+            if entry.valid(&key, now)
                 && self
                     .get(&key)
                     .is_none_or(|old| old.revision() < entry.revision())
@@ -271,7 +275,7 @@ mod tests {
             .write(key.into(), None, DeviceId::from_bytes([1; 32]), 0)
             .unwrap_err();
         assert!(error.to_string().contains(&writer.to_string()));
-        prefs.discard_future(0);
+        prefs.retain_valid(0);
         assert!(prefs.is_empty());
     }
 
@@ -360,6 +364,28 @@ mod tests {
             prop_assert_eq!(folded.iter().filter(|(_, e)| e.value.is_none()).count(), MAX_TOMBSTONES);
             prop_assert!(!folded.iter().any(|(_, e)| e.value.is_none() && e.hlc.counter == shift + 100));
         }
+    }
+
+    #[test]
+    fn bounds_values_at_one_kibibyte_on_both_catalog_paths() {
+        let key = "view/greenhouse";
+        let value = format!("tag:hardware {}", "x".repeat(1010));
+        assert_eq!(value.len(), 1023);
+        let mut prefs = Preferences::default();
+        let writer = DeviceId::from_bytes([42; 32]);
+        prefs
+            .write(key.into(), Some(format!("{value}x")), writer, NOW)
+            .unwrap();
+        assert!(
+            prefs
+                .write(key.into(), Some(format!("{value}xx")), writer, NOW)
+                .is_err()
+        );
+        let mut old = event(key, Some(&format!("{value}xx")), 3, 10);
+        prefs.merge(old.clone(), NOW);
+        assert_eq!(prefs.get(key).unwrap().value.as_ref().unwrap().len(), 1024);
+        old.retain_valid(NOW);
+        assert!(old.is_empty());
     }
 
     #[test]
