@@ -74,6 +74,19 @@ fn board(host: &Host, name: &str) -> Value {
         .unwrap_or(Value::Null)
 }
 
+#[track_caller]
+fn wait_for_house_task(host: &Host, id: &str) {
+    until(
+        || host.json(&["ls", "--board", "House"]),
+        |listing| {
+            listing["tasks"]
+                .as_array()
+                .is_some_and(|tasks| tasks.iter().any(|task| task["id"] == id))
+        },
+        WAIT,
+    );
+}
+
 #[test]
 fn two_identities_share_one_board_and_edit_each_others_work() {
     let dir = tempfile::tempdir().unwrap();
@@ -135,15 +148,7 @@ fn two_identities_share_one_board_and_edit_each_others_work() {
     }
     let person = ana.json(&["identity", "show"])["identity"]["id"].clone();
     luiz.json(&["assign", "--board", "House", task, "Ana"]);
-    until(
-        || ana.json(&["ls", "--board", "House"]),
-        |listing| {
-            listing["tasks"]
-                .as_array()
-                .is_some_and(|tasks| tasks.iter().any(|row| row["id"] == task))
-        },
-        WAIT,
-    );
+    wait_for_house_task(&ana, task);
     ana.json(&["comment", "--board", "House", task, "New glass arrived"]);
     ana.json(&[
         "edit",
@@ -741,6 +746,7 @@ fn a_reader_links_a_device_and_both_follow_person_roles_and_departure() {
         |roles| roles == &["write", "write"],
         WAIT,
     );
+    wait_for_house_task(&linked, id);
     linked.run(&[
         "comment",
         "--board",
