@@ -675,6 +675,80 @@ fn join(owner: &Host, guest: &Host, role: &str) {
     assert!(String::from_utf8_lossy(&output.stdout).contains("Initial sync complete"));
 }
 
+#[test]
+fn status_reports_an_unreadable_header_during_initial_board_sync() {
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+
+    let dir = tempfile::tempdir().unwrap();
+    let network = dir.path().file_name().unwrap().to_str().unwrap();
+    let owner = host(network, "Ada", "Laptop", "Owner private");
+    let guest = host(network, "Ben", "Phone", "Guest private");
+    owner.run(&["board", "new", "House"]);
+    let board_id = board(&owner, "House")["id"].as_str().unwrap().to_owned();
+    let title = "Replace the bent hinge";
+    owner.run(&["add", "--board", "House", title]);
+    owner.run(&["sync", "--timeout", "40s"]);
+    let invitation = grant(&owner, "House", "read", &guest.json(&["board", "request"]));
+    let code = invitation["grant"]["code"].as_str().unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let connect = async |file| {
+                SqliteConnection::connect_with(
+                    &SqliteConnectOptions::new().filename(owner.data.join(file)),
+                )
+                .await
+                .unwrap()
+            };
+            let hash: String = sqlx::query_scalar(
+                "SELECT lower(hex(operation)) FROM publication
+                 JOIN event_log AS e ON e.board = publication.board AND e.id = publication.event
+                 WHERE instr(e.bytes, ?) > 0",
+            )
+            .bind(title.as_bytes())
+            .fetch_one(&mut connect("pepino.sqlite").await)
+            .await
+            .unwrap();
+            let updated = sqlx::query("UPDATE operations_v1 SET header = ? WHERE hash = ?")
+                .bind([0x9f_u8].as_slice())
+                .bind(hash)
+                .execute(&mut connect("node.sqlite").await)
+                .await
+                .unwrap();
+            assert_eq!(updated.rows_affected(), 1);
+        });
+
+    common::task_error(
+        guest.output(&["board", "join", code, "--json", "--timeout", "1s"]),
+        7,
+        "pending",
+    );
+    let status = until(
+        || owner.json(&["status"]),
+        |status| status["network"]["boards"][&board_id]["last_error"].is_string(),
+        WAIT,
+    );
+    let error = status["network"]["boards"][&board_id]["last_error"]
+        .as_str()
+        .unwrap();
+    assert!(
+        error.contains("could not decode corrupted 'header' value"),
+        "{error}"
+    );
+    let human = owner.run(&["status"]);
+    assert!(
+        human.contains("Last error: Could not read a board operation during sync"),
+        "{human}"
+    );
+    until(
+        || std::fs::read_to_string(owner.data.join("daemon.log")).unwrap(),
+        |log| log.contains(&format!("board {board_id}: {error}")),
+        WAIT,
+    );
+}
+
 fn member(owner: &Host, name: &str) -> Value {
     owner.json(&["board", "members", "House"])["people"]
         .as_array()

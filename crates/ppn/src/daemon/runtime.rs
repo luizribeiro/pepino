@@ -1,5 +1,6 @@
 use std::{
     cell::OnceCell,
+    collections::BTreeMap,
     io::{self, Write},
     sync::Arc,
     time::{Duration, Instant},
@@ -188,7 +189,7 @@ async fn cycle(
                     tokio::select! {
                         biased;
                         outcome = &mut control => outcome,
-                        () = log_catalog_upgrade(sync, level, upgrade_logged) => unreachable!("status monitoring does not end"),
+                        () = log_status(sync, level, upgrade_logged) => unreachable!("status monitoring does not end"),
                     }
                 }
             }
@@ -237,16 +238,24 @@ async fn the_startup_warning_fires_once_without_ending_startup() {
     assert!(observed.try_recv().is_err());
 }
 
-async fn log_catalog_upgrade(engine: &SyncEngine, level: LogLevel, logged: &mut bool) {
-    if !*logged {
-        let mut changes = std::pin::pin!(engine.status_changes());
-        while let Some(status) = changes.next().await {
-            if status.newer_catalog.is_some() {
-                log(level, LogLevel::Warn, pepino_app::CATALOG_UPGRADE_NOTICE);
-                *logged = true;
-                break;
+async fn log_status(engine: &SyncEngine, level: LogLevel, upgrade_logged: &mut bool) {
+    let mut logged_errors = BTreeMap::new();
+    let mut changes = std::pin::pin!(engine.status_changes());
+    while let Some(status) = changes.next().await {
+        if !*upgrade_logged && status.newer_catalog.is_some() {
+            log(level, LogLevel::Warn, pepino_app::CATALOG_UPGRADE_NOTICE);
+            *upgrade_logged = true;
+        }
+        let mut current_errors = BTreeMap::new();
+        for (id, board) in status.node.boards {
+            if let Some(error) = board.operation_read_error {
+                if logged_errors.get(&id) != Some(&error) {
+                    log(level, LogLevel::Warn, &format!("board {id}: {error}"));
+                }
+                current_errors.insert(id, error);
             }
         }
+        logged_errors = current_errors;
     }
     std::future::pending().await
 }

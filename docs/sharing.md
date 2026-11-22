@@ -14,7 +14,10 @@ Everyone you invite can read the board's **entire history**, including work
 done before they joined. Everyone on a shared board must run the same `ppn`
 version; upgrade together. Builds from before the fix for readmitted devices
 cannot read some membership changes on boards with several removals, so
-upgrade every device and relay that syncs the board.
+upgrade every device and relay that syncs the board. When a device cannot
+read an operation, `ppn status` marks the board with
+`Last error: Could not read a board operation during sync` and the daemon
+log has a matching warning.
 
 ## Invite someone
 

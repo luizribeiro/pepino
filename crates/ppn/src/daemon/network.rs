@@ -58,7 +58,12 @@ pub fn snapshot(status: pepino_sync::Status) -> Network {
                         received: board.received,
                         last_sent: board.last_published_at.map(Into::into),
                         last_received: board.last_received_at.map(Into::into),
-                        last_error: board.last_error,
+                        last_error: status
+                            .node
+                            .boards
+                            .get(&id)
+                            .and_then(|node| node.operation_read_error.clone())
+                            .or(board.last_error),
                     },
                 )
             })
@@ -108,5 +113,32 @@ mod tests {
         );
         assert_eq!(network.boards[&board.to_string()].events_waiting, None);
         assert!(network.boards[&board.to_string()].starting_up);
+    }
+
+    #[test]
+    fn an_unreadable_board_operation_takes_precedence_as_the_last_error() {
+        let board = BoardId::from_bytes([51; 32]);
+        let unreadable = "read a board operation during sync: failed decoding incoming header bytes: DecodingHeader(LengthTooLarge)";
+        let mut status = pepino_sync::Status::default();
+        status.boards.entry(board).or_default().last_error =
+            Some("publish 0303: the operation was not submitted".into());
+        let published = snapshot(status.clone());
+        assert_eq!(
+            published.boards[&board.to_string()].last_error.as_deref(),
+            Some("publish 0303: the operation was not submitted")
+        );
+        status.node.boards.insert(
+            board,
+            pepino_node::BoardStatus {
+                operation_read_error: Some(unreadable.into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            snapshot(status).boards[&board.to_string()]
+                .last_error
+                .as_deref(),
+            Some(unreadable)
+        );
     }
 }

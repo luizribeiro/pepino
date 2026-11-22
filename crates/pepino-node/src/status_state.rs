@@ -22,6 +22,7 @@ pub struct BoardStatus {
     pub pending_deliveries: usize,
     pub caught_up: BTreeSet<DeviceId>,
     pub active_syncs: BTreeMap<(DeviceId, u64), SyncCounts>,
+    pub operation_read_error: Option<String>,
 }
 
 pub(crate) use tracking::{Status, WeakStatus};
@@ -115,9 +116,13 @@ mod tracking {
                         item.replaying = true;
                     }
                 }
-                NodeEvent::ReplayEnded { board, .. } => {
+                NodeEvent::ReplayEnded { board, error } => {
                     if let Some(item) = state.boards.get_mut(board) {
                         item.replaying = false;
+                        if let Some(error) = error {
+                            item.operation_read_error =
+                                Some(format!("replay board operations: {error}"));
+                        }
                     }
                 }
                 NodeEvent::SyncStarted {
@@ -136,10 +141,17 @@ mod tracking {
                     board,
                     peer,
                     session_id,
+                    error,
                     ..
                 } => {
                     if let Some(item) = state.boards.get_mut(board) {
                         item.active_syncs.remove(&(*peer, *session_id));
+                        if let Some(error) =
+                            error.as_ref().filter(|error| is_header_read_error(error))
+                        {
+                            item.operation_read_error =
+                                Some(format!("read a board operation during sync: {error}"));
+                        }
                     }
                 }
                 NodeEvent::CaughtUp { board, peer } => {
@@ -179,6 +191,12 @@ mod tracking {
                 });
             }
         }
+    }
+
+    // p2panda's public SyncError contains only the protocol error's display text.
+    fn is_header_read_error(error: &str) -> bool {
+        error.contains("failed decoding incoming header bytes:")
+            || error.contains("could not decode corrupted 'header' value")
     }
 
     #[cfg(test)]
@@ -238,4 +256,81 @@ fn reconnect_requires_a_fresh_catch_up() {
     assert!(snapshot.last_seen.contains_key(&peer));
     assert!(snapshot.boards[&board].joined && snapshot.boards[&board].synced_with_peer);
     assert!(snapshot.last_seen.contains_key(&peer));
+}
+
+#[cfg(test)]
+mod operation_read_errors {
+    use super::*;
+    use crate::NodeEvent;
+
+    const BOARD: BoardId = BoardId::from_bytes([11; 32]);
+    const PEER: DeviceId = DeviceId::from_bytes([22; 32]);
+
+    fn after_sync(error: Option<&str>) -> Option<String> {
+        let status = Status::default();
+        status.send(NodeEvent::BoardOpened {
+            board: BOARD,
+            replaying: false,
+        });
+        status.send(sync_ended(error));
+        status.snapshot().boards[&BOARD]
+            .operation_read_error
+            .clone()
+    }
+
+    fn sync_ended(error: Option<&str>) -> NodeEvent {
+        NodeEvent::SyncEnded {
+            board: BOARD,
+            peer: PEER,
+            session_id: 7,
+            transferred: SyncCounts {
+                incoming_operations: 3,
+                outgoing_operations: 0,
+                incoming_bytes: 2_417,
+                outgoing_bytes: 0,
+            },
+            error: error.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_sync_that_cannot_decode_a_header_is_recorded_for_its_board() {
+        for cause in [
+            "failed decoding incoming header bytes: DecodingHeader(LengthTooLarge)",
+            "database error: could not decode corrupted 'header' value",
+        ] {
+            assert_eq!(
+                after_sync(Some(cause)),
+                Some(format!("read a board operation during sync: {cause}"))
+            );
+        }
+    }
+
+    #[test]
+    fn clean_and_interrupted_syncs_record_no_read_error() {
+        assert_eq!(after_sync(None), None);
+        assert_eq!(after_sync(Some("connection lost: timed out")), None);
+    }
+
+    #[test]
+    fn the_read_error_outlives_later_syncs_and_ends_with_the_board() {
+        let status = Status::default();
+        status.send(NodeEvent::BoardOpened {
+            board: BOARD,
+            replaying: true,
+        });
+        status.send(NodeEvent::ReplayEnded {
+            board: BOARD,
+            error: Some("store: row 14 has no header".into()),
+        });
+        status.send(sync_ended(None));
+        assert_eq!(
+            status.snapshot().boards[&BOARD]
+                .operation_read_error
+                .as_deref(),
+            Some("replay board operations: store: row 14 has no header")
+        );
+        status.send(NodeEvent::BoardClosed { board: BOARD });
+        assert!(!status.snapshot().boards.contains_key(&BOARD));
+    }
 }
