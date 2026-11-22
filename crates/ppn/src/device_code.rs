@@ -26,6 +26,15 @@ impl Kind {
         }
     }
 
+    fn name(self) -> &'static str {
+        match self {
+            Self::Request => "device request code",
+            Self::Grant => "device grant code",
+            Self::BoardRequest => "board request code",
+            Self::BoardGrant => "board grant code",
+        }
+    }
+
     fn checksum(self, bytes: &[u8]) -> [u8; CHECKSUM_LEN] {
         let mut hash = blake3::Hasher::new();
         hash.update(self.prefix().as_bytes()).update(bytes);
@@ -56,11 +65,33 @@ impl Kind {
     }
 
     pub fn decode<T: DeserializeOwned>(self, text: &str) -> Result<T, Error> {
+        let text = text.trim();
+        let received = if text.is_empty() {
+            "no code"
+        } else {
+            [
+                Self::Request,
+                Self::Grant,
+                Self::BoardRequest,
+                Self::BoardGrant,
+            ]
+            .into_iter()
+            .find(|kind| {
+                text.get(..kind.prefix().len())
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(kind.prefix()))
+            })
+            .map_or("an unrecognised code", Self::name)
+        };
+        if received != self.name() {
+            return Err(Error::Kind {
+                expected: self.name(),
+                received,
+            });
+        }
         if text.len() > MAX_CODE_TEXT {
             return Err(Error::Payload);
         }
-        let text = text.trim().to_ascii_uppercase();
-        let text = text.strip_prefix(self.prefix()).ok_or(Error::Kind)?;
+        let text = &text[self.prefix().len()..];
         let base32: Vec<_> = text.bytes().filter(|ch| *ch != b'-').collect();
         let bytes = BASE32_NOPAD_NOCASE
             .decode(&base32)
@@ -119,8 +150,11 @@ fn invalid(error: Error) -> CliError {
 
 #[derive(Debug, Eq, PartialEq, thiserror::Error)]
 pub enum Error {
-    #[error("Incorrect device code type.")]
-    Kind,
+    #[error("Expected a {expected}, received {received}.")]
+    Kind {
+        expected: &'static str,
+        received: &'static str,
+    },
     #[error("Device code is corrupt or incomplete.")]
     Checksum,
     #[error("Unsupported device code version.")]
@@ -139,7 +173,10 @@ fn round_trips_and_detects_wrong_kind_version_and_checksum() {
             .unwrap(),
         "Ferrum"
     );
-    assert_eq!(Kind::Grant.decode::<String>(&text), Err(Error::Kind));
+    assert!(matches!(
+        Kind::Grant.decode::<String>(&text),
+        Err(Error::Kind { .. })
+    ));
     assert!(
         Kind::Request
             .decode::<String>(&text[..text.len() - 1])
@@ -172,8 +209,14 @@ fn round_trips_and_detects_wrong_kind_version_and_checksum() {
 #[test]
 fn device_and_board_codes_have_distinct_types_and_checksums() {
     let invite = Kind::BoardRequest.encode(&"Garden tablet").unwrap();
-    assert_eq!(Kind::Request.decode::<String>(&invite), Err(Error::Kind));
-    assert_eq!(Kind::BoardGrant.decode::<String>(&invite), Err(Error::Kind));
+    assert!(matches!(
+        Kind::Request.decode::<String>(&invite),
+        Err(Error::Kind { .. })
+    ));
+    assert!(matches!(
+        Kind::BoardGrant.decode::<String>(&invite),
+        Err(Error::Kind { .. })
+    ));
     assert_eq!(
         Kind::BoardRequest.decode::<String>(&invite).unwrap(),
         "Garden tablet"

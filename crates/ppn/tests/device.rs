@@ -369,3 +369,65 @@ fn the_first_device_cannot_leave() {
 #[cfg(pepino_network_tests)]
 #[path = "device/removal.rs"]
 mod removal;
+
+#[test]
+fn code_commands_report_the_expected_and_received_kinds_without_echoing_the_input() {
+    let (sandbox, _) = common::uninitialized_task_sandbox();
+    for (command, action, expected, wrong, received) in [
+        (
+            "board",
+            "join",
+            "board grant code",
+            "PPN-BOARD-REQUEST",
+            "board request code",
+        ),
+        (
+            "device",
+            "join",
+            "device grant code",
+            "PPN-REQUEST",
+            "device request code",
+        ),
+        (
+            "device",
+            "add",
+            "device request code",
+            "PPN-BOARD-GRANT",
+            "board grant code",
+        ),
+        (
+            "board",
+            "invite",
+            "board request code",
+            "PPN-GRANT",
+            "device grant code",
+        ),
+    ] {
+        for (code, given) in [
+            (String::new(), "no code"),
+            (format!("{wrong}-SECRET"), received),
+        ] {
+            let human = sandbox
+                .command()
+                .args([command, action, &code])
+                .output()
+                .unwrap();
+            assert_eq!(human.status.code(), Some(2), "{human:?}");
+            assert!(human.stdout.is_empty());
+            let diagnostic = String::from_utf8(human.stderr).unwrap();
+            let message = format!("Expected a {expected}, received {given}.");
+            assert!(diagnostic.contains(&message), "{diagnostic}");
+            assert!(!diagnostic.contains("SECRET"));
+            let error = common::task_error(
+                sandbox
+                    .command()
+                    .args([command, action, &code, "--json"])
+                    .output()
+                    .unwrap(),
+                2,
+                "invalid_input",
+            );
+            assert_eq!(error["message"], message);
+        }
+    }
+}
