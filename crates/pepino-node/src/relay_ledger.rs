@@ -62,6 +62,7 @@ impl Record {
 pub(super) struct Ledger {
     pub(super) records: BTreeMap<Vec<u8>, Record>,
     pub(super) rejected: u64,
+    stored_rejected: u64,
     trusted: BTreeSet<DeviceId>,
     cap: usize,
     pool: SqlitePool,
@@ -78,9 +79,11 @@ impl Ledger {
             .fetch_one(&pool)
             .await
             .map_err(Error::storage)?;
+        let rejected = rejected as u64;
         Ok(Self {
             records,
-            rejected: rejected as u64,
+            rejected,
+            stored_rejected: rejected,
             trusted,
             cap,
             pool,
@@ -91,15 +94,21 @@ impl Ledger {
         self.trusted.contains(&id)
     }
 
-    pub(super) async fn reject(&mut self) -> Result<RelayAnswer, Error> {
-        sqlx::query(
-            "UPDATE pepino_relay_stats SET rejected = MIN(rejected + 1, 9223372036854775807)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(Error::storage)?;
+    pub(super) fn reject(&mut self) -> RelayAnswer {
         self.rejected = (self.rejected + 1).min(i64::MAX as u64);
-        Ok(RelayAnswer::NotTrusted)
+        RelayAnswer::NotTrusted
+    }
+
+    pub(super) async fn flush(&mut self) -> Result<(), Error> {
+        if self.rejected != self.stored_rejected {
+            sqlx::query("UPDATE pepino_relay_stats SET rejected = ?")
+                .bind(self.rejected as i64)
+                .execute(&self.pool)
+                .await
+                .map_err(Error::storage)?;
+            self.stored_rejected = self.rejected;
+        }
+        Ok(())
     }
 
     pub(super) fn sequence(&self, board: BoardId) -> u64 {
@@ -127,7 +136,7 @@ impl Ledger {
         now_ms: u64,
     ) -> Result<RelayAnswer, Error> {
         if !self.is_trusted(writer) {
-            return self.reject().await;
+            return Ok(self.reject());
         }
         if instruction.sequence > now_ms.saturating_add(CLOCK_TOLERANCE_MS) {
             return Ok(RelayAnswer::ClockAhead);
@@ -288,12 +297,21 @@ pub(super) mod tests {
         );
         assert_eq!(ledger.sequence(earlier.board), 1);
         assert_eq!(ledger.sequence(BoardId::from_bytes([58; 32])), 0);
-        let restored = Ledger::load(pool.clone(), [trusted].into(), 1)
-            .await
-            .unwrap();
+        let restore = || Ledger::load(pool.clone(), [trusted].into(), 1);
+        let restored = restore().await.unwrap();
         assert_eq!(restored.counts(), [(trusted, 1)].into());
         assert_eq!(restored.records.len(), 1);
-        assert_eq!(restored.rejected, 1);
+        assert_eq!(restored.rejected, 0);
+        for _ in 0..2 {
+            assert_eq!(
+                ledger.apply(stranger, add(58), NOW).await.unwrap(),
+                RelayAnswer::NotTrusted
+            );
+        }
+        assert_eq!(ledger.rejected, 3);
+        assert_eq!(restore().await.unwrap().rejected, 0);
+        ledger.flush().await.unwrap();
+        assert_eq!(restore().await.unwrap().rejected, 3);
         let empty = Ledger::load(pool, [].into(), 64).await.unwrap();
         assert!(!empty.is_trusted(trusted));
     }

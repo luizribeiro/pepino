@@ -8,7 +8,10 @@ use futures_util::StreamExt;
 use pepino_core::{BoardId, DeviceId};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use tokio::sync::{Notify, watch};
+use tokio::{
+    sync::{Notify, watch},
+    time::{Interval, MissedTickBehavior, interval},
+};
 
 use crate::{
     DeviceCredentials, Error, Node, NodeSettings, NodeStatus,
@@ -16,6 +19,8 @@ use crate::{
     relay_ledger::Ledger,
     status_state::Status,
 };
+
+const MAINTENANCE: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug)]
 pub enum RelayEnd {
@@ -62,6 +67,7 @@ pub struct Relay {
     keys: DeviceCredentials,
     status: watch::Sender<RelayStatus>,
     stream_ended: Arc<Notify>,
+    maintenance: Interval,
 }
 
 impl Relay {
@@ -74,14 +80,19 @@ impl Relay {
         let node = Node::spawn_relay(settings).await?;
         let stream_ended = Arc::new(Notify::new());
         match Self::open(&node, trusted, cap, &stream_ended).await {
-            Ok((channel, ledger, status)) => Ok(Self {
-                node,
-                channel,
-                ledger,
-                keys,
-                status,
-                stream_ended,
-            }),
+            Ok((channel, ledger, status)) => {
+                let mut maintenance = interval(MAINTENANCE);
+                maintenance.set_missed_tick_behavior(MissedTickBehavior::Delay);
+                Ok(Self {
+                    node,
+                    channel,
+                    ledger,
+                    keys,
+                    status,
+                    stream_ended,
+                    maintenance,
+                })
+            }
             Err(error) => {
                 node.shutdown().await?;
                 Err(error)
@@ -120,6 +131,10 @@ impl Relay {
         loop {
             let incoming = tokio::select! {
                 _ = self.stream_ended.notified() => return Ok(RelayEnd::Restart),
+                _ = self.maintenance.tick() => {
+                    self.ledger.flush().await?;
+                    continue;
+                }
                 incoming = self.channel.receive_instruction() => incoming.ok_or(Error::Closed)?,
             };
             if let Some(receipt) = self.apply(&incoming).await? {
@@ -137,7 +152,7 @@ impl Relay {
     ) -> Result<Option<RelayReceipt>, Error> {
         let receipt = if !self.ledger.is_trusted(incoming.author) {
             RelayReceipt {
-                answer: self.ledger.reject().await?,
+                answer: self.ledger.reject(),
                 relay_sequence: 0,
             }
         } else {
@@ -177,9 +192,11 @@ impl Relay {
         let Self {
             node,
             channel,
-            ledger,
+            mut ledger,
             ..
         } = self;
+        // The count is a diagnostic. Losing it must not turn a clean stop into a failure.
+        let _ = ledger.flush().await;
         drop((channel, ledger));
         node.shutdown().await
     }
