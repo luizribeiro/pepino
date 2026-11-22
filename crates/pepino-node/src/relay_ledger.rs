@@ -160,6 +160,16 @@ impl RelayDrop {
     }
 }
 
+// A replayed addition must not outrank the drop. A revision that no relay clock accepts is
+// pulled back so that its device can ask again.
+fn dropped_sequence(requested: u64, now_ms: u64) -> u64 {
+    if requested > now_ms.saturating_add(CLOCK_TOLERANCE_MS) {
+        now_ms
+    } else {
+        requested.max(now_ms)
+    }
+}
+
 const HANDLE_CONTEXT: &[u8] = b"pepino relay board handle v1";
 
 // The operator names a board by this handle, which reveals neither the board ID nor its ledger key.
@@ -296,8 +306,7 @@ impl Ledger {
     }
 
     /// Ends every selected request and returns how many boards that touched. A board left without
-    /// requesters is purged at the next node start. A revision ahead of the clock is pulled back
-    /// so that it cannot outrank later instructions.
+    /// requesters is purged at the next node start.
     pub(super) async fn drop_boards(
         &mut self,
         selection: &RelayDrop,
@@ -310,7 +319,9 @@ impl Ledger {
                 let leaving: Vec<_> = record
                     .requesters()
                     .filter(|&(requester, _)| selection.selects(key, requester))
-                    .map(|(requester, request)| (requester, request.sequence.min(now_ms)))
+                    .map(|(requester, request)| {
+                        (requester, dropped_sequence(request.sequence, now_ms))
+                    })
                     .collect();
                 (!leaving.is_empty()).then(|| {
                     let mut record = record.clone();
@@ -875,6 +886,61 @@ pub(super) mod tests {
         assert_eq!(
             ledger.apply(laptop, leave, NOW + 6).await.unwrap(),
             RelayAnswer::RemovalPendingRestart
+        );
+    }
+
+    #[tokio::test]
+    async fn a_replayed_addition_does_not_undo_an_operator_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&dir.path().join("relay.sqlite")).await;
+        let laptop = DeviceId::from_bytes([17; 32]);
+        let mut ledger = Ledger::load(pool.clone(), [laptop].into(), 8)
+            .await
+            .unwrap();
+        let seed_house = BoardId::from_bytes([58; 32]);
+        let add = |sequence| RelayInstruction {
+            board: seed_house,
+            sequence,
+            carry: true,
+        };
+        let stamped_ahead = add(NOW + 300_000);
+        assert_eq!(
+            ledger.apply(laptop, stamped_ahead, NOW).await.unwrap(),
+            RelayAnswer::Carrying
+        );
+        let by_handle = RelayDrop::Handle(handle(&key(seed_house)));
+        assert_eq!(
+            ledger.drop_boards(&by_handle, NOW + 1_000).await.unwrap(),
+            1
+        );
+        assert_eq!(
+            ledger
+                .apply(laptop, stamped_ahead, NOW + 2_000)
+                .await
+                .unwrap(),
+            RelayAnswer::RemovalPendingRestart
+        );
+        drop(ledger);
+
+        prepare(&pool).await.unwrap();
+        let mut ledger = Ledger::load(pool, [laptop].into(), 8).await.unwrap();
+        for (replayed, answer) in [
+            (stamped_ahead, RelayAnswer::Removed),
+            (add(NOW + 100), RelayAnswer::Superseded),
+        ] {
+            assert_eq!(
+                ledger.apply(laptop, replayed, NOW + 2_000).await.unwrap(),
+                answer
+            );
+        }
+        assert!(ledger.boards().is_empty());
+        assert_eq!(ledger.sequence(seed_house, laptop), NOW + 300_000);
+        assert_eq!(
+            ledger
+                .apply(laptop, add(NOW + 300_001), NOW + 3_000)
+                .await
+                .unwrap(),
+            RelayAnswer::Carrying
         );
     }
 }
