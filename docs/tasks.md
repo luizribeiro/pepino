@@ -101,8 +101,8 @@ ppn ls --sort due --limit 2
 ```
 
 Quote any term containing `<`, `>`, or spaces. `ppn help filters` lists every
-key (`status`, `due`, `priority`, `parent`, `has`, `is`, and more). A key
-that no task uses matches nothing and prints a warning instead of failing.
+key (`status`, `due`, `priority`, `parent`, `has`, `is`, and more). An unknown key
+returns exit status 2 and suggests a spelling.
 
 `--sort` takes `created`, `updated`, `due`, `priority`, `status`, or `title`,
 comma-separated; prefix a key with `-` to reverse it.

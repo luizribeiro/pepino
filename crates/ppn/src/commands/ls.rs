@@ -1,6 +1,6 @@
 use pepino_app::{ReadRequest, Request};
 use ppn::app::AppClient;
-use ppn::error::CliError;
+use ppn::error::{CliError, ErrorKind};
 use ppn::help_tree::example_help;
 use ppn::output::{CommandResult, Warning};
 use ppn::render::TaskRows;
@@ -87,31 +87,31 @@ pub(super) fn list(
         .map_err(|error| positions.remap(error, None))?;
 
     let result = response.tasks()?;
+    if let Some(warning) = result
+        .warnings
+        .iter()
+        .find(|warning| warning.text_tasks.is_none())
+    {
+        return Err(CliError::new(
+            ErrorKind::InvalidInput,
+            format!("Unknown filter key {:?}.", warning.field),
+        )
+        .with_hint(format!("Did you mean {:?}?", warning.suggestion))
+        .with_field("filter"));
+    }
     let warnings: Vec<_> = result
         .warnings
         .iter()
-        .map(|warning| {
-            if let (Some(count), Some(message)) = (warning.text_tasks, &warning.message) {
-                return Warning {
-                    message: message.clone(),
-                    details: Map::from_iter([
-                        ("code".into(), json!("numeric_filter_on_text")),
-                        ("field".into(), json!(warning.field)),
-                        ("text_tasks".into(), json!(count)),
-                    ]),
-                };
-            }
-            Warning {
-                message: format!(
-                    "Unknown filter field {:?}. Did you mean {:?}?",
-                    warning.field, warning.suggestion
-                ),
+        .filter_map(|warning| {
+            let (count, message) = (warning.text_tasks?, warning.message.as_ref()?);
+            Some(Warning {
+                message: message.clone(),
                 details: Map::from_iter([
-                    ("code".into(), json!("unknown_filter_field")),
+                    ("code".into(), json!("numeric_filter_on_text")),
                     ("field".into(), json!(warning.field)),
-                    ("suggestion".into(), json!(warning.suggestion)),
+                    ("text_tasks".into(), json!(count)),
                 ]),
-            }
+            })
         })
         .collect();
     let count = result.tasks.len();

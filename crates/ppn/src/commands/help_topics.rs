@@ -9,7 +9,8 @@ equality. Use <, <=, > or >= with priority, due, created, updated and custom
 fields. Priority accepts signed 64-bit integers. Custom fields accept
 integers, dates or text, in that order. Quote a custom operand to make it text.
 Both keys and custom field names use lowercase ASCII letters, digits, underscores
-and hyphens, start with a letter and are at most 64 bytes. The tags use
+and hyphens, start with a letter and are at most 64 bytes. An unknown key
+is an input error. Tags use
 lowercase letters, digits, underscores, hyphens, slashes and periods.
 Open includes todo and doing. Closed includes done and cancelled.
 A blocked task has an open blocker. Ready means todo with no open blockers.

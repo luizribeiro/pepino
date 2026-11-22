@@ -244,25 +244,21 @@ fn negated_terms_and_flags_can_be_interleaved() {
 }
 
 #[test]
-fn ls_warns_on_unknown_custom_fields_without_failing() {
+fn ls_and_ready_reject_unknown_filter_keys_with_a_suggestion() {
     let (sandbox, _) = task_sandbox();
-    let args = ["ls", "statuss:todo"];
-    let output = sandbox.command().args(args).output().unwrap();
-    assert!(output.status.success());
-    assert!(output.stdout.is_empty());
-    assert_eq!(output.stderr, b"No matching tasks.\nwarning: Unknown filter field \"statuss\". Did you mean \"status\"?\n");
-    let output = sandbox.command().args(args).arg("--json").output().unwrap();
-    assert!(output.status.success());
-    let warning = as_json(std::str::from_utf8(&output.stderr).unwrap());
-    assert_eq!(warning["kind"], "warning");
-    assert_eq!(warning["schema"], 1);
-    assert_eq!(warning["warning"]["code"], "unknown_filter_field");
-    assert_eq!(
-        as_json(std::str::from_utf8(&output.stdout).unwrap())["warnings"],
-        serde_json::json!([
-            {"field": "statuss", "suggestion": "status"}
-        ])
-    );
+    for command in ["ls", "ready"] {
+        let args = [command, "statuss:todo"];
+        let output = sandbox.command().args(args).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        let diagnostic = String::from_utf8(output.stderr).unwrap();
+        assert!(diagnostic.contains("Unknown filter key \"statuss\"."));
+        assert!(diagnostic.contains("Did you mean \"status\"?"));
+        let output = sandbox.command().args(args).arg("--json").output().unwrap();
+        let error = common::task_error(output, 2, "invalid_input");
+        assert_eq!(error["message"], "Unknown filter key \"statuss\".");
+        assert_eq!(error["hint"], "Did you mean \"status\"?");
+    }
 }
 
 #[test]
