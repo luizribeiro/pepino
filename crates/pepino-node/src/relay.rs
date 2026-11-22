@@ -16,7 +16,7 @@ use tokio::{
 use crate::{
     DeviceCredentials, Error, Node, NodeSettings, NodeStatus,
     relay_control::{IncomingInstruction, RelayAnswer, RelayChannel, RelayReceipt},
-    relay_ledger::Ledger,
+    relay_ledger::{self, Ledger},
     relay_purge,
     relay_refusals::Refusals,
     status_state::Status,
@@ -75,6 +75,21 @@ pub struct Relay {
 }
 
 impl Relay {
+    /// Deletes the stored data of boards whose removal was recorded. This can take long for a
+    /// large board, so it is separate from [`Relay::start`], which callers put a time limit on.
+    pub async fn purge_removed(settings: &NodeSettings) -> Result<(), Error> {
+        let pool = crate::node::open_database(&settings.database_path, true).await?;
+        let purged = async {
+            p2panda_store::sqlite::run_pending_migrations(&pool)
+                .await
+                .map_err(Error::storage)?;
+            relay_ledger::prepare(&pool).await
+        }
+        .await;
+        pool.close().await;
+        purged
+    }
+
     pub async fn start(
         settings: NodeSettings,
         trusted: BTreeSet<DeviceId>,

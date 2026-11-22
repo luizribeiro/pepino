@@ -136,7 +136,7 @@ mod tests {
     use crate::{
         relay_control::RelayInstruction,
         relay_ledger::{
-            Ledger, prepare,
+            Ledger,
             tests::{NOW, open},
         },
     };
@@ -220,8 +220,12 @@ mod tests {
         }
         let before = std::fs::read(&path).unwrap();
         assert!(before.windows(32).any(|w| w == x.as_bytes()));
+        let keys = crate::DeviceCredentials::load_or_create(dir.path().join("relay.cbor")).unwrap();
+        crate::Relay::purge_removed(&crate::NodeSettings::new(keys, &path))
+            .await
+            .unwrap();
+        assert_no_trace(dir.path(), x);
         let pool = crate::node::open_database(&path, true).await.unwrap();
-        prepare(&pool).await.unwrap();
         let hashes: Vec<String> =
             sqlx::query_scalar("SELECT hash FROM operations_v1 ORDER BY hash")
                 .fetch_all(&pool)
@@ -251,23 +255,7 @@ mod tests {
         );
         drop(ledger);
         pool.close().await;
-        for entry in std::fs::read_dir(dir.path()).unwrap() {
-            let p = entry.unwrap().path();
-            let bytes = std::fs::read(&p).unwrap();
-            let hex = Topic::from(*x.as_bytes()).to_hex();
-            for secret in [
-                x.as_bytes().as_slice(),
-                hex.as_bytes(),
-                b"CIPHERTEXT-OF-X",
-                b"ONLY-X-MEM",
-            ] {
-                assert!(
-                    !bytes.windows(secret.len()).any(|w| w == secret),
-                    "purge left data in {}",
-                    p.display()
-                );
-            }
-        }
+        assert_no_trace(dir.path(), x);
     }
 
     #[tokio::test]
@@ -298,5 +286,25 @@ mod tests {
         drop(reader);
         assert!(checkpoint(&pool).await.unwrap());
         assert_eq!(log.metadata().unwrap().len(), 0);
+    }
+
+    fn assert_no_trace(dir: &std::path::Path, board: BoardId) {
+        let hex = Topic::from(*board.as_bytes()).to_hex();
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let bytes = std::fs::read(&path).unwrap();
+            for secret in [
+                board.as_bytes().as_slice(),
+                hex.as_bytes(),
+                b"CIPHERTEXT-OF-X",
+                b"ONLY-X-MEM",
+            ] {
+                assert!(
+                    !bytes.windows(secret.len()).any(|window| window == secret),
+                    "purge left data in {}",
+                    path.display()
+                );
+            }
+        }
     }
 }

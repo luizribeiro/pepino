@@ -30,6 +30,13 @@ pub(super) async fn cycle(
         .iter()
         .map(|id| DeviceId::from_bytes(*id.as_bytes()))
         .collect();
+    tokio::select! {
+        _ = terminate.recv() => return Ok(End::Stopped),
+        _ = interrupt.recv() => return Ok(End::Stopped),
+        purged = Relay::purge_removed(settings) => {
+            purged.map_err(|_| failure("Could not delete removed boards from the relay database."))?;
+        }
+    }
     let mut relay = tokio::select! {
         _ = terminate.recv() => return Ok(End::Stopped),
         _ = interrupt.recv() => return Ok(End::Stopped),
