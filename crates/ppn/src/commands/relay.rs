@@ -163,10 +163,17 @@ impl Render for Status {
     }
 }
 
+// A board appears once for every device that requested it.
+fn carried_boards(status: &pepino_node::RelayStatus) -> usize {
+    let handles: std::collections::BTreeSet<_> =
+        status.boards.iter().map(|board| &board.handle).collect();
+    handles.len()
+}
+
 fn carrying(status: &pepino_node::RelayStatus) -> String {
     format!(
         "Carrying {} of {} boards",
-        status.boards_by_device.values().sum::<usize>(),
+        carried_boards(status),
         status.max_boards
     )
 }
@@ -265,7 +272,7 @@ impl Render for Boards {
             .collect();
         Map::from_iter([
             ("kind".into(), json!("relay_boards")),
-            ("count".into(), json!(self.0.boards.len())),
+            ("count".into(), json!(carried_boards(&self.0))),
             ("max_boards".into(), json!(self.0.max_boards)),
             ("devices".into(), json!(devices)),
         ])
@@ -284,7 +291,7 @@ struct Dropped(usize);
 impl Render for Dropped {
     fn human(&self, _: &Terminal) -> String {
         format!(
-            "Dropped {} boards. The relay restarts its node and deletes the stored copies.",
+            "Dropped {} boards. The relay restarts its node and deletes the copies that no device requests.",
             self.0
         )
     }
@@ -337,4 +344,40 @@ fn drop_boards(
             "Could not drop the boards.",
         )),
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_board_requested_by_two_devices_is_listed_under_each_and_counted_once() {
+    let [laptop, phone] = [[17; 32], [27; 32]].map(DeviceId::from_bytes);
+    let board = |handle: &str, requested_by, removal_pending| pepino_node::CarriedBoard {
+        handle: handle.into(),
+        requested_by,
+        removal_pending,
+    };
+    let status = pepino_node::RelayStatus {
+        boards_by_device: [(laptop, 1), (phone, 1)].into(),
+        max_boards: 8,
+        boards: vec![
+            board("3f9a12c4d5e6", laptop, false),
+            board("3f9a12c4d5e6", phone, false),
+            board("a1b2c3d4e5f6", laptop, true),
+        ],
+        ..Default::default()
+    };
+    assert_eq!(carrying(&status), "Carrying 2 of 8 boards");
+    let fields = Boards(status).json_fields();
+    assert_eq!(fields["count"], 2);
+    assert_eq!(
+        fields["devices"],
+        json!([
+            {"node_id": laptop, "boards": [
+                {"handle": "3f9a12c4d5e6", "removal_pending": false},
+                {"handle": "a1b2c3d4e5f6", "removal_pending": true},
+            ]},
+            {"node_id": phone, "boards": [
+                {"handle": "3f9a12c4d5e6", "removal_pending": false},
+            ]},
+        ])
+    );
 }
