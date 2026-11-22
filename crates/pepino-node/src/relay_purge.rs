@@ -7,7 +7,6 @@ use sqlx::{Connection, Sqlite, SqliteConnection, SqlitePool, Transaction};
 
 use crate::{
     Error,
-    relay_control::RelayAnswer,
     relay_ledger::{Record, encode},
 };
 
@@ -17,24 +16,15 @@ pub(super) async fn pending(
 ) -> Result<(), Error> {
     let mut pending = records
         .into_iter()
-        .filter_map(|(key, record)| {
-            (record.answer == RelayAnswer::RemovalPendingRestart)
-                .then_some(record.board)
-                .flatten()
-                .map(|board| (key, record, board))
-        })
+        .filter(|(_, record)| record.removal_pending())
+        .filter_map(|(key, record)| record.board.map(|board| (key, record, board)))
         .peekable();
     if pending.peek().is_some() {
         let mut tx = pool.begin().await.map_err(Error::storage)?;
         for (key, record, board) in pending {
             purge(&mut tx, board).await?;
-            let removed = Record {
-                board: None,
-                answer: RelayAnswer::Removed,
-                ..record
-            };
             sqlx::query("UPDATE pepino_relay_ledger SET record = ? WHERE key = ?")
-                .bind(encode(&removed)?)
+                .bind(encode(&record.purged())?)
                 .bind(key)
                 .execute(&mut *tx)
                 .await
@@ -134,7 +124,7 @@ fn board_log(board: BoardId, domain: &[u8]) -> Result<Vec<u8>, Error> {
 mod tests {
     use super::*;
     use crate::{
-        relay_control::RelayInstruction,
+        relay_control::{RelayAnswer, RelayInstruction},
         relay_ledger::{
             Ledger,
             tests::{NOW, open},
@@ -241,18 +231,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ledger.counts(), [(trusted, 1)].into());
-        assert!(
-            ledger
-                .records
-                .values()
-                .any(|record| record.board.is_none() && record.answer == RelayAnswer::Removed)
-        );
-        assert!(
-            ledger
-                .records
-                .values()
-                .any(|record| record.board == Some(y) && record.answer == RelayAnswer::Carrying)
-        );
+        assert!(ledger.records.values().any(|record| record.board.is_none()
+            && record.requests[&trusted].answer == RelayAnswer::Removed));
+        assert!(ledger.records.values().any(|record| record.board == Some(y)
+            && record.requests[&trusted].answer == RelayAnswer::Carrying));
         drop(ledger);
         pool.close().await;
         assert_no_trace(dir.path(), x);

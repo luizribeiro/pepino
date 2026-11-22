@@ -13,50 +13,128 @@ use crate::{
 pub const CLOCK_TOLERANCE_MS: u64 = 10 * 60 * 1000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(super) struct Record {
-    pub(super) revision: RelayRevision,
+pub(super) struct Request {
+    pub(super) sequence: u64,
     pub(super) answer: RelayAnswer,
+}
+
+/// What the relay holds for one board: the board while a copy is stored, and the latest
+/// instruction of every device that asked for it.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub(super) struct Record {
     pub(super) board: Option<BoardId>,
+    pub(super) requests: BTreeMap<DeviceId, Request>,
 }
 
 impl Record {
+    fn requesters(&self) -> impl Iterator<Item = (DeviceId, Request)> {
+        self.requests
+            .iter()
+            .filter(|(_, request)| request.answer == RelayAnswer::Carrying)
+            .map(|(&device, &request)| (device, request))
+    }
+
+    pub(super) fn removal_pending(&self) -> bool {
+        self.board.is_some() && self.requesters().next().is_none()
+    }
+
+    /// Ends the requests of the leaving devices. The copy is only removed with its last
+    /// requester, and a device that leaves others behind is told that its own request is gone.
+    fn withdraw(&mut self, leaving: &[(DeviceId, u64)]) -> RelayAnswer {
+        for (device, _) in leaving {
+            self.requests.remove(device);
+        }
+        let answer = if self.removal_pending() {
+            RelayAnswer::RemovalPendingRestart
+        } else {
+            RelayAnswer::Removed
+        };
+        let ended = leaving
+            .iter()
+            .map(|&(device, sequence)| (device, Request { sequence, answer }));
+        self.requests.extend(ended);
+        answer
+    }
+
+    fn settle_pending_removals(&mut self) {
+        for request in self.requests.values_mut() {
+            if request.answer == RelayAnswer::RemovalPendingRestart {
+                request.answer = RelayAnswer::Removed;
+            }
+        }
+    }
+
+    pub(super) fn purged(mut self) -> Self {
+        self.board = None;
+        self.settle_pending_removals();
+        self
+    }
+
     fn next(
-        previous: Option<Self>,
+        previous: Option<&Self>,
         writer: DeviceId,
         instruction: RelayInstruction,
         below_capacity: bool,
     ) -> (Option<Self>, RelayAnswer) {
-        let revision = RelayRevision {
-            sequence: instruction.sequence,
-            writer,
-        };
-        if let Some(record) = previous {
-            if revision < record.revision {
+        let request = previous.and_then(|record| record.requests.get(&writer));
+        if let Some(request) = request {
+            if instruction.sequence < request.sequence {
                 return (None, RelayAnswer::Superseded);
             }
-            if revision == record.revision {
-                return (None, record.answer);
+            if instruction.sequence == request.sequence {
+                return (None, request.answer);
             }
         }
-        let active = previous.is_some_and(|record| record.board.is_some());
-        let (answer, board) = match (instruction.carry, active, below_capacity) {
-            (true, true, _) | (true, false, true) => {
-                (RelayAnswer::Carrying, Some(instruction.board))
+        let mut record = previous.cloned().unwrap_or_default();
+        let sequence = instruction.sequence;
+        let answer = if instruction.carry {
+            if record.board.is_none() && !below_capacity {
+                return (None, RelayAnswer::AtCapacity);
             }
-            (true, false, false) => return (None, RelayAnswer::AtCapacity),
-            (false, true, _) => (RelayAnswer::RemovalPendingRestart, Some(instruction.board)),
-            (false, false, _) if previous.is_none() => return (None, RelayAnswer::Removed),
-            (false, false, _) => (RelayAnswer::Removed, None),
+            record.settle_pending_removals();
+            record.board = Some(instruction.board);
+            let answer = RelayAnswer::Carrying;
+            record.requests.insert(writer, Request { sequence, answer });
+            answer
+        } else if request.is_none() {
+            return (None, RelayAnswer::Removed);
+        } else {
+            record.withdraw(&[(writer, sequence)])
         };
-        (
-            Some(Self {
-                revision,
-                answer,
-                board,
-            }),
-            answer,
-        )
+        (Some(record), answer)
     }
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct SingleRequesterRecord {
+    revision: RelayRevision,
+    answer: RelayAnswer,
+    board: Option<BoardId>,
+}
+
+impl From<SingleRequesterRecord> for Record {
+    fn from(record: SingleRequesterRecord) -> Self {
+        let request = Request {
+            sequence: record.revision.sequence,
+            answer: record.answer,
+        };
+        Self {
+            board: record.board,
+            requests: [(record.revision.writer, request)].into(),
+        }
+    }
+}
+
+// Ledgers written before boards had several requesters hold one revision per board.
+fn decode(bytes: &[u8]) -> Option<Record> {
+    p2panda_core::cbor::decode_cbor_strict(bytes)
+        .ok()
+        .or_else(|| {
+            let single: Option<SingleRequesterRecord> =
+                p2panda_core::cbor::decode_cbor_strict(bytes).ok();
+            single.map(Record::from)
+        })
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -74,10 +152,10 @@ pub enum RelayDrop {
 }
 
 impl RelayDrop {
-    fn selects(&self, key: &[u8], record: &Record) -> bool {
+    fn selects(&self, key: &[u8], requester: DeviceId) -> bool {
         match self {
             Self::Handle(wanted) => *wanted == handle(key),
-            Self::From(device) => record.revision.writer == *device,
+            Self::From(device) => requester == *device,
         }
     }
 }
@@ -145,20 +223,17 @@ impl Ledger {
         Ok(())
     }
 
-    pub(super) fn sequence(&self, board: BoardId) -> u64 {
+    pub(super) fn sequence(&self, board: BoardId, requester: DeviceId) -> u64 {
         self.records
             .get(&key(board))
-            .map_or(0, |record| record.revision.sequence)
+            .and_then(|record| record.requests.get(&requester))
+            .map_or(0, |request| request.sequence)
     }
 
     pub(super) fn counts(&self) -> BTreeMap<DeviceId, usize> {
         let mut counts: BTreeMap<_, _> = self.trusted.iter().map(|&id| (id, 0)).collect();
-        for record in self
-            .records
-            .values()
-            .filter(|record| record.board.is_some())
-        {
-            *counts.entry(record.revision.writer).or_default() += 1;
+        for (requester, _) in self.records.values().flat_map(Record::requesters) {
+            *counts.entry(requester).or_default() += 1;
         }
         counts
     }
@@ -183,12 +258,8 @@ impl Ledger {
             .filter(|record| record.board.is_some())
             .count()
             < self.cap;
-        let (next, answer) = Record::next(
-            self.records.get(key).copied(),
-            writer,
-            instruction,
-            below_capacity,
-        );
+        let (next, answer) =
+            Record::next(self.records.get(key), writer, instruction, below_capacity);
         if let Some(next) = next {
             self.store(key, next).await?;
         }
@@ -210,16 +281,23 @@ impl Ledger {
         self.records
             .iter()
             .filter(|(_, record)| record.board.is_some())
-            .map(|(key, record)| CarriedBoard {
-                handle: handle(key),
-                requested_by: record.revision.writer,
-                removal_pending: record.answer == RelayAnswer::RemovalPendingRestart,
+            .flat_map(|(key, record)| {
+                record
+                    .requests
+                    .iter()
+                    .filter(|(_, request)| request.answer != RelayAnswer::Removed)
+                    .map(|(&requested_by, request)| CarriedBoard {
+                        handle: handle(key),
+                        requested_by,
+                        removal_pending: request.answer == RelayAnswer::RemovalPendingRestart,
+                    })
             })
             .collect()
     }
 
-    /// Records the removal of every selected board, for the purge at the next node start. A
-    /// revision ahead of the clock is pulled back so that it cannot outrank later instructions.
+    /// Ends every selected request and returns how many boards that touched. A board left without
+    /// requesters is purged at the next node start. A revision ahead of the clock is pulled back
+    /// so that it cannot outrank later instructions.
     pub(super) async fn drop_boards(
         &mut self,
         selection: &RelayDrop,
@@ -228,21 +306,24 @@ impl Ledger {
         let selected: Vec<_> = self
             .records
             .iter()
-            .filter(|(key, record)| record.board.is_some() && selection.selects(key, record))
-            .map(|(key, record)| (key.clone(), *record))
+            .filter_map(|(key, record)| {
+                let leaving: Vec<_> = record
+                    .requesters()
+                    .filter(|&(requester, _)| selection.selects(key, requester))
+                    .map(|(requester, request)| (requester, request.sequence.min(now_ms)))
+                    .collect();
+                (!leaving.is_empty()).then(|| {
+                    let mut record = record.clone();
+                    record.withdraw(&leaving);
+                    (key.clone(), record)
+                })
+            })
             .collect();
-        for (key, record) in &selected {
-            let dropped = Record {
-                revision: RelayRevision {
-                    sequence: record.revision.sequence.min(now_ms),
-                    ..record.revision
-                },
-                answer: RelayAnswer::RemovalPendingRestart,
-                ..*record
-            };
-            self.store(key, dropped).await?;
+        let boards = selected.len();
+        for (key, record) in selected {
+            self.store(&key, record).await?;
         }
-        Ok(selected.len())
+        Ok(boards)
     }
 }
 
@@ -268,9 +349,9 @@ async fn load_records(pool: &SqlitePool) -> Result<BTreeMap<Vec<u8>, Record>, Er
         .map_err(Error::storage)?
         .into_iter()
         .map(|(key, record)| {
-            p2panda_core::cbor::decode_cbor_strict(record.as_slice())
+            decode(&record)
                 .map(|record| (key, record))
-                .map_err(|_| Error::Storage("invalid relay ledger record".into()))
+                .ok_or_else(|| Error::Storage("invalid relay ledger record".into()))
         })
         .collect()
 }
@@ -298,30 +379,38 @@ pub(super) mod tests {
 
     proptest! {
         #[test]
-        fn replays_in_any_order_converge_to_the_latest_revision(
+        fn replays_in_any_order_converge_to_each_requesters_latest_instruction(
             order in any::<[u8; 8]>(),
-            latest_carries in any::<bool>(),
+            latest_carries in any::<[bool; 2]>(),
         ) {
             let board = BoardId::from_bytes([42; 32]);
             let authors = [DeviceId::from_bytes([61; 32]), DeviceId::from_bytes([73; 32])];
             let mut deliveries: Vec<_> = order.into_iter().enumerate().collect();
             deliveries.sort_by_key(|(_, value)| *value);
-            let mut record = Some(Record {
-                revision: RelayRevision { sequence: 0, writer: authors[0] },
-                answer: RelayAnswer::Carrying,
+            let mut record = Record {
                 board: Some(board),
-            });
+                requests: authors
+                    .map(|author| (author, Request { sequence: 0, answer: RelayAnswer::Carrying }))
+                    .into(),
+            };
             for (index, _) in deliveries {
-                let carry = if index == 7 { latest_carries } else { index % 2 == 0 };
+                let author = index % 2;
+                let carry = if index >= 6 { latest_carries[author] } else { index % 4 < 2 };
                 let instruction = RelayInstruction { board, sequence: 1 + (index / 2) as u64, carry };
-                let (next, _) = Record::next(record, authors[index % 2], instruction, true);
-                record = next.or(record);
+                let (next, _) = Record::next(Some(&record), authors[author], instruction, true);
+                record = next.unwrap_or(record);
             }
-            let record = record.unwrap();
-            prop_assert_eq!(record.revision, RelayRevision { sequence: 4, writer: authors[1] });
-            prop_assert_eq!(record.answer == RelayAnswer::Carrying, latest_carries);
-            let old_add = RelayInstruction { board, sequence: 4, carry: true };
-            prop_assert_eq!(Record::next(Some(record), authors[0], old_add, true), (None, RelayAnswer::Superseded));
+            for (author, carries) in authors.into_iter().zip(latest_carries) {
+                let request = record.requests[&author];
+                prop_assert_eq!(request.sequence, 4);
+                prop_assert_eq!(request.answer == RelayAnswer::Carrying, carries);
+                let old_add = RelayInstruction { board, sequence: 3, carry: true };
+                prop_assert_eq!(
+                    Record::next(Some(&record), author, old_add, true),
+                    (None, RelayAnswer::Superseded)
+                );
+            }
+            prop_assert_eq!(record.removal_pending(), latest_carries == [false, false]);
         }
     }
 
@@ -374,8 +463,9 @@ pub(super) mod tests {
             ledger.apply(trusted, earlier, NOW).await.unwrap(),
             RelayAnswer::Superseded
         );
-        assert_eq!(ledger.sequence(earlier.board), 1);
-        assert_eq!(ledger.sequence(BoardId::from_bytes([58; 32])), 0);
+        assert_eq!(ledger.sequence(earlier.board, trusted), 1);
+        assert_eq!(ledger.sequence(earlier.board, stranger), 0);
+        assert_eq!(ledger.sequence(BoardId::from_bytes([58; 32]), trusted), 0);
         let restore = || Ledger::load(pool.clone(), [trusted].into(), 1);
         let restored = restore().await.unwrap();
         assert_eq!(restored.counts(), [(trusted, 1)].into());
@@ -469,13 +559,8 @@ pub(super) mod tests {
             );
         }
         let pinned = key(add(58, 1).board);
-        let far_future = Record {
-            revision: RelayRevision {
-                sequence: u64::MAX,
-                writer: laptop,
-            },
-            ..ledger.records[&pinned]
-        };
+        let mut far_future = ledger.records[&pinned].clone();
+        far_future.requests.get_mut(&laptop).unwrap().sequence = u64::MAX;
         ledger.store(&pinned, far_future).await.unwrap();
 
         let boards = ledger.boards();
@@ -521,13 +606,275 @@ pub(super) mod tests {
         let mut ledger = Ledger::load(pool, trusted, 8).await.unwrap();
         assert_eq!(ledger.counts(), [(laptop, 1), (phone, 0)].into());
         assert_eq!(ledger.boards().len(), 1);
-        assert_eq!(ledger.sequence(add(58, 1).board), NOW);
+        assert_eq!(ledger.sequence(add(58, 1).board, laptop), NOW);
         assert_eq!(
             ledger
                 .apply(laptop, add(58, NOW + 1), NOW + 1)
                 .await
                 .unwrap(),
             RelayAnswer::Carrying
+        );
+    }
+
+    #[tokio::test]
+    async fn a_board_stays_until_its_last_requester_leaves() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&dir.path().join("relay.sqlite")).await;
+        let alice = DeviceId::from_bytes([17; 32]);
+        let bob = DeviceId::from_bytes([27; 32]);
+        let carol = DeviceId::from_bytes([37; 32]);
+        let trusted: BTreeSet<_> = [alice, bob, carol].into();
+        let mut ledger = Ledger::load(pool.clone(), trusted.clone(), 1)
+            .await
+            .unwrap();
+        let greenhouse = BoardId::from_bytes([57; 32]);
+        let instruction = |sequence, carry| RelayInstruction {
+            board: greenhouse,
+            sequence,
+            carry,
+        };
+        for (device, sequence) in [(bob, NOW), (alice, NOW + 1)] {
+            assert_eq!(
+                ledger
+                    .apply(device, instruction(sequence, true), NOW + 1)
+                    .await
+                    .unwrap(),
+                RelayAnswer::Carrying
+            );
+        }
+        assert_eq!(ledger.counts(), [(alice, 1), (bob, 1), (carol, 0)].into());
+        let listed = |ledger: &Ledger| -> Vec<_> {
+            ledger
+                .boards()
+                .into_iter()
+                .map(|board| (board.requested_by, board.removal_pending))
+                .collect()
+        };
+        assert_eq!(listed(&ledger), [(alice, false), (bob, false)]);
+        let handles: BTreeSet<_> = ledger.boards().into_iter().map(|b| b.handle).collect();
+        assert_eq!(handles.len(), 1);
+
+        assert_eq!(
+            ledger
+                .apply(carol, instruction(NOW + 2, false), NOW + 2)
+                .await
+                .unwrap(),
+            RelayAnswer::Removed
+        );
+        assert_eq!(listed(&ledger), [(alice, false), (bob, false)]);
+
+        let bob_leaves = instruction(NOW + 2, false);
+        for _ in 0..2 {
+            assert_eq!(
+                ledger.apply(bob, bob_leaves, NOW + 2).await.unwrap(),
+                RelayAnswer::Removed
+            );
+        }
+        assert_eq!(listed(&ledger), [(alice, false)]);
+        assert_eq!(ledger.counts(), [(alice, 1), (bob, 0), (carol, 0)].into());
+        assert_eq!(
+            ledger
+                .apply(bob, instruction(NOW + 1, true), NOW + 2)
+                .await
+                .unwrap(),
+            RelayAnswer::Superseded
+        );
+        assert_eq!(ledger.sequence(greenhouse, bob), NOW + 2);
+        drop(ledger);
+
+        prepare(&pool).await.unwrap();
+        let mut ledger = Ledger::load(pool.clone(), trusted.clone(), 1)
+            .await
+            .unwrap();
+        assert_eq!(listed(&ledger), [(alice, false)]);
+        assert_eq!(
+            ledger
+                .apply(alice, instruction(NOW + 3, false), NOW + 3)
+                .await
+                .unwrap(),
+            RelayAnswer::RemovalPendingRestart
+        );
+        assert_eq!(listed(&ledger), [(alice, true)]);
+        assert_eq!(ledger.counts(), [(alice, 0), (bob, 0), (carol, 0)].into());
+        drop(ledger);
+
+        prepare(&pool).await.unwrap();
+        let mut ledger = Ledger::load(pool, trusted, 1).await.unwrap();
+        assert!(ledger.boards().is_empty());
+        for (device, leaves) in [(alice, instruction(NOW + 3, false)), (bob, bob_leaves)] {
+            assert_eq!(
+                ledger.apply(device, leaves, NOW + 4).await.unwrap(),
+                RelayAnswer::Removed
+            );
+        }
+        let seed_house = RelayInstruction {
+            board: BoardId::from_bytes([58; 32]),
+            sequence: NOW + 4,
+            carry: true,
+        };
+        assert_eq!(
+            ledger.apply(carol, seed_house, NOW + 4).await.unwrap(),
+            RelayAnswer::Carrying
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_one_requester_keeps_a_board_others_asked_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&dir.path().join("relay.sqlite")).await;
+        let alice = DeviceId::from_bytes([17; 32]);
+        let bob = DeviceId::from_bytes([27; 32]);
+        let trusted: BTreeSet<_> = [alice, bob].into();
+        let mut ledger = Ledger::load(pool.clone(), trusted.clone(), 8)
+            .await
+            .unwrap();
+        let add = |byte| RelayInstruction {
+            board: BoardId::from_bytes([byte; 32]),
+            sequence: NOW,
+            carry: true,
+        };
+        let (shared, bobs, both_dropped) = (add(57), add(58), add(59));
+        for (device, instruction) in [
+            (alice, shared),
+            (bob, shared),
+            (bob, bobs),
+            (alice, both_dropped),
+            (bob, both_dropped),
+        ] {
+            assert_eq!(
+                ledger.apply(device, instruction, NOW).await.unwrap(),
+                RelayAnswer::Carrying
+            );
+        }
+        let listed = |ledger: &Ledger| -> BTreeSet<_> {
+            ledger
+                .boards()
+                .into_iter()
+                .map(|board| (board.handle, board.requested_by, board.removal_pending))
+                .collect()
+        };
+        let handle_of = |instruction: RelayInstruction| handle(&key(instruction.board));
+
+        let from_bob = RelayDrop::From(bob);
+        assert_eq!(ledger.drop_boards(&from_bob, NOW + 1).await.unwrap(), 3);
+        assert_eq!(ledger.drop_boards(&from_bob, NOW + 1).await.unwrap(), 0);
+        assert_eq!(
+            listed(&ledger),
+            [
+                (handle_of(shared), alice, false),
+                (handle_of(bobs), bob, true),
+                (handle_of(both_dropped), alice, false),
+            ]
+            .into()
+        );
+        let by_handle = RelayDrop::Handle(handle_of(both_dropped));
+        assert_eq!(ledger.drop_boards(&by_handle, NOW + 1).await.unwrap(), 1);
+        assert_eq!(ledger.counts(), [(alice, 1), (bob, 0)].into());
+        drop(ledger);
+
+        prepare(&pool).await.unwrap();
+        let mut ledger = Ledger::load(pool.clone(), trusted.clone(), 8)
+            .await
+            .unwrap();
+        assert_eq!(listed(&ledger), [(handle_of(shared), alice, false)].into());
+
+        let everyone = RelayDrop::Handle(handle_of(shared));
+        let rejoined = RelayInstruction {
+            sequence: NOW + 2,
+            ..shared
+        };
+        assert_eq!(
+            ledger.apply(bob, rejoined, NOW + 2).await.unwrap(),
+            RelayAnswer::Carrying
+        );
+        assert_eq!(ledger.drop_boards(&everyone, NOW + 3).await.unwrap(), 1);
+        assert_eq!(
+            listed(&ledger),
+            [
+                (handle_of(shared), alice, true),
+                (handle_of(shared), bob, true),
+            ]
+            .into()
+        );
+        drop(ledger);
+        prepare(&pool).await.unwrap();
+        let ledger = Ledger::load(pool, trusted, 8).await.unwrap();
+        assert!(ledger.boards().is_empty());
+        assert!(ledger.records.values().all(|record| record.board.is_none()));
+    }
+
+    #[tokio::test]
+    async fn a_ledger_with_one_revision_per_board_keeps_its_boards_and_tombstones() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&dir.path().join("relay.sqlite")).await;
+        let laptop = DeviceId::from_bytes([17; 32]);
+        let phone = DeviceId::from_bytes([27; 32]);
+        let greenhouse = BoardId::from_bytes([57; 32]);
+        let seed_house = BoardId::from_bytes([58; 32]);
+        for (board, record) in [
+            (
+                greenhouse,
+                SingleRequesterRecord {
+                    revision: RelayRevision {
+                        sequence: NOW,
+                        writer: laptop,
+                    },
+                    answer: RelayAnswer::Carrying,
+                    board: Some(greenhouse),
+                },
+            ),
+            (
+                seed_house,
+                SingleRequesterRecord {
+                    revision: RelayRevision {
+                        sequence: NOW + 5,
+                        writer: phone,
+                    },
+                    answer: RelayAnswer::Removed,
+                    board: None,
+                },
+            ),
+        ] {
+            sqlx::query("INSERT INTO pepino_relay_ledger VALUES (?, ?)")
+                .bind(key(board))
+                .bind(p2panda_core::cbor::encode_cbor(&record).unwrap())
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("INSERT INTO pepino_relay_ledger VALUES (x'00', x'a0')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            Ledger::load(pool.clone(), [laptop, phone].into(), 8).await,
+            Err(Error::Storage(_))
+        ));
+        sqlx::query("DELETE FROM pepino_relay_ledger WHERE key = x'00'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut ledger = Ledger::load(pool, [laptop, phone].into(), 8).await.unwrap();
+        assert_eq!(ledger.counts(), [(laptop, 1), (phone, 0)].into());
+        assert_eq!(ledger.sequence(greenhouse, laptop), NOW);
+        let replayed = RelayInstruction {
+            board: seed_house,
+            sequence: NOW + 4,
+            carry: true,
+        };
+        assert_eq!(
+            ledger.apply(phone, replayed, NOW + 6).await.unwrap(),
+            RelayAnswer::Superseded
+        );
+        let leave = RelayInstruction {
+            board: greenhouse,
+            sequence: NOW + 6,
+            carry: false,
+        };
+        assert_eq!(
+            ledger.apply(laptop, leave, NOW + 6).await.unwrap(),
+            RelayAnswer::RemovalPendingRestart
         );
     }
 }

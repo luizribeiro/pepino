@@ -235,7 +235,7 @@ impl Relay {
                 }
             }
             let relay_sequence = match answer {
-                RelayAnswer::Superseded => self.ledger.sequence(instruction.board),
+                RelayAnswer::Superseded => self.ledger.sequence(instruction.board, incoming.author),
                 _ => 0,
             };
             RelayReceipt {
@@ -287,7 +287,7 @@ fn update_status(status: &watch::Sender<RelayStatus>, ledger: &Ledger) {
         status.removal_pending_restart = ledger
             .records
             .values()
-            .filter(|record| record.answer == RelayAnswer::RemovalPendingRestart)
+            .filter(|record| record.removal_pending())
             .count();
     });
 }
