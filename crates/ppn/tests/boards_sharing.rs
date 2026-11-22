@@ -135,6 +135,15 @@ fn two_identities_share_one_board_and_edit_each_others_work() {
     }
     let person = ana.json(&["identity", "show"])["identity"]["id"].clone();
     luiz.json(&["assign", "--board", "House", task, "Ana"]);
+    until(
+        || ana.json(&["ls", "--board", "House"]),
+        |listing| {
+            listing["tasks"]
+                .as_array()
+                .is_some_and(|tasks| tasks.iter().any(|row| row["id"] == task))
+        },
+        WAIT,
+    );
     ana.json(&["comment", "--board", "House", task, "New glass arrived"]);
     ana.json(&[
         "edit",
@@ -301,15 +310,21 @@ fn a_read_invitation_is_pending_offline_and_refuses_writes() {
         |value| value["membership"] == "joined",
         WAIT,
     );
-    let expected = owner.json(&["show", "--board", "House", task])["names"].clone();
+    let expected = owner.json(&["show", "--board", "House", task]);
     until(
         || {
             let output = reader.output(&["show", "--board", "House", task, "--json"]);
-            output.status.success().then(|| {
-                common::as_json(&String::from_utf8(output.stdout).unwrap())["names"].clone()
+            output
+                .status
+                .success()
+                .then(|| common::as_json(&String::from_utf8(output.stdout).unwrap()))
+        },
+        |show| {
+            show.as_ref().is_some_and(|show| {
+                show["names"] == expected["names"]
+                    && show["task"]["comments"] == expected["task"]["comments"]
             })
         },
-        |names| names.as_ref() == Some(&expected),
         WAIT,
     );
     assert!(
