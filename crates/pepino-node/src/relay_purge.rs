@@ -35,6 +35,31 @@ pub(super) async fn pending(
     Ok(())
 }
 
+pub(super) async fn device_boards(pool: &SqlitePool, boards: &[BoardId]) -> Result<(), Error> {
+    let _acks = crate::ack::AckStore::create(pool.clone()).await?;
+    let mut tx = pool.begin().await.map_err(Error::storage)?;
+    for &board in boards {
+        purge(&mut tx, board).await?;
+        for query in [
+            "DELETE FROM pepino_board_ack WHERE board = ?",
+            "DELETE FROM pepino_ack_position WHERE board = ?",
+            "DELETE FROM pepino_ack_store WHERE board = ?",
+            "DELETE FROM pepino_delivery WHERE board = ?",
+        ] {
+            sqlx::query(query)
+                .bind(board.as_bytes().as_slice())
+                .execute(&mut *tx)
+                .await
+                .map_err(Error::storage)?;
+        }
+    }
+    tx.commit().await.map_err(Error::storage)?;
+    if !checkpoint(pool).await? {
+        return Err(Error::storage("the node database write-ahead log is busy"));
+    }
+    Ok(())
+}
+
 /// Empties the write-ahead log, which still holds purged rows. Returns false while another
 /// connection is using the log, so that the caller tries again later.
 pub(super) async fn checkpoint(pool: &SqlitePool) -> Result<bool, Error> {
@@ -289,4 +314,72 @@ mod tests {
             }
         }
     }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn device_purge_removes_operations_secrets_and_receipts_from_disk() {
+    use futures_util::StreamExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("node.sqlite");
+    let keys = crate::DeviceCredentials::load_or_create(dir.path().join("keys.cbor")).unwrap();
+    let node = crate::Node::spawn(crate::NodeSettings::offline(keys, &path))
+        .await
+        .unwrap();
+    let mut forgotten = node.create_board().await.unwrap();
+    let mut kept = node.create_board().await.unwrap();
+    let boards = [forgotten.id(), kept.id()];
+    let mut ids = Vec::new();
+    for (board, payload) in [
+        (&mut forgotten, b"Repair gate".as_slice()),
+        (&mut kept, b"Check pump".as_slice()),
+    ] {
+        let mut events = board.events().unwrap();
+        let id = board.publish(payload.to_vec()).await.unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(60), events.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(id, event.id);
+        event.ack().await.unwrap();
+        ids.push(id);
+    }
+    assert!(matches!(
+        crate::Node::purge_device_boards(&path, &boards[..1]).await,
+        Err(Error::DirectoryInUse(_))
+    ));
+    node.shutdown().await.unwrap();
+    let contains = |needle: &str| {
+        std::fs::read(&path)
+            .unwrap()
+            .windows(needle.len())
+            .any(|part| part == needle.as_bytes())
+    };
+    assert!(contains(&boards[0].to_string()));
+    assert!(contains(&ids[0].to_string()));
+
+    for _ in 0..2 {
+        crate::Node::purge_device_boards(&path, &boards[..1])
+            .await
+            .unwrap();
+    }
+    assert!(!contains(&boards[0].to_string()));
+    assert!(!contains(&ids[0].to_string()));
+    assert!(contains(&boards[1].to_string()));
+    assert!(contains(&ids[1].to_string()));
+    assert!(
+        crate::Node::persisted_members(&path, boards[0])
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        crate::Node::persisted_members(&path, boards[1])
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
 }

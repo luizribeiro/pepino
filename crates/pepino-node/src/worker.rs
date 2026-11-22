@@ -39,18 +39,7 @@ impl Worker {
         database: &Path,
         mut transport: oneshot::Receiver<Transport>,
     ) -> Result<Self, Error> {
-        let path = database.with_file_name("node.lock");
-        let lock = File::options()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
-            .map_err(Error::storage)?;
-        match lock.try_lock() {
-            Ok(()) => (),
-            Err(std::fs::TryLockError::WouldBlock) => return Err(Error::DirectoryInUse(path)),
-            Err(error) => return Err(Error::storage(error)),
-        }
+        let lock = lock_database(database)?;
         let (ready_tx, ready) = oneshot::channel();
         let (stop, stop_rx) = oneshot::channel();
         let (done_tx, done) = oneshot::channel();
@@ -119,6 +108,22 @@ impl Worker {
             })?
             .map_err(|_| Error::Worker("network worker exited during shutdown".into()))?
     }
+}
+
+pub(crate) fn lock_database(database: &Path) -> Result<File, Error> {
+    let path = database.with_file_name("node.lock");
+    let lock = File::options()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(Error::storage)?;
+    match lock.try_lock() {
+        Ok(()) => (),
+        Err(std::fs::TryLockError::WouldBlock) => return Err(Error::DirectoryInUse(path)),
+        Err(error) => return Err(Error::storage(error)),
+    }
+    Ok(lock)
 }
 
 fn stop_runtime(
