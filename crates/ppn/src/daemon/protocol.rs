@@ -50,6 +50,11 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         relay_url: Option<String>,
     },
+    BoardLeaveCheck {
+        board: BoardId,
+        person: pepino_app::PersonKey,
+        timeout_ms: u64,
+    },
     BoardManage {
         board: BoardId,
         person: pepino_app::PersonKey,
@@ -67,7 +72,8 @@ impl Operation {
         match *self {
             Self::WaitIdle { timeout_ms }
             | Self::BoardJoinState { timeout_ms, .. }
-            | Self::DeviceRemoval { timeout_ms, .. } => Some(timeout_ms),
+            | Self::DeviceRemoval { timeout_ms, .. }
+            | Self::BoardLeaveCheck { timeout_ms, .. } => Some(timeout_ms),
             _ => None,
         }
     }
@@ -127,6 +133,9 @@ pub enum Outcome {
     },
     BoardInvited {
         grant: Box<BoardGrant>,
+    },
+    BoardLeaveChecked {
+        risk: bool,
     },
     BoardManaged {
         departure: Option<pepino_app::BoardDeparture>,

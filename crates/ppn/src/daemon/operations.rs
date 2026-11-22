@@ -157,6 +157,25 @@ pub(super) async fn operate(
                 &error,
             ),
         },
+        Operation::BoardLeaveCheck {
+            board,
+            person,
+            timeout_ms,
+        } => match engine
+            .check_board_leave(board, person, Duration::from_millis(timeout_ms))
+            .await
+        {
+            Ok(risk) => Outcome::BoardLeaveChecked { risk },
+            Err(Error::App(error)) => {
+                let error = crate::error::CliError::from(error);
+                Outcome::error(error.kind().code(), &error.to_string())
+            }
+            Err(error) => failure(
+                "membership_failed",
+                "Could not read the current board role",
+                &error,
+            ),
+        },
         Operation::BoardManage {
             board,
             person,

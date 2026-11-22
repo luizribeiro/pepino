@@ -898,6 +898,45 @@ fn a_readmitted_member_can_forget_after_leaving() {
 }
 
 #[test]
+fn leave_checks_the_synced_role_after_an_offline_demotion() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = dir.path().file_name().unwrap().to_str().unwrap();
+    let owner = host(network, "Ada", "Laptop", "Owner private");
+    let guest = host(network, "Ben", "Tablet", "Guest private");
+    owner.run(&["board", "new", "House"]);
+    join(&owner, &guest, "manage");
+    guest.stop();
+    owner.run(&[
+        "board",
+        "role",
+        "Ben",
+        "write",
+        "--board",
+        "House",
+        "--yes",
+        "--i-understand-mutual-removal-risk",
+    ]);
+    let status = guest.json(&["status"]);
+    assert!(
+        status["boards"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|board| { board["name"] == "House" && board["role"] == "manage" })
+    );
+    owner.stop();
+    guest.start();
+    let args = ["board", "leave", "--board", "House", "--yes"];
+    let offline = guest.output(&[&args[..], &["--timeout", "1s"]].concat());
+    assert_eq!(offline.status.code(), Some(5), "{offline:?}");
+    assert!(String::from_utf8_lossy(&offline.stderr).contains("current board role is unknown"));
+    owner.start();
+    let leave = guest.json(&args);
+    assert_eq!(leave["departure"], "leaving");
+    assert_eq!(leave["complete"], false);
+}
+
+#[test]
 fn the_original_inviter_can_leave_after_promoting_a_successor() {
     let dir = tempfile::tempdir().unwrap();
     let network = dir.path().file_name().unwrap().to_str().unwrap();

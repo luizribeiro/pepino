@@ -38,30 +38,56 @@ pub(super) fn run(
         .person_labels()
         .remove(&person)
         .unwrap_or_else(|| reference.to_owned());
-    let path = context
-        .config()?
-        .config
-        .data_dir
-        .value
-        .as_path()
-        .join("node.sqlite");
-    let members = runtime()?
-        .block_on(Node::persisted_members(&path, board.id))
-        .map_err(|_| CliError::new(ErrorKind::Failure, "Could not read the board membership."))?
-        .into_iter()
-        .filter_map(|(id, state)| match state {
-            MemberState::Member(role) => Some((id, role)),
-            _ => None,
-        })
-        .collect();
-    let devices = local.membership_devices(board.id, person);
     let previous = local.board_departure(board.id);
-    if !(matches!(action, ManagePerson::Leave) && previous.is_some()) {
+    let wait = context.timeout.unwrap_or(Duration::from_secs(30));
+    let daemon = if matches!(action, ManagePerson::Leave) && previous.is_none() {
+        Some(super::request::running(context, config_path, allow_start)?)
+    } else {
+        None
+    };
+    let risk = if let Some(daemon) = &daemon {
+        let timeout_ms = ppn::daemon::protocol::wait_millis(wait)?;
+        match daemon
+            .call_with(
+                Operation::BoardLeaveCheck {
+                    board: board.id,
+                    person,
+                    timeout_ms,
+                },
+                wait.saturating_add(Duration::from_secs(2)),
+            )
+            .map_err(unreachable)?
+        {
+            Outcome::BoardLeaveChecked { risk } => risk,
+            Outcome::Error { code, message } => {
+                return Err(super::request::control_error(&code, message));
+            }
+            _ => return Err(unexpected_reply()),
+        }
+    } else if matches!(action, ManagePerson::Leave) {
+        false
+    } else {
+        let path = context
+            .config()?
+            .config
+            .data_dir
+            .value
+            .as_path()
+            .join("node.sqlite");
+        let members = runtime()?
+            .block_on(Node::persisted_members(&path, board.id))
+            .map_err(|_| CliError::new(ErrorKind::Failure, "Could not read the board membership."))?
+            .into_iter()
+            .filter_map(|(id, state)| match state {
+                MemberState::Member(role) => Some((id, role)),
+                _ => None,
+            })
+            .collect();
+        let devices = local.membership_devices(board.id, person);
         action.check(local, board.id, person, &devices, &members, true)?;
-    }
-    if action.requires_risk_ack(local, board.id, person, &devices, &members)
-        && !(context.yes && acknowledge)
-    {
+        action.requires_risk_ack(local, board.id, person, &devices, &members)
+    };
+    if risk && !(context.yes && acknowledge) {
         let details = if matches!(action, ManagePerson::Remove) {
             format!(" {REMOVAL}")
         } else {
@@ -106,7 +132,10 @@ pub(super) fn run(
             Some(BoardDeparture::Leaving)
         }
     } else {
-        let daemon = super::request::running(context, config_path, allow_start)?;
+        let daemon = match daemon {
+            Some(daemon) => daemon,
+            None => super::request::running(context, config_path, allow_start)?,
+        };
         match daemon
             .call_with(
                 Operation::BoardManage {
@@ -115,7 +144,7 @@ pub(super) fn run(
                     action,
                     accept_risk: context.yes && acknowledge,
                 },
-                context.timeout.unwrap_or(Duration::from_secs(30)),
+                wait,
             )
             .map_err(unreachable)?
         {
