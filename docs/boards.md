@@ -1,57 +1,67 @@
-# Boards
+# Use several boards
 
-A board is a private, encrypted space for tasks. Each board belongs to your identity and
-its linked devices. The first board you create with `ppn init` is the starting board on
-each newly linked device.
+Create boards to separate areas of work, and choose which board a command
+acts on. A board is a private, encrypted set of tasks. New boards appear on
+all [your devices](devices.md), and any board except your first can be
+[shared](sharing.md).
 
-```sh
-ppn board new Workshop
-ppn board ls
-ppn board show Workshop
-ppn board rename Workshop 'Tool Shed'
-ppn board use 'Tool Shed'
+## Create, rename, and list boards
+
+```console
+$ ppn board new Workshop
+$ ppn board rename Workshop 'Tool Shed'
+$ ppn board ls
+* Home (003257)  4/6 open  joined  idle
+  Tool Shed (847796)  1/1 open  joined  idle
+Selected board: Home (003257) via current
 ```
 
-`board new` starts the sync daemon if needed and automatic startup is enabled. It keeps
-your current board selected. When another device needs to supply fresh membership keys,
-it does so the next time its daemon connects. The board list shows the host's current
-board with `*`, open and total task counts, this device's membership, and sync activity.
-New board names and renames appear on linked devices as they sync. `board use` changes
-only the host on which you run it. `ppn status` and `ppn device ls` show membership by board.
+`*` marks this device's current board. The columns after the name are open
+and total tasks, your membership, and sync activity. Renames reach your
+other devices as they sync.
 
-Board names are case-sensitive labels. If a label is shared by several boards, Pepino
-lists the candidates. Use the short hexadecimal ID shown by `ppn board ls` to select one.
-You can use any unambiguous ID prefix of at least four hexadecimal characters.
+Refer to a board by its name or by the short ID in parentheses. Names are
+case-sensitive and need not be unique; if two boards share a name, use the
+ID.
 
-## Select a board per project
+## Choose the board for a command
 
-Pepino reads `--board` first, then `PPN_BOARD`, then the host's current board. An empty
-`PPN_BOARD` counts as unset. A missing or ambiguous reference produces an error that names
-the source. `ppn board ls`, `ppn board show`, and `ppn status` show which board was
-selected and why. `ppn board use` warns if the shell still sets `PPN_BOARD`.
+`ppn` picks the board from the first of these that is set:
 
-Full board IDs are secrets. Keep them out of committed environment files and use a board
-name or a short ID prefix. This direnv `.envrc` sets the project board by name.
+1. `--board NAME` on the command line;
+2. the `PPN_BOARD` environment variable;
+3. this device's current board, set with `ppn board use NAME`.
+
+```sh
+ppn board use 'Tool Shed'
+ppn add 'Sharpen the spade' --board Home
+```
+
+`ppn board use` changes only the device you run it on. To tie a board to a
+project directory, export `PPN_BOARD` from a direnv `.envrc`:
 
 ```sh
 export PPN_BOARD='Tool Shed'
 ```
 
+Use the name there, never a full board ID:
+[board IDs are secrets](security.md#keep-board-ids-and-codes-secret).
+
+## List tasks across boards
+
 ```sh
-ppn add 'Sharpen the spade'
-ppn --board Greenhouse ls
-ppn ls --all-boards --json
+ppn ls --all-boards
 ppn ls 'board:"Tool Shed"' tag:maintenance
 ```
 
-By default `ppn ls` lists tasks from the selected board. A `board:` filter can route a
-listing to named boards, including through a saved view. An explicit selector narrows
-the filter to that board. `--all-boards` starts with every board and adds a board column
-or a `board` object to each JSON task. The usual status, sort, and limit options still apply.
-Saved views follow you across devices under the same identity. The latest change wins.
+`--all-boards` adds a board column to each row. A `board:` filter term selects
+a board by name and also works inside a [saved view](tasks.md#save-a-view).
 
-Task ID prefixes resolve within the selected board. If an ID only appears elsewhere, the
-error points to the matching board. A relation requires both tasks to belong to the same
-board. Moving tasks between boards is unsupported.
+Task IDs resolve within the selected board, and links join tasks on the same
+board only. You cannot move a task to another board.
 
-Request and response examples are in the [board protocol reference](board-protocol.md).
+## Remove a board
+
+There is no command to delete or archive a board. You can
+[leave a shared board](sharing.md#leave-a-board-and-delete-your-copy) that
+has another manager.
