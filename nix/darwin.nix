@@ -3,6 +3,7 @@ let
   client = config.programs.pepino;
   node = config.services.pepino;
   quote = lib.escapeShellArg;
+  nodeLog = "/var/log/pepino-node.log";
   job = prepare: command: {
     ProgramArguments = [
       "/bin/sh"
@@ -59,7 +60,10 @@ in
         job ''
           ${lib.escapeShellArgs (pepinoNodeArgs ++ [ "relay" "init" ])} || {
             status=$?
-            if [ "$status" -eq ${toString pepinoDeviceDirectoryStatus} ]; then exit 0; fi
+            if [ "$status" -eq ${toString pepinoDeviceDirectoryStatus} ]; then
+              echo "pepino-node: the relay was not started and will not be retried until the data directory is replaced." >&2
+              exit 0
+            fi
             exit "$status"
           }
         ''
@@ -67,6 +71,7 @@ in
           UserName = node.user;
           GroupName = node.group;
           Umask = 63;
+          StandardErrorPath = nodeLog;
         };
       environment.systemPackages = [
         (import ./node-wrapper.nix {

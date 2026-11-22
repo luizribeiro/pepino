@@ -99,7 +99,9 @@ provided by systemd on NixOS.
 If an older `services.pepino` installation uses a data directory already
 linked as a device, `ppn relay init` exits with status 8 and the service does
 not start. The NixOS unit shows as failed without restarting, and the
-launchd job exits without respawning. Other failures restart the service. Device state is not converted. Give
+launchd job exits without respawning. Other failures restart the service.
+On nix-darwin the reason is written to `/var/log/pepino-node.log`, which
+receives the standard error of the launchd job. Device state is not converted. Give
 the relay a fresh `services.pepino.dataDir` and run the linked device as a
 user daemon with `programs.pepino.daemon.enable`.
 
