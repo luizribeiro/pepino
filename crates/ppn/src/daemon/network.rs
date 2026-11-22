@@ -7,6 +7,7 @@ pub fn snapshot(status: pepino_sync::Status) -> Network {
         .map(|&id| (id, status.board_caught_up(id, &status.node)))
         .collect::<std::collections::BTreeMap<_, _>>();
     Network {
+        starting_ms: None,
         board_joins: status.board_join_states(),
         board_members: status.members,
         last_seen: status

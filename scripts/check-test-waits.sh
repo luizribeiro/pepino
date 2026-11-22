@@ -21,6 +21,7 @@ crates/ppn/src/daemon/process.rs:        thread::sleep(POLL_INTERVAL);
 crates/ppn/src/daemon/process.rs:                thread::sleep(remaining.min(POLL_INTERVAL));
 crates/ppn/src/daemon/relay.rs:            _ = tokio::time::sleep(delay) => (),
 crates/ppn/src/daemon/runtime.rs:            _ = tokio::time::sleep(Duration::from_millis(250)) => (),
+crates/ppn/src/daemon/runtime.rs:    tokio::time::sleep(delay).await;
 crates/ppn/tests/common/wait.rs:        thread::sleep(remaining.min(Duration::from_millis(25)));
 ALLOW
 )

@@ -42,6 +42,12 @@ ppn daemon run       # foreground; logs to stderr; stop with Ctrl-C
 One daemon runs per data directory. `--log-level debug` on `start` or `run`
 gives more detail.
 
+While the device daemon opens its network node and sync engine, `ppn status`
+shows how long startup has taken (`network.starting_ms` in JSON). The daemon
+logs a warning after 45 seconds and continues starting. You can stop it during
+startup with `ppn daemon stop`. Once the daemon is ready, individual boards may still
+be attaching or syncing.
+
 ## Run it under a service manager
 
 Run `ppn daemon run` from systemd or launchd and turn automatic startup off,

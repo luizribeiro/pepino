@@ -26,6 +26,7 @@ use super::{
 };
 
 pub(super) const STARTUP_LIMIT: Duration = Duration::from_secs(8);
+const STARTUP_WARNING: Duration = Duration::from_secs(45);
 
 pub fn run(config: &Config, level: LogLevel) -> Result<(), CliError> {
     let runtime = Builder::new_current_thread()
@@ -123,16 +124,32 @@ async fn cycle(
     interrupt: &mut Signal,
     upgrade_logged: &mut bool,
 ) -> Result<End, CliError> {
+    let startup = Instant::now();
+    let control = async {
+        tokio::select! {
+            result = server::serve_starting(listener, started, startup) => result.map_err(socket_error),
+            () = startup_warning(STARTUP_WARNING, || {
+                log(level, LogLevel::Warn, "daemon still starting after 45 seconds");
+            }) => unreachable!("startup warning does not end control service"),
+        }
+    };
+    tokio::pin!(control);
     let node = tokio::select! {
         _ = terminate.recv() => return Ok(End::Stopped),
         _ = interrupt.recv() => return Ok(End::Stopped),
+        result = &mut control => return result,
         result = Node::spawn(settings.clone()) => {
             Arc::new(result.map_err(|error| failure(&format!("Could not start the network node. {error}")))?)
         }
     };
+    let mut startup_end = Ok(End::Stopped);
     let engine = tokio::select! {
         _ = terminate.recv() => None,
         _ = interrupt.recv() => None,
+        result = &mut control => {
+            startup_end = result;
+            None
+        },
         result = SyncEngine::start_with_node_settings(node.clone(), settings, app.clone()) => Some(result),
     };
     let mut engine_stop = Ok(());
@@ -158,7 +175,7 @@ async fn cycle(
         Some(Err(error)) => Err(failure(&format!(
             "Could not start the sync engine. {error}"
         ))),
-        None => Ok(End::Stopped),
+        None => startup_end,
     };
     let node = Arc::try_unwrap(node)
         .map_err(|_| shutdown_failure("the network node", "sync workers still hold it"))?;
@@ -166,6 +183,26 @@ async fn cycle(
         .await
         .map_err(|error| shutdown_failure("the network node", error))?;
     engine_stop.and(outcome)
+}
+
+async fn startup_warning(delay: Duration, log: impl FnOnce()) {
+    tokio::time::sleep(delay).await;
+    log();
+    std::future::pending().await
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn the_startup_warning_fires_once_without_ending_startup() {
+    let (warned, mut observed) = tokio::sync::mpsc::unbounded_channel();
+    let startup = startup_warning(Duration::ZERO, || warned.send(()).unwrap());
+    tokio::pin!(startup);
+    tokio::select! {
+        result = observed.recv() => assert_eq!(result, Some(())),
+        () = &mut startup => panic!("startup was interrupted by its warning"),
+    }
+    assert!(futures_util::poll!(&mut startup).is_pending());
+    assert!(observed.try_recv().is_err());
 }
 
 async fn log_catalog_upgrade(engine: &SyncEngine, level: LogLevel, logged: &mut bool) {

@@ -80,7 +80,7 @@ impl Fixture {
             },
             |output| {
                 serde_json::from_slice::<Value>(&output.stdout)
-                    .is_ok_and(|value| value["running"] == true)
+                    .is_ok_and(|value| value["running"] == true && value["starting_ms"].is_null())
             },
             WAIT,
         );

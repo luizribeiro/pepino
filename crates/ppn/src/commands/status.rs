@@ -17,14 +17,34 @@ pub fn run(context: &Context<'_>, _: Args) -> Result<CommandResult, CliError> {
     if pepino_app::is_relay(context.config()?.config.data_dir.value.as_path())? {
         return super::relay::status(context);
     }
-    let client = AppClient::open(context)?;
     let path = socket_path(&context.config()?.config);
     let network = (Client { path })
         .status()
         .ok()
         .flatten()
         .map(|status| status.network);
-    document(context, client, network, None)
+    if let Some(network) = network.as_ref()
+        && let Some(elapsed) = network.starting_ms
+    {
+        return Ok(CommandResult::document(Starting(elapsed)));
+    }
+    document(context, AppClient::open(context)?, network, None)
+}
+
+struct Starting(u64);
+
+impl ppn::output::Render for Starting {
+    fn human(&self, _: &ppn::terminal::Terminal) -> String {
+        ppn::daemon::report::describe_startup(self.0)
+    }
+
+    fn json_fields(self) -> serde_json::Map<String, serde_json::Value> {
+        use serde_json::json;
+        serde_json::Map::from_iter([
+            ("kind".into(), json!("status")),
+            ("network".into(), json!({"starting_ms": self.0})),
+        ])
+    }
 }
 
 #[derive(clap::Args)]

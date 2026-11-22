@@ -105,6 +105,9 @@ pub fn ensure_running(
     allow_start: bool,
 ) -> Result<DaemonStatus, CliError> {
     match client.status() {
+        Ok(Some(status)) if status.network.starting_ms.is_some() => {
+            return process::wait_for_service(client, process::START_LIMIT).map_err(unreachable);
+        }
         Ok(Some(status)) => return Ok(status),
         Ok(None) => (),
         Err(error)

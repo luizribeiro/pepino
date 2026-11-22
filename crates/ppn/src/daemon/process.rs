@@ -103,9 +103,13 @@ pub fn wait_started(
     limit: Duration,
 ) -> io::Result<DaemonStatus> {
     let start = Instant::now();
+    let mut starting = false;
     let result = loop {
         if let Ok(Some(status)) = client.status() {
-            break Ok(status);
+            if status.network.starting_ms.is_none() {
+                break Ok(status);
+            }
+            starting |= status.pid == process.child.id();
         }
         if process.child.try_wait()?.is_some() && !lease_held(data) {
             break Err(process.failure(
@@ -114,6 +118,12 @@ pub fn wait_started(
             ));
         }
         if start.elapsed() >= limit {
+            if starting {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "The daemon is still starting. Run ppn status for elapsed time.",
+                ));
+            }
             break Err(process.failure(
                 io::ErrorKind::TimedOut,
                 "The daemon did not answer its control socket. See daemon.log",
@@ -128,12 +138,12 @@ pub fn wait_started(
     result
 }
 
-pub fn wait_for_service(client: &Client, limit: Duration) -> io::Result<()> {
+pub fn wait_for_service(client: &Client, limit: Duration) -> io::Result<DaemonStatus> {
     let start = Instant::now();
     loop {
         match client.status() {
-            Ok(Some(_)) => return Ok(()),
-            Ok(None) => {}
+            Ok(Some(status)) if status.network.starting_ms.is_none() => return Ok(status),
+            Ok(_) => {}
             // The listener is bound before a starting daemon can serve requests.
             Err(error)
                 if matches!(

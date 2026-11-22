@@ -15,6 +15,9 @@ pub struct State {
 impl Render for State {
     fn human(&self, _: &Terminal) -> String {
         match (&self.status, self.action) {
+            (Some(status), _) if let Some(elapsed) = status.network.starting_ms => {
+                describe_startup(elapsed)
+            }
             (Some(status), "started") => format!("Daemon running (PID {})", status.pid),
             (Some(status), _) => format!(
                 "Daemon running (PID {}, uptime {})\nSocket {}",
@@ -29,7 +32,7 @@ impl Render for State {
     }
 
     fn json_fields(self) -> Map<String, Value> {
-        Map::from_iter([
+        let mut fields = Map::from_iter([
             ("kind".into(), json!("daemon")),
             ("action".into(), json!(self.action)),
             ("running".into(), json!(self.status.is_some())),
@@ -45,8 +48,17 @@ impl Render for State {
                 "socket_path".into(),
                 json!(self.socket_path.to_string_lossy()),
             ),
-        ])
+        ]);
+        if let Some(elapsed) = self.status.and_then(|status| status.network.starting_ms) {
+            fields.insert("starting_ms".into(), json!(elapsed));
+        }
+        fields
     }
+}
+
+pub fn describe_startup(elapsed: u64) -> String {
+    let elapsed = humantime::format_duration(std::time::Duration::from_secs(elapsed / 1000));
+    format!("Daemon still starting ({elapsed} elapsed)")
 }
 
 #[cfg(test)]

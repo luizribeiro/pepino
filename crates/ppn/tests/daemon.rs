@@ -541,3 +541,55 @@ fn detached_daemon_leaves_its_working_directory() {
     );
     fixture.run(&["daemon", "stop"]);
 }
+
+#[cfg(pepino_network_tests)]
+#[test]
+fn status_reports_startup_while_the_node_waits_for_its_database() {
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+    use std::{process::Stdio, time::Duration};
+    use wait::{WAIT, until};
+
+    let mut fixture = support::Fixture::new("");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut writer = runtime.block_on(async {
+        let options = SqliteConnectOptions::new().filename(fixture.data.join("node.sqlite"));
+        let mut writer = SqliteConnection::connect_with(&options).await.unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+        writer
+    });
+    fixture.foreground = Some(
+        fixture
+            .command()
+            .args(["daemon", "run", "--json"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let observed = until(
+        || as_json(&fixture.run(&["status", "--json"])),
+        |status| status["network"]["starting_ms"].is_u64(),
+        Duration::from_secs(4),
+    );
+    assert_eq!(observed["kind"], "status");
+    assert!(fixture.run(&["status"]).contains("Daemon still starting"));
+    runtime.block_on(async {
+        sqlx::query("ROLLBACK").execute(&mut writer).await.unwrap();
+    });
+    until(
+        || as_json(&fixture.run(&["status", "--json"])),
+        |status| {
+            status["network"]["boards"].is_object() && status["network"]["starting_ms"].is_null()
+        },
+        WAIT,
+    );
+    fixture.run(&["daemon", "stop"]);
+    success(fixture.wait_foreground());
+    fixture.assert_stopped();
+}

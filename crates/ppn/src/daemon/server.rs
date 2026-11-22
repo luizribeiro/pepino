@@ -48,6 +48,45 @@ pub async fn serve(
     .await
 }
 
+pub(super) async fn serve_starting(
+    listener: &UnixListener,
+    started: Instant,
+    startup: Instant,
+) -> io::Result<End> {
+    use super::protocol::{DaemonStatus, Network};
+    serve_with(
+        listener,
+        started,
+        std::future::pending(),
+        async |operation, started| match operation {
+            Operation::Status => Outcome::Status {
+                status: DaemonStatus {
+                    pid: std::process::id(),
+                    uptime_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                    network: Network {
+                        starting_ms: Some(
+                            startup.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                        ),
+                        ..Default::default()
+                    },
+                    peer_syncs: Default::default(),
+                    relay: None,
+                },
+            },
+            Operation::Stop => Outcome::Stopping,
+            operation => Outcome::error(
+                if matches!(operation, Operation::Nudge) {
+                    "busy"
+                } else {
+                    "daemon_unreachable"
+                },
+                "The daemon is still starting. Run ppn status for elapsed time.",
+            ),
+        },
+    )
+    .await
+}
+
 pub(super) async fn serve_with(
     listener: &UnixListener,
     started: Instant,
