@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use futures_util::StreamExt;
@@ -17,6 +17,7 @@ use crate::{
     DeviceCredentials, Error, Node, NodeSettings, NodeStatus,
     relay_control::{IncomingInstruction, RelayAnswer, RelayChannel, RelayReceipt},
     relay_ledger::Ledger,
+    relay_refusals::Refusals,
     status_state::Status,
 };
 
@@ -68,6 +69,7 @@ pub struct Relay {
     status: watch::Sender<RelayStatus>,
     stream_ended: Arc<Notify>,
     maintenance: Interval,
+    refusals: Refusals,
 }
 
 impl Relay {
@@ -91,6 +93,7 @@ impl Relay {
                     status,
                     stream_ended,
                     maintenance,
+                    refusals: Refusals::default(),
                 })
             }
             Err(error) => {
@@ -151,8 +154,13 @@ impl Relay {
         incoming: &IncomingInstruction,
     ) -> Result<Option<RelayReceipt>, Error> {
         let receipt = if !self.ledger.is_trusted(incoming.author) {
+            let answer = self.ledger.reject();
+            if !self.refusals.allow(incoming.author, Instant::now()) {
+                update_status(&self.status, &self.ledger);
+                return Ok(None);
+            }
             RelayReceipt {
-                answer: self.ledger.reject(),
+                answer,
                 relay_sequence: 0,
             }
         } else {
