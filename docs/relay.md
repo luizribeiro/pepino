@@ -31,8 +31,9 @@ ppn --config relay.toml daemon run
 An empty trusted list refuses all instructions. A relay uses the first
 configured iroh relay URL as its connection hint. Set `relay_urls = []` for
 LAN discovery only. Use a common `network` value on the relay and devices.
-Device and relay directories are separate roles. Create a new directory to
-change roles.
+Device and relay directories are separate roles. A command for the other
+role reports which role the directory has. Use a separate data directory for
+each role.
 
 ## Hand over a board
 
@@ -59,7 +60,8 @@ being full. Reissue `add` after resolving the refusal.
 
 The relay refuses a request stamped more than ten minutes ahead of its own
 clock and the device shows `clock too far ahead of the relay`. Correct the
-device clock and reissue the request. When the relay already holds a newer
+device clock and reissue the request, which then starts again from the
+corrected clock. When the relay already holds a newer
 instruction for the board, the device moves its request past it and sends it
 once more by itself.
 
@@ -76,9 +78,13 @@ a trusted device tells it to remove the board.
 ppn board relay rm NODE_ID --board Greenhouse --yes
 ```
 
-The relay records the request, restarts its node, and deletes the stored
-ciphertext for that board before starting replication again. The requesting
-device may show `removal pending restart` before the final `removed` receipt.
+A relay keeps a board for as long as any trusted device requests it. A
+removal ends the request of the device that sends it, so send it from the
+device that handed the board over. When the last request ends, the relay
+restarts its node and deletes the stored ciphertext for that board before
+starting replication again. The requesting device may show `removal pending
+restart` before the final `removed` receipt. A device whose removal leaves
+another device's request in place also sees `removed`.
 `ppn status` on the relay reports per-device board counts, stored
 replication bytes, peers seen, and rejected instructions. The board limit
 applies to new admissions. Lowering it leaves existing copies available.
@@ -98,11 +104,13 @@ ppn relay drop --from NODE_ID --yes
 ```
 
 `ppn relay boards` asks the running relay daemon for the boards it carries,
-grouped by the device that requested them. Each board has a handle that is
+grouped by the device that requested them. A board that several devices
+requested appears under each of them. Each board has a handle that is
 only meaningful on this relay and reveals nothing about the board ID.
-`ppn relay drop` deletes the stored copy of one board, or of every board a
-device requested, in the same way as a removal request from a device. The
-relay restarts its node to do so.
+`ppn relay drop HANDLE` ends every request for one board and deletes its
+stored copy. `ppn relay drop --from NODE_ID` ends the requests of one device
+and deletes the boards that no other device requested. The relay restarts
+its node to do so.
 
 The board limit is shared by all trusted devices. Any one of them can use
 the whole allowance. Removing a node ID from `trusted_devices` stops further
