@@ -1,22 +1,20 @@
-# Hacking on Pepino
+# Hacking on pepino
 
-Run `nix flake check --print-build-logs` from the repository root to build the
-package and run the checks for your system.
+Build, test, and check pepino from a checkout.
 
-On Linux, the Nix build users need permission to create unprivileged user and
-network namespaces and map their UID and GID in the new user namespace. The
-Rust `test` check uses a private network namespace with a loopback multicast
-route. From an unprivileged shell, `unshare --user --map-root-user --net true`
-probes the host policy for your account. The Nix build users need the same
-permissions. Check that `user.max_user_namespaces` is greater than zero and
-that any AppArmor policy allows the namespace and ID mapping. GitHub Actions
-uses Ubuntu's boot-scoped `kernel.apparmor_restrict_unprivileged_userns=0`
-setting on its disposable Linux runners. See the
+Run `nix flake check --print-build-logs` to build the package and run every
+check for your system.
+
+On Linux, the Rust `test` check runs in a private network namespace, so the
+Nix build users must be allowed to create unprivileged user and network
+namespaces. Probe your host with `unshare --user --map-root-user --net true`.
+If it fails, check that `user.max_user_namespaces` is above zero and that
+AppArmor allows it; see the
 [Ubuntu guidance on unprivileged user namespaces](https://documentation.ubuntu.com/release-notes/24.04/#unprivileged-user-namespace-restrictions).
 
-On `x86_64-linux`, the `vm` check also needs hardware virtualization enabled
-and a working `/dev/kvm` that the Nix build users can read and write. The Nix
-builder must advertise `kvm` and `nixos-test` in `system-features`.
+The `vm` check, on `x86_64-linux` only, runs a relay and two devices in NixOS
+VMs. It needs a `/dev/kvm` the Nix build users can use, and a builder that
+advertises `kvm` and `nixos-test` in `system-features`.
 
 ## Run individual checks
 
@@ -32,9 +30,9 @@ nix build --no-link --print-build-logs .#checks.x86_64-linux.vm  # NixOS VM on x
 
 ## Rust tests
 
-Enter the development shell with `nix develop`. It provides `cargo-nextest`
-and sets `PEPINO_NETWORK_TESTS=1`. Use the crate test loop before each commit.
-Repeat the last command for each changed crate.
+The development shell (`nix develop`) provides `cargo-nextest` and sets
+`PEPINO_NETWORK_TESTS=1`. Before each commit, run this loop, repeating the
+last command for each crate you changed.
 
 ```sh
 export CARGO_PROFILE_DEV_DEBUG=0
@@ -63,15 +61,9 @@ scripts/test-under-load.sh 10 0
 scripts/test-under-load.sh 5 8
 ```
 
-The arguments specify the number of workspace runs and busy-loop processes.
-Each iteration runs the network-enabled Nextest suite and the doctests. The
-harness completes all iterations, prints each failed run's output, retains
-logs under `target/test-under-load.*`, and exits unsuccessfully if any run
-failed.
-
-On Linux, the default daemon publication and ingestion recovery tests use
-`/dev/shm` when it is available and `TMPDIR` is unset. The SQLite files
-remain available across daemon restarts.
+The arguments are the number of suite runs and of busy-loop processes. The
+harness finishes every run, prints the output of failed ones, keeps logs
+under `target/test-under-load.*`, and fails if any run failed.
 
 ### Scale tests
 
@@ -85,11 +77,6 @@ cargo nextest run -p pepino-store --lib --run-ignored ignored-only -E 'test(=edg
 cargo nextest run -p ppn --lib --run-ignored ignored-only -E 'test(=daemon::shutdown_tests::sigterm_recovers_events_during_publishing_and_ingesting_at_scale)'
 cargo nextest run -p ppn --lib --run-ignored ignored-only -E 'test(=daemon::shutdown_tests::sigkill_recovers_events_during_publishing_and_ingesting_at_scale)'
 ```
-
-The daemon scale tests fill the receiver's memory buffer and interrupt it
-with a task still in the SQLite delivery spool. They give the full burst
-up to three minutes to reach the receiver and another three minutes to
-replay after restart.
 
 To sample more generated store histories, raise the property case count.
 
