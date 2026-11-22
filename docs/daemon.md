@@ -1,9 +1,10 @@
 # Sync daemon
 
 The daemon publishes locally committed events to the replication node and
-ingests events from other devices. Tasks, saved views and local reads and writes
-go directly to the local store. They work without a running daemon or a network
-connection.
+ingests events from other devices. Task and saved-view commands read and write
+local state without a running daemon or a network connection. Saved views
+follow your identity to all its devices when they sync. The latest change to
+a view wins, including a removal.
 
 ## Start and stop
 

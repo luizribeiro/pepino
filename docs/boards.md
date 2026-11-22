@@ -48,6 +48,7 @@ By default `ppn ls` lists tasks from the selected board. A `board:` filter can r
 listing to named boards, including through a saved view. An explicit selector narrows
 the filter to that board. `--all-boards` starts with every board and adds a board column
 or a `board` object to each JSON task. The usual status, sort, and limit options still apply.
+Saved views follow you across devices under the same identity. The latest change wins.
 
 Task ID prefixes resolve within the selected board. If an ID only appears elsewhere, the
 error points to the matching board. A relation requires both tasks to belong to the same

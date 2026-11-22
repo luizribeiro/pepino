@@ -84,3 +84,10 @@ zero. Other edits require an active writer in their accepted parents'
 causal past. The fold holds edits with missing parents and rejects
 invalid signatures, causal links, or writers. It resolves accepted
 edits in ascending `(generation, edit ID)` order.
+
+The private catalog's optional CBOR `preferences` map carries namespaced
+keys such as `view/weekend` with an event ID, HLC, writer device ID and
+optional string value. The latest change by `(HLC, event ID)` wins on all
+devices of the identity, and a null value records a deletion.
+Keys are limited to 128 bytes and values to 4,096 bytes. The catalog holds up
+to 256 keys, including tombstones.

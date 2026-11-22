@@ -18,7 +18,8 @@ Use ppn help ids for task references used with parent, blocks and blocked-by.
 board: accepts a board name or an unambiguous hexadecimal ID prefix.
 
 Free text searches titles, descriptions and comments by case-insensitive
-substring. @name expands a saved view. Use ppn help dates for date forms.
+substring. @name expands a saved view. Saved views follow you to all your
+devices. The latest change wins. Use ppn help dates for date forms.
 Double quotes in filter syntax protect spaces, commas and operators.
 Inside quotes, use \" for a literal double quote and \\ for a backslash.
 The shell removes its own quotes. Each positional argument is one term.

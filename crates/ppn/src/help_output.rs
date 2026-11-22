@@ -130,7 +130,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "devices",
             "devices Local device observations including first_device, board counts and last seen time\nroster Shared roster with device IDs, names, first_device, admission metadata, revocations and pending leave requests",
         ),
-        "view ls" => ("views", "views Saved filters ordered by name"),
+        "view ls" => (
+            "views",
+            "views Saved filters ordered by name, with recovered_as, updated_by and updated_at when applicable",
+        ),
         "view save" => (
             "view_saved",
             "view Saved name and filter\nreplaced Whether a previous definition was replaced",
