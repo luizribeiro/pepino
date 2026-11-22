@@ -1,4 +1,4 @@
-use std::{future::poll_fn, pin::Pin, time::Duration};
+use std::{future::poll_fn, pin::Pin, task::Poll, time::Duration};
 
 use futures_util::Stream;
 use p2panda::{
@@ -16,6 +16,9 @@ use tokio::time::{Interval, MissedTickBehavior, interval};
 use crate::{DeviceCredentials, Error, Node};
 
 const CONTEXT: &[u8] = b"pepino relay control v1";
+
+// The gossip buffer of p2panda-net 0.8.1 holds 128 messages, so this many polls empty it.
+const POLLS_PER_WAKE: usize = 256;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct RelayRevision {
@@ -212,12 +215,18 @@ fn control_topic(relay: DeviceId) -> Topic {
 impl RelayChannel {
     async fn next(&mut self) -> Option<p2panda::streams::EphemeralMessage<Envelope>> {
         poll_fn(|cx| {
-            let item = Pin::new(&mut self.rx).poll_next(cx);
-            // p2panda 0.8.1 may return Pending without a waker after discarding an item.
-            if item.is_pending() && self.repoll.poll_tick(cx).is_ready() {
+            // p2panda 0.8.1 returns Pending without a waker after discarding an item, which one
+            // poll cannot tell from an empty stream.
+            for _ in 0..POLLS_PER_WAKE {
+                let item = Pin::new(&mut self.rx).poll_next(cx);
+                if item.is_ready() {
+                    return item;
+                }
+            }
+            if self.repoll.poll_tick(cx).is_ready() {
                 cx.waker().wake_by_ref();
             }
-            item
+            Poll::Pending
         })
         .await
     }
@@ -375,87 +384,159 @@ fn all_receipts_have_the_same_encrypted_length() {
 }
 
 #[cfg(test)]
-#[tokio::test]
-#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
-async fn receives_valid_instruction_after_junk_on_loopback() {
-    use tokio::{sync::mpsc, time::timeout};
-
-    let dir = tempfile::tempdir().unwrap();
-    let network = format!(
-        "relay-control-{}",
-        dir.path().file_name().unwrap().to_string_lossy()
-    );
-    let settings = |name: &str| {
-        let home = dir.path().join(name);
-        std::fs::create_dir(&home).unwrap();
-        let keys = DeviceCredentials::load_or_create(home.join("device.cbor")).unwrap();
-        let mut settings = crate::NodeSettings::new(keys, home.join("node.sqlite"));
-        settings.network_name = network.clone();
-        settings.bind_ip_v4 = Some(std::net::Ipv4Addr::LOCALHOST);
-        settings
+mod loopback {
+    use tokio::{
+        sync::mpsc,
+        time::{error::Elapsed, timeout},
     };
-    let relay = Node::spawn(settings("relay")).await.unwrap();
-    let device = Node::spawn(settings("device")).await.unwrap();
-    let relay_id = relay.device_id();
-    let mut recipient = relay.relay_channel(relay_id).await.unwrap();
-    let sender = device.relay_channel(relay_id).await.unwrap();
-    let inner = device.inner.clone();
-    let (junk, _keep) = device
-        .worker
-        .run(async move {
-            inner
-                .ephemeral_stream::<String>(control_topic(relay_id))
-                .await
-                .map_err(Error::node)
-        })
-        .await
-        .unwrap();
-    let (seen, mut received) = mpsc::unbounded_channel();
-    let receiver = tokio::spawn(async move {
-        while let Some(incoming) = recipient.receive_instruction().await {
-            if seen.send(incoming.challenge).is_err() {
-                break;
-            }
-        }
-    });
-    let instruction = RelayInstruction {
+
+    use super::*;
+
+    const WAIT: Duration = Duration::from_secs(60);
+    const INSTRUCTION: RelayInstruction = RelayInstruction {
         board: BoardId::from_bytes([71; 32]),
         sequence: 49,
         carry: true,
     };
-    let wait = Duration::from_secs(60);
-    timeout(wait, async {
-        let mut retry = interval(Duration::from_millis(250));
-        loop {
-            tokio::select! {
-                _ = retry.tick() => sender.send(relay_id, [1; 16], instruction).await.unwrap(),
-                challenge = received.recv() => {
-                    assert_eq!(challenge, Some([1; 16]));
-                    break;
-                }
-            }
-        }
-    })
-    .await
-    .expect("relay and device did not connect");
 
-    junk.publish("not a relay envelope".into()).await.unwrap();
-    sender.send(relay_id, [2; 16], instruction).await.unwrap();
-    let next = timeout(wait, async {
-        while let Some(challenge) = received.recv().await {
-            if challenge == [2; 16] {
-                return Some(challenge);
-            }
+    struct Pair {
+        _dir: tempfile::TempDir,
+        relay: Node,
+        device: Node,
+        sender: RelayChannel,
+        junk: EphemeralStreamPublisher<String>,
+        _junk_subscription: EphemeralStreamSubscription<String>,
+        received: mpsc::UnboundedReceiver<[u8; 16]>,
+        receiver: tokio::task::JoinHandle<()>,
+    }
+
+    impl Pair {
+        async fn connected() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let network = format!(
+                "relay-control-{}",
+                dir.path().file_name().unwrap().to_string_lossy()
+            );
+            let settings = |name: &str| {
+                let home = dir.path().join(name);
+                std::fs::create_dir(&home).unwrap();
+                let keys = DeviceCredentials::load_or_create(home.join("device.cbor")).unwrap();
+                let mut settings = crate::NodeSettings::new(keys, home.join("node.sqlite"));
+                settings.network_name = network.clone();
+                settings.bind_ip_v4 = Some(std::net::Ipv4Addr::LOCALHOST);
+                settings
+            };
+            let relay = Node::spawn(settings("relay")).await.unwrap();
+            let device = Node::spawn(settings("device")).await.unwrap();
+            let relay_id = relay.device_id();
+            let mut recipient = relay.relay_channel(relay_id).await.unwrap();
+            let sender = device.relay_channel(relay_id).await.unwrap();
+            let inner = device.inner.clone();
+            let (junk, _junk_subscription) = device
+                .worker
+                .run(async move {
+                    inner
+                        .ephemeral_stream::<String>(control_topic(relay_id))
+                        .await
+                        .map_err(Error::node)
+                })
+                .await
+                .unwrap();
+            let (seen, received) = mpsc::unbounded_channel();
+            let receiver = tokio::spawn(async move {
+                while let Some(incoming) = recipient.receive_instruction().await {
+                    if seen.send(incoming.challenge).is_err() {
+                        break;
+                    }
+                }
+            });
+            let mut pair = Self {
+                _dir: dir,
+                relay,
+                device,
+                sender,
+                junk,
+                _junk_subscription,
+                received,
+                receiver,
+            };
+            timeout(WAIT, async {
+                let mut retry = interval(Duration::from_millis(250));
+                loop {
+                    tokio::select! {
+                        _ = retry.tick() => pair.send([1; 16]).await,
+                        challenge = pair.received.recv() => {
+                            assert_eq!(challenge, Some([1; 16]));
+                            break;
+                        }
+                    }
+                }
+            })
+            .await
+            .expect("relay and device did not connect");
+            pair
         }
-        None
-    })
-    .await;
-    receiver.abort();
-    let _ = receiver.await;
-    device.shutdown().await.unwrap();
-    relay.shutdown().await.unwrap();
-    assert_eq!(
-        next.expect("control reception stalled after junk"),
-        Some([2; 16])
-    );
+
+        async fn send(&self, challenge: [u8; 16]) {
+            self.sender
+                .send(self.relay.device_id(), challenge, INSTRUCTION)
+                .await
+                .unwrap();
+        }
+
+        async fn receive(&mut self, challenge: [u8; 16]) -> Result<bool, Elapsed> {
+            timeout(WAIT, async {
+                while let Some(received) = self.received.recv().await {
+                    if received == challenge {
+                        return true;
+                    }
+                }
+                false
+            })
+            .await
+        }
+
+        async fn shutdown(self) {
+            self.receiver.abort();
+            let _ = self.receiver.await;
+            self.device.shutdown().await.unwrap();
+            self.relay.shutdown().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+    async fn receives_valid_instruction_after_junk_on_loopback() {
+        let mut pair = Pair::connected().await;
+        pair.junk
+            .publish("not a relay envelope".into())
+            .await
+            .unwrap();
+        pair.send([2; 16]).await;
+        let next = pair.receive([2; 16]).await;
+        pair.shutdown().await;
+        assert!(next.expect("control reception stalled after junk"));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+    async fn a_burst_of_junk_does_not_delay_a_valid_instruction() {
+        let mut pair = Pair::connected().await;
+        for index in 0..100 {
+            pair.junk
+                .publish(format!("not a relay envelope {index}"))
+                .await
+                .unwrap();
+        }
+        let sent = std::time::Instant::now();
+        pair.send([2; 16]).await;
+        let next = pair.receive([2; 16]).await;
+        let delay = sent.elapsed();
+        pair.shutdown().await;
+        assert!(next.expect("control reception stalled after junk"));
+        assert!(
+            delay < Duration::from_secs(2),
+            "100 junk messages delayed a valid instruction by {delay:?}"
+        );
+    }
 }
