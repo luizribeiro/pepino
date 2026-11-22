@@ -1,6 +1,6 @@
 use std::{
     cell::OnceCell,
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     io::{self, Write},
     sync::Arc,
     time::{Duration, Instant},
@@ -93,7 +93,7 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         log(level, LogLevel::Info, "daemon stopped");
         return Ok(());
     };
-    let mut upgrade_logged = false;
+    let mut logged = StatusLog::default();
     loop {
         let outcome = cycle(
             &socket.listener,
@@ -102,7 +102,7 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
             level,
             started,
             (&mut terminate, &mut interrupt),
-            &mut upgrade_logged,
+            &mut logged,
         )
         .await?;
         if matches!(outcome, End::Stopped) {
@@ -129,7 +129,7 @@ async fn cycle(
     level: LogLevel,
     started: Instant,
     (terminate, interrupt): (&mut Signal, &mut Signal),
-    upgrade_logged: &mut bool,
+    logged: &mut StatusLog,
 ) -> Result<End, CliError> {
     let startup = Instant::now();
     let engine = OnceCell::new();
@@ -190,7 +190,7 @@ async fn cycle(
                     tokio::select! {
                         biased;
                         outcome = &mut control => outcome,
-                        () = log_status(sync, level, upgrade_logged) => unreachable!("status monitoring does not end"),
+                        () = log_status(sync, level, logged) => unreachable!("status monitoring does not end"),
                     }
                 }
             }
@@ -239,66 +239,203 @@ async fn the_startup_warning_fires_once_without_ending_startup() {
     assert!(observed.try_recv().is_err());
 }
 
-async fn log_status(engine: &SyncEngine, level: LogLevel, upgrade_logged: &mut bool) {
-    let mut logged_errors = BTreeMap::new();
-    let mut near_limit = BTreeSet::new();
+#[derive(Default)]
+struct StatusLog {
+    upgrade_logged: bool,
+    reported: BTreeSet<(BoardId, String)>,
+}
+
+impl StatusLog {
+    /// Lines for board conditions not yet reported. `opened` holds the boards seen since
+    /// this engine started; an engine that is restarting reports no closures.
+    fn board_lines(
+        &mut self,
+        opened: &mut BTreeSet<BoardId>,
+        node: &pepino_node::NodeStatus,
+        restarting: bool,
+    ) -> Vec<(LogLevel, String)> {
+        let current: Vec<_> = node
+            .boards
+            .iter()
+            .flat_map(|(id, board)| {
+                let near_limit = board
+                    .near_header_limit()
+                    .then(|| super::protocol::NEAR_MEMBER_LIMIT_NOTICE.to_owned());
+                let unmeasured = board
+                    .membership_header_error
+                    .as_ref()
+                    .map(|error| format!("could not measure membership headers: {error}"));
+                [
+                    (LogLevel::Warn, near_limit),
+                    (LogLevel::Warn, board.operation_read_error.clone()),
+                    (LogLevel::Debug, unmeasured),
+                ]
+                .into_iter()
+                .filter_map(move |(level, message)| Some((*id, level, message?)))
+            })
+            .collect();
+        opened.extend(node.boards.keys());
+        if !restarting {
+            self.reported.retain(|(id, message)| {
+                !opened.contains(id)
+                    || current
+                        .iter()
+                        .any(|(board, _, text)| (board, text) == (id, message))
+            });
+            opened.retain(|id| node.boards.contains_key(id));
+        }
+        current
+            .into_iter()
+            .filter(|(id, _, message)| self.reported.insert((*id, message.clone())))
+            .map(|(id, level, message)| (level, board_line(id, &message)))
+            .collect()
+    }
+}
+
+// A board id is a capability, so log lines carry only its short form.
+fn board_line(id: BoardId, message: &str) -> String {
+    crate::error::shorten_message_ids(&format!("board {id}: {message}"))
+}
+
+async fn log_status(engine: &SyncEngine, level: LogLevel, logged: &mut StatusLog) {
+    let mut opened = BTreeSet::new();
     let mut changes = std::pin::pin!(engine.status_changes());
     while let Some(status) = changes.next().await {
-        if !*upgrade_logged && status.newer_catalog.is_some() {
+        if !logged.upgrade_logged && status.newer_catalog.is_some() {
             log(level, LogLevel::Warn, pepino_app::CATALOG_UPGRADE_NOTICE);
-            *upgrade_logged = true;
+            logged.upgrade_logged = true;
         }
-        for id in newly_near_member_limit(&mut near_limit, &status.node) {
-            let notice = super::protocol::NEAR_MEMBER_LIMIT_NOTICE;
-            log(level, LogLevel::Warn, &format!("board {id}: {notice}"));
+        let restarting = status.restart_required.is_some();
+        for (severity, line) in logged.board_lines(&mut opened, &status.node, restarting) {
+            log(level, severity, &line);
         }
-        let mut current_errors = BTreeMap::new();
-        for (id, board) in status.node.boards {
-            if let Some(error) = board.operation_read_error {
-                if logged_errors.get(&id) != Some(&error) {
-                    log(level, LogLevel::Warn, &format!("board {id}: {error}"));
-                }
-                current_errors.insert(id, error);
-            }
-        }
-        logged_errors = current_errors;
     }
     std::future::pending().await
 }
 
-fn newly_near_member_limit(
-    warned: &mut BTreeSet<BoardId>,
-    node: &pepino_node::NodeStatus,
-) -> Vec<BoardId> {
-    node.boards
-        .iter()
-        .filter(|(id, board)| board.near_header_limit() && warned.insert(**id))
-        .map(|(id, _)| *id)
-        .collect()
-}
-
 #[cfg(test)]
-#[test]
-fn a_board_near_the_member_limit_is_reported_once() {
-    let house = BoardId::from_bytes([65; 32]);
-    let allotment = BoardId::from_bytes([66; 32]);
-    let mut node = pepino_node::NodeStatus::default();
-    let measure = |node: &mut pepino_node::NodeStatus, board, largest| {
-        node.boards
-            .entry(board)
-            .or_default()
-            .largest_membership_header_item = largest;
-    };
-    let mut warned = BTreeSet::new();
-    measure(&mut node, house, 547);
-    measure(&mut node, allotment, 1_236);
-    assert!(newly_near_member_limit(&mut warned, &node).is_empty());
-    measure(&mut node, house, pepino_node::HEADER_ITEM_WARNING + 1);
-    assert_eq!(newly_near_member_limit(&mut warned, &node), [house]);
-    measure(&mut node, house, pepino_node::HEADER_ITEM_LIMIT);
-    measure(&mut node, allotment, 14_000);
-    assert_eq!(newly_near_member_limit(&mut warned, &node), [allotment]);
-    assert!(newly_near_member_limit(&mut warned, &node).is_empty());
+mod status_log_tests {
+    use super::*;
+    use pepino_node::{BoardStatus, HEADER_ITEM_LIMIT, HEADER_ITEM_WARNING, NodeStatus};
+
+    const HOUSE: BoardId = BoardId::from_bytes([65; 32]);
+    const ALLOTMENT: BoardId = BoardId::from_bytes([66; 32]);
+    const UNREADABLE: &str = "read a board operation during sync: failed decoding incoming header bytes: could not decode header from cbor: LengthTooLarge";
+
+    fn node(boards: &[(BoardId, BoardStatus)]) -> NodeStatus {
+        NodeStatus {
+            boards: boards.iter().cloned().collect(),
+            ..Default::default()
+        }
+    }
+
+    fn measured(largest_membership_header_item: usize) -> BoardStatus {
+        BoardStatus {
+            largest_membership_header_item,
+            ..Default::default()
+        }
+    }
+
+    fn near_limit_line(board: BoardId) -> (LogLevel, String) {
+        let notice = crate::daemon::protocol::NEAR_MEMBER_LIMIT_NOTICE;
+        let short = &board.to_string()[..6];
+        (LogLevel::Warn, format!("board {short}: {notice}"))
+    }
+
+    #[test]
+    fn board_lines_never_carry_the_full_board_id() {
+        let mut log = StatusLog::default();
+        let board = BoardStatus {
+            operation_read_error: Some(UNREADABLE.into()),
+            membership_header_error: Some(format!("node storage: no log for {HOUSE}")),
+            ..measured(HEADER_ITEM_LIMIT)
+        };
+        let lines = log.board_lines(&mut BTreeSet::new(), &node(&[(HOUSE, board)]), false);
+        let short = &HOUSE.to_string()[..6];
+        assert_eq!(
+            lines,
+            [
+                near_limit_line(HOUSE),
+                (LogLevel::Warn, format!("board {short}: {UNREADABLE}")),
+                (
+                    LogLevel::Debug,
+                    format!(
+                        "board {short}: could not measure membership headers: node storage: no log for {short}"
+                    )
+                ),
+            ]
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|(_, line)| !line.contains(&HOUSE.to_string()))
+        );
+    }
+
+    #[test]
+    fn a_board_near_the_member_limit_is_reported_once() {
+        let mut log = StatusLog::default();
+        let mut opened = BTreeSet::new();
+        let small = node(&[(HOUSE, measured(547)), (ALLOTMENT, measured(1_236))]);
+        assert!(log.board_lines(&mut opened, &small, false).is_empty());
+        let grown = node(&[
+            (HOUSE, measured(HEADER_ITEM_WARNING + 1)),
+            (ALLOTMENT, measured(1_236)),
+        ]);
+        assert_eq!(
+            log.board_lines(&mut opened, &grown, false),
+            [near_limit_line(HOUSE)]
+        );
+        let both = node(&[
+            (HOUSE, measured(HEADER_ITEM_LIMIT)),
+            (ALLOTMENT, measured(14_000)),
+        ]);
+        assert_eq!(
+            log.board_lines(&mut opened, &both, false),
+            [near_limit_line(ALLOTMENT)]
+        );
+        assert!(log.board_lines(&mut opened, &both, false).is_empty());
+    }
+
+    #[test]
+    fn reports_survive_an_engine_restart_and_end_when_the_board_closes() {
+        let mut log = StatusLog::default();
+        let near = node(&[(HOUSE, measured(HEADER_ITEM_WARNING + 1))]);
+        let mut opened = BTreeSet::new();
+        assert_eq!(
+            log.board_lines(&mut opened, &near, false),
+            [near_limit_line(HOUSE)]
+        );
+        assert!(log.board_lines(&mut opened, &node(&[]), true).is_empty());
+
+        let mut reopened = BTreeSet::new();
+        assert!(log.board_lines(&mut reopened, &node(&[]), false).is_empty());
+        assert!(log.board_lines(&mut reopened, &near, false).is_empty());
+
+        assert!(log.board_lines(&mut reopened, &node(&[]), false).is_empty());
+        assert_eq!(
+            log.board_lines(&mut reopened, &near, false),
+            [near_limit_line(HOUSE)]
+        );
+    }
+
+    #[test]
+    fn a_read_error_is_reported_again_after_it_cleared() {
+        let mut log = StatusLog::default();
+        let mut opened = BTreeSet::new();
+        let failing = node(&[(
+            HOUSE,
+            BoardStatus {
+                operation_read_error: Some(UNREADABLE.into()),
+                ..Default::default()
+            },
+        )]);
+        let clean = node(&[(HOUSE, BoardStatus::default())]);
+        assert_eq!(log.board_lines(&mut opened, &failing, false).len(), 1);
+        assert!(log.board_lines(&mut opened, &failing, false).is_empty());
+        assert!(log.board_lines(&mut opened, &clean, false).is_empty());
+        assert_eq!(log.board_lines(&mut opened, &failing, false).len(), 1);
+    }
 }
 
 pub(super) fn shutdown_failure(component: &str, error: impl std::fmt::Display) -> CliError {

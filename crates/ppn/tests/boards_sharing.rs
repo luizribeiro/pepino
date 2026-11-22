@@ -742,11 +742,12 @@ fn status_reports_an_unreadable_header_during_initial_board_sync() {
         |human| human.contains("Read error: Could not read a board operation during sync"),
         WAIT,
     );
-    until(
+    let log = until(
         || std::fs::read_to_string(owner.data.join("daemon.log")).unwrap(),
-        |log| log.contains(&format!("board {board_id}: {error}")),
+        |log| log.contains(&format!("board {}: read a board operation", &board_id[..6])),
         WAIT,
     );
+    assert!(!log.contains(&board_id), "{log}");
 }
 
 fn member(owner: &Host, name: &str) -> Value {

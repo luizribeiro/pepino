@@ -57,7 +57,7 @@ impl Startup {
                 &mut signal(SignalKind::terminate()).unwrap(),
                 &mut signal(SignalKind::interrupt()).unwrap(),
             ),
-            &mut false,
+            &mut StatusLog::default(),
         )
         .await
     }
