@@ -1,120 +1,100 @@
-# Carry boards on an always-on relay
+# Run an always-on relay
 
-A Pepino relay uses its own node credentials to store and forward encrypted
-board history. Identities, task data, and board keys live on member devices.
-Devices that are online at different times can sync through the relay. An
-iroh relay provides network connectivity. A Pepino relay keeps a copy of
-the ciphertext while devices are offline.
+Keep a copy of your boards on a machine that is always on, so devices that
+are never online at the same time still sync. A relay stores and forwards
+encrypted board history. It has no identity and no board keys and cannot
+read your tasks; [Security model](security.md#what-a-relay-operator-sees)
+lists what its operator does see.
 
-## Set up a relay
+This relay is different from the relay servers in `relay_urls`, which only
+help two nodes connect and store nothing.
 
-On NixOS or nix-darwin, enable `services.pepino`. The service creates its
-credentials on first start. Run `sudo pepino-node relay show` to get its
-address. Set `services.pepino.trustedDevices` to the device node IDs allowed to
-submit board requests. See [Nix services](nix.md).
+## Set up the relay
 
-On other hosts, use an unused data directory. Put the following in a TOML
-configuration file and use that file for each command on the relay.
+On NixOS or nix-darwin, enable `services.pepino`
+([Nix guide](nix.md#run-an-always-on-relay)) and skip to the next section.
+
+Elsewhere, write a config file. A relay needs its own data directory, never
+one that a device uses.
 
 ```toml
+# relay.toml
 data_dir = "~/.local/state/pepino-relay"
-trusted_devices = ["<64-digit device node ID>"]
+trusted_devices = ["DEVICE_NODE_ID"]
 max_boards = 64
 ```
 
-```sh
-ppn --config relay.toml relay init
-ppn --config relay.toml relay show --json
-ppn --config relay.toml daemon run
+`trusted_devices` lists the devices allowed to hand boards to this relay; an
+empty list refuses everyone. Find a device's node ID in the `device.id` field
+of `ppn status --json` on that device. Use the same `network` value as your
+devices, then start the relay:
+
+```console
+$ ppn --config relay.toml relay init
+Relay node RELAY_NODE_ID
+Address RELAY_NODE_ID
+$ ppn --config relay.toml daemon run
 ```
 
-An empty trusted list refuses all instructions. A relay uses the first
-configured iroh relay URL as its connection hint. Set `relay_urls = []` for
-LAN discovery only. Use a common `network` value on the relay and devices.
-Device and relay directories are separate roles. A command for the other
-role reports which role the directory has. Use a separate data directory for
-each role.
+Pass the same `--config` to every command you run on the relay.
 
-## Hand over a board
+## Hand a board to the relay
 
-Run `ppn status --json` on the device to find its node ID in `device.id`.
-Once the relay trusts that ID, copy the address from `ppn relay show`.
+On a trusted device, give the address printed by `ppn relay show`:
 
-```sh
-ppn board relay add NODE_ID@https://relay.example --board Greenhouse
-ppn board relay ls --board Greenhouse
-ppn board show Greenhouse
+```console
+$ ppn board relay add RELAY_NODE_ID --board 'Tool Shed'
+Tool Shed
+  RELAY_NODE_ID  requested
+$ ppn board relay ls --board 'Tool Shed'
+Tool Shed
+  RELAY_NODE_ID  carrying
 ```
 
-A bare `NODE_ID` works when local discovery or a configured bootstrap entry
-can reach it. Devices outside the relay's LAN that have yet to sync the relay
-address can use it as a `[[bootstrap_nodes]]` entry. Use `--all-boards` to
-request every local board. Without a board selector the command uses the
-selected board.
+`--all-boards` hands over every board on the device. The device keeps asking
+until the relay answers. `carrying` means the relay accepted the board; leave
+the device online a little longer so the history can copy across. A refusal
+states its reason, such as an untrusted device or a full relay. Fix the cause
+and run `add` again.
 
-The requesting daemon retries until the relay answers. `carrying` means the
-relay has opened the board for sync. Keep the source device online until
-replication has had time to finish. `unreachable` requests continue retrying.
-A refusal gives the reason, such as the device being untrusted or the relay
-being full. Reissue `add` after resolving the refusal.
+A relay with a configured relay server prints its address as
+`NODE_ID@https://…`. Use that form from devices outside the relay's local
+network.
 
-The relay refuses a request stamped more than ten minutes ahead of its own
-clock and the device shows `clock too far ahead of the relay`. Correct the
-device clock and reissue the request, which then starts again from the
-corrected clock. When the relay already holds a newer
-instruction for the board, the device moves its request past it and sends it
-once more by itself.
+Any member of a shared board can hand it to a relay they trust. Doing so
+gives the relay operator the board ID, which
+[cannot be changed later](security.md#keep-board-ids-and-codes-secret).
 
-Any joined member of a shared board can give its ID to a relay that trusts
-their device. The operator learns the board ID and can see ciphertext sizes,
-sync timing, and which node IDs sync. Board IDs cannot be rotated. Keep them
-private, since anyone who learns a board ID can fetch ciphertext. Removing a
-member rotates the board keys, while that member’s relay keeps serving until
-a trusted device tells it to remove the board.
-
-## Remove a board
+## Take a board off the relay
 
 ```sh
-ppn board relay rm NODE_ID --board Greenhouse --yes
+ppn board relay rm RELAY_NODE_ID --board 'Tool Shed' --yes
 ```
 
-A relay keeps a board for as long as any trusted device requests it. A
-removal ends the request of the device that sends it. When the last request
-ends, the relay restarts its node and deletes the stored ciphertext for that
-board before starting replication again. The requesting device may show
-`removal pending restart` before the final `removed` receipt. While another
-device still requests the board, the device shows `removed for this device;
-the relay still carries it for another device` (`still_carried` in JSON).
-Repeat the removal on that device, or drop the board on the relay.
-`ppn status` on the relay reports per-device board counts, stored
-replication bytes, peers seen, and rejected instructions. The board limit
-applies to new admissions. Lowering it leaves existing copies available.
-
-Leaving a board, or being removed from it, makes the device that handed the
-board over ask each relay to delete its copy. `ppn board forget` waits for
-those answers. It warns about every relay that keeps a copy, for example one
-that another device asked or that no longer trusts this device. The relay
-operator can then drop the board as described below.
+The relay deletes its copy once no trusted device still asks for that board.
+When you leave a board or are removed from it, your device asks each relay to
+delete its copy for you.
 
 ## Inspect and evict boards on the relay
 
-```sh
-ppn relay boards
-ppn relay drop HANDLE --yes
-ppn relay drop --from NODE_ID --yes
+Run these on the relay machine while its daemon runs:
+
+```console
+$ ppn relay boards
+Carrying 4 of 64 boards
+DEVICE_NODE_ID  4 boards
+  09e6cb1678db
+  4df1d8b927b8
+$ ppn relay drop 09e6cb1678db --yes
+$ ppn relay drop --from DEVICE_NODE_ID --yes
+$ ppn status
 ```
 
-`ppn relay boards` asks the running relay daemon for the boards it carries,
-grouped by the device that requested them. A board that several devices
-requested appears under each of them. Each board has a handle that is
-only meaningful on this relay and reveals nothing about the board ID.
-`ppn relay drop HANDLE` ends every request for one board and deletes its
-stored copy. `ppn relay drop --from NODE_ID` ends the requests of one device
-and deletes the boards that no other device requested. The relay restarts
-its node only when it has a copy to delete.
+Boards are grouped by the device that handed them over, under handles that
+mean something only on this relay. `drop HANDLE` deletes one board;
+`drop --from` deletes every board that only that device asked for.
+`ppn status` reports stored bytes, peers seen, and rejected instructions.
 
-The board limit is shared by all trusted devices. Any one of them can use
-the whole allowance. Removing a node ID from `trusted_devices` stops further
-instructions from that device and leaves the boards it handed over in place.
-Evict them with `ppn relay drop --from NODE_ID`. A device that is still
-trusted can hand a dropped board over again.
+Removing a device from `trusted_devices` stops new instructions from it but
+keeps the boards it handed over; evict them with `drop --from`. `max_boards`
+is shared by all trusted devices and limits new boards only.
