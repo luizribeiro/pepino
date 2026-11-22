@@ -35,3 +35,6 @@ p2panda-sync = "=0.8.1"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 futures-util = "0.3"
+
+[patch.crates-io]
+p2panda-core = { path = "vendor/p2panda-core" }

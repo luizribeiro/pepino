@@ -10,7 +10,13 @@ let
     cargoExtraArgs = "--locked --workspace";
   };
   cargoVendorDir = craneLib.vendorCargoDeps common;
-  cargoArtifacts = craneLib.buildDepsOnly (common // { inherit cargoVendorDir; });
+  cargoArtifacts = craneLib.buildDepsOnly (common // {
+    inherit cargoVendorDir;
+    # The registry crates need the real API of this local path dependency.
+    extraDummyScript = ''
+      cp -R --remove-destination ${../vendor/p2panda-core}/. "$out/vendor/p2panda-core"
+    '';
+  });
   shared = common // { inherit cargoArtifacts cargoVendorDir; };
   testArgs = common.cargoExtraArgs + lib.concatMapStrings
     (name: " --config profile.release.package.${name}.opt-level=0")

@@ -16,6 +16,31 @@ The `vm` check, on `x86_64-linux` only, runs a relay and two devices in NixOS
 VMs. It needs a `/dev/kvm` the Nix build users can use, and a builder that
 advertises `kvm` and `nixos-test` in `system-features`.
 
+## p2panda header decoder
+
+`vendor/p2panda-core` contains the source of p2panda-core 0.8.1
+(`fbe2363114ca62d3b2de1b44ce1f37434fbd2520`) with a local change to
+`AnyHeader::decode`. The CBOR item limit is 16 KiB so legitimate key-agreement
+welcomes can carry the encrypted bundle of historical board secrets. The
+decoder still enforces canonical CBOR, depth and allocation checks, and the
+header signature. Neither limit value caps a whole header: on initial sync
+the only total bound is p2panda-net's 128 MiB frame limit. The Cargo patch is a local path included in the flake's
+source fileset and copied into Crane's dependency build. It adds no
+build-time fetches.
+
+The raised limit is a stopgap, not the fix. A welcome carries every group
+secret its author retains, and each removal of a member or device adds one,
+so the bundle grows without bound. 16 KiB postpones the failure to roughly
+200 retained secrets; it does not prevent it. The fix has to come from
+p2panda: welcomes in operation bodies, a way to prune retained secrets, or a
+configurable limit.
+
+Remove the patch once a published p2panda release can decode persisted
+oversized headers and passes the retained-header and readmission tests.
+Upgrade every device and relay for boards with this history. An older peer
+fails when it reads or receives an operation with a CBOR item over 512 bytes.
+Pepino's application envelope and the p2panda header encoding are unchanged.
+
 ## Run individual checks
 
 ```sh

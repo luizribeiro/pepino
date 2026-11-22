@@ -45,6 +45,7 @@
                 ./Cargo.lock
                 ./Cargo.toml
                 ./crates
+                ./vendor/p2panda-core
               ];
             };
           };

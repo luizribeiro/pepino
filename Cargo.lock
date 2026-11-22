@@ -3124,8 +3124,6 @@ dependencies = [
 [[package]]
 name = "p2panda-core"
 version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac464c3443a03b1f0e8d492e2cabf26a55a75f694aa2e6d67be90e3fdf461c45"
 dependencies = [
  "blake3",
  "cbor-core",

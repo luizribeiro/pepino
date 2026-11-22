@@ -8,6 +8,13 @@ use tokio::time::timeout;
 
 use super::support::{WAIT, network, next, settings, start};
 
+#[test]
+fn decodes_a_retained_readmission_header() {
+    let bytes = include_bytes!("../fixtures/readmission-header.cbor");
+    let header = p2panda_core::AnyHeader::decode(bytes).unwrap();
+    assert_eq!(header.encode(), bytes);
+}
+
 #[tokio::test]
 #[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
 async fn a_decode_error_leaves_the_board_stream_open() {

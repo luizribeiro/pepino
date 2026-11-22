@@ -12,7 +12,9 @@ ppn board new House
 
 Everyone you invite can read the board's **entire history**, including work
 done before they joined. Everyone on a shared board must run the same `ppn`
-version; upgrade together.
+version; upgrade together. Builds from before the fix for readmitted devices
+cannot read some membership changes on boards with several removals, so
+upgrade every device and relay that syncs the board.
 
 ## Invite someone
 
