@@ -82,6 +82,10 @@ assert fullDarwin.launchd.agents.pepino.serviceConfig.KeepAlive.SuccessfulExit =
 assert lib.hasInfix (builtins.unsafeDiscardStringContext "${package}/bin/ppn daemon run")
   (builtins.elemAt fullDarwin.launchd.agents.pepino.serviceConfig.ProgramArguments 2);
 assert fullDarwin.launchd.daemons.pepino-node.serviceConfig.UserName == "pepino-relay";
+assert fullDarwin.launchd.daemons.pepino-node.serviceConfig.StartInterval == null;
+assert fullDarwin.launchd.daemons.pepino-node.serviceConfig.KeepAlive.SuccessfulExit == false;
+assert lib.hasInfix ''if [ "$status" -eq 5 ]; then exit 0; fi''
+  (builtins.elemAt fullDarwin.launchd.daemons.pepino-node.serviceConfig.ProgramArguments 2);
 assert lib.hasInfix (builtins.unsafeDiscardStringContext "${package}/bin/ppn --config ${fullDarwin.services.pepino.configFile} relay init")
   (builtins.elemAt fullDarwin.launchd.daemons.pepino-node.serviceConfig.ProgramArguments 2);
 pkgs.runCommand "pepino-config-check"

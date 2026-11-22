@@ -43,8 +43,6 @@ let
   checkNode = config:
     let cfg = config.services.pepino;
     in hasLines config.systemd.units."pepino.service" [
-      "ExecStartPre=${cfg.package}/bin/ppn --config ${cfg.configFile} relay init"
-      "ExecStart=${cfg.package}/bin/ppn --config ${cfg.configFile} daemon run"
       "User=${cfg.user}"
       "Group=${cfg.group}"
       "RuntimeDirectory=pepino"
@@ -54,7 +52,9 @@ let
       "NoNewPrivileges=true"
       "PrivateTmp=true"
       "Restart=on-failure"
-    ] && !(config.systemd.units ? "pepino.path");
+      "RestartPreventExitStatus=5"
+    ] && lib.hasSuffix "-pepino-relay-start" config.systemd.services.pepino.serviceConfig.ExecStart
+    && !(config.systemd.units ? "pepino.path");
 in
 assert lib.all (config: builtins.seq config.system.build.toplevel.drvPath true) [ client node both ];
 assert !(client.systemd.units ? "pepino.service");

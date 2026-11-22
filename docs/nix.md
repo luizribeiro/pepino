@@ -96,6 +96,13 @@ uses `runtime/daemon.sock` under `dataDir`. Account and directory permissions
 apply on macOS. Filesystem sandboxing and runtime directory management are
 provided by systemd on NixOS.
 
+If an older `services.pepino` installation uses a data directory already
+linked as a device, the service reports that it contains device state and
+does not start. The NixOS unit shows as failed without restarting, and the
+launchd job exits without respawning. Device state is not converted. Give
+the relay a fresh `services.pepino.dataDir` and run the linked device as a
+user daemon with `programs.pepino.daemon.enable`.
+
 See [Carry boards on an always-on relay](relay.md) for handing over boards.
 
 On NixOS, `openFirewall` opens the fixed IPv4 UDP port and UDP 5353 if mDNS is

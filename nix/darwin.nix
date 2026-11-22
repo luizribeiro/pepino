@@ -3,19 +3,18 @@ let
   client = config.programs.pepino;
   node = config.services.pepino;
   quote = lib.escapeShellArg;
-  job = ready: command: {
+  job = prepare: command: {
     ProgramArguments = [
       "/bin/sh"
       "-c"
       ''
         /bin/wait4path ${quote builtins.storeDir} || exit 1
-        ${ready} || exit 0
+        ${prepare}
         exec ${lib.escapeShellArgs command}
       ''
     ];
     RunAtLoad = true;
     KeepAlive.SuccessfulExit = false;
-    StartInterval = 5;
     ThrottleInterval = 5;
   };
   # nix-darwin's ID options have no defaults.
@@ -27,7 +26,9 @@ in
   config = lib.mkMerge [
     (lib.mkIf (client.enable && client.daemon.enable) {
       launchd.agents.pepino.serviceConfig =
-        job "${pepinoClientReady}" [ "${client.package}/bin/ppn" "daemon" "run" ];
+        job "${pepinoClientReady} || exit 0" [ "${client.package}/bin/ppn" "daemon" "run" ] // {
+          StartInterval = 5;
+        };
     })
     (lib.mkIf node.enable {
       assertions = [
@@ -55,7 +56,14 @@ in
         /usr/bin/install -d -m 0700 -o ${quote node.user} -g ${quote node.group} -- ${quote node.dataDir}
       '';
       launchd.daemons.pepino-node.serviceConfig =
-        job "${lib.escapeShellArgs (pepinoNodeArgs ++ [ "relay" "init" ])}" (pepinoNodeArgs ++ [ "daemon" "run" ]) // {
+        job ''
+          ${lib.escapeShellArgs (pepinoNodeArgs ++ [ "relay" "init" ])} || {
+            status=$?
+            if [ "$status" -eq 5 ]; then exit 0; fi
+            exit "$status"
+          }
+        ''
+          (pepinoNodeArgs ++ [ "daemon" "run" ]) // {
           UserName = node.user;
           GroupName = node.group;
           Umask = 63;

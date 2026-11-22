@@ -151,5 +151,15 @@ pkgs.testers.runNixOSTest {
     laptop.wait_until_succeeds(f"{ppn} ls --json | grep -Fq {quote(second)}", timeout=deadline)
     server.fail(f"grep -arF {quote(first)} /var/lib/pepino")
     server.fail(f"grep -arF {quote(second)} /var/lib/pepino")
+
+    server.succeed(f"systemctl stop {service} && mv /var/lib/pepino /var/lib/pepino-relay-test")
+    server.succeed("install -d -m 0700 -o pepino -g pepino /var/lib/pepino")
+    server.succeed(f"{node} init --name Ada --device Server --board Nursery")
+    server.execute(f"systemctl start {service}")
+    server.wait_until_succeeds(f"systemctl is-failed {service}", timeout=deadline)
+    for property in ["ActiveState=failed", "SubState=failed", "NRestarts=0", "ExecMainStatus=5"]:
+        server.succeed(f"systemctl show {service} | grep -Fx {quote(property)}")
+    server.succeed(f"journalctl -u {service} --grep 'This data directory contains device state.'")
+    server.succeed("test ! -e /var/lib/pepino/relay.json")
   '';
 }

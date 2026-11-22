@@ -3,6 +3,11 @@ let
   client = config.programs.pepino;
   node = config.services.pepino;
   stateDir = lib.replaceStrings [ "%" ] [ "%%" ] node.dataDir;
+  relay = lib.escapeShellArgs pepinoNodeArgs;
+  relayStart = pkgs.writeShellScript "pepino-relay-start" ''
+    ${relay} relay init || exit $?
+    exec ${relay} daemon run
+  '';
 in
 {
   config = lib.mkMerge [
@@ -58,11 +63,11 @@ in
         wantedBy = [ "multi-user.target" ];
         after = [ "network.target" "systemd-tmpfiles-setup.service" ];
         serviceConfig = {
-          ExecStartPre = "${lib.escapeShellArgs pepinoNodeArgs} relay init";
-          ExecStart = "${lib.escapeShellArgs pepinoNodeArgs} daemon run";
+          ExecStart = "${relayStart}";
           User = node.user;
           Group = node.group;
           Restart = "on-failure";
+          RestartPreventExitStatus = [ 5 ];
           RestartSec = "5s";
           RuntimeDirectory = "pepino";
           RuntimeDirectoryMode = "0700";
