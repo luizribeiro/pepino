@@ -9,14 +9,14 @@ use pepino_core::{BoardId, DeviceId};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tokio::{
-    sync::{Notify, watch},
+    sync::{Notify, mpsc, oneshot, watch},
     time::{Interval, MissedTickBehavior, interval},
 };
 
 use crate::{
     DeviceCredentials, Error, Node, NodeSettings, NodeStatus,
     relay_control::{IncomingInstruction, RelayAnswer, RelayChannel, RelayReceipt},
-    relay_ledger::{self, Ledger},
+    relay_ledger::{self, CarriedBoard, Ledger, RelayDrop},
     relay_purge,
     relay_refusals::Refusals,
     status_state::Status,
@@ -38,13 +38,18 @@ pub struct RelayStatus {
     pub rejected_instructions: u64,
     pub bytes_stored: u64,
     pub peers: BTreeSet<DeviceId>,
+    #[serde(default)]
+    pub boards: Vec<CarriedBoard>,
 }
+
+type DropRequest = (RelayDrop, oneshot::Sender<Result<usize, Error>>);
 
 #[derive(Clone)]
 pub struct RelayMonitor {
     state: watch::Receiver<RelayStatus>,
     status: Status,
     pool: SqlitePool,
+    drops: mpsc::Sender<DropRequest>,
 }
 
 impl RelayMonitor {
@@ -61,6 +66,16 @@ impl RelayMonitor {
         result.bytes_stored = bytes as u64;
         Ok(result)
     }
+
+    /// Returns how many boards were selected. Their copies are deleted when the node next starts.
+    pub async fn drop_boards(&self, selection: RelayDrop) -> Result<usize, Error> {
+        let (reply, dropped) = oneshot::channel();
+        self.drops
+            .send((selection, reply))
+            .await
+            .map_err(|_| Error::Closed)?;
+        dropped.await.map_err(|_| Error::Closed)?
+    }
 }
 
 pub struct Relay {
@@ -73,6 +88,7 @@ pub struct Relay {
     maintenance: Interval,
     refusals: Refusals,
     checkpoint_due: bool,
+    drops: (mpsc::Sender<DropRequest>, mpsc::Receiver<DropRequest>),
 }
 
 impl Relay {
@@ -113,6 +129,7 @@ impl Relay {
                     maintenance,
                     refusals: Refusals::default(),
                     checkpoint_due: true,
+                    drops: mpsc::channel(1),
                 })
             }
             Err(error) => {
@@ -148,6 +165,7 @@ impl Relay {
             state: self.status.subscribe(),
             status: self.node.status.clone(),
             pool: self.node.pool()?.clone(),
+            drops: self.drops.0.clone(),
         })
     }
 
@@ -157,6 +175,12 @@ impl Relay {
                 _ = self.stream_ended.notified() => return Ok(RelayEnd::StreamEnded),
                 _ = self.maintenance.tick() => {
                     self.maintain().await?;
+                    continue;
+                }
+                Some((selection, reply)) = self.drops.1.recv() => {
+                    let dropped = self.ledger.drop_boards(&selection, now_ms()).await;
+                    update_status(&self.status, &self.ledger);
+                    let _ = reply.send(dropped);
                     continue;
                 }
                 incoming = self.channel.receive_instruction() => incoming.ok_or(Error::Closed)?,
@@ -258,6 +282,7 @@ fn now_ms() -> u64 {
 fn update_status(status: &watch::Sender<RelayStatus>, ledger: &Ledger) {
     status.send_modify(|status| {
         status.boards_by_device = ledger.counts();
+        status.boards = ledger.boards();
         status.rejected_instructions = ledger.rejected;
         status.removal_pending_restart = ledger
             .records

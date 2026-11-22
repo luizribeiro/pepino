@@ -59,6 +59,40 @@ impl Record {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CarriedBoard {
+    pub handle: String,
+    pub requested_by: DeviceId,
+    pub removal_pending: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayDrop {
+    Handle(String),
+    From(DeviceId),
+}
+
+impl RelayDrop {
+    fn selects(&self, key: &[u8], record: &Record) -> bool {
+        match self {
+            Self::Handle(wanted) => *wanted == handle(key),
+            Self::From(device) => record.revision.writer == *device,
+        }
+    }
+}
+
+const HANDLE_CONTEXT: &[u8] = b"pepino relay board handle v1";
+
+// The operator names a board by this handle, which reveals neither the board ID nor its ledger key.
+fn handle(key: &[u8]) -> String {
+    let mut bytes = HANDLE_CONTEXT.to_vec();
+    bytes.extend_from_slice(key);
+    let mut handle = Hash::digest(bytes).to_hex();
+    handle.truncate(12);
+    handle
+}
+
 pub(super) struct Ledger {
     pub(super) records: BTreeMap<Vec<u8>, Record>,
     pub(super) rejected: u64,
@@ -156,15 +190,59 @@ impl Ledger {
             below_capacity,
         );
         if let Some(next) = next {
-            sqlx::query("INSERT OR REPLACE INTO pepino_relay_ledger VALUES (?, ?)")
-                .bind(key)
-                .bind(encode(&next)?)
-                .execute(&self.pool)
-                .await
-                .map_err(Error::storage)?;
-            self.records.insert(key.to_vec(), next);
+            self.store(key, next).await?;
         }
         Ok(answer)
+    }
+
+    async fn store(&mut self, key: &[u8], record: Record) -> Result<(), Error> {
+        sqlx::query("INSERT OR REPLACE INTO pepino_relay_ledger VALUES (?, ?)")
+            .bind(key)
+            .bind(encode(&record)?)
+            .execute(&self.pool)
+            .await
+            .map_err(Error::storage)?;
+        self.records.insert(key.to_vec(), record);
+        Ok(())
+    }
+
+    pub(super) fn boards(&self) -> Vec<CarriedBoard> {
+        self.records
+            .iter()
+            .filter(|(_, record)| record.board.is_some())
+            .map(|(key, record)| CarriedBoard {
+                handle: handle(key),
+                requested_by: record.revision.writer,
+                removal_pending: record.answer == RelayAnswer::RemovalPendingRestart,
+            })
+            .collect()
+    }
+
+    /// Records the removal of every selected board, for the purge at the next node start. A
+    /// revision ahead of the clock is pulled back so that it cannot outrank later instructions.
+    pub(super) async fn drop_boards(
+        &mut self,
+        selection: &RelayDrop,
+        now_ms: u64,
+    ) -> Result<usize, Error> {
+        let selected: Vec<_> = self
+            .records
+            .iter()
+            .filter(|(key, record)| record.board.is_some() && selection.selects(key, record))
+            .map(|(key, record)| (key.clone(), *record))
+            .collect();
+        for (key, record) in &selected {
+            let dropped = Record {
+                revision: RelayRevision {
+                    sequence: record.revision.sequence.min(now_ms),
+                    ..record.revision
+                },
+                answer: RelayAnswer::RemovalPendingRestart,
+                ..*record
+            };
+            self.store(key, dropped).await?;
+        }
+        Ok(selected.len())
     }
 }
 
@@ -366,6 +444,90 @@ pub(super) mod tests {
                 .await
                 .unwrap(),
             RelayAnswer::RemovalPendingRestart
+        );
+    }
+
+    #[tokio::test]
+    async fn the_operator_lists_and_drops_boards_by_handle_or_requester() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&dir.path().join("relay.sqlite")).await;
+        let laptop = DeviceId::from_bytes([17; 32]);
+        let phone = DeviceId::from_bytes([27; 32]);
+        let trusted: BTreeSet<_> = [laptop, phone].into();
+        let mut ledger = Ledger::load(pool.clone(), trusted.clone(), 8)
+            .await
+            .unwrap();
+        let add = |byte, sequence| RelayInstruction {
+            board: BoardId::from_bytes([byte; 32]),
+            sequence,
+            carry: true,
+        };
+        for (device, byte) in [(laptop, 57), (laptop, 58), (phone, 59)] {
+            assert_eq!(
+                ledger.apply(device, add(byte, 1), NOW).await.unwrap(),
+                RelayAnswer::Carrying
+            );
+        }
+        let pinned = key(add(58, 1).board);
+        let far_future = Record {
+            revision: RelayRevision {
+                sequence: u64::MAX,
+                writer: laptop,
+            },
+            ..ledger.records[&pinned]
+        };
+        ledger.store(&pinned, far_future).await.unwrap();
+
+        let boards = ledger.boards();
+        assert_eq!(boards.len(), 3);
+        let handles: BTreeSet<_> = boards.iter().map(|board| board.handle.clone()).collect();
+        assert_eq!(handles.len(), 3);
+        for board in &boards {
+            assert_eq!(board.handle.len(), 12);
+            assert!(!board.removal_pending);
+            for byte in [57, 58, 59] {
+                let id = BoardId::from_bytes([byte; 32]);
+                assert!(!id.to_string().contains(&board.handle));
+                assert!(!Hash::digest(id.as_bytes()).to_hex().contains(&board.handle));
+            }
+        }
+        assert_eq!(
+            boards
+                .iter()
+                .filter(|board| board.requested_by == laptop)
+                .count(),
+            2
+        );
+
+        let unknown = RelayDrop::Handle("0123456789ab".into());
+        assert_eq!(ledger.drop_boards(&unknown, NOW).await.unwrap(), 0);
+        let stranger = RelayDrop::From(DeviceId::from_bytes([99; 32]));
+        assert_eq!(ledger.drop_boards(&stranger, NOW).await.unwrap(), 0);
+        let pinned_handle = RelayDrop::Handle(handle(&pinned));
+        assert_eq!(ledger.drop_boards(&pinned_handle, NOW).await.unwrap(), 1);
+        assert_eq!(
+            ledger
+                .boards()
+                .iter()
+                .filter(|board| board.removal_pending)
+                .count(),
+            1
+        );
+        let from_phone = RelayDrop::From(phone);
+        assert_eq!(ledger.drop_boards(&from_phone, NOW).await.unwrap(), 1);
+        drop(ledger);
+
+        prepare(&pool).await.unwrap();
+        let mut ledger = Ledger::load(pool, trusted, 8).await.unwrap();
+        assert_eq!(ledger.counts(), [(laptop, 1), (phone, 0)].into());
+        assert_eq!(ledger.boards().len(), 1);
+        assert_eq!(ledger.sequence(add(58, 1).board), NOW);
+        assert_eq!(
+            ledger
+                .apply(laptop, add(58, NOW + 1), NOW + 1)
+                .await
+                .unwrap(),
+            RelayAnswer::Carrying
         );
     }
 }

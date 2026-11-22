@@ -33,6 +33,7 @@ pub use relay::{Relay, RelayEnd, RelayMonitor, RelayStatus};
 pub use relay_control::{
     RelayAnswer, RelayChannel, RelayInstruction, RelayReceipt, RelayRevision, validate_relay_id,
 };
+pub use relay_ledger::{CarriedBoard, RelayDrop};
 pub use settings::{BootstrapNode, MdnsMode, NodeSettings, peer_relay_url};
 pub use status::{NodeEvent, NodeEvents, SyncCounts};
 pub use status_state::{BoardStatus, NodeStatus};
