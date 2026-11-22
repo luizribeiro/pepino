@@ -39,13 +39,15 @@ impl Record {
     }
 
     /// Ends the requests of the leaving devices. The copy is only removed with its last
-    /// requester, and a device that leaves others behind is told that its own request is gone.
+    /// requester, and a device that leaves others behind is told that the copy stays.
     fn withdraw(&mut self, leaving: &[(DeviceId, u64)]) -> RelayAnswer {
         for (device, _) in leaving {
             self.requests.remove(device);
         }
         let answer = if self.removal_pending() {
             RelayAnswer::RemovalPendingRestart
+        } else if self.board.is_some() {
+            RelayAnswer::StillCarried
         } else {
             RelayAnswer::Removed
         };
@@ -56,17 +58,17 @@ impl Record {
         answer
     }
 
-    fn settle_pending_removals(&mut self) {
+    fn answer_ended_requests(&mut self, answer: RelayAnswer) {
         for request in self.requests.values_mut() {
-            if request.answer == RelayAnswer::RemovalPendingRestart {
-                request.answer = RelayAnswer::Removed;
+            if request.answer != RelayAnswer::Carrying {
+                request.answer = answer;
             }
         }
     }
 
     pub(super) fn purged(mut self) -> Self {
         self.board = None;
-        self.settle_pending_removals();
+        self.answer_ended_requests(RelayAnswer::Removed);
         self
     }
 
@@ -91,13 +93,20 @@ impl Record {
             if record.board.is_none() && !below_capacity {
                 return (None, RelayAnswer::AtCapacity);
             }
-            record.settle_pending_removals();
+            if record.board.is_some() {
+                record.answer_ended_requests(RelayAnswer::StillCarried);
+            }
             record.board = Some(instruction.board);
             let answer = RelayAnswer::Carrying;
             record.requests.insert(writer, Request { sequence, answer });
             answer
         } else if request.is_none() {
-            return (None, RelayAnswer::Removed);
+            let answer = if record.requesters().next().is_some() {
+                RelayAnswer::StillCarried
+            } else {
+                RelayAnswer::Removed
+            };
+            return (None, answer);
         } else {
             record.withdraw(&[(writer, sequence)])
         };
@@ -295,7 +304,12 @@ impl Ledger {
                 record
                     .requests
                     .iter()
-                    .filter(|(_, request)| request.answer != RelayAnswer::Removed)
+                    .filter(|(_, request)| {
+                        matches!(
+                            request.answer,
+                            RelayAnswer::Carrying | RelayAnswer::RemovalPendingRestart
+                        )
+                    })
                     .map(|(&requested_by, request)| CarriedBoard {
                         handle: handle(key),
                         requested_by,
@@ -670,15 +684,16 @@ pub(super) mod tests {
                 .apply(carol, instruction(NOW + 2, false), NOW + 2)
                 .await
                 .unwrap(),
-            RelayAnswer::Removed
+            RelayAnswer::StillCarried
         );
+        assert_eq!(ledger.sequence(greenhouse, carol), 0);
         assert_eq!(listed(&ledger), [(alice, false), (bob, false)]);
 
         let bob_leaves = instruction(NOW + 2, false);
         for _ in 0..2 {
             assert_eq!(
                 ledger.apply(bob, bob_leaves, NOW + 2).await.unwrap(),
-                RelayAnswer::Removed
+                RelayAnswer::StillCarried
             );
         }
         assert_eq!(listed(&ledger), [(alice, false)]);

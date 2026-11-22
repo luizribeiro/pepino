@@ -43,10 +43,12 @@ pub enum RelayAnswer {
     Removed = 4,
     Superseded = 5,
     ClockAhead = 6,
+    /// The sender's request is gone and the relay keeps the copy for another requester.
+    StillCarried = 7,
 }
 
 impl RelayAnswer {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Carrying,
         Self::NotTrusted,
         Self::AtCapacity,
@@ -54,6 +56,7 @@ impl RelayAnswer {
         Self::Removed,
         Self::Superseded,
         Self::ClockAhead,
+        Self::StillCarried,
     ];
 }
 
@@ -350,7 +353,16 @@ fn all_receipts_have_the_same_encrypted_length() {
     let device = DeviceCredentials::load_or_create(dir.path().join("device.cbor")).unwrap();
     let lengths: std::collections::BTreeSet<_> = RelayAnswer::ALL
         .into_iter()
-        .zip([0, 1, 255, 65_536, 1_795_300_240_000, u64::MAX - 1, u64::MAX])
+        .zip([
+            0,
+            1,
+            255,
+            65_536,
+            1_795_300_240_000,
+            u64::MAX - 1,
+            u64::MAX,
+            42,
+        ])
         .map(|(answer, relay_sequence)| {
             let receipt = RelayReceipt {
                 answer,
