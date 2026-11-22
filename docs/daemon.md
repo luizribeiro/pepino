@@ -1,77 +1,71 @@
-# Sync daemon
+# The sync daemon
 
-The daemon publishes locally committed events to the replication node and
-ingests events from other devices. Task and saved-view commands read and write
-local state without a running daemon or a network connection. Saved views
-follow your identity to all its devices when they sync. The latest change to
-a view wins, including a removal.
+How syncing runs, how to check it, and how to control the daemon yourself.
+Task commands never need the daemon: they read and write a local database.
+The daemon sends your changes to other devices and applies theirs.
 
-## Start and stop
+## Check sync
 
-Initialise the data directory with `ppn init`. Use `ppn daemon run` to keep
-the daemon in the foreground, or `ppn daemon start` to launch it in the
-background and print its PID once it is ready. `ppn daemon status` shows
-whether it is running, its PID and uptime, and the socket path. `ppn daemon
-stop` waits for shutdown. SIGTERM and SIGINT also shut down a foreground
-process. One daemon can run per data directory.
+```console
+$ ppn sync --timeout 20s
+Published 1 events to the local node, received 28 events. Synced with 1 device: laptop.
+$ ppn status
+```
 
-For a relay directory, initialise with `ppn relay init` before running the
-daemon. The Nix system service `services.pepino` performs that step when it
-starts. Its daemon carries ciphertext for boards handed over by trusted device
-IDs. `ppn relay show` prints its address and `ppn status` reports its
-replication activity. See [Carry boards on an always-on relay](relay.md).
+`ppn sync` waits until the pending changes are exchanged, 30 seconds by
+default and five minutes at most. It exits with status 1 if work is still
+pending when the wait ends. `ppn status` shows your identity, boards, how many
+peers the daemon sees, and how many events wait to be sent.
 
-The daemon uses the configured network, relays, bootstrap peers, mDNS
-setting and device credentials. Set `port` to a fixed IPv4 UDP port from
-1 to 65535. The default is an ephemeral port.
+Two devices sync when both are online and can reach each other:
 
-Foreground logs go to stderr. A daemon launched by the CLI redirects stderr to
-`daemon.log` in its data directory. The default level is `info`. Set
-`log_level` in the config or pass `--log-level` when starting the daemon.
+- on the same local network, they find each other through mDNS;
+- elsewhere, they connect through the relay servers in `relay_urls`, which
+  default to iroh's public servers.
 
-## Control socket and automatic startup
+Both need the same `network` name (default `pepino`). If they are rarely
+online together, add [an always-on relay](relay.md).
 
-On Linux with an absolute `XDG_RUNTIME_DIR`, the CLI looks for a
-data-directory-specific socket under `$XDG_RUNTIME_DIR/pepino/`. Otherwise it
-uses `runtime/daemon.sock` inside the data directory. The runtime
-directory must be owned by the user running Pepino and have mode `0700`.
-The socket has mode `0600` and trusts clients running as the same user.
-Control operations can change local board membership.
+## Start and stop the daemon
 
-Set `daemon.socket_path` to select an absolute path elsewhere or to
-shorten a path that exceeds the platform limit. The parent directory
-must already exist and meet the same ownership and mode requirements.
-Use the same path and data directory settings for the CLI and daemon.
+By default the first command that writes starts the daemon in the background,
+and it keeps running. To control it yourself:
 
-A successful local write asks the daemon to scan for pending events. If the
-daemon is down, the CLI launches it and briefly retries the notification. The engine also scans
-on startup.
-Set `PPN_NO_DAEMON=1` or set the following in your TOML configuration to
-disable automatic starts and notifications after writes.
+```sh
+ppn daemon status
+ppn daemon start     # background; logs to daemon.log in the data directory
+ppn daemon stop
+ppn daemon run       # foreground; logs to stderr; stop with Ctrl-C
+```
+
+One daemon runs per data directory. `--log-level debug` on `start` or `run`
+gives more detail.
+
+## Run it under a service manager
+
+Run `ppn daemon run` from systemd or launchd and turn automatic startup off,
+so commands do not start a second copy outside the service:
 
 ```toml
+# ~/.config/pepino/config.toml
 [daemon]
 autostart = false
 ```
 
-`--verbose` shows notification failures. Explicit daemon commands and
-`ppn sync` can still use a daemon that is already running. `ppn daemon start`
-also works with automatic startup disabled.
+`PPN_NO_DAEMON=1` does the same for one shell. With automatic startup off,
+task commands still work; changes wait until a daemon runs. The
+[Nix modules](nix.md) set all of this up.
 
-## Sync and status
+## Use a fixed port or socket
 
-`ppn sync --timeout 10s` asks the daemon to scan and waits until known work
-settles. The default wait is 30 seconds and the maximum is five minutes.
-It reports publications to the local node, ingested events, and devices that
-completed a board sync during the current daemon run. Local publication can
-finish while events remain available in the node for future peers.
+```toml
+port = 44124                          # UDP; the default is a random port
 
-`ppn status` includes peer IDs and per-board sync activity in JSON. The
-human output shows peer counts, events waiting to publish, timestamps, and
-the last error. It shows `offline (daemon not running)` when the control
-socket is unavailable.
+[daemon]
+socket_path = "/run/user/1000/ppn.sock"
+```
 
-The daemon commands, `ppn sync`, and `ppn status` accept `--json`. An
-idle sync exits 0. A wait that expires with work pending exits 1 with
-`sync_timeout`. A command that needs a daemon and cannot reach or start it
-exits 6 with `daemon_unreachable`.
+Set `port` if you want to open one port in a firewall. The CLI talks to the
+daemon over a Unix socket that only your user can open, under
+`$XDG_RUNTIME_DIR/pepino/` on Linux and in the data directory otherwise. Set
+`socket_path` only if that path is too long for your system.
