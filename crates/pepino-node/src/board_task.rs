@@ -18,7 +18,7 @@ use crate::{
     delivery::DeliveryWriter,
     delivery_item::Delivery,
     events::pipeline_error,
-    header_headroom::largest_control_item,
+    header_headroom::Headroom,
     membership_watch::{MembershipMonitor, is_removed},
     receipt::{Payload, Receipts},
     status::board_status,
@@ -55,6 +55,7 @@ pub(crate) struct BoardTask {
     pub(crate) ejected: bool,
     pub(crate) receipts: Receipts,
     pub(crate) author: p2panda::NodeId,
+    pub(crate) headroom: Headroom,
 }
 
 impl BoardTask {
@@ -142,14 +143,17 @@ impl BoardTask {
         Ok(())
     }
 
-    async fn measure_membership_headers(&self) {
+    async fn measure_membership_headers(&mut self) {
         let board = self.lease.id;
-        if let Ok(largest_item) = largest_control_item(&self.acks.pool, board).await {
-            self.status.send(NodeEvent::MembershipHeaderMeasured {
-                board,
-                largest_item,
-            });
-        }
+        let largest_item = self
+            .headroom
+            .measure(&self.acks.pool, board)
+            .await
+            .map_err(|error| error.to_string());
+        self.status.send(NodeEvent::MembershipHeaderMeasured {
+            board,
+            largest_item,
+        });
     }
 
     async fn forward(&mut self, event: StreamEvent<Payload>) -> Result<(), Error> {
@@ -235,6 +239,7 @@ mod tests {
             ejected: false,
             receipts,
             author: p2panda::Credentials::generate().verifying_key(),
+            headroom: Headroom::default(),
         };
         drop(stop);
         task.drive(futures_util::stream::pending(), std::future::pending())

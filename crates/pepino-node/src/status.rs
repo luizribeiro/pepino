@@ -60,7 +60,7 @@ pub enum NodeEvent {
     },
     MembershipHeaderMeasured {
         board: BoardId,
-        largest_item: usize,
+        largest_item: Result<usize, String>,
     },
     PeerSeen {
         peer: DeviceId,

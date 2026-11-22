@@ -24,6 +24,7 @@ pub struct BoardStatus {
     pub active_syncs: BTreeMap<(DeviceId, u64), SyncCounts>,
     pub operation_read_error: Option<String>,
     pub largest_membership_header_item: usize,
+    pub membership_header_error: Option<String>,
 }
 
 impl BoardStatus {
@@ -167,7 +168,13 @@ mod tracking {
                     largest_item,
                 } => {
                     if let Some(item) = state.boards.get_mut(board) {
-                        item.largest_membership_header_item = *largest_item;
+                        match largest_item {
+                            Ok(largest_item) => {
+                                item.largest_membership_header_item = *largest_item;
+                                item.membership_header_error = None;
+                            }
+                            Err(error) => item.membership_header_error = Some(error.clone()),
+                        }
                     }
                 }
                 NodeEvent::CaughtUp { board, peer } => {
@@ -361,7 +368,7 @@ fn a_board_nears_the_header_limit_only_past_the_warning_size() {
     let measured = |largest_item| {
         status.send(NodeEvent::MembershipHeaderMeasured {
             board,
-            largest_item,
+            largest_item: Ok(largest_item),
         });
         status.snapshot().boards.get(&board).cloned()
     };
@@ -378,4 +385,15 @@ fn a_board_nears_the_header_limit_only_past_the_warning_size() {
             .unwrap()
             .near_header_limit()
     );
+    status.send(NodeEvent::MembershipHeaderMeasured {
+        board,
+        largest_item: Err("node storage: membership header is not CBOR".into()),
+    });
+    let unreadable = status.snapshot().boards[&board].clone();
+    assert!(unreadable.near_header_limit());
+    assert_eq!(
+        unreadable.membership_header_error.as_deref(),
+        Some("node storage: membership header is not CBOR")
+    );
+    assert_eq!(measured(547).unwrap().membership_header_error, None);
 }

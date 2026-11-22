@@ -231,6 +231,7 @@ impl BoardHandle {
             ejected: false,
             receipts: receipts.clone(),
             author: node.id(),
+            headroom: Default::default(),
             stop: stop_rx,
         };
         Self {
