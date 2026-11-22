@@ -179,7 +179,8 @@ pub(super) async fn prepare(pool: &SqlitePool) -> Result<(), Error> {
          INSERT OR IGNORE INTO pepino_relay_stats VALUES (1, 0);"
     ).execute(pool).await.map_err(Error::storage)?;
     let records = load_records(pool).await?;
-    super::relay_purge::pending(pool, records).await
+    super::relay_purge::pending(pool, records).await?;
+    super::relay_purge::checkpoint(pool).await.map(|_| ())
 }
 
 async fn load_records(pool: &SqlitePool) -> Result<BTreeMap<Vec<u8>, Record>, Error> {

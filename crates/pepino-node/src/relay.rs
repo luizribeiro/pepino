@@ -17,6 +17,7 @@ use crate::{
     DeviceCredentials, Error, Node, NodeSettings, NodeStatus,
     relay_control::{IncomingInstruction, RelayAnswer, RelayChannel, RelayReceipt},
     relay_ledger::Ledger,
+    relay_purge,
     relay_refusals::Refusals,
     status_state::Status,
 };
@@ -70,6 +71,7 @@ pub struct Relay {
     stream_ended: Arc<Notify>,
     maintenance: Interval,
     refusals: Refusals,
+    checkpoint_due: bool,
 }
 
 impl Relay {
@@ -94,6 +96,7 @@ impl Relay {
                     stream_ended,
                     maintenance,
                     refusals: Refusals::default(),
+                    checkpoint_due: true,
                 })
             }
             Err(error) => {
@@ -135,7 +138,7 @@ impl Relay {
             let incoming = tokio::select! {
                 _ = self.stream_ended.notified() => return Ok(RelayEnd::Restart),
                 _ = self.maintenance.tick() => {
-                    self.ledger.flush().await?;
+                    self.maintain().await?;
                     continue;
                 }
                 incoming = self.channel.receive_instruction() => incoming.ok_or(Error::Closed)?,
@@ -147,6 +150,14 @@ impl Relay {
                 }
             }
         }
+    }
+
+    async fn maintain(&mut self) -> Result<(), Error> {
+        self.ledger.flush().await?;
+        if self.checkpoint_due {
+            self.checkpoint_due = !relay_purge::checkpoint(self.node.pool()?).await?;
+        }
+        Ok(())
     }
 
     async fn apply(

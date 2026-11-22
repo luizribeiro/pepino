@@ -1,9 +1,9 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
 use p2panda::{Topic, operation::LogId};
 use p2panda_core::cbor::encode_cbor;
 use pepino_core::BoardId;
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::{Connection, Sqlite, SqliteConnection, SqlitePool, Transaction};
 
 use crate::{
     Error,
@@ -42,16 +42,39 @@ pub(super) async fn pending(
         }
         tx.commit().await.map_err(Error::storage)?;
     }
-    let (busy, _, _): (i64, i64, i64) = sqlx::query_as("PRAGMA wal_checkpoint(TRUNCATE)")
-        .fetch_one(pool)
+    Ok(())
+}
+
+/// Empties the write-ahead log, which still holds purged rows. Returns false while another
+/// connection is using the log, so that the caller tries again later.
+pub(super) async fn checkpoint(pool: &SqlitePool) -> Result<bool, Error> {
+    let options = pool
+        .connect_options()
+        .as_ref()
+        .clone()
+        .busy_timeout(Duration::ZERO);
+    let mut connection = SqliteConnection::connect_with(&options)
         .await
         .map_err(Error::storage)?;
-    if busy != 0 {
-        return Err(Error::Storage(
-            "relay database checkpoint was blocked".into(),
-        ));
+    let outcome = sqlx::query_as::<_, (i64, i64, i64)>("PRAGMA wal_checkpoint(TRUNCATE)")
+        .fetch_one(&mut connection)
+        .await;
+    connection.close().await.map_err(Error::storage)?;
+    match outcome {
+        Ok((busy, _, _)) => Ok(busy == 0),
+        Err(error) if is_busy(&error) => Ok(false),
+        Err(error) => Err(Error::storage(error)),
     }
-    Ok(())
+}
+
+fn is_busy(error: &sqlx::Error) -> bool {
+    const SQLITE_BUSY: u32 = 5;
+    const SQLITE_LOCKED: u32 = 6;
+    error
+        .as_database_error()
+        .and_then(|error| error.code())
+        .and_then(|code| code.parse::<u32>().ok())
+        .is_some_and(|code| matches!(code & 0xff, SQLITE_BUSY | SQLITE_LOCKED))
 }
 
 async fn purge(tx: &mut Transaction<'_, Sqlite>, board: BoardId) -> Result<(), Error> {
@@ -245,5 +268,35 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn a_reader_delays_the_checkpoint_without_failing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("relay.sqlite");
+        let pool = open(&path).await;
+        let write = |name: &'static str| {
+            sqlx::query("INSERT INTO cursors_v1 VALUES (?, x'00')")
+                .bind(name)
+                .execute(&pool)
+        };
+        write("before the reader").await.unwrap();
+        let mut reader = pool.acquire().await.unwrap();
+        sqlx::query("BEGIN").execute(&mut *reader).await.unwrap();
+        let seen: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cursors_v1")
+            .fetch_one(&mut *reader)
+            .await
+            .unwrap();
+        assert_eq!(seen, 1);
+        write("after the reader").await.unwrap();
+
+        assert!(!checkpoint(&pool).await.unwrap());
+        let log = path.with_file_name("relay.sqlite-wal");
+        assert_ne!(log.metadata().unwrap().len(), 0);
+
+        sqlx::query("COMMIT").execute(&mut *reader).await.unwrap();
+        drop(reader);
+        assert!(checkpoint(&pool).await.unwrap());
+        assert_eq!(log.metadata().unwrap().len(), 0);
     }
 }
