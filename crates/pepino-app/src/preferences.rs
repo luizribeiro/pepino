@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use pepino_core::{Clock, DeviceId, EventId, Hlc};
+use pepino_core::{Clock, DeviceId, EventId, Hlc, ObserveOutcome};
 use serde::{Deserialize, Serialize};
 
 use crate::{AppError, app::invalid};
@@ -45,6 +45,11 @@ impl Preference {
         EventId::from_bytes(*hash.finalize().as_bytes())
     }
 
+    fn acceptable_clock(&self, now: u64) -> bool {
+        Clock::new().observe(self.hlc, now) == ObserveOutcome::Accepted
+            && crate::Hlc::from(self.hlc).utc().is_some()
+    }
+
     fn revision(&self) -> (Hlc, EventId) {
         (self.hlc, self.id)
     }
@@ -79,31 +84,38 @@ impl Preferences {
                 ),
             ));
         }
-        let mut clock = self
-            .0
-            .values()
-            .map(|entry| entry.hlc)
-            .max()
-            .map_or_else(Clock::new, Clock::from_hlc);
-        let hlc = clock
-            .tick(now)
-            .map_err(|error| invalid("preference", error))?;
-        if crate::Hlc::from(hlc).utc().is_none() {
-            return Err(invalid(
+        let mut clock = Clock::new();
+        let previous = self.get(&key);
+        if let Some(entry) = previous {
+            clock.observe(entry.hlc, now);
+        }
+        let clock_error = || {
+            invalid(
                 "preference",
-                "timestamp is outside the supported range",
-            ));
+                previous.map_or_else(
+                    || "the local clock is outside the supported range".into(),
+                    |entry| format!("check the clock on device {}", entry.writer),
+                ),
+            )
+        };
+        let hlc = clock.tick(now).map_err(|_| clock_error())?;
+        if crate::Hlc::from(hlc).utc().is_none() || previous.is_some_and(|entry| entry.hlc >= hlc) {
+            return Err(clock_error());
         }
         let entry = Preference::new(&key, value, writer, hlc);
         self.0.insert(key, entry);
         Ok(())
     }
 
-    pub(crate) fn merge(&mut self, incoming: Self) {
+    pub(crate) fn discard_future(&mut self, now: u64) {
+        self.0.retain(|_, entry| entry.acceptable_clock(now));
+    }
+
+    pub(crate) fn merge(&mut self, incoming: Self, now: u64) {
         for (key, entry) in incoming.0 {
             let value = entry.value.as_deref();
             if validate(&key, value).is_ok()
-                && crate::Hlc::from(entry.hlc).utc().is_some()
+                && entry.acceptable_clock(now)
                 && entry.id == Preference::event_id(&key, value, entry.writer, entry.hlc)
                 && self
                     .get(&key)
@@ -148,9 +160,11 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
+    const NOW: u64 = 1_800_000_000_000;
+
     fn event(key: &str, value: Option<&str>, writer: u8, counter: u32) -> Preferences {
         let hlc = Hlc {
-            wall_ms: 1_800_000_000_000,
+            wall_ms: NOW,
             counter,
         };
         let entry = Preference::new(
@@ -180,7 +194,7 @@ mod tests {
             ];
             let mut expected = Preferences::default();
             for change in &keys {
-                expected.merge(change.clone());
+                expected.merge(change.clone(), NOW);
             }
             prop_assert_eq!(expected.get(key), Some(&winner));
             prop_assert_eq!(expected.get("view/weekend").unwrap().value.as_deref(), None);
@@ -188,34 +202,67 @@ mod tests {
             changes.sort_by_key(|(index, _)| *index);
             let mut merged = Preferences::default();
             for (_, change) in changes {
-                merged.merge(change.clone());
-                merged.merge(change);
+                merged.merge(change.clone(), NOW);
+                merged.merge(change, NOW);
             }
             prop_assert_eq!(merged, expected);
         }
+    }
+
+    proptest! {
+        #[test]
+        fn hostile_remote_hlc_cannot_block_an_honest_write(
+            wall_ms in prop_oneof![
+                (NOW + pepino_core::MAX_CLOCK_SKEW_MS + 1)..=u64::MAX,
+                Just(253_402_300_799_999),
+            ],
+            counter in prop_oneof![any::<u32>(), Just(u32::MAX)],
+        ) {
+            let key = "view/weekend";
+            let writer = DeviceId::from_bytes([9; 32]);
+            let hostile = Preference::new(key, Some("tag:poison".into()), writer, Hlc { wall_ms, counter });
+            let mut prefs = Preferences::default();
+            prefs.merge(Preferences([(key.into(), hostile)].into()), NOW);
+            prop_assert!(prefs.is_empty());
+            prefs.write(key.into(), Some("tag:garden".into()), DeviceId::from_bytes([1; 32]), NOW).unwrap();
+            prop_assert_eq!(prefs.get(key).unwrap().hlc.wall_ms, NOW);
+        }
+    }
+
+    #[test]
+    fn clock_error_names_the_writer_after_a_local_clock_rollback() {
+        let key = "view/weekend";
+        let mut prefs = event(key, Some("tag:garden"), 9, 0);
+        let writer = DeviceId::from_bytes([9; 32]);
+        let error = prefs
+            .write(key.into(), None, DeviceId::from_bytes([1; 32]), 0)
+            .unwrap_err();
+        assert!(error.to_string().contains(&writer.to_string()));
+        prefs.discard_future(0);
+        assert!(prefs.is_empty());
     }
 
     #[test]
     fn caps_merged_keys_and_ignores_invalid_entries() {
         let mut prefs = Preferences::default();
         for i in 0..MAX_ENTRIES {
-            prefs.merge(event(&format!("view/tool-{i:03}"), None, 3, 2));
+            prefs.merge(event(&format!("view/tool-{i:03}"), None, 3, 2), NOW);
         }
         let incoming = event("view/greenhouse", Some("tag:garden"), 3, 2);
         let mut opposite = incoming.clone();
-        opposite.merge(prefs.clone());
-        prefs.merge(incoming);
+        opposite.merge(prefs.clone(), NOW);
+        prefs.merge(incoming, NOW);
         assert_eq!(prefs, opposite);
         assert_eq!(prefs.0.len(), MAX_ENTRIES);
         assert!(prefs.get("view/tool-255").is_none());
 
         let before = prefs.clone();
         let oversized = "é".repeat(MAX_VALUE_BYTES);
-        prefs.merge(event("view/greenhouse", Some(&oversized), 3, 3));
-        prefs.merge(event("greenhouse", Some("tag:tools"), 3, 3));
+        prefs.merge(event("view/greenhouse", Some(&oversized), 3, 3), NOW);
+        prefs.merge(event("greenhouse", Some("tag:tools"), 3, 3), NOW);
         let mut forged = event("view/greenhouse", Some("tag:garden"), 3, 4);
         forged.0.get_mut("view/greenhouse").unwrap().value = Some("tag:tools".into());
-        prefs.merge(forged);
+        prefs.merge(forged, NOW);
         assert_eq!(prefs, before);
     }
     #[test]

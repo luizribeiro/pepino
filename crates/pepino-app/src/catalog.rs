@@ -167,6 +167,8 @@ impl LocalState {
     }
 
     pub fn encode_catalog(&self, member: &MemberInfo) -> Result<Vec<u8>, AppError> {
+        let mut preferences = self.catalog.preferences.clone();
+        preferences.discard_future(unix_ms());
         let announcement = Announcement {
             v: crate::PROTOCOL_VERSION,
             identity: self.identity_id,
@@ -175,7 +177,7 @@ impl LocalState {
             roster: self.catalog.identity.edits().cloned().collect(),
             member: member.to_hex(),
             relays: self.catalog.relays.clone(),
-            preferences: self.catalog.preferences.clone(),
+            preferences,
             shared: self.catalog.shared.clone(),
             reader_routes: self
                 .card_exchanges()
@@ -322,7 +324,9 @@ impl LocalState {
         if active_sender || self.granted_by(signer) {
             self.merge_relays(signer, announcement.relays, now);
         }
-        self.catalog.preferences.merge(announcement.preferences);
+        self.catalog
+            .preferences
+            .merge(announcement.preferences, now);
         self.catalog
             .written_views
             .retain(|key| self.catalog.preferences.get(key).is_some());
@@ -473,6 +477,12 @@ impl App {
         })
         .await?
     }
+}
+
+fn unix_ms() -> u64 {
+    std::time::UNIX_EPOCH.elapsed().map_or(0, |elapsed| {
+        u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+    })
 }
 
 #[cfg(test)]
