@@ -543,18 +543,18 @@ fn detached_daemon_leaves_its_working_directory() {
 }
 
 #[cfg(pepino_network_tests)]
-#[test]
-fn status_reports_startup_while_the_node_waits_for_its_database() {
+fn hold_daemon_startup(
+    fixture: &mut support::Fixture,
+) -> (tokio::runtime::Runtime, sqlx::SqliteConnection) {
     use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
     use std::{process::Stdio, time::Duration};
-    use wait::{WAIT, until};
+    use wait::until;
 
-    let mut fixture = support::Fixture::new("");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
-    let mut writer = runtime.block_on(async {
+    let writer = runtime.block_on(async {
         let options = SqliteConnectOptions::new().filename(fixture.data.join("node.sqlite"));
         let mut writer = SqliteConnection::connect_with(&options).await.unwrap();
         sqlx::query("BEGIN IMMEDIATE")
@@ -567,6 +567,7 @@ fn status_reports_startup_while_the_node_waits_for_its_database() {
         fixture
             .command()
             .args(["daemon", "run", "--json"])
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -578,17 +579,44 @@ fn status_reports_startup_while_the_node_waits_for_its_database() {
         Duration::from_secs(4),
     );
     assert_eq!(observed["kind"], "status");
+    (runtime, writer)
+}
+
+#[cfg(pepino_network_tests)]
+#[test]
+fn status_reports_startup_while_the_node_waits_for_its_database() {
+    let mut fixture = support::Fixture::new("");
+    let (runtime, mut writer) = hold_daemon_startup(&mut fixture);
     assert!(fixture.run(&["status"]).contains("Daemon still starting"));
+    let starting = as_json(&fixture.run(&["status", "--json"]));
+    assert!(starting["network"]["starting_ms"].is_u64());
     runtime.block_on(async {
         sqlx::query("ROLLBACK").execute(&mut writer).await.unwrap();
     });
-    until(
-        || as_json(&fixture.run(&["status", "--json"])),
-        |status| {
-            status["network"]["boards"].is_object() && status["network"]["starting_ms"].is_null()
-        },
-        WAIT,
-    );
+    fixture.ready();
+    let ready = as_json(&fixture.run(&["status", "--json"]));
+    assert!(ready["network"]["boards"].is_object());
+    assert!(ready["network"]["starting_ms"].is_null());
+    fixture.run(&["daemon", "stop"]);
+    success(fixture.wait_foreground());
+    fixture.assert_stopped();
+}
+
+#[cfg(pepino_network_tests)]
+#[test]
+fn stop_during_startup_releases_the_socket_and_store() {
+    let mut fixture = support::Fixture::new("");
+    let (runtime, mut writer) = hold_daemon_startup(&mut fixture);
+    let stopped = as_json(&fixture.run(&["daemon", "stop", "--json"]));
+    assert_eq!(stopped["action"], "stopped");
+    assert_eq!(stopped["running"], false);
+    let exit = as_json(&success(fixture.wait_foreground()));
+    assert_eq!(exit["action"], "stopped");
+    fixture.assert_stopped();
+    runtime.block_on(async {
+        sqlx::query("ROLLBACK").execute(&mut writer).await.unwrap();
+    });
+    fixture.foreground();
     fixture.run(&["daemon", "stop"]);
     success(fixture.wait_foreground());
     fixture.assert_stopped();

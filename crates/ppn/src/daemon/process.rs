@@ -121,7 +121,7 @@ pub fn wait_started(
             if starting {
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "The daemon is still starting. Run ppn status for elapsed time.",
+                    super::protocol::STARTING,
                 ));
             }
             break Err(process.failure(

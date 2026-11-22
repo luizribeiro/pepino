@@ -1,4 +1,5 @@
 use std::{
+    cell::OnceCell,
     io::{self, Write},
     sync::Arc,
     time::{Duration, Instant},
@@ -11,6 +12,7 @@ use tokio::{
     net::UnixListener,
     runtime::Builder,
     signal::unix::{Signal, SignalKind, signal},
+    sync::Notify,
 };
 
 use crate::{
@@ -24,6 +26,9 @@ use super::{
     server::{self, End},
     socket::{Socket, lease},
 };
+
+#[cfg(all(test, pepino_network_tests))]
+mod startup_tests;
 
 pub(super) const STARTUP_LIMIT: Duration = Duration::from_secs(8);
 const STARTUP_WARNING: Duration = Duration::from_secs(45);
@@ -90,11 +95,11 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
     loop {
         let outcome = cycle(
             &socket.listener,
-            (&settings, &app),
+            &settings,
+            async |node| SyncEngine::start_with_node_settings(node, &settings, app.clone()).await,
             level,
             started,
-            &mut terminate,
-            &mut interrupt,
+            (&mut terminate, &mut interrupt),
             &mut upgrade_logged,
         )
         .await?;
@@ -117,72 +122,71 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
 
 async fn cycle(
     listener: &UnixListener,
-    (settings, app): (&NodeSettings, &Arc<pepino_app::App>),
+    settings: &NodeSettings,
+    start_engine: impl AsyncFnOnce(Arc<Node>) -> Result<SyncEngine, pepino_sync::Error>,
     level: LogLevel,
     started: Instant,
-    terminate: &mut Signal,
-    interrupt: &mut Signal,
+    (terminate, interrupt): (&mut Signal, &mut Signal),
     upgrade_logged: &mut bool,
 ) -> Result<End, CliError> {
     let startup = Instant::now();
-    let control = async {
+    let engine = OnceCell::new();
+    let ready = Notify::new();
+    let mut node = None;
+    let outcome = {
+        let start = async {
+            let transport =
+                Arc::new(Node::spawn(settings.clone()).await.map_err(|error| {
+                    failure(&format!("Could not start the network node. {error}"))
+                })?);
+            node = Some(transport.clone());
+            let sync = start_engine(transport)
+                .await
+                .map_err(|error| failure(&format!("Could not start the sync engine. {error}")))?;
+            let sync = engine.get_or_init(|| sync);
+            ready.notify_one();
+            log(level, LogLevel::Info, "daemon ready");
+            log_catalog_upgrade(sync, level, upgrade_logged).await;
+            unreachable!("status monitoring does not end")
+        };
         tokio::select! {
-            result = server::serve_starting(listener, started, startup) => result.map_err(socket_error),
+            biased;
+            _ = terminate.recv() => Ok(End::Stopped),
+            _ = interrupt.recv() => Ok(End::Stopped),
+            result = server::serve(listener, &engine, &ready, started, startup) => result.map_err(socket_error),
+            result = start => result,
             () = startup_warning(STARTUP_WARNING, || {
-                log(level, LogLevel::Warn, "daemon still starting after 45 seconds");
+                if engine.get().is_none() {
+                    let message = format!(
+                        "daemon still starting after {} seconds",
+                        STARTUP_WARNING.as_secs()
+                    );
+                    log(level, LogLevel::Warn, &message);
+                }
             }) => unreachable!("startup warning does not end control service"),
         }
     };
-    tokio::pin!(control);
-    let node = tokio::select! {
-        _ = terminate.recv() => return Ok(End::Stopped),
-        _ = interrupt.recv() => return Ok(End::Stopped),
-        result = &mut control => return result,
-        result = Node::spawn(settings.clone()) => {
-            Arc::new(result.map_err(|error| failure(&format!("Could not start the network node. {error}")))?)
-        }
-    };
-    let mut startup_end = Ok(End::Stopped);
-    let engine = tokio::select! {
-        _ = terminate.recv() => None,
-        _ = interrupt.recv() => None,
-        result = &mut control => {
-            startup_end = result;
-            None
-        },
-        result = SyncEngine::start_with_node_settings(node.clone(), settings, app.clone()) => Some(result),
-    };
-    let mut engine_stop = Ok(());
-    let outcome = match engine {
-        Some(Ok(engine)) => {
-            log(level, LogLevel::Info, "daemon ready");
-            let end = tokio::select! {
-                biased;
-                _ = terminate.recv() => Ok(End::Stopped),
-                _ = interrupt.recv() => Ok(End::Stopped),
-                result = server::serve(listener, &engine, started) => result.map_err(socket_error),
-                () = log_catalog_upgrade(&engine, level, upgrade_logged) => unreachable!("status monitoring does not end"),
-            };
+    if let Some(node) = node {
+        let mut engine_stop = Ok(());
+        if let Some(engine) = engine.into_inner() {
             node.prepare_shutdown();
             engine_stop = match engine.shutdown().await {
-                Err(pepino_sync::Error::RestartRequired(_)) if matches!(end, Ok(End::Restart)) => {
+                Err(pepino_sync::Error::RestartRequired(_))
+                    if matches!(outcome, Ok(End::Restart)) =>
+                {
                     Ok(())
                 }
                 result => result.map_err(|error| shutdown_failure("the sync engine", error)),
             };
-            end
         }
-        Some(Err(error)) => Err(failure(&format!(
-            "Could not start the sync engine. {error}"
-        ))),
-        None => startup_end,
-    };
-    let node = Arc::try_unwrap(node)
-        .map_err(|_| shutdown_failure("the network node", "sync workers still hold it"))?;
-    node.shutdown()
-        .await
-        .map_err(|error| shutdown_failure("the network node", error))?;
-    engine_stop.and(outcome)
+        let node = Arc::try_unwrap(node)
+            .map_err(|_| shutdown_failure("the network node", "sync workers still hold it"))?;
+        node.shutdown()
+            .await
+            .map_err(|error| shutdown_failure("the network node", error))?;
+        engine_stop?;
+    }
+    outcome
 }
 
 async fn startup_warning(delay: Duration, log: impl FnOnce()) {

@@ -1,4 +1,5 @@
 use std::{
+    cell::OnceCell,
     io,
     time::{Duration, Instant},
 };
@@ -14,7 +15,10 @@ use tokio::{
 use super::{
     framing,
     operations::operate,
-    protocol::{MAX_WAIT_MS, Operation, Outcome, Request, Response, VERSION},
+    protocol::{
+        DaemonStatus, MAX_WAIT_MS, Network, Operation, Outcome, Request, Response, STARTING,
+        VERSION,
+    },
 };
 
 const IO_LIMIT: Duration = Duration::from_secs(2);
@@ -28,12 +32,18 @@ pub enum End {
     Restart,
 }
 
-pub async fn serve(
+pub(super) async fn serve(
     listener: &UnixListener,
-    engine: &SyncEngine,
+    engine: &OnceCell<SyncEngine>,
+    ready: &Notify,
     started: Instant,
+    startup: Instant,
 ) -> io::Result<End> {
     let restart = async {
+        ready.notified().await;
+        let Some(engine) = engine.get() else {
+            unreachable!("readiness is signaled after installing the sync engine");
+        };
         let changes = engine.status_changes();
         tokio::pin!(changes);
         while let Some(status) = changes.next().await {
@@ -42,49 +52,42 @@ pub async fn serve(
             }
         }
     };
-    serve_with(listener, started, restart, async |operation, started| {
-        operate(engine, operation, started).await
-    })
-    .await
-}
-
-pub(super) async fn serve_starting(
-    listener: &UnixListener,
-    started: Instant,
-    startup: Instant,
-) -> io::Result<End> {
-    use super::protocol::{DaemonStatus, Network};
     serve_with(
         listener,
         started,
-        std::future::pending(),
-        async |operation, started| match operation {
-            Operation::Status => Outcome::Status {
-                status: DaemonStatus {
-                    pid: std::process::id(),
-                    uptime_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-                    network: Network {
-                        starting_ms: Some(
-                            startup.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-                        ),
-                        ..Default::default()
-                    },
-                    peer_syncs: Default::default(),
-                    relay: None,
-                },
-            },
-            Operation::Stop => Outcome::Stopping,
-            operation => Outcome::error(
-                if matches!(operation, Operation::Nudge) {
-                    "busy"
-                } else {
-                    "daemon_unreachable"
-                },
-                "The daemon is still starting. Run ppn status for elapsed time.",
-            ),
+        restart,
+        async |operation, started| match engine.get() {
+            Some(engine) => operate(engine, operation, started).await,
+            None => starting(operation, started, startup),
         },
     )
     .await
+}
+
+fn starting(operation: Operation, started: Instant, startup: Instant) -> Outcome {
+    match operation {
+        Operation::Status => Outcome::Status {
+            status: DaemonStatus {
+                pid: std::process::id(),
+                uptime_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                network: Network {
+                    starting_ms: Some(startup.elapsed().as_millis().try_into().unwrap_or(u64::MAX)),
+                    ..Default::default()
+                },
+                peer_syncs: Default::default(),
+                relay: None,
+            },
+        },
+        Operation::Stop => Outcome::Stopping,
+        operation => Outcome::error(
+            if matches!(operation, Operation::Nudge) {
+                "busy"
+            } else {
+                "daemon_unreachable"
+            },
+            STARTING,
+        ),
+    }
 }
 
 pub(super) async fn serve_with(

@@ -35,6 +35,11 @@ echo '{"title":"Water the tomatoes","due":"tomorrow","tags":["garden"]}' |
   ppn add --from-json -
 ```
 
+While the daemon is starting, `ppn status --json` includes
+`network.starting_ms`, the elapsed milliseconds in the current startup
+attempt. `ppn daemon status --json` reports the same value as
+`starting_ms` at the top level. The field is omitted once the daemon is ready.
+
 ## Check the exit status
 
 | Status | Meaning |

@@ -5,6 +5,7 @@ use pepino_core::{BoardId, DeviceId};
 use serde::{Deserialize, Serialize};
 
 pub const VERSION: u32 = 1;
+pub(super) const STARTING: &str = "The daemon is still starting. Run ppn status for elapsed time.";
 pub const MAX_WAIT_MS: u64 = 300_000;
 
 #[derive(Serialize, Deserialize)]
