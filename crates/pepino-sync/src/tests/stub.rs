@@ -23,6 +23,7 @@ struct Publisher {
     operations: Arc<Mutex<Vec<Vec<u8>>>>,
     next_fault: Mutex<Option<PublishFault>>,
     operation_role: Mutex<Option<Role>>,
+    refuse_last_manager: AtomicBool,
     role_queries: Mutex<Option<watch::Sender<usize>>>,
     membership: Mutex<BTreeMap<BoardId, BTreeMap<DeviceId, Role>>>,
     membership_changes: Mutex<Vec<(BoardId, DeviceId, Option<Role>)>>,
@@ -144,6 +145,12 @@ impl Stub {
         if let Some(status) = self.status.lock().unwrap().boards.get_mut(&board) {
             status.joined = true;
         }
+    }
+
+    pub(super) fn refuse_next_manager_removal(&self) {
+        self.publisher
+            .refuse_last_manager
+            .store(true, Ordering::Relaxed);
     }
 
     pub(super) fn set_readmission_invite(&self, board: BoardId, device: DeviceId, invite: EventId) {
@@ -356,7 +363,17 @@ impl TransportBoard for Board {
                 (device, Some(role))
             }
             DeviceMembershipChange::SetRole(device, role) => (device, Some(role)),
-            DeviceMembershipChange::Remove(device) => (device, None),
+            DeviceMembershipChange::Remove(device) => {
+                if members.get(&device) == Some(&Role::Manage)
+                    && self
+                        .publisher
+                        .refuse_last_manager
+                        .swap(false, Ordering::Relaxed)
+                {
+                    return Err(Error::LastManager);
+                }
+                (device, None)
+            }
         };
         if let Some(role) = role {
             members.insert(device, role);

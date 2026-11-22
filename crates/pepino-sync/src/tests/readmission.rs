@@ -450,3 +450,23 @@ async fn a_revoked_device_does_not_block_enrolling_a_new_device() {
     assert_eq!(now.get(&phone), Some(&Role::Write));
     assert!(!now.contains_key(&world.tablet));
 }
+
+#[tokio::test]
+async fn reconcile_records_transport_refusal_to_remove_the_last_manager() {
+    let mut world = world().await;
+    let (ada, ben) = (world.ada, world.ben);
+    world
+        .node
+        .set_joined_members(BOARD, [(ada, Role::Manage), (ben.1, Role::Manage)].into());
+    let mut removal = record(1, ada, ben, MembershipAction::Removed, &[], None);
+    removal.applied = false;
+    world.app.record_membership(BOARD, removal).await.unwrap();
+    world.node.refuse_next_manager_removal();
+    rounds(&world, &mut Repairs::default(), 1).await;
+    let local = world.app.fresh_local_state().await.unwrap();
+    let record = local.membership_history(BOARD).next().unwrap();
+    assert_eq!(record.refusal, Some(MembershipRefusal::LastManager));
+    assert!(!record.applied);
+    assert!(world.node.membership_changes().is_empty());
+    world.workers.abort().await;
+}
