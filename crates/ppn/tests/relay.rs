@@ -24,6 +24,7 @@ fn relay_role_is_explicit_and_exclusive_without_a_terminal() {
         &["add", "Replace glazing"],
         &["init"],
         &["device", "request"],
+        &["device", "ls"],
     ] {
         let error = run(arguments);
         assert_eq!(error.status.code(), Some(5));
@@ -35,6 +36,13 @@ fn relay_role_is_explicit_and_exclusive_without_a_terminal() {
     }
     let device = ConfigSandbox::new();
     success(device.command().args(["init"]).output().unwrap());
+    let human = device.command().args(["relay", "init"]).output().unwrap();
+    assert_eq!(human.status.code(), Some(8));
+    assert!(human.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&human.stderr)
+            .contains("is a device; use a separate data directory for a relay")
+    );
     let error = task_error(
         device
             .command()
