@@ -1,4 +1,4 @@
-{ config, lib, pkgs, pepinoClientReady, pepinoNodeArgs, ... }:
+{ config, lib, pkgs, pepinoClientReady, pepinoNodeArgs, pepinoDeviceDirectoryStatus, ... }:
 let
   client = config.programs.pepino;
   node = config.services.pepino;
@@ -59,7 +59,7 @@ in
         job ''
           ${lib.escapeShellArgs (pepinoNodeArgs ++ [ "relay" "init" ])} || {
             status=$?
-            if [ "$status" -eq 5 ]; then exit 0; fi
+            if [ "$status" -eq ${toString pepinoDeviceDirectoryStatus} ]; then exit 0; fi
             exit "$status"
           }
         ''

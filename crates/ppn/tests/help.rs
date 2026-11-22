@@ -104,7 +104,11 @@ fn help_describes_the_cli_in_both_formats() {
         flag("color")["choices"],
         serde_json::json!(["auto", "always", "never"])
     );
-    assert_eq!(help["exit_codes"].as_array().unwrap().len(), 8);
+    assert_eq!(help["exit_codes"].as_array().unwrap().len(), 9);
+    assert_eq!(
+        help["exit_codes"][8],
+        serde_json::json!({"status": 8, "code": "device_directory", "error_codes": ["device_directory"]})
+    );
     assert_eq!(
         help["exit_codes"][6],
         serde_json::json!({"status": 6, "code": "daemon_unreachable", "error_codes": ["daemon_unreachable"]})

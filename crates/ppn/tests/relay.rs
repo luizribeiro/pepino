@@ -41,8 +41,8 @@ fn relay_role_is_explicit_and_exclusive_without_a_terminal() {
             .args(["relay", "init", "--json"])
             .output()
             .unwrap(),
-        5,
-        "permission_denied",
+        8,
+        "device_directory",
     );
     let message = error["message"].as_str().unwrap();
     assert!(message.contains("is a device; use a separate data directory for a relay"));

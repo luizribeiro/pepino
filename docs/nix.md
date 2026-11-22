@@ -97,9 +97,9 @@ apply on macOS. Filesystem sandboxing and runtime directory management are
 provided by systemd on NixOS.
 
 If an older `services.pepino` installation uses a data directory already
-linked as a device, the service reports that it contains device state and
-does not start. The NixOS unit shows as failed without restarting, and the
-launchd job exits without respawning. Device state is not converted. Give
+linked as a device, `ppn relay init` exits with status 8 and the service does
+not start. The NixOS unit shows as failed without restarting, and the
+launchd job exits without respawning. Other failures restart the service. Device state is not converted. Give
 the relay a fresh `services.pepino.dataDir` and run the linked device as a
 user daemon with `programs.pepino.daemon.enable`.
 

@@ -356,6 +356,7 @@ pub enum AppErrorKind {
     DeviceRequestPending,
     IncompatibleLocalState,
     PermissionDenied,
+    DeviceDirectory,
     AmbiguousId,
     InvalidInput,
     Conflict,
@@ -373,6 +374,7 @@ impl AppErrorKind {
             Self::DeviceRequestPending => "device_request_pending",
             Self::IncompatibleLocalState => "incompatible_local_state",
             Self::PermissionDenied => "permission_denied",
+            Self::DeviceDirectory => "device_directory",
             Self::AmbiguousId => "ambiguous_id",
             Self::InvalidInput => "invalid_input",
             Self::Conflict => "conflict",
@@ -444,6 +446,10 @@ pub enum AppError {
     IncompatibleLocalState { version: u64, directory: String },
     #[error("permission denied for {path}: {reason}")]
     PermissionDenied { path: String, reason: String },
+    #[error(
+        "This data directory is a device; use a separate data directory for a relay: {directory}"
+    )]
+    DeviceDirectory { directory: String },
     #[error("This device was revoked from identity {identity} on {at} by {by}.")]
     DeviceRevoked {
         identity: String,
@@ -565,6 +571,7 @@ impl AppError {
             Self::PermissionDenied { .. } | Self::DeviceRevoked { .. } | Self::DeviceLeaving => {
                 AppErrorKind::PermissionDenied
             }
+            Self::DeviceDirectory { .. } => AppErrorKind::DeviceDirectory,
             Self::AmbiguousId { .. }
             | Self::AmbiguousBoard { .. }
             | Self::AmbiguousPerson { .. }

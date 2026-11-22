@@ -1,4 +1,4 @@
-{ config, lib, pkgs, pepinoClientReady, pepinoNodeArgs, ... }:
+{ config, lib, pkgs, pepinoClientReady, pepinoNodeArgs, pepinoDeviceDirectoryStatus, ... }:
 let
   client = config.programs.pepino;
   node = config.services.pepino;
@@ -67,7 +67,7 @@ in
           User = node.user;
           Group = node.group;
           Restart = "on-failure";
-          RestartPreventExitStatus = [ 5 ];
+          RestartPreventExitStatus = [ pepinoDeviceDirectoryStatus ];
           RestartSec = "5s";
           RuntimeDirectory = "pepino";
           RuntimeDirectoryMode = "0700";

@@ -52,7 +52,7 @@ let
       "NoNewPrivileges=true"
       "PrivateTmp=true"
       "Restart=on-failure"
-      "RestartPreventExitStatus=5"
+      "RestartPreventExitStatus=8"
     ] && lib.hasSuffix "-pepino-relay-start" config.systemd.services.pepino.serviceConfig.ExecStart
     && !(config.systemd.units ? "pepino.path");
 in

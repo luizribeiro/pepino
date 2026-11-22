@@ -16,6 +16,8 @@ in
   '';
   _module.args.pepinoNodeArgs = [ "${node.package}/bin/ppn" "--config" "${node.configFile}" ];
   _module.args.pepinoNodeDaemon = lib.mkDefault { autostart = false; };
+  # Exit status of `ppn relay init` in a data directory that holds a device.
+  _module.args.pepinoDeviceDirectoryStatus = 8;
 
   environment.systemPackages = lib.mkIf client.enable [ client.package ];
   environment.etc."pepino/config.toml" = lib.mkIf client.enable {

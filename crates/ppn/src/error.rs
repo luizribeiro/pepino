@@ -17,6 +17,7 @@ pub enum ErrorKind {
     DeviceRequestPending,
     AmbiguousId,
     PermissionDenied,
+    DeviceDirectory,
     DaemonUnreachable,
     SyncTimeout,
     Pending,
@@ -41,6 +42,7 @@ impl ErrorKind {
             Self::DeviceRequestPending => "A local device request is waiting for a grant.",
             Self::AmbiguousId => "The identifier matches multiple items.",
             Self::PermissionDenied => "The operation is not permitted.",
+            Self::DeviceDirectory => "The data directory holds a device and cannot become a relay.",
             Self::DaemonUnreachable => "The daemon or network could not be reached.",
             Self::SyncTimeout => "Sync timed out with work pending.",
             Self::Pending => "The join is kept and will complete later.",
@@ -68,6 +70,7 @@ impl ErrorKind {
             Self::PermissionDenied => 5,
             Self::DaemonUnreachable => 6,
             Self::Pending => 7,
+            Self::DeviceDirectory => 8,
         }
     }
 
@@ -80,6 +83,7 @@ impl ErrorKind {
             Self::DeviceRequestPending => "device_request_pending",
             Self::AmbiguousId => "ambiguous_id",
             Self::PermissionDenied => "permission_denied",
+            Self::DeviceDirectory => "device_directory",
             Self::DaemonUnreachable => "daemon_unreachable",
             Self::SyncTimeout => "sync_timeout",
             Self::Pending => "pending",
@@ -296,6 +300,7 @@ impl From<AppError> for CliError {
             AppErrorKind::NotInitialized => ErrorKind::NotInitialized,
             AppErrorKind::DeviceRequestPending => ErrorKind::DeviceRequestPending,
             AppErrorKind::PermissionDenied => ErrorKind::PermissionDenied,
+            AppErrorKind::DeviceDirectory => ErrorKind::DeviceDirectory,
             AppErrorKind::AmbiguousId => ErrorKind::AmbiguousId,
             AppErrorKind::InvalidInput => ErrorKind::InvalidInput,
             AppErrorKind::Conflict => ErrorKind::Conflict,

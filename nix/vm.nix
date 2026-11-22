@@ -157,9 +157,9 @@ pkgs.testers.runNixOSTest {
     server.succeed(f"{node} init --name Ada --device Server --board Nursery")
     server.execute(f"systemctl start {service}")
     server.wait_until_succeeds(f"systemctl is-failed {service}", timeout=deadline)
-    for property in ["ActiveState=failed", "SubState=failed", "NRestarts=0", "ExecMainStatus=5"]:
+    for property in ["ActiveState=failed", "SubState=failed", "NRestarts=0", "ExecMainStatus=8"]:
         server.succeed(f"systemctl show {service} | grep -Fx {quote(property)}")
-    server.succeed(f"journalctl -u {service} --grep 'This data directory contains device state.'")
+    server.succeed(f"journalctl -u {service} --grep 'This data directory is a device; use a separate data directory for a relay'")
     server.succeed("test ! -e /var/lib/pepino/relay.json")
   '';
 }

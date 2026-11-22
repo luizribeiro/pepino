@@ -52,10 +52,9 @@ pub async fn init_relay(
         ".node-init",
     ] {
         if exists(&directory.join(name))? {
-            return Err(role_error(
-                directory,
-                "This data directory is a device; use a separate data directory for a relay.",
-            ));
+            return Err(AppError::DeviceDirectory {
+                directory: directory.display().to_string(),
+            });
         }
     }
     let keys = if exists(key_path)? {
@@ -136,10 +135,19 @@ async fn relay_initialization_excludes_device_state_in_both_directions() {
     App::request_device(root, OpenOptions::default())
         .await
         .unwrap();
-    assert!(matches!(
-        init_relay(root, &root.join("credentials.cbor"), OpenOptions::default()).await,
-        Err(AppError::PermissionDenied { .. })
-    ));
+    let Err(refused) =
+        init_relay(root, &root.join("credentials.cbor"), OpenOptions::default()).await
+    else {
+        panic!("a device directory became a relay");
+    };
+    assert_eq!(refused.kind(), crate::AppErrorKind::DeviceDirectory);
+    assert_eq!(
+        refused.to_string(),
+        format!(
+            "This data directory is a device; use a separate data directory for a relay: {}",
+            root.display()
+        )
+    );
     assert!(!root.join(RELAY_MARKER).exists());
 }
 

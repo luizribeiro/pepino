@@ -85,7 +85,7 @@ assert fullDarwin.launchd.daemons.pepino-node.serviceConfig.UserName == "pepino-
 assert !(fullDarwin.launchd.daemons.pepino-node.serviceConfig ? StartInterval);
 assert fullDarwin.launchd.agents.pepino.serviceConfig.StartInterval == 5;
 assert fullDarwin.launchd.daemons.pepino-node.serviceConfig.KeepAlive.SuccessfulExit == false;
-assert lib.hasInfix ''if [ "$status" -eq 5 ]; then exit 0; fi''
+assert lib.hasInfix ''if [ "$status" -eq 8 ]; then exit 0; fi''
   (builtins.elemAt fullDarwin.launchd.daemons.pepino-node.serviceConfig.ProgramArguments 2);
 assert lib.hasInfix (builtins.unsafeDiscardStringContext "${package}/bin/ppn --config ${fullDarwin.services.pepino.configFile} relay init")
   (builtins.elemAt fullDarwin.launchd.daemons.pepino-node.serviceConfig.ProgramArguments 2);
