@@ -1,14 +1,17 @@
 use pepino_core::BoardId;
 
 use crate::{
-    App, AppError, LocalState,
+    App, AppError, BoardDeparture, LocalState,
     app::{lock, store_error, worker},
 };
 
 impl LocalState {
     pub fn check_can_forget(&self, board: BoardId) -> Result<(), AppError> {
         self.check_invitable(board)?;
-        if !self.board_departure_confirmed(board) {
+        // An accepted voluntary leave can reach this device before its transport ejection.
+        if self.board_departure(board) != Some(BoardDeparture::Left)
+            && !self.board_departure_confirmed(board)
+        {
             return Err(AppError::PermissionDenied {
                 path: "board".into(),
                 reason: "leave the board before forgetting its local history".into(),

@@ -106,6 +106,8 @@ the departure when it is next online; until then `ppn board ls` shows
 with one other manager needs `--i-understand-mutual-removal-risk` too.
 
 After you have left or been removed, the tasks stay readable on each device.
+For a voluntary leave, `left` means the manager’s acceptance reached that
+device and its local copy can be forgotten.
 To delete them, stop the daemon and forget the board, on every device:
 
 ```sh

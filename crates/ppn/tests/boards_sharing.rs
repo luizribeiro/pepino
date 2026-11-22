@@ -849,6 +849,55 @@ fn a_reader_links_a_device_and_both_follow_person_roles_and_departure() {
 }
 
 #[test]
+fn a_readmitted_member_can_forget_after_leaving() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = dir.path().file_name().unwrap().to_str().unwrap();
+    let owner = host(network, "Ada", "Laptop", "Owner private");
+    let guest = host(network, "Ben", "Phone", "Guest private");
+    owner.run(&["board", "new", "House"]);
+    join(&owner, &guest, "write");
+    owner.run(&["board", "remove", "Ben", "--board", "House", "--yes"]);
+    until(
+        || board(&guest, "House"),
+        |board| board["membership"] == "removed",
+        WAIT,
+    );
+    until(
+        || guest.output(&["board", "forget", "House", "--json"]),
+        |output| output.status.code() == Some(1),
+        WAIT,
+    );
+    guest.stop();
+    assert_eq!(
+        guest.json(&["board", "forget", "House", "--yes"])["forgotten"],
+        true
+    );
+    guest.start();
+    join(&owner, &guest, "read");
+    guest.run(&["board", "leave", "--board", "House", "--yes"]);
+    until(
+        || board(&guest, "House"),
+        |board| board["membership"] == "left",
+        WAIT,
+    );
+    guest.stop();
+    until(
+        || member(&owner, "Ben"),
+        |person| person["devices"][0]["membership"] == "removed",
+        WAIT,
+    );
+    guest.start();
+    assert_eq!(board(&guest, "House")["membership"], "left");
+    let confirmation = guest.output(&["board", "forget", "House", "--json"]);
+    common::task_error(confirmation, 1, "confirmation_required");
+    guest.stop();
+    assert_eq!(
+        guest.json(&["board", "forget", "House", "--yes"])["forgotten"],
+        true
+    );
+}
+
+#[test]
 fn the_original_inviter_can_leave_after_promoting_a_successor() {
     let dir = tempfile::tempdir().unwrap();
     let network = dir.path().file_name().unwrap().to_str().unwrap();
