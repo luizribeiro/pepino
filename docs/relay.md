@@ -79,12 +79,13 @@ ppn board relay rm NODE_ID --board Greenhouse --yes
 ```
 
 A relay keeps a board for as long as any trusted device requests it. A
-removal ends the request of the device that sends it, so send it from the
-device that handed the board over. When the last request ends, the relay
-restarts its node and deletes the stored ciphertext for that board before
-starting replication again. The requesting device may show `removal pending
-restart` before the final `removed` receipt. A device whose removal leaves
-another device's request in place also sees `removed`.
+removal ends the request of the device that sends it. When the last request
+ends, the relay restarts its node and deletes the stored ciphertext for that
+board before starting replication again. The requesting device may show
+`removal pending restart` before the final `removed` receipt. While another
+device still requests the board, the device shows `removed for this device;
+the relay still carries it for another device` (`still_carried` in JSON).
+Repeat the removal on that device, or drop the board on the relay.
 `ppn status` on the relay reports per-device board counts, stored
 replication bytes, peers seen, and rejected instructions. The board limit
 applies to new admissions. Lowering it leaves existing copies available.
@@ -110,7 +111,7 @@ only meaningful on this relay and reveals nothing about the board ID.
 `ppn relay drop HANDLE` ends every request for one board and deletes its
 stored copy. `ppn relay drop --from NODE_ID` ends the requests of one device
 and deletes the boards that no other device requested. The relay restarts
-its node to do so.
+its node only when it has a copy to delete.
 
 The board limit is shared by all trusted devices. Any one of them can use
 the whole allowance. Removing a node ID from `trusted_devices` stops further
