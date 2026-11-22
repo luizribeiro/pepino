@@ -206,3 +206,27 @@ impl Render for List {
         ])
     }
 }
+
+#[cfg(test)]
+#[test]
+fn a_copy_kept_for_another_device_is_listed_as_such() {
+    let relay = DeviceId::from_bytes([31; 32]);
+    let entry = Entry::new(
+        relay,
+        &BoardRelay {
+            revision: pepino_node::RelayRevision {
+                sequence: 1_795_300_000_000,
+                writer: DeviceId::from_bytes([74; 32]),
+            },
+            state: pepino_app::RelayState::StillCarried,
+            carry: false,
+            relay_url: None,
+            reason: None,
+        },
+    );
+    assert_eq!(
+        entry.human(),
+        format!("{relay}  removed for this device; the relay still carries it for another device")
+    );
+    assert_eq!(json!(entry)["state"], "still_carried");
+}

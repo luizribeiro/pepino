@@ -18,6 +18,7 @@ pub enum RelayState {
     Carrying,
     RemovalPendingRestart,
     Refused,
+    StillCarried,
     Removed,
 }
 
@@ -29,6 +30,9 @@ impl std::fmt::Display for RelayState {
             Self::Carrying => "carrying",
             Self::Refused => "refused",
             Self::RemovalPendingRestart => "removal pending restart",
+            Self::StillCarried => {
+                "removed for this device; the relay still carries it for another device"
+            }
             Self::Removed => "removed",
         })
     }
@@ -96,6 +100,7 @@ impl BoardRelay {
                 (RelayState::RemovalPendingRestart, None)
             }
             Some(RelayAnswer::Removed) if !self.carry => (RelayState::Removed, None),
+            Some(RelayAnswer::StillCarried) if !self.carry => (RelayState::StillCarried, None),
             Some(RelayAnswer::NotTrusted) => (
                 RelayState::Refused,
                 Some("device is not trusted by the relay"),
@@ -360,6 +365,43 @@ fn a_request_stamped_ahead_of_the_relay_clock_is_refused_with_the_cause() {
         Some("clock too far ahead of the relay")
     );
     assert!(!request.pending());
+}
+
+#[cfg(test)]
+#[test]
+fn a_removal_that_leaves_the_board_with_another_requester_is_not_shown_as_removed() {
+    let tablet = DeviceId::from_bytes([74; 32]);
+    let request = |carry| BoardRelay {
+        revision: RelayRevision {
+            sequence: 1_795_300_000_000,
+            writer: tablet,
+        },
+        state: RelayState::Requested,
+        carry,
+        relay_url: Some("https://relay.example/".into()),
+        reason: None,
+    };
+    let mut removal = request(false);
+    removal.record(Some(RelayAnswer::StillCarried));
+    assert_eq!(removal.state, RelayState::StillCarried);
+    assert_eq!(removal.reason, None);
+    assert!(!removal.pending());
+    assert_eq!(removal.copy(tablet), RelayCopy::Kept);
+    assert_eq!(
+        removal.state.to_string(),
+        "removed for this device; the relay still carries it for another device"
+    );
+    assert_eq!(
+        serde_json::to_value(removal.state).unwrap(),
+        "still_carried"
+    );
+    removal.record(Some(RelayAnswer::Removed));
+    assert_eq!(removal.state, RelayState::Removed);
+    assert_eq!(removal.copy(tablet), RelayCopy::Absent);
+
+    let mut addition = request(true);
+    addition.record(Some(RelayAnswer::StillCarried));
+    assert_eq!(addition, request(true));
 }
 
 #[cfg(test)]
