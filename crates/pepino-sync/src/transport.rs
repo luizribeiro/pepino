@@ -64,6 +64,14 @@ pub trait TransportBoard: Send + Sync + 'static {
         async { Ok(BTreeMap::new()) }
     }
 
+    fn permits_reenrollment(
+        &self,
+        _device: DeviceId,
+        _invitation: Option<EventId>,
+    ) -> impl Future<Output = Result<bool, Error>> + Send {
+        async { Ok(true) }
+    }
+
     fn apply_device_change(
         &self,
         _change: pepino_app::DeviceMembershipChange,
@@ -202,6 +210,14 @@ impl TransportBoard for BoardHandle {
                 _ => None,
             })
             .collect())
+    }
+
+    async fn permits_reenrollment(
+        &self,
+        device: DeviceId,
+        invitation: Option<EventId>,
+    ) -> Result<bool, Error> {
+        BoardHandle::permits_reenrollment(self, device, invitation).await
     }
 
     async fn apply_device_change(

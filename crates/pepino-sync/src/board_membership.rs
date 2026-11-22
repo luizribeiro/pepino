@@ -272,6 +272,23 @@ impl Repairs {
                     changes_own_device(change, local.device_id)
                         || authorized.is_some_and(|record| changes_own_device(change, record.actor))
                 });
+                let invitation = authorized
+                    .and_then(|record| match record.change.action {
+                        MembershipAction::Invited(_) => Some(record.operation),
+                        MembershipAction::RoleChanged(_) => record.change.incarnation,
+                        MembershipAction::Removed | MembershipAction::Left => None,
+                    })
+                    .and_then(|invitation| {
+                        local
+                            .membership_history(board.id)
+                            .find(|record| {
+                                record.operation == invitation
+                                    && record.refusal.is_none()
+                                    && !record.relayed
+                                    && members.get(&record.actor) == Some(&Role::Manage)
+                            })
+                            .map(|record| record.operation)
+                    });
                 let mut applied_to_author = false;
                 for change in changes {
                     let current = handle.roles().await?;
@@ -279,6 +296,13 @@ impl Repairs {
                         .is_some_and(|record| current.get(&record.actor) != Some(&Role::Manage))
                     {
                         break;
+                    }
+                    if let DeviceMembershipChange::Enroll(info, _) = &change
+                        && !handle
+                            .permits_reenrollment(info.device_id()?, invitation)
+                            .await?
+                    {
+                        continue;
                     }
                     let changes_author =
                         authorized.is_some_and(|record| changes_own_device(&change, record.actor));

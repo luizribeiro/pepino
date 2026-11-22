@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 use p2panda::{
     AccessLevel, Hash,
@@ -343,6 +346,66 @@ impl BoardHandle {
                     .then(|| Role::from_level(access.level))
             },
         )))
+    }
+
+    /// A reconcile invitation must have observed every transport removal of the device.
+    pub async fn permits_reenrollment(
+        &self,
+        device: DeviceId,
+        invitation: Option<EventId>,
+    ) -> Result<bool, Error> {
+        use p2panda_auth::group::{GroupAction, GroupMember};
+
+        let store = SqliteStore::from_pool(self.membership_pool.clone());
+        let spaces = SqliteSpacesStore::<Extensions>::new(store.clone());
+        let space = Hash::from_bytes(*self.id().as_bytes());
+        let Some(state): Option<SpacesStoreState<()>> = spaces
+            .get_space_state(&space)
+            .await
+            .map_err(Error::storage)?
+        else {
+            return Ok(false);
+        };
+        let device = MemberId::from_bytes(device.as_bytes()).map_err(Error::storage)?;
+        if !state.removed.contains(&device) {
+            return Ok(true);
+        }
+        let Some(invitation) = invitation else {
+            return Ok(false);
+        };
+        let id = Hash::from_bytes(*invitation.as_bytes());
+        let Some(op) = <SqliteStore as OperationStore<Operation, Hash>>::get_operation(&store, &id)
+            .await
+            .map_err(Error::storage)?
+        else {
+            return Ok(false);
+        };
+        let ExtensionsVariantV1::Space(extension) = &op.header.extensions.variant else {
+            return Ok(false);
+        };
+        let SpacesHeaderArgs::Application {
+            space_id, proof, ..
+        } = &extension.args
+        else {
+            return Ok(false);
+        };
+        if *space_id != space {
+            return Ok(false);
+        }
+        let operations = &state.groups_y.inner.operations;
+        let mut pending = proof.to_vec();
+        let mut covered = BTreeSet::new();
+        while let Some(id) = pending.pop() {
+            if covered.insert(id)
+                && let Some(op) = operations.get(&id)
+            {
+                pending.extend(op.dependencies.iter().copied());
+            }
+        }
+        Ok(operations.values().filter(|op| {
+            op.group_id == state.group_id
+                && matches!(op.action, GroupAction::Remove { member: GroupMember::Individual(id) } if id == device)
+        }).all(|op| covered.contains(&op.operation_id)))
     }
 
     /// Check whether a device was admitted by the named manager in this board's history.

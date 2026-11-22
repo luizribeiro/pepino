@@ -87,6 +87,19 @@ async fn the_first_publishes_after_removal_use_rotated_keys() {
     assert_ne!(old, secret_id(&a_settings.database_path, first).await);
     assert_ne!(old, secret_id(&b_settings.database_path, second).await);
     let removed = c.device_id();
+    assert!(!alice.permits_reenrollment(removed, None).await.unwrap());
+    assert!(
+        !alice
+            .permits_reenrollment(removed, Some(before))
+            .await
+            .unwrap()
+    );
+    assert!(
+        alice
+            .permits_reenrollment(removed, Some(first))
+            .await
+            .unwrap()
+    );
     assert!(alice.admitted_by(removed, a.device_id()).await.unwrap());
     assert!(ben.admitted_by(removed, a.device_id()).await.unwrap());
     assert!(!ben.admitted_by(removed, b.device_id()).await.unwrap());

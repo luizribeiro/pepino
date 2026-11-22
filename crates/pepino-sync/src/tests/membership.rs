@@ -340,3 +340,104 @@ async fn a_concurrent_enrollment_is_rechecked_and_repaired_at_the_requested_role
         [(board, guest.device_id, Some(Role::Write))]
     );
 }
+
+#[tokio::test]
+async fn offline_removal_blocks_enrollment_until_a_fresh_invitation() {
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([29; 32]);
+    let (app, invitee) = members(dir.path(), board).await;
+    let owner = app.local_state().device_id;
+    let guest = invitee.local_state().device_id;
+    let person = invitee.local_state().own_person_key();
+    let original = EventId::from_bytes([31; 32]);
+    let removal = EventId::from_bytes([32; 32]);
+    let fresh = EventId::from_bytes([33; 32]);
+    let record = |operation, action, parents| MembershipRecord {
+        operation,
+        actor: owner,
+        change: MembershipChange {
+            person,
+            action,
+            at: std::time::UNIX_EPOCH.into(),
+            revision: 1,
+            incarnation: None,
+            parents,
+        },
+        refusal: None,
+        applied: false,
+        relayed: false,
+    };
+    app.record_membership(
+        board,
+        record(
+            original,
+            MembershipAction::Invited(BoardRole::Read),
+            Default::default(),
+        ),
+    )
+    .await
+    .unwrap();
+    let stale = app.fresh_local_state().await.unwrap();
+
+    let node = Arc::new(Stub::new(owner));
+    let (changes, _) = watch::channel(Default::default());
+    let (_stop, stopping) = watch::channel(());
+    let (_close, closing) = watch::channel(());
+    let (_nudge, nudged) = watch::channel(0);
+    let mut workers = BoardWorkers::new(
+        node.clone(),
+        app.clone(),
+        changes,
+        (stopping, closing),
+        nudged,
+        Duration::from_secs(1),
+        [0; 16],
+    );
+    workers.open_missing(&stale).await.unwrap();
+    node.set_joined_members(board, [(owner, Role::Manage), (guest, Role::Read)].into());
+    assert!(node.status().connected_peers.is_empty());
+
+    let mut repairs = Repairs::default();
+    app.mark_membership_result(board, original, Ok(()))
+        .await
+        .unwrap();
+    app.record_membership(
+        board,
+        record(removal, MembershipAction::Removed, [original].into()),
+    )
+    .await
+    .unwrap();
+    let removed = app.fresh_local_state().await.unwrap();
+    repairs
+        .reconcile(&workers, &removed, &node.status())
+        .await
+        .unwrap();
+    assert_eq!(node.membership_changes(), [(board, guest, None)]);
+    repairs
+        .reconcile(&workers, &stale, &node.status())
+        .await
+        .unwrap();
+    assert_eq!(node.membership_changes(), [(board, guest, None)]);
+
+    app.record_membership(
+        board,
+        record(
+            fresh,
+            MembershipAction::Invited(BoardRole::Read),
+            [removal].into(),
+        ),
+    )
+    .await
+    .unwrap();
+    node.set_readmission_invite(board, guest, fresh);
+    let invited = app.fresh_local_state().await.unwrap();
+    repairs
+        .reconcile(&workers, &invited, &node.status())
+        .await
+        .unwrap();
+    assert_eq!(
+        node.membership_changes(),
+        [(board, guest, None), (board, guest, Some(Role::Read))]
+    );
+    workers.abort().await;
+}

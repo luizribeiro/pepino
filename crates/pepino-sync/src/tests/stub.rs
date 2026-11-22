@@ -26,6 +26,7 @@ struct Publisher {
     role_queries: Mutex<Option<watch::Sender<usize>>>,
     membership: Mutex<BTreeMap<BoardId, BTreeMap<DeviceId, Role>>>,
     membership_changes: Mutex<Vec<(BoardId, DeviceId, Option<Role>)>>,
+    readmission_invites: Mutex<BTreeMap<(BoardId, DeviceId), Option<EventId>>>,
 }
 
 #[derive(Clone, Copy)]
@@ -143,6 +144,14 @@ impl Stub {
         if let Some(status) = self.status.lock().unwrap().boards.get_mut(&board) {
             status.joined = true;
         }
+    }
+
+    pub(super) fn set_readmission_invite(&self, board: BoardId, device: DeviceId, invite: EventId) {
+        self.publisher
+            .readmission_invites
+            .lock()
+            .unwrap()
+            .insert((board, device), Some(invite));
     }
 
     pub(super) fn membership_changes(&self) -> Vec<(BoardId, DeviceId, Option<Role>)> {
@@ -322,6 +331,20 @@ impl TransportBoard for Board {
             .is_ok_and(|roles| roles.get(&device) == Some(&Role::Manage))
     }
 
+    async fn permits_reenrollment(
+        &self,
+        device: DeviceId,
+        invitation: Option<EventId>,
+    ) -> Result<bool, Error> {
+        Ok(self
+            .publisher
+            .readmission_invites
+            .lock()
+            .unwrap()
+            .get(&(self.id, device))
+            .is_none_or(|&expected| expected.is_some() && expected == invitation))
+    }
+
     async fn apply_device_change(&self, change: DeviceMembershipChange) -> Result<(), Error> {
         let mut boards = self.publisher.membership.lock().unwrap();
         let members = boards.entry(self.id).or_default();
@@ -340,6 +363,11 @@ impl TransportBoard for Board {
             members.insert(device, role);
         } else {
             members.remove(&device);
+            self.publisher
+                .readmission_invites
+                .lock()
+                .unwrap()
+                .insert((self.id, device), None);
         }
         self.publisher
             .membership_changes
