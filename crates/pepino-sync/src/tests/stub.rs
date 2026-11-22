@@ -333,16 +333,15 @@ impl TransportBoard for Board {
 
     async fn permits_reenrollment(
         &self,
-        device: DeviceId,
+        devices: &BTreeSet<DeviceId>,
         invitation: Option<EventId>,
     ) -> Result<bool, Error> {
-        Ok(self
-            .publisher
-            .readmission_invites
-            .lock()
-            .unwrap()
-            .get(&(self.id, device))
-            .is_none_or(|&expected| expected.is_some() && expected == invitation))
+        let invites = self.publisher.readmission_invites.lock().unwrap();
+        Ok(devices.iter().all(|device| {
+            invites
+                .get(&(self.id, *device))
+                .is_none_or(|&expected| expected.is_some() && expected == invitation)
+        }))
     }
 
     async fn apply_device_change(&self, change: DeviceMembershipChange) -> Result<(), Error> {

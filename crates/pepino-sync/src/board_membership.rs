@@ -146,8 +146,10 @@ impl Repairs {
                     }
                 }
 
+                let revoked: BTreeSet<_> = person.confirmed_revoked_devices().collect();
                 let mut devices = local.membership_devices(board.id, person.key());
-                devices.extend(person.confirmed_revoked_devices());
+                let readmission_devices = &devices - &revoked;
+                devices.extend(revoked);
                 let devices = &devices - &conflicts;
                 let members = handle.roles().await?;
                 let record = local.latest_membership(board.id, person.key());
@@ -263,9 +265,9 @@ impl Repairs {
                     {
                         break;
                     }
-                    if let DeviceMembershipChange::Enroll(info, _) = &change
+                    if matches!(change, DeviceMembershipChange::Enroll(..))
                         && !handle
-                            .permits_reenrollment(info.device_id()?, invitation)
+                            .permits_reenrollment(&readmission_devices, invitation)
                             .await?
                     {
                         continue;

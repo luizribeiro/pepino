@@ -87,16 +87,21 @@ async fn the_first_publishes_after_removal_use_rotated_keys() {
     assert_ne!(old, secret_id(&a_settings.database_path, first).await);
     assert_ne!(old, secret_id(&b_settings.database_path, second).await);
     let removed = c.device_id();
-    assert!(!alice.permits_reenrollment(removed, None).await.unwrap());
     assert!(
         !alice
-            .permits_reenrollment(removed, Some(before))
+            .permits_reenrollment(&[removed].into(), None)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !alice
+            .permits_reenrollment(&[removed].into(), Some(before))
             .await
             .unwrap()
     );
     assert!(
         alice
-            .permits_reenrollment(removed, Some(first))
+            .permits_reenrollment(&[removed].into(), Some(first))
             .await
             .unwrap()
     );
@@ -423,4 +428,116 @@ async fn remaining_peers_block_a_device_removed_while_offline() {
     c.shutdown().await.unwrap();
     b.shutdown().await.unwrap();
     a.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn concurrent_removals_are_visible_to_existing_and_late_managers() {
+    let dir = fixture_dir();
+    let network = network(dir.path());
+    let a_settings = settings(&network, dir.path().join("alice"));
+    let b_settings = settings(&network, dir.path().join("ben"));
+    let a = start(&a_settings).await;
+    let b = start(&b_settings).await;
+    let alice = a.create_board().await.unwrap();
+    let id = alice.id();
+    let mut ben = enroll(&alice, &b, Role::Manage).await;
+    let chloe = start(&settings(&network, dir.path().join("chloe"))).await;
+    let dana = start(&settings(&network, dir.path().join("dana"))).await;
+    let removed = [chloe.device_id(), dana.device_id()];
+    for device in [&chloe, &dana] {
+        alice
+            .add_member(&device.member_info().await.unwrap(), Role::Write)
+            .await
+            .unwrap();
+    }
+    let before = alice.publish(PLAN.to_vec()).await.unwrap();
+    expect(&mut ben.events().unwrap(), &[(before, a.device_id(), PLAN)]).await;
+
+    for device in [chloe, dana, a, b] {
+        device.shutdown().await.unwrap();
+    }
+    let isolated = |settings: &pepino_node::NodeSettings| {
+        let mut isolated = settings.clone();
+        isolated.mdns = pepino_node::MdnsMode::Disabled;
+        isolated.network_name = format!("{network}-{}", settings.credentials.device_id());
+        isolated
+    };
+    let a = start(&isolated(&a_settings)).await;
+    let b = start(&isolated(&b_settings)).await;
+    let alice = a.open_board(id).await.unwrap();
+    let ben = b.open_board(id).await.unwrap();
+    alice.remove_member(removed[0], false).await.unwrap();
+    ben.remove_member(removed[1], false).await.unwrap();
+    let between = alice.publish(REVIEW.to_vec()).await.unwrap();
+    assert!(
+        alice
+            .permits_reenrollment(&removed.into(), Some(between))
+            .await
+            .unwrap()
+    );
+    for device in [a, b] {
+        device.shutdown().await.unwrap();
+    }
+
+    let a = start(&a_settings).await;
+    let b = start(&b_settings).await;
+    let alice = a.open_board(id).await.unwrap();
+    let ben = b.open_board(id).await.unwrap();
+    let both_removed = |states: &pepino_node::MemberStates| {
+        removed
+            .iter()
+            .all(|device| states.get(device) == Some(&MemberState::Removed))
+    };
+    until(
+        async || alice.member_states().await.unwrap(),
+        both_removed,
+        WAIT,
+    )
+    .await;
+    until(
+        async || ben.member_states().await.unwrap(),
+        both_removed,
+        WAIT,
+    )
+    .await;
+    let late = start(&settings(&network, dir.path().join("late-manager"))).await;
+    let late_board = enroll(&alice, &late, Role::Manage).await;
+    let fresh = alice.publish(DONE.to_vec()).await.unwrap();
+    for replica in [&ben, &late_board] {
+        until(
+            async || replica.member_states().await.unwrap(),
+            both_removed,
+            WAIT,
+        )
+        .await;
+        for device in removed {
+            assert!(
+                !replica
+                    .permits_reenrollment(&[device].into(), None)
+                    .await
+                    .unwrap()
+            );
+        }
+        assert!(
+            !replica
+                .permits_reenrollment(&removed.into(), Some(between))
+                .await
+                .unwrap()
+        );
+        until(
+            async || {
+                replica
+                    .permits_reenrollment(&removed.into(), Some(fresh))
+                    .await
+                    .unwrap()
+            },
+            |permitted| *permitted,
+            WAIT,
+        )
+        .await;
+    }
+    for device in [late, b, a] {
+        device.shutdown().await.unwrap();
+    }
 }

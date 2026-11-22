@@ -348,10 +348,10 @@ impl BoardHandle {
         )))
     }
 
-    /// A reconcile invitation must have observed every transport removal of the device.
+    /// A reconcile invitation must have observed every removal of the person’s non-revoked devices.
     pub async fn permits_reenrollment(
         &self,
-        device: DeviceId,
+        devices: &BTreeSet<DeviceId>,
         invitation: Option<EventId>,
     ) -> Result<bool, Error> {
         use p2panda_auth::group::{GroupAction, GroupMember};
@@ -366,8 +366,12 @@ impl BoardHandle {
         else {
             return Ok(false);
         };
-        let device = MemberId::from_bytes(device.as_bytes()).map_err(Error::storage)?;
-        if !state.removed.contains(&device) {
+        let devices = devices
+            .iter()
+            .map(|device| MemberId::from_bytes(device.as_bytes()).map_err(Error::storage))
+            .collect::<Result<std::collections::HashSet<_>, _>>()?;
+        let removed = &state.removed & &devices;
+        if removed.is_empty() {
             return Ok(true);
         }
         let Some(invitation) = invitation else {
@@ -404,7 +408,7 @@ impl BoardHandle {
         }
         Ok(operations.values().filter(|op| {
             op.group_id == state.group_id
-                && matches!(op.action, GroupAction::Remove { member: GroupMember::Individual(id) } if id == device)
+                && matches!(op.action, GroupAction::Remove { member: GroupMember::Individual(id) } if removed.contains(&id))
         }).all(|op| covered.contains(&op.operation_id)))
     }
 

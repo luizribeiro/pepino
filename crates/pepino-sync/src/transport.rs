@@ -66,11 +66,9 @@ pub trait TransportBoard: Send + Sync + 'static {
 
     fn permits_reenrollment(
         &self,
-        _device: DeviceId,
-        _invitation: Option<EventId>,
-    ) -> impl Future<Output = Result<bool, Error>> + Send {
-        async { Ok(true) }
-    }
+        devices: &BTreeSet<DeviceId>,
+        invitation: Option<EventId>,
+    ) -> impl Future<Output = Result<bool, Error>> + Send;
 
     fn apply_device_change(
         &self,
@@ -214,10 +212,10 @@ impl TransportBoard for BoardHandle {
 
     async fn permits_reenrollment(
         &self,
-        device: DeviceId,
+        devices: &BTreeSet<DeviceId>,
         invitation: Option<EventId>,
     ) -> Result<bool, Error> {
-        BoardHandle::permits_reenrollment(self, device, invitation).await
+        BoardHandle::permits_reenrollment(self, devices, invitation).await
     }
 
     async fn apply_device_change(

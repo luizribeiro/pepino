@@ -4,6 +4,7 @@ mod membership;
 mod network;
 mod property;
 mod publish;
+mod readmission;
 mod simulation;
 mod stub;
 mod wire;
