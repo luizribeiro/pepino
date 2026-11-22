@@ -20,6 +20,7 @@ in
 {
   package = craneLib.buildPackage (shared // {
     doCheck = false;
+    meta.mainProgram = "ppn";
     passthru = { inherit cargoArtifacts; };
   });
   checks = {

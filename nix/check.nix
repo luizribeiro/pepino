@@ -44,6 +44,7 @@ let
   fullDarwin = darwinWithAccount fullDarwinSettings;
 
 in
+assert package.meta.mainProgram == "ppn";
 assert system != "x86_64-linux" || import ./check-nixos.nix { inherit self pkgs fixtures; };
 assert verify linux && verify darwinWithAccount;
 assert lib.all
