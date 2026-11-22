@@ -164,13 +164,17 @@ impl App {
         };
         let migrate_views =
             !app.local.saved_views.is_empty() && app.local.check_device_write().is_ok();
-        if roster_keys.is_some() || migrate_views {
+        let settle_views = !app.local.catalog.migrated_views.is_empty();
+        if roster_keys.is_some() || migrate_views || settle_views {
             let mut local = app.local.clone();
             if let Some(keys) = roster_keys {
                 local.reconcile_identity(local.device_id, &keys, None)?;
             }
             if migrate_views {
                 local.migrate_views(now);
+            }
+            if settle_views {
+                local.settle_view_migrations(&[], now);
             }
             if local != app.local {
                 app.persist_local(local, guard).await?;

@@ -51,7 +51,7 @@ impl Preference {
             && crate::Hlc::from(self.hlc).utc().is_some()
     }
 
-    fn valid(&self, key: &str, now: u64) -> bool {
+    pub(crate) fn valid(&self, key: &str, now: u64) -> bool {
         let value = self.value.as_deref();
         validate(key, value).is_ok()
             && self.acceptable_clock(now)

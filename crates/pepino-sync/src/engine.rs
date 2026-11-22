@@ -114,7 +114,8 @@ impl<T: Transport> SyncEngine<T> {
             lock_timeout: settings.lock_timeout,
             ..Default::default()
         };
-        let app = Arc::new(App::open_with_options(data_dir, 0, options).await?);
+        let app =
+            Arc::new(App::open_with_options(data_dir, pepino_app::wall_time_ms(), options).await?);
         let local = app.local_state().device_id;
         if local != node.device_id() {
             return Err(Error::DeviceMismatch {

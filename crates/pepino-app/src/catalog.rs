@@ -22,6 +22,8 @@ pub(crate) struct CatalogState {
     pub(crate) preferences: crate::preferences::Preferences,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) written_views: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "crate::views::SavedViews::is_empty")]
+    pub(super) migrated_views: crate::views::SavedViews,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) shared: BTreeMap<BoardId, crate::SharedAccess>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -168,7 +170,7 @@ impl LocalState {
 
     pub fn encode_catalog(&self, member: &MemberInfo) -> Result<Vec<u8>, AppError> {
         let mut preferences = self.catalog.preferences.clone();
-        preferences.retain_valid(unix_ms());
+        preferences.retain_valid(crate::wall_time_ms());
         preferences.retain_writers(|writer| self.knows_roster_device(writer));
         let announcement = Announcement {
             v: crate::PROTOCOL_VERSION,
@@ -327,7 +329,9 @@ impl LocalState {
         }
         let mut preferences = announcement.preferences;
         preferences.retain_writers(|writer| self.knows_roster_device(writer));
+        let echoed = self.migration_echoes(&preferences, now);
         self.catalog.preferences.merge(preferences, now);
+        self.settle_view_migrations(&echoed, now);
         self.catalog
             .written_views
             .retain(|key| self.catalog.preferences.get(key).is_some());
@@ -478,12 +482,6 @@ impl App {
         })
         .await?
     }
-}
-
-fn unix_ms() -> u64 {
-    std::time::UNIX_EPOCH.elapsed().map_or(0, |elapsed| {
-        u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-    })
 }
 
 #[cfg(test)]
@@ -805,4 +803,54 @@ fn bootstrap_accepts_relayed_preferences_only_from_known_writers() {
         local.catalog.preferences.get("view/known").unwrap().writer,
         tablet
     );
+}
+
+#[cfg(test)]
+#[test]
+fn two_devices_recover_both_legacy_filters_after_a_catalog_exchange() {
+    let board = BoardId::from_bytes([76; 32]);
+    let now = 1_800_000_000_000;
+    let mut states: Vec<LocalState> = [
+        (74, 75, "tag:garden", now),
+        (75, 74, "tag:hardware", now + 1),
+    ]
+    .into_iter()
+    .map(|(id, peer, filter, stamp)| {
+        let mut local = LocalState::new(
+            crate::OpenOptions::default().try_into().unwrap(),
+            DeviceId::from_bytes([id; 32]),
+            board,
+        )
+        .unwrap();
+        local
+            .other_devices
+            .insert(DeviceId::from_bytes([peer; 32]), "Other device".into());
+        local.saved_views.insert("weekend".into(), filter.into());
+        local
+            .saved_views
+            .insert("identical".into(), "is:open".into());
+        local.migrate_views(stamp);
+        local
+    })
+    .collect();
+    states[1].identity_id = states[0].identity_id;
+    for (receiver, sender) in [(0, 1), (1, 0), (0, 1), (1, 0)] {
+        let signer = states[sender].device_id;
+        let announcement =
+            preference_announcement(&states[sender], states[sender].catalog.preferences.clone());
+        states[receiver]
+            .merge_catalog(board, signer, announcement, now + 2)
+            .unwrap();
+    }
+    for local in &states {
+        let views = local.view_filters();
+        assert_eq!(views.get("weekend"), Some("tag:hardware"));
+        assert!(
+            views
+                .iter()
+                .any(|(name, filter)| name.starts_with("weekend-from-") && filter == "tag:garden")
+        );
+        assert!(local.catalog.migrated_views.is_empty());
+        assert!(!local.catalog.written_views.contains("view/identical"));
+    }
 }

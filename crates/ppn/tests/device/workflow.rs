@@ -574,3 +574,62 @@ fn assert_view_writer(view: &serde_json::Value, host: &Host, name: &str) {
         chrono::DateTime::parse_from_rfc3339(view["updated_at"].as_str().unwrap()).unwrap();
     assert_eq!(updated.offset().local_minus_utc(), 0);
 }
+
+#[test]
+fn legacy_view_clashes_are_recovered_after_two_daemons_reconnect() {
+    let (_dir, network) = network();
+    let laptop = Host::owner(&network);
+    let tablet = Host::new(&network);
+    join(&tablet, &laptop.add(&tablet.request("Ferrum"), &[]));
+    laptop.stop();
+    tablet.stop();
+
+    for (host, filter) in [(&laptop, "tag:garden"), (&tablet, "tag:hardware")] {
+        let path = host.data.join("local.json");
+        let mut local: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        local["saved_views"] = serde_json::json!({"weekend":filter,"identical":"is:open"});
+        std::fs::write(path, serde_json::to_vec(&local).unwrap()).unwrap();
+    }
+    assert_eq!(
+        tablet.json(&["view", "show", "weekend"])["view"]["filter"],
+        "tag:hardware"
+    );
+    laptop.start();
+    let state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(laptop.data.join("local.json")).unwrap()).unwrap();
+    let stamp = state["catalog"]["preferences"]["view/weekend"]["hlc"]["wall_ms"]
+        .as_u64()
+        .unwrap();
+    assert!(stamp > 1_700_000_000_000, "{stamp}");
+    tablet.start();
+
+    let (left, right) = until(
+        || (view_list(&laptop), view_list(&tablet)),
+        |(left, right)| left.as_array().unwrap().len() == 3 && right.as_array().unwrap().len() == 3,
+        WAIT,
+    );
+    for rows in [&left, &right] {
+        let rows = rows.as_array().unwrap();
+        let filters: std::collections::BTreeSet<_> = rows
+            .iter()
+            .map(|view| view["filter"].as_str().unwrap())
+            .collect();
+        assert_eq!(filters, ["is:open", "tag:garden", "tag:hardware"].into());
+        let recovered = rows
+            .iter()
+            .find(|view| view["recovered_as"].is_string())
+            .unwrap();
+        assert!(
+            recovered["recovered_as"]
+                .as_str()
+                .unwrap()
+                .starts_with("weekend (from ")
+        );
+        let same = rows
+            .iter()
+            .find(|view| view["name"] == "identical")
+            .unwrap();
+        assert!(same.get("updated_by").is_none());
+    }
+}

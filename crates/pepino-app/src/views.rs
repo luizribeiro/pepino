@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::app::invalid;
 use crate::filter::ViewFilters;
 use crate::list::query_error;
-use crate::preferences::Preference;
+use crate::preferences::{Preference, Preferences};
 use crate::{
     App, AppError, ConflictReference, FilterInput, LocalState, MissingReference, Response,
 };
@@ -132,6 +132,7 @@ impl App {
             now,
         )?;
         local.saved_views.remove(&name);
+        local.catalog.migrated_views.remove(&name);
         self.persist_local(local, guard).await?;
         Ok(Response::ViewSaved {
             view: SavedView::new(name, canonical),
@@ -169,6 +170,7 @@ impl App {
         let mut local = self.local.clone();
         local.write_view(&name, None, now)?;
         local.saved_views.remove(&name);
+        local.catalog.migrated_views.remove(&name);
         self.persist_local(local, guard).await?;
         Ok(Response::ViewDeleted {
             view: SavedView::new(name, filter),
@@ -178,12 +180,7 @@ impl App {
     pub(super) fn list_views(&self) -> Response {
         Response::Views {
             views: self.local.listed_views(),
-            not_imported: self
-                .local
-                .saved_views
-                .iter()
-                .map(|(name, _)| name.into())
-                .collect(),
+            not_imported: self.local.not_imported_views(),
         }
     }
 }
@@ -289,7 +286,70 @@ impl LocalState {
                 recovered_as: None,
             }),
             now,
-        )
+        )?;
+        self.catalog
+            .migrated_views
+            .insert(name.into(), filter.into());
+        Ok(())
+    }
+
+    fn not_imported_views(&self) -> Vec<String> {
+        let mut names: std::collections::BTreeSet<_> =
+            self.saved_views.iter().map(|(name, _)| name).collect();
+        names.extend(
+            self.catalog
+                .migrated_views
+                .iter()
+                .filter_map(|(name, filter)| {
+                    let entry = self.catalog.preferences.get(&view_key(name))?;
+                    (entry.writer != self.device_id
+                        && decode_view(entry).is_none_or(|view| view.filter != filter))
+                    .then_some(name)
+                }),
+        );
+        names.into_iter().map(str::to_owned).collect()
+    }
+
+    pub(crate) fn migration_echoes(&self, incoming: &Preferences, now: u64) -> Vec<String> {
+        self.catalog
+            .migrated_views
+            .iter()
+            .filter_map(|(name, filter)| {
+                let key = view_key(name);
+                let entry = incoming.get(&key)?;
+                (entry.valid(&key, now)
+                    && decode_view(entry).is_some_and(|value| value.filter == filter))
+                .then(|| name.to_owned())
+            })
+            .collect()
+    }
+
+    pub(crate) fn settle_view_migrations(&mut self, echoed: &[String], now: u64) {
+        if self.check_device_write().is_err() {
+            return;
+        }
+        let pending = std::mem::take(&mut self.catalog.migrated_views);
+        let legacy = self.saved_views.clone();
+        for (name, filter) in pending.iter() {
+            let key = view_key(name);
+            let mut settled = false;
+            if let Some(entry) = self.catalog.preferences.get(&key) {
+                let same = decode_view(entry).is_some_and(|view| view.filter == filter);
+                if same
+                    && (entry.writer != self.device_id || echoed.iter().any(|echo| echo == name))
+                {
+                    self.catalog.written_views.remove(&key);
+                    settled = true;
+                } else if !same && entry.writer != self.device_id {
+                    settled = self.recover_view(name, filter, &legacy, now).is_ok();
+                }
+            }
+            if !settled {
+                self.catalog
+                    .migrated_views
+                    .insert(name.into(), filter.into());
+            }
+        }
     }
 
     fn recover_view(
@@ -550,4 +610,30 @@ mod tests {
             AppErrorKind::InvalidInput
         );
     }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn an_explicit_view_write_settles_the_pending_legacy_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::init(dir.path(), 10).await.unwrap();
+    for name in ["weekend", "repairs"] {
+        app.local
+            .saved_views
+            .insert(name.into(), "tag:garden".into());
+    }
+    app.local.replace(dir.path()).unwrap();
+    let mut app = App::open(dir.path(), 11).await.unwrap();
+    let write = crate::Request::Write(crate::WriteRequest::SaveView {
+        name: "weekend".into(),
+        filter: FilterInput::Text("tag:hardware".into()),
+    });
+    let delete = crate::Request::Write(crate::WriteRequest::DeleteView {
+        name: "repairs".into(),
+        force: false,
+    });
+    assert_eq!(app.local.catalog.migrated_views.iter().count(), 2);
+    app.handle(write, 12).await.unwrap();
+    app.handle(delete, 12).await.unwrap();
+    assert!(app.local.catalog.migrated_views.is_empty());
 }

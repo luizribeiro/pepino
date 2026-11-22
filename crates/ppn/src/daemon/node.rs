@@ -14,7 +14,7 @@ pub async fn settings(config: &Config) -> Result<NodeSettings, CliError> {
         credentials_file: Some(path.to_owned()),
         ..OpenOptions::default()
     };
-    let app = pepino_app::App::open_with_options(data, 0, options).await?;
+    let app = pepino_app::App::open_with_options(data, pepino_app::wall_time_ms(), options).await?;
     let credentials = DeviceCredentials::load(path).map_err(|_| {
         CliError::new(
             ErrorKind::Failure,

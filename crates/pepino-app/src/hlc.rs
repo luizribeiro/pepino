@@ -44,3 +44,9 @@ impl From<Hlc> for pepino_core::Hlc {
         }
     }
 }
+
+pub fn wall_time_ms() -> u64 {
+    std::time::UNIX_EPOCH.elapsed().map_or(0, |elapsed| {
+        u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+    })
+}
