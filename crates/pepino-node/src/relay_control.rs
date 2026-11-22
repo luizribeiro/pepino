@@ -1,4 +1,6 @@
-use futures_util::StreamExt;
+use std::{future::poll_fn, pin::Pin, time::Duration};
+
+use futures_util::Stream;
 use p2panda::{
     Hash, Topic,
     streams::{EphemeralStreamPublisher, EphemeralStreamSubscription},
@@ -9,6 +11,7 @@ use p2panda_encryption::crypto::{
 };
 use pepino_core::{BoardId, DeviceId};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use tokio::time::{Interval, MissedTickBehavior, interval};
 
 use crate::{DeviceCredentials, Error, Node};
 
@@ -123,6 +126,7 @@ pub struct RelayChannel {
     id: DeviceId,
     tx: EphemeralStreamPublisher<Envelope>,
     rx: EphemeralStreamSubscription<Envelope>,
+    repoll: Interval,
 }
 
 pub(crate) struct IncomingInstruction {
@@ -143,17 +147,38 @@ impl Node {
         let id = self.device_id();
         self.worker
             .run(async move {
-                let mut topic = CONTEXT.to_vec();
-                topic.extend_from_slice(relay.as_bytes());
-                let topic = Topic::from(Hash::digest(topic));
-                let (tx, rx) = node.ephemeral_stream(topic).await.map_err(Error::node)?;
-                Ok(RelayChannel { id, tx, rx })
+                node.ephemeral_stream(control_topic(relay))
+                    .await
+                    .map_err(Error::node)
             })
             .await
+            .map(|(tx, rx)| {
+                let mut repoll = interval(Duration::from_millis(100));
+                repoll.set_missed_tick_behavior(MissedTickBehavior::Delay);
+                RelayChannel { id, tx, rx, repoll }
+            })
     }
 }
 
+fn control_topic(relay: DeviceId) -> Topic {
+    let mut topic = CONTEXT.to_vec();
+    topic.extend_from_slice(relay.as_bytes());
+    Topic::from(Hash::digest(topic))
+}
+
 impl RelayChannel {
+    async fn next(&mut self) -> Option<p2panda::streams::EphemeralMessage<Envelope>> {
+        poll_fn(|cx| {
+            let item = Pin::new(&mut self.rx).poll_next(cx);
+            // p2panda 0.8.1 may return Pending without a waker after discarding an item.
+            if item.is_pending() && self.repoll.poll_tick(cx).is_ready() {
+                cx.waker().wake_by_ref();
+            }
+            item
+        })
+        .await
+    }
+
     pub async fn send(
         &self,
         relay: DeviceId,
@@ -194,7 +219,7 @@ impl RelayChannel {
         relay: DeviceId,
         keys: &DeviceCredentials,
     ) -> Option<([u8; 16], RelayAnswer)> {
-        while let Some(message) = self.rx.next().await {
+        while let Some(message) = self.next().await {
             let author = DeviceId::from_bytes(*message.author().as_bytes());
             let body = message.body();
             if author == relay
@@ -208,7 +233,7 @@ impl RelayChannel {
     }
 
     pub(crate) async fn receive_instruction(&mut self) -> Option<IncomingInstruction> {
-        while let Some(message) = self.rx.next().await {
+        while let Some(message) = self.next().await {
             let body = message.body();
             if body.to == self.id && body.direction == Direction::Instruction {
                 return Some(IncomingInstruction {
@@ -260,4 +285,90 @@ fn instruction_encoding_binds_sender_recipient_direction_and_challenge() {
     decoded.challenge[0] ^= 1;
     decoded.direction = Direction::Answer;
     assert_eq!(decoded.open::<RelayInstruction>(device, &relay), None);
+}
+
+#[cfg(test)]
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn receives_valid_instruction_after_junk_on_loopback() {
+    use tokio::{sync::mpsc, time::timeout};
+
+    let dir = tempfile::tempdir().unwrap();
+    let network = format!(
+        "relay-control-{}",
+        dir.path().file_name().unwrap().to_string_lossy()
+    );
+    let settings = |name: &str| {
+        let home = dir.path().join(name);
+        std::fs::create_dir(&home).unwrap();
+        let keys = DeviceCredentials::load_or_create(home.join("device.cbor")).unwrap();
+        let mut settings = crate::NodeSettings::new(keys, home.join("node.sqlite"));
+        settings.network_name = network.clone();
+        settings.bind_ip_v4 = Some(std::net::Ipv4Addr::LOCALHOST);
+        settings
+    };
+    let relay = Node::spawn(settings("relay")).await.unwrap();
+    let device = Node::spawn(settings("device")).await.unwrap();
+    let relay_id = relay.device_id();
+    let mut recipient = relay.relay_channel(relay_id).await.unwrap();
+    let sender = device.relay_channel(relay_id).await.unwrap();
+    let inner = device.inner.clone();
+    let (junk, _keep) = device
+        .worker
+        .run(async move {
+            inner
+                .ephemeral_stream::<String>(control_topic(relay_id))
+                .await
+                .map_err(Error::node)
+        })
+        .await
+        .unwrap();
+    let (seen, mut received) = mpsc::unbounded_channel();
+    let receiver = tokio::spawn(async move {
+        while let Some(incoming) = recipient.receive_instruction().await {
+            if seen.send(incoming.challenge).is_err() {
+                break;
+            }
+        }
+    });
+    let instruction = RelayInstruction {
+        board: BoardId::from_bytes([71; 32]),
+        sequence: 49,
+        carry: true,
+    };
+    let wait = Duration::from_secs(60);
+    timeout(wait, async {
+        let mut retry = interval(Duration::from_millis(250));
+        loop {
+            tokio::select! {
+                _ = retry.tick() => sender.send(relay_id, [1; 16], instruction).await.unwrap(),
+                challenge = received.recv() => {
+                    assert_eq!(challenge, Some([1; 16]));
+                    break;
+                }
+            }
+        }
+    })
+    .await
+    .expect("relay and device did not connect");
+
+    junk.publish("not a relay envelope".into()).await.unwrap();
+    sender.send(relay_id, [2; 16], instruction).await.unwrap();
+    let next = timeout(wait, async {
+        while let Some(challenge) = received.recv().await {
+            if challenge == [2; 16] {
+                return Some(challenge);
+            }
+        }
+        None
+    })
+    .await;
+    receiver.abort();
+    let _ = receiver.await;
+    device.shutdown().await.unwrap();
+    relay.shutdown().await.unwrap();
+    assert_eq!(
+        next.expect("control reception stalled after junk"),
+        Some([2; 16])
+    );
 }
