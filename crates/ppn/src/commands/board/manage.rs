@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use pepino_app::{BoardDeparture, MUTUAL_REMOVAL_RISK, ManagePerson, RelayCopy};
+use pepino_app::{MUTUAL_REMOVAL_RISK, ManagePerson, RelayCopy};
 use pepino_core::DeviceId;
 use pepino_node::{MemberState, Node};
 use ppn::{
@@ -19,8 +19,6 @@ use crate::commands::{
 };
 
 const REMOVAL: &str = "They keep the data they already had, and the transport can still deliver ciphertext. An offline device does not learn of the removal from the board. Re-inviting gives them the full history, including work added while they were away.";
-const LEAVE: &str = "Tasks, comments, and other data already synced stay on this device. After departure, run ppn board forget on each device where you want to delete the local history.";
-
 pub(super) fn run(
     context: &Context<'_>,
     config_path: Option<&Path>,
@@ -38,35 +36,8 @@ pub(super) fn run(
         .person_labels()
         .remove(&person)
         .unwrap_or_else(|| reference.to_owned());
-    let previous = local.board_departure(board.id);
     let wait = context.timeout.unwrap_or(Duration::from_secs(30));
-    let daemon = if matches!(action, ManagePerson::Leave) && previous.is_none() {
-        Some(super::request::running(context, config_path, allow_start)?)
-    } else {
-        None
-    };
-    let risk = if let Some(daemon) = &daemon {
-        let timeout_ms = ppn::daemon::protocol::wait_millis(wait)?;
-        match daemon
-            .call_with(
-                Operation::BoardLeaveCheck {
-                    board: board.id,
-                    person,
-                    timeout_ms,
-                },
-                wait.saturating_add(Duration::from_secs(2)),
-            )
-            .map_err(unreachable)?
-        {
-            Outcome::BoardLeaveChecked { risk } => risk,
-            Outcome::Error { code, message } => {
-                return Err(super::request::control_error(&code, message));
-            }
-            _ => return Err(unexpected_reply()),
-        }
-    } else if matches!(action, ManagePerson::Leave) {
-        false
-    } else {
+    let risk = {
         let path = context
             .config()?
             .config
@@ -110,32 +81,10 @@ pub(super) fn run(
             )),
             Some(REMOVAL),
         ),
-        ManagePerson::Leave => (
-            "board_leave",
-            Some(format!(
-                "Leave {} on all your devices? {LEAVE}",
-                single_line(&board.name)
-            )),
-            Some(LEAVE),
-        ),
     };
-    let confirmed = match prompt {
-        Some(prompt) if previous.is_none() => context.confirm(&prompt)?,
-        _ => true,
-    };
-    let departure = if !confirmed {
-        None
-    } else if matches!(action, ManagePerson::Leave) && previous.is_some() {
-        if local.board_departure_confirmed(board.id) {
-            previous
-        } else {
-            Some(BoardDeparture::Leaving)
-        }
-    } else {
-        let daemon = match daemon {
-            Some(daemon) => daemon,
-            None => super::request::running(context, config_path, allow_start)?,
-        };
+    let confirmed = prompt.map_or(Ok(true), |prompt| context.confirm(&prompt))?;
+    if confirmed {
+        let daemon = super::request::running(context, config_path, allow_start)?;
         match daemon
             .call_with(
                 Operation::BoardManage {
@@ -148,13 +97,13 @@ pub(super) fn run(
             )
             .map_err(unreachable)?
         {
-            Outcome::BoardManaged { departure } => departure,
+            Outcome::BoardManaged => (),
             Outcome::Error { code, message } => {
                 return Err(super::request::control_error(&code, message));
             }
             _ => return Err(unexpected_reply()),
         }
-    };
+    }
     let human = if !confirmed {
         "Membership change cancelled.".into()
     } else {
@@ -166,15 +115,6 @@ pub(super) fn run(
             }
             ManagePerson::Remove => {
                 format!("Removed {name} from {board_name}. {REMOVAL}")
-            }
-            ManagePerson::Leave => {
-                let state = departure.unwrap_or(BoardDeparture::Leaving);
-                let pending = if state == BoardDeparture::Leaving {
-                    " · membership change incomplete"
-                } else {
-                    ""
-                };
-                format!("{board_name} · {state}{pending}. {LEAVE}")
             }
         }
     };
@@ -196,115 +136,113 @@ pub(super) fn run(
                 }),
             ),
             ("cancelled".into(), json!(!confirmed)),
-            (
-                "complete".into(),
-                json!(confirmed && departure != Some(BoardDeparture::Leaving)),
-            ),
-            ("departure".into(), json!(departure)),
+            ("complete".into(), json!(confirmed)),
             ("consequences".into(), json!(notice)),
         ]),
     }))
 }
 
-pub(super) fn forget(context: &Context<'_>, reference: &str) -> Result<CommandResult, CliError> {
-    let mut app = AppClient::open(context)?;
-    let board = app.local_state().resolve_board(reference, "board")?.clone();
-    app.local_state().check_can_forget(board.id)?;
-    let confirmed = context.confirm(&format!(
-        "Delete the local task and membership history for {}?",
-        single_line(&board.name)
-    ))?;
-    let mut kept = Vec::new();
-    if confirmed {
-        let directory = &context.config()?.config.data_dir.value;
-        let _lease = ppn::daemon::socket::lease(&directory.as_path().join("daemon.lock")).map_err(
-            |error| {
-                if error.kind() == std::io::ErrorKind::AddrInUse {
+const LOCAL_LEAVE: &str = "Other members still see you listed until a manager removes you.";
+const LAST_MANAGER: &str = "The board will be left without a manager. Nobody will be able to invite or remove people. Promote someone first if the board should stay managed.";
+
+pub(super) enum Discard {
+    Leave { acknowledge: bool },
+    Forget,
+}
+
+pub(super) fn discard(
+    context: &Context<'_>,
+    reference: Option<&str>,
+    action: Discard,
+) -> Result<CommandResult, CliError> {
+    let app = AppClient::open(context)?;
+    let local = app.local_state();
+    let board = match reference {
+        Some(reference) => local.resolve_board(reference, "board")?,
+        None => app.selected_board()?.0,
+    };
+    local.check_invitable(board.id)?;
+    let active = !local.board_removed(board.id);
+    let last_manager = if active {
+        let path = context
+            .config()?
+            .config
+            .data_dir
+            .value
+            .as_path()
+            .join("node.sqlite");
+        let members = if path.exists() {
+            runtime()?
+                .block_on(Node::persisted_members(&path, board.id))
+                .map_err(|_| {
                     CliError::new(
-                        ErrorKind::Busy,
-                        "Stop the daemon before forgetting a board.",
+                        ErrorKind::Failure,
+                        "Could not read the local board membership.",
                     )
-                    .with_hint("Run ppn daemon stop, then retry board forget.")
-                } else {
-                    unreachable(error)
-                }
-            },
-        )?;
-        let released = app.release_board_relays(board.id)?;
-        kept = relays_keeping_a_copy(released.relay_copies(board.id))?;
-        app.forget_board(board.id)?;
-    }
-    let warnings: Vec<_> = kept
-        .iter()
-        .map(|relay| {
-            format!(
-                "Relay {relay} keeps its copy of {}. Run ppn relay drop on the relay to delete it.",
-                single_line(&board.name)
-            )
-        })
-        .collect();
-    Ok(CommandResult::document(ResultDocument {
-        human: if confirmed {
-            format!("Forgot {} on this device.", single_line(&board.name))
+                })?
         } else {
-            "Forget cancelled.".into()
+            Default::default()
+        };
+        local.is_only_board_manager(board.id, &members)
+    } else {
+        false
+    };
+    if last_manager && context.yes && !matches!(action, Discard::Leave { acknowledge: true }) {
+        return Err(CliError::new(ErrorKind::ConfirmationRequired, LAST_MANAGER)
+            .with_hint("Pass --yes and --i-understand-last-manager-risk to board leave."));
+    }
+    let name = single_line(&board.name);
+    let mut prompt =
+        format!("Delete the local task and membership history for {name} on all your devices?");
+    if active {
+        prompt.push(' ');
+        prompt.push_str(LOCAL_LEAVE);
+    }
+    if last_manager {
+        prompt.push(' ');
+        prompt.push_str(LAST_MANAGER);
+    }
+    let confirmed = context.confirm(&prompt)?;
+    let kept: std::collections::BTreeSet<DeviceId> = if confirmed {
+        app.forget_board(board.id)?
+            .relay_copies(board.id)
+            .filter_map(|(relay, copy)| (copy == RelayCopy::Kept).then_some(relay))
+            .collect::<std::collections::BTreeSet<_>>()
+    } else {
+        Default::default()
+    };
+    let leaving = matches!(action, Discard::Leave { .. });
+    let mut fields = Map::from_iter([
+        (
+            "kind".into(),
+            json!(if leaving {
+                "board_leave"
+            } else {
+                "board_forget"
+            }),
+        ),
+        ("board".into(), json!(board)),
+        ("relay_copies_kept".into(), json!(kept)),
+    ]);
+    fields.insert(
+        if leaving { "left" } else { "forgotten" }.into(),
+        json!(confirmed),
+    );
+    let still_listed = confirmed && active;
+    fields.insert("still_listed_as_member".into(), json!(still_listed));
+    let warnings = kept.into_iter().map(|relay| format!(
+        "Relay {relay} may keep its copy of {name}. Run ppn relay drop on the relay to delete it."
+    )).collect::<Vec<_>>();
+    Ok(CommandResult::document(ResultDocument {
+        human: match (confirmed, leaving, still_listed) {
+            (true, _, true) => format!("Deleted {name} from your local catalog. {LOCAL_LEAVE}"),
+            (true, _, false) => format!("Forgot {name} from your local catalog."),
+            (false, true, _) => "Leave cancelled.".into(),
+            (false, false, _) => "Forget cancelled.".into(),
         },
-        fields: Map::from_iter([
-            ("kind".into(), json!("board_forget")),
-            ("board".into(), json!(board)),
-            ("forgotten".into(), json!(confirmed)),
-            ("relay_copies_kept".into(), json!(kept)),
-        ]),
+        fields,
     })
     .with_warnings(warnings))
-}
-
-fn relays_keeping_a_copy(
-    copies: impl Iterator<Item = (DeviceId, RelayCopy)>,
-) -> Result<Vec<DeviceId>, CliError> {
-    let mut kept = std::collections::BTreeSet::new();
-    for (relay, copy) in copies {
-        match copy {
-            RelayCopy::Absent => (),
-            RelayCopy::Kept => {
-                kept.insert(relay);
-            }
-            RelayCopy::RemovalPending => {
-                return Err(CliError::new(
-                    ErrorKind::Busy,
-                    "A relay has not yet answered the request to delete its copy of this board.",
-                )
-                .with_hint(
-                    "Run ppn daemon start, wait until ppn board relay ls shows the removal as removed or unreachable, then run ppn daemon stop and retry.",
-                ));
-            }
-        }
-    }
-    Ok(kept.into_iter().collect())
-}
-
-#[cfg(test)]
-#[test]
-fn forgetting_waits_for_pending_relay_removals_and_names_the_copies_kept() {
-    let [greenhouse_relay, attic_relay, cellar_relay] =
-        [31, 47, 59].map(|byte| DeviceId::from_bytes([byte; 32]));
-    let settled = [
-        (greenhouse_relay, RelayCopy::Absent),
-        (attic_relay, RelayCopy::Kept),
-        (cellar_relay, RelayCopy::Kept),
-    ];
-    assert_eq!(
-        relays_keeping_a_copy(settled.into_iter()).unwrap(),
-        [attic_relay, cellar_relay]
-    );
-    assert_eq!(relays_keeping_a_copy([].into_iter()).unwrap(), []);
-    let waiting = [
-        (attic_relay, RelayCopy::Kept),
-        (greenhouse_relay, RelayCopy::RemovalPending),
-    ];
-    let error = relays_keeping_a_copy(waiting.into_iter()).unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::Busy);
-    assert!(error.to_string().contains("has not yet answered"));
 }
 
 struct ResultDocument {

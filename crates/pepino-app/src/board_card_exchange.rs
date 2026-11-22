@@ -32,51 +32,6 @@ impl LocalState {
                 .is_none_or(|incarnation| route.incarnation == Some(incarnation))
     }
 
-    pub(crate) fn device_update_incarnation(
-        &self,
-        board: BoardId,
-        person: crate::PersonKey,
-    ) -> Option<EventId> {
-        self.membership_incarnation(board, person).or_else(|| {
-            self.catalog
-                .joined_shares
-                .get(&board)
-                .and_then(|share| share.card_exchange)
-                .and_then(|channel| self.card_exchanges().get(&channel))
-                .filter(|route| self.is_current_exchange(route, person))
-                .or_else(|| {
-                    self.card_exchanges().values().find(|route| {
-                        route.board == board && self.is_current_exchange(route, person)
-                    })
-                })
-                .and_then(|route| route.incarnation)
-        })
-    }
-
-    pub(crate) fn matches_device_update_incarnation(
-        &self,
-        board: BoardId,
-        person: crate::PersonKey,
-        incarnation: Option<EventId>,
-    ) -> bool {
-        if !self.card_exchange_person_is_current(board, person) {
-            return false;
-        }
-        if let Some(effective) = self.membership_incarnation(board, person) {
-            return incarnation == Some(effective);
-        }
-        // A surviving manager can verify a route even if it refused the original invitation.
-        let mut routes = self
-            .card_exchanges()
-            .values()
-            .filter(|route| route.board == board && route.matches(person))
-            .peekable();
-        if routes.peek().is_none() {
-            return incarnation.is_none();
-        }
-        routes.any(|route| route.incarnation == incarnation)
-    }
-
     pub fn card_exchanges(&self) -> &BTreeMap<BoardId, CardExchange> {
         &self.catalog.card_exchanges
     }

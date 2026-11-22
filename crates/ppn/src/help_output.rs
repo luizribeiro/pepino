@@ -48,19 +48,23 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "board members" => (
             "board_members",
-            "board Board name\npeople Identity IDs, display names, effective roles, device memberships and invitation details\nmembership_history Invitations, role changes, removals and completed leaves\ndeparture Local departure state or null",
+            "board Board name\npeople Identity IDs, display names, effective roles, device memberships and invitation details\nmembership_history Invitations, role changes, and removals",
         ),
-        "board role" | "board remove" | "board leave" => (
-            match name {
-                "board role" => "board_role",
-                "board remove" => "board_remove",
-                _ => "board_leave",
+        "board role" | "board remove" => (
+            if name == "board role" {
+                "board_role"
+            } else {
+                "board_remove"
             },
-            "board Affected board with its full ID and name\nperson Identity ID, root key and display name\nrole Requested role or null\ncancelled Whether confirmation was declined\ncomplete Whether the verified transport membership matches the request\ndeparture Local departure state or null\nconsequences Removal or leave notice when applicable",
+            "board Affected board with its full ID and name\nperson Identity ID, root key and display name\nrole Requested role or null\ncancelled Whether confirmation was declined\ncomplete Whether the verified transport membership matches the request\nconsequences Removal notice when applicable",
+        ),
+        "board leave" => (
+            "board_leave",
+            "board Board with its full ID and name\nleft Whether local deletion completed\nstill_listed_as_member Whether other members still see you listed until a manager removes you\nrelay_copies_kept Node IDs of relays known to keep a copy",
         ),
         "board forget" => (
             "board_forget",
-            "board Board with its full ID and name\nforgotten Whether the local application history was deleted\nrelay_copies_kept Node IDs of relays that still hold the board's ciphertext",
+            "board Board with its full ID and name\nforgotten Whether local deletion completed\nstill_listed_as_member Whether other members still see you listed until a manager removes you\nrelay_copies_kept Node IDs of relays known to keep a copy",
         ),
         "board ls" => (
             "boards",

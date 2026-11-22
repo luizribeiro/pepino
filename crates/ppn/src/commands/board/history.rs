@@ -18,7 +18,6 @@ pub(crate) fn records(local: &LocalState, board: BoardId) -> Vec<Value> {
             MembershipAction::Invited(_) => "invited",
             MembershipAction::RoleChanged(_) => "role_changed",
             MembershipAction::Removed => "removed",
-            MembershipAction::Left => "left",
         };
         rows.push((
             change.change.at,
@@ -68,8 +67,7 @@ pub(crate) fn line(row: &Value, dates: Dates<'_>) -> String {
         Some("invited") => format!("{at} · {by} invited {name} as {role}"),
         Some("role_changed") => format!("{at} · {by} changed {name}'s role to {role}"),
         Some("removed") => format!("{at} · {by} removed {name}"),
-        _ if name == by => format!("{at} · {name} left"),
-        _ => format!("{at} · {name} left (processed by {by})"),
+        _ => String::new(),
     };
     if let Some(reason) = row["not_applied_reason"].as_str() {
         format!("{line} · not applied ({reason})")

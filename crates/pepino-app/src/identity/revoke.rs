@@ -75,7 +75,7 @@ impl App {
         for board in local
             .boards()
             .iter()
-            .filter(|board| local.board_departure(board.id).is_none())
+            .filter(|board| !local.board_removed(board.id))
             .filter(|board| {
                 local.shared_access(board.id).is_none()
                     || local

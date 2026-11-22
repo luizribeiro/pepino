@@ -84,7 +84,7 @@ impl SyncEngine {
             || (!former
                 && local
                     .board_people(id)
-                    .any(|known| known.key() == person && known.first_device != request.device.id))
+                    .any(|known| known.key() == person && !known.confirms(request.device.id)))
         {
             return Err(AppError::InvalidInput {
                 field: "request".into(),
@@ -146,19 +146,15 @@ impl SyncEngine {
         grant.check_code_size()?;
         let introduce = BoardCards::Introduce(admission.clone()).encode()?;
         self.app.consume_board_request(id, &request).await?;
-        let incarnation = if !former && let Some(saved) = local.membership_incarnation(id, person) {
-            saved
-        } else {
-            crate::board_membership::publish_change(
-                &self.app,
-                &local,
-                &*handle,
-                id,
-                person,
-                pepino_app::MembershipAction::Invited(role),
-            )
-            .await?
-        };
+        let incarnation = crate::board_membership::publish_change(
+            &self.app,
+            &local,
+            &*handle,
+            id,
+            person,
+            pepino_app::MembershipAction::Invited(role),
+        )
+        .await?;
         local = self.app.fresh_local_state().await?;
         if local.membership_incarnation(id, person) != Some(incarnation) {
             return Err(Error::MembershipIncomplete(

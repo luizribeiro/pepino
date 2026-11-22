@@ -94,18 +94,13 @@ impl AppClient {
         Ok(local)
     }
 
-    pub fn release_board_relays(
+    pub fn forget_board(
         &self,
         board: pepino_core::BoardId,
     ) -> Result<pepino_app::LocalState, CliError> {
         Ok(self
             .runtime
-            .block_on(self.app.release_board_relays(board, self.now_ms))?)
-    }
-
-    pub fn forget_board(&mut self, board: pepino_core::BoardId) -> Result<(), CliError> {
-        self.runtime.block_on(self.app.forget_board(board))?;
-        Ok(())
+            .block_on(self.app.forget_board(board, self.now_ms))?)
     }
 
     pub fn local_state(&self) -> &pepino_app::LocalState {
@@ -175,15 +170,15 @@ impl AppClient {
         };
         if !identity_local && !all_boards && matches!(&request, Request::Read(_)) {
             let selected = self.selected_board()?.0;
-            if let Some(state) = self.local_state().board_departure(selected.id) {
+            if self.local_state().board_removed(selected.id) {
                 self.board_notice.replace(Some(crate::output::Warning {
                     message: format!(
-                        "Board {:?} membership {state}. Showing local data.",
+                        "Board {:?} membership removed. Showing local data.",
                         selected.name
                     ),
                     details: serde_json::Map::from_iter([(
-                        "departure".into(),
-                        serde_json::json!(state),
+                        "membership".into(),
+                        serde_json::json!("removed"),
                     )]),
                 }));
             }

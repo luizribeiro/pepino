@@ -115,7 +115,6 @@ pub enum BoardCards {
     Introduce(BoardAdmission),
     Update(IdentityCard),
     Membership(crate::MembershipChange),
-    Leave(crate::SignedBoardLeave),
     ReaderRoute {
         channel: BoardId,
         person: crate::PersonKey,
@@ -153,6 +152,19 @@ impl BoardCards {
 }
 
 impl App {
+    pub async fn reject_unknown_board_card(
+        &self,
+        board: BoardId,
+        operation: EventId,
+    ) -> Result<(), AppError> {
+        self.update_local(move |local| {
+            if local.boards().iter().any(|entry| entry.id == board) {
+                local.catalog.reject_card(board, operation);
+            }
+        })
+        .await
+    }
+
     pub async fn receive_board_cards(
         &self,
         board: BoardId,
@@ -180,18 +192,6 @@ impl App {
             BoardCards::Introduce(_)
             | BoardCards::Membership(_)
             | BoardCards::ReaderRoute { .. } => (),
-            BoardCards::Leave(request) => {
-                return self
-                    .record_board_leave(board, request)
-                    .await
-                    .or_else(|error| {
-                        if matches!(error, AppError::InvalidInput { .. }) {
-                            Ok(())
-                        } else {
-                            Err(error)
-                        }
-                    });
-            }
             BoardCards::Update(card) => {
                 return self.update_card(board, id, card).await;
             }

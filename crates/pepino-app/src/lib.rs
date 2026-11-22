@@ -56,9 +56,8 @@ pub use board_card_exchange::CardExchange;
 pub use board_card_wire::BoardCards;
 pub use board_grant::{BoardGrant, DEVICE_CODE_PAYLOAD_LIMIT};
 pub use board_membership::{
-    BoardDeparture, BoardLeave, DeviceMembershipChange, MUTUAL_REMOVAL_RISK, ManagePerson,
-    MembershipAction, MembershipChange, MembershipRecord, MembershipRefusal, SignedBoardLeave,
-    reconcile_person,
+    DeviceMembershipChange, MUTUAL_REMOVAL_RISK, ManagePerson, MembershipAction, MembershipChange,
+    MembershipRecord, MembershipRefusal, reconcile_person,
 };
 pub use board_people::BoardPerson;
 pub use board_request::BoardRequest;

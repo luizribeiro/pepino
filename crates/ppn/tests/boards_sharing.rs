@@ -761,7 +761,7 @@ fn member(owner: &Host, name: &str) -> Value {
 }
 
 #[test]
-fn a_reader_links_a_device_and_both_follow_person_roles_and_departure() {
+fn a_linked_reader_leaves_locally_and_all_devices_rejoin_after_removal() {
     let dir = tempfile::tempdir().unwrap();
     let network = dir.path().file_name().unwrap().to_str().unwrap();
     let owner = host(network, "Ada", "Laptop", "Owner private");
@@ -857,6 +857,25 @@ fn a_reader_links_a_device_and_both_follow_person_roles_and_departure() {
         5,
         "permission_denied",
     );
+    linked.stop();
+    guest.stop();
+    let own_private = board(&guest, "Guest private")["id"].clone();
+    let leave = guest.run(&["board", "leave", "House", "--yes"]);
+    assert_eq!(leave.lines().count(), 1);
+    assert!(leave.contains("Other members still see you listed until a manager removes you."));
+    assert!(board(&guest, "House").is_null());
+    assert_eq!(board(&guest, "Guest private")["id"], own_private);
+    assert_eq!(board(&linked, "House")["membership"], "joined");
+    let ben = member(&owner, "Ben");
+    assert_eq!(ben["former_member"], false);
+    assert!(
+        ben["devices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|device| device["membership"] == "member")
+    );
+
     let confirmation = common::task_error(
         owner.output(&["board", "remove", "Ben", "--board", "House", "--json"]),
         1,
@@ -870,22 +889,12 @@ fn a_reader_links_a_device_and_both_follow_person_roles_and_departure() {
     );
     let removed = owner.json(&["board", "remove", "Ben", "--board", "House", "--yes"]);
     assert_eq!(removed["kind"], "board_remove");
-    for host in [&guest, &linked] {
-        until(
-            || board(host, "House"),
-            |board| board["membership"] == "removed",
-            WAIT,
-        );
-        common::task_error(
-            host.output(&["add", "--board", "House", "Should fail", "--json"]),
-            5,
-            "permission_denied",
-        );
-        let local = host.output(&["show", "--board", "House", id]);
-        assert!(local.status.success(), "{local:?}");
-        assert!(String::from_utf8_lossy(&local.stdout).contains("Repair the window"));
-        assert!(String::from_utf8_lossy(&local.stderr).contains("membership removed"));
-    }
+    assert!(board(&guest, "House").is_null());
+    guest.start();
+    linked.start();
+    until(|| board(&linked, "House"), Value::is_null, WAIT);
+    guest.run(&["sync", "--board", "Guest private", "--timeout", "60s"]);
+    assert!(board(&guest, "House").is_null());
     let saved = owner.run(&["show", "--board", "House", id]);
     assert!(saved.contains("former member") && saved.contains("The replacement glass is ready"));
     let history = owner.json(&["log", "--board", "House", "--all"]);
@@ -900,28 +909,6 @@ fn a_reader_links_a_device_and_both_follow_person_roles_and_departure() {
         owner
             .run(&["board", "members", "House"])
             .contains("Ben (former member)")
-    );
-    let confirmation = until(
-        || linked.output(&["board", "forget", "House", "--json"]),
-        |output| output.status.code() == Some(1),
-        WAIT,
-    );
-    common::task_error(confirmation, 1, "confirmation_required");
-    let busy = linked.output(&["board", "forget", "House", "--yes", "--json"]);
-    assert!(!busy.status.success());
-    assert!(
-        String::from_utf8_lossy(&busy.stderr).contains("Stop the daemon")
-            || String::from_utf8_lossy(&busy.stdout).contains("Stop the daemon")
-    );
-    linked.stop();
-    assert_eq!(
-        linked.json(&["board", "forget", "House", "--yes"])["forgotten"],
-        true
-    );
-    common::task_error(
-        linked.output(&["board", "show", "House", "--json"]),
-        3,
-        "not_found",
     );
     owner.run(&[
         "add",
@@ -941,75 +928,81 @@ fn a_reader_links_a_device_and_both_follow_person_roles_and_departure() {
         WAIT,
     );
     join(&owner, &guest, "read");
+    let returning = owner.json(&["add", "--board", "House", "Install new weatherstripping"]);
+    let returning = returning["created"].as_str().unwrap();
+    for host in [&guest, &linked] {
+        until(
+            || board(host, "House"),
+            |board| board["membership"] == "joined",
+            WAIT,
+        );
+        wait_for_house_task(host, returning);
+        wait_for_house_task(host, id);
+    }
     until(
-        || {
-            let output = guest.output(&["ls", "--board", "House"]);
-            (
-                output.status.success(),
-                String::from_utf8_lossy(&output.stdout).into_owned(),
-                String::from_utf8_lossy(&output.stderr).into_owned(),
-            )
-        },
-        |(success, listing, diagnostics)| {
-            *success
-                && listing.contains("Replace the sill while Ben is away")
-                && diagnostics.is_empty()
+        || member(&owner, "Ben"),
+        |person| {
+            person["former_member"] == false
+                && person["devices"].as_array().is_some_and(|devices| {
+                    devices.len() == 2
+                        && devices
+                            .iter()
+                            .all(|device| device["membership"] == "member")
+                })
         },
         WAIT,
     );
 }
 
 #[test]
-fn a_readmitted_member_can_forget_after_leaving() {
+fn a_fresh_invitation_restores_a_locally_deleted_board_without_removal() {
     let dir = tempfile::tempdir().unwrap();
     let network = dir.path().file_name().unwrap().to_str().unwrap();
     let owner = host(network, "Ada", "Laptop", "Owner private");
     let guest = host(network, "Ben", "Phone", "Guest private");
     owner.run(&["board", "new", "House"]);
+    let task = owner.json(&["add", "--board", "House", "Repair the window"]);
+    let id = task["created"].as_str().unwrap();
     join(&owner, &guest, "write");
-    owner.run(&["board", "remove", "Ben", "--board", "House", "--yes"]);
-    until(
-        || board(&guest, "House"),
-        |board| board["membership"] == "removed",
-        WAIT,
+    wait_for_house_task(&guest, id);
+    common::task_error(
+        guest.output(&["board", "forget", "House", "--json"]),
+        1,
+        "confirmation_required",
     );
-    until(
-        || guest.output(&["board", "forget", "House", "--json"]),
-        |output| output.status.code() == Some(1),
-        WAIT,
+    let error = common::task_error(
+        guest.output(&["board", "leave", "House", "--json"]),
+        1,
+        "confirmation_required",
     );
-    guest.stop();
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("Other members still see you listed")
+    );
+    let leave = guest.json(&["board", "leave", "House", "--yes"]);
+    assert_eq!(leave["left"], true);
+    assert_eq!(leave["still_listed_as_member"], true);
+    assert!(board(&guest, "House").is_null());
+    assert_eq!(member(&owner, "Ben")["devices"][0]["membership"], "member");
+    assert_eq!(member(&owner, "Ben")["former_member"], false);
+    join(&owner, &guest, "write");
+    wait_for_house_task(&guest, id);
+    let history = owner.json(&["board", "members", "House"]);
     assert_eq!(
-        guest.json(&["board", "forget", "House", "--yes"])["forgotten"],
-        true
-    );
-    guest.start();
-    join(&owner, &guest, "read");
-    guest.run(&["board", "leave", "--board", "House", "--yes"]);
-    until(
-        || board(&guest, "House"),
-        |board| board["membership"] == "left",
-        WAIT,
-    );
-    guest.stop();
-    until(
-        || member(&owner, "Ben"),
-        |person| person["devices"][0]["membership"] == "removed",
-        WAIT,
-    );
-    guest.start();
-    assert_eq!(board(&guest, "House")["membership"], "left");
-    let confirmation = guest.output(&["board", "forget", "House", "--json"]);
-    common::task_error(confirmation, 1, "confirmation_required");
-    guest.stop();
-    assert_eq!(
-        guest.json(&["board", "forget", "House", "--yes"])["forgotten"],
-        true
+        history["membership_history"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["action"] == "invited")
+            .count(),
+        2
     );
 }
 
 #[test]
-fn leave_checks_the_synced_role_after_an_offline_demotion() {
+fn leave_uses_the_local_view_after_an_offline_demotion() {
     let dir = tempfile::tempdir().unwrap();
     let network = dir.path().file_name().unwrap().to_str().unwrap();
     let owner = host(network, "Ada", "Laptop", "Owner private");
@@ -1027,27 +1020,11 @@ fn leave_checks_the_synced_role_after_an_offline_demotion() {
         "--yes",
         "--i-understand-mutual-removal-risk",
     ]);
-    let role = || {
-        guest.json(&["status"])["boards"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|board| board["name"] == "House")
-            .unwrap()["role"]
-            .clone()
-    };
-    assert_eq!(role(), "manage");
     owner.stop();
-    guest.start();
-    let args = ["board", "leave", "--board", "House", "--yes"];
-    let offline = guest.output(&[&args[..], &["--timeout", "1s"]].concat());
-    assert_eq!(offline.status.code(), Some(5), "{offline:?}");
-    assert!(String::from_utf8_lossy(&offline.stderr).contains("current board role is unknown"));
-    owner.start();
-    until(role, |role| role == "write", WAIT);
-    let leave = guest.json(&args);
-    assert_eq!(leave["departure"], "leaving");
-    assert_eq!(leave["complete"], false);
+    let leave = guest.json(&["board", "leave", "--board", "House", "--yes"]);
+    assert_eq!(leave["left"], true);
+    assert_eq!(leave["still_listed_as_member"], true);
+    assert!(board(&guest, "House").is_null());
 }
 
 #[test]
@@ -1056,79 +1033,53 @@ fn the_original_inviter_can_leave_after_promoting_a_successor() {
     let network = dir.path().file_name().unwrap().to_str().unwrap();
     let owner = host(network, "Ada", "Laptop", "Owner private");
     let manager = host(network, "Cora", "Tablet", "Manager private");
-    let reader = host(network, "Ben", "Phone", "Reader private");
     owner.run(&["board", "new", "House"]);
-    join(&owner, &reader, "read");
-    common::task_error(
-        owner.output(&["board", "leave", "--board", "House", "--yes", "--json"]),
-        5,
-        "permission_denied",
+    let last_manager = common::task_error(
+        owner.output(&["board", "leave", "House", "--yes", "--json"]),
+        1,
+        "confirmation_required",
     );
+    let message = last_manager["message"].as_str().unwrap();
+    assert!(message.contains("Nobody will be able to invite or remove people"));
+    assert!(message.contains("Promote someone first"));
+    assert!(
+        last_manager["hint"]
+            .as_str()
+            .unwrap()
+            .contains("--i-understand-last-manager-risk")
+    );
+    assert_eq!(board(&owner, "House")["membership"], "joined");
     common::task_error(
         owner.output(&["board", "role", "me", "write", "--board", "House", "--json"]),
         5,
         "permission_denied",
     );
-    join(&owner, &manager, "manage");
-    common::task_error(
-        owner.output(&[
-            "board", "role", "Cora", "read", "--board", "House", "--yes", "--json",
-        ]),
-        1,
-        "confirmation_required",
-    );
-    common::task_error(
-        owner.output(&[
-            "board", "remove", "Cora", "--board", "House", "--yes", "--json",
-        ]),
-        1,
-        "confirmation_required",
-    );
-    common::task_error(
-        owner.output(&["board", "leave", "--board", "House", "--yes", "--json"]),
-        1,
-        "confirmation_required",
-    );
-    let result = owner.json(&[
-        "board",
-        "leave",
-        "--board",
-        "House",
-        "--yes",
-        "--i-understand-mutual-removal-risk",
-    ]);
-    assert_eq!(result["departure"], "left");
+    join(&owner, &manager, "write");
     until(
         || member(&manager, "Ada"),
-        |person| person["former_member"] == true,
+        |person| person["devices"][0]["membership"] == "member",
         WAIT,
     );
+    owner.run(&["board", "role", "Cora", "manage", "--board", "House"]);
     until(
-        || member(&manager, "Ada"),
-        |person| person["devices"][0]["membership"] == "removed",
+        || manager.json(&["status"])["boards"].clone(),
+        |boards| {
+            boards.as_array().is_some_and(|rows| {
+                rows.iter()
+                    .any(|row| row["name"] == "House" && row["role"] == "manage")
+            })
+        },
         WAIT,
     );
-    owner.stop();
-    reader.run(&["identity", "rename", "Ben Workshop"]);
-    until(
-        || member(&manager, "Ben Workshop"),
-        |person| person["role"] == "read",
-        WAIT,
+    let result = owner.json(&["board", "leave", "House", "--yes"]);
+    assert_eq!(result["left"], true);
+    assert_eq!(result["still_listed_as_member"], true);
+    assert_eq!(
+        member(&manager, "Ada")["devices"][0]["membership"],
+        "member"
     );
-    common::task_error(
-        reader.output(&["board", "leave", "--board", "House", "--json"]),
-        1,
-        "confirmation_required",
-    );
-    let leave = reader.run(&["board", "leave", "--board", "House", "--yes"]);
-    assert!(leave.contains("leaving (waiting for a manager)"));
-    until(
-        || board(&reader, "House"),
-        |board| board["membership"] == "left",
-        WAIT,
-    );
-    let history = manager.run(&["log", "--board", "House", "--all"]);
-    assert!(history.contains("Ben Workshop left (processed by Cora)"));
+    assert_eq!(member(&manager, "Ada")["former_member"], false);
+
     let new_guest = host(network, "Dara", "Desktop", "New private");
     join(&manager, &new_guest, "write");
     assert_eq!(member(&manager, "Dara")["role"], "write");
@@ -1137,11 +1088,16 @@ fn the_original_inviter_can_leave_after_promoting_a_successor() {
             .run(&["board", "remove", "Dara", "--board", "House", "--yes"])
             .contains("Removed Dara")
     );
-    reader.stop();
-    assert!(
-        reader
-            .run(&["board", "forget", "House", "--yes"])
-            .contains("Forgot House")
+    owner.run(&["board", "new", "Tool shed"]);
+    assert_eq!(
+        owner.json(&[
+            "board",
+            "leave",
+            "Tool shed",
+            "--yes",
+            "--i-understand-last-manager-risk"
+        ])["left"],
+        true
     );
 }
 
@@ -1309,4 +1265,75 @@ fn preferences_stay_private_when_two_identities_share_a_board() {
             }
         });
     }
+}
+
+#[test]
+fn leaving_offline_drops_only_the_selected_board_from_a_relay() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = dir.path().file_name().unwrap().to_str().unwrap();
+    let owner = host(network, "Ada", "Laptop", "Owner private");
+    let guest = host(network, "Ben", "Phone", "Guest private");
+    owner.run(&["board", "new", "House"]);
+    join(&owner, &guest, "write");
+    guest.run(&["board", "new", "Tool shed"]);
+    let task = guest.json(&["add", "--board", "Tool shed", "Sharpen the pruning shears"]);
+    let guest_id = guest.json(&["status"])["device"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let relay = Host::new(network);
+    let relay_id = relay.json(&["relay", "init"])["node_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    common::success(
+        relay
+            .command()
+            .env("PPN_TRUSTED_DEVICES", &guest_id)
+            .args(["daemon", "start"])
+            .output()
+            .unwrap(),
+    );
+    let relay_boards = || {
+        let output = relay.output(&["relay", "boards", "--json"]);
+        if output.status.code() == Some(6) {
+            return None;
+        }
+        let listing = common::as_json(&common::success(output));
+        listing["devices"]
+            .as_array()?
+            .iter()
+            .find(|device| device["node_id"] == guest_id)
+            .and_then(|device| device["boards"].as_array().cloned())
+    };
+    guest.run(&["board", "relay", "add", &relay_id, "--board", "Tool shed"]);
+    let tool_shed = until(
+        relay_boards,
+        |value| value.as_ref().is_some_and(|boards| boards.len() == 1),
+        WAIT,
+    );
+    guest.run(&["board", "relay", "add", &relay_id, "--board", "House"]);
+    let both = until(
+        relay_boards,
+        |value| value.as_ref().is_some_and(|boards| boards.len() == 2),
+        WAIT,
+    );
+    guest.stop();
+    let left = guest.json(&["board", "leave", "House", "--yes"]);
+    assert_eq!(left["left"], true);
+    assert!(board(&guest, "House").is_null());
+    assert_eq!(until(relay_boards, Option::is_some, WAIT), both);
+    guest.start();
+    until(relay_boards, |observed| observed == &tool_shed, WAIT);
+    let saved = guest.json(&[
+        "show",
+        "--board",
+        "Tool shed",
+        task["created"].as_str().unwrap(),
+    ]);
+    assert_eq!(saved["task"]["title"], "Sharpen the pruning shears");
+    let requests = guest.json(&["board", "relay", "ls", "--board", "Tool shed"]);
+    assert_eq!(requests["boards"][0]["relays"][0]["carry"], true);
+    assert_eq!(member(&owner, "Ben")["devices"][0]["membership"], "member");
+    relay.stop();
 }

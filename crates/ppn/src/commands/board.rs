@@ -58,14 +58,17 @@ enum Operation {
         #[arg(long)]
         i_understand_mutual_removal_risk: bool,
     },
-    /// Leave the board on all your devices.
-    #[command(after_help = example_help(&["ppn board leave --board House --yes"]))]
+    /// Delete this board from your devices while other members keep sharing with you.
+    #[command(after_help = example_help(&["ppn board leave House --yes"]))]
     Leave {
-        /// Acknowledge that concurrent mutual manager departures can destroy access.
+        /// Board name or unambiguous ID prefix. Defaults to the selected board.
+        #[arg(value_name = "BOARD")]
+        reference: Option<String>,
+        /// Confirm leaving when you are the only manager.
         #[arg(long)]
-        i_understand_mutual_removal_risk: bool,
+        i_understand_last_manager_risk: bool,
     },
-    /// Delete this host's local history of a board you left or were removed from.
+    /// Delete the local history of a board you were removed from.
     #[command(after_help = example_help(&["ppn board forget House --yes"]))]
     Forget {
         /// Board name or unambiguous ID prefix.
@@ -152,7 +155,6 @@ impl Args {
             Operation::Invite { .. }
                 | Operation::Role { .. }
                 | Operation::Remove { .. }
-                | Operation::Leave { .. }
                 | Operation::Join { .. }
                 | Operation::Request { .. }
                 | Operation::Use { .. }
@@ -200,18 +202,20 @@ pub fn run(
             );
         }
         Operation::Leave {
-            i_understand_mutual_removal_risk,
+            reference,
+            i_understand_last_manager_risk,
         } => {
-            return manage::run(
+            return manage::discard(
                 context,
-                config_path,
-                allow_start,
-                "me",
-                pepino_app::ManagePerson::Leave,
-                i_understand_mutual_removal_risk,
+                reference.as_deref(),
+                manage::Discard::Leave {
+                    acknowledge: i_understand_last_manager_risk,
+                },
             );
         }
-        Operation::Forget { board } => return manage::forget(context, &board),
+        Operation::Forget { board } => {
+            return manage::discard(context, Some(&board), manage::Discard::Forget);
+        }
         Operation::Join { input } => return join::run(context, &input.read(context)?, config_path),
         Operation::Request { name } => {
             return request::run(context, name, config_path, allow_start);
@@ -328,11 +332,7 @@ fn document(
     let mut records = Vec::new();
     for (info, id) in boards.iter().zip(&ids) {
         let (state, sync) = board_activity(info.board.id, info.membership, network);
-        let sync = if info.departure.is_some() {
-            "paused"
-        } else {
-            sync
-        };
+        let sync = if info.removed { "paused" } else { sync };
         let activity = if matches!(response, Response::Boards { .. })
             && (sync == "paused"
                 || (state == pepino_app::BoardJoinState::Joined
@@ -353,9 +353,8 @@ fn document(
         } else {
             String::new()
         };
-        let departure = info.departure.map(|state| state.to_string());
-        let member = if let Some(departure) = departure.as_deref() {
-            departure
+        let member = if info.removed {
+            "removed"
         } else if info.waiting_for_access {
             "waiting for access"
         } else {
@@ -371,8 +370,8 @@ fn document(
             member,
         ));
         let mut record = json!(info);
-        record["membership"] = if let Some(departure) = info.departure {
-            json!(departure)
+        record["membership"] = if info.removed {
+            json!("removed")
         } else if info.waiting_for_access {
             json!("waiting_for_access")
         } else {

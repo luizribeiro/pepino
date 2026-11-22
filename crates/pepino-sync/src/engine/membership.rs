@@ -1,8 +1,6 @@
 use std::time::Duration;
 
-use pepino_app::{
-    AppError, BoardDeparture, BoardRole, CardExchange, ManagePerson, MembershipAction, PersonKey,
-};
+use pepino_app::{AppError, BoardRole, CardExchange, ManagePerson, MembershipAction, PersonKey};
 use pepino_core::BoardId;
 use pepino_node::Role;
 
@@ -13,81 +11,16 @@ use crate::{
 };
 
 impl SyncEngine {
-    pub async fn check_board_leave(
-        &self,
-        board: BoardId,
-        person: PersonKey,
-        wait: Duration,
-    ) -> Result<bool, Error> {
-        let unknown = || AppError::PermissionDenied {
-            path: "board membership".into(),
-            reason: "the current board role is unknown. Sync with a board manager and try again"
-                .into(),
-        };
-        let updates = self.status_changes();
-        use futures_util::StreamExt;
-        let mut updates = std::pin::pin!(updates);
-        tokio::time::timeout(wait, async {
-            loop {
-                {
-                    let workers = self.boards.lock().await;
-                    let local = self.app.fresh_local_state().await?;
-                    if local.board_departure(board).is_some() {
-                        return Ok(false);
-                    }
-                    if let Some(handle) = workers.handle(board) {
-                        let members = handle.roles().await?;
-                        let own = members.get(&local.device_id);
-                        let only_manager = own == Some(&Role::Manage)
-                            && !members
-                                .iter()
-                                .any(|(id, role)| *id != local.device_id && *role == Role::Manage);
-                        let status = self.status();
-                        if own.is_some()
-                            && !local.needs_readmission_replay(board)
-                            && status.node.boards.get(&board).is_some_and(|node| {
-                                node.joined
-                                    && !node.replaying
-                                    && node.active_syncs.is_empty()
-                                    && (node.synced_with_peer || only_manager)
-                            })
-                        {
-                            let devices = local.membership_devices(board, person);
-                            ManagePerson::Leave
-                                .check(&local, board, person, &devices, &members, true)?;
-                            return Ok(ManagePerson::Leave
-                                .requires_risk_ack(&local, board, person, &devices, &members));
-                        }
-                    }
-                }
-                if updates.next().await.is_none() {
-                    return Err(unknown().into());
-                }
-            }
-        })
-        .await
-        .map_err(|_| unknown())?
-    }
-
     pub async fn manage_person(
         &self,
         board: BoardId,
         person: PersonKey,
         action: ManagePerson,
         accept_risk: bool,
-    ) -> Result<Option<BoardDeparture>, Error> {
+    ) -> Result<(), Error> {
         let mut workers = self.boards.lock().await;
         let local = self.app.fresh_local_state().await?;
         let known = local.resolve_board(&board.to_string(), "board")?;
-        if matches!(action, ManagePerson::Leave)
-            && let Some(departure) = local.board_departure(board)
-        {
-            return Ok(Some(if local.board_departure_confirmed(board) {
-                departure
-            } else {
-                BoardDeparture::Leaving
-            }));
-        }
         local.check_invitable(board)?;
         if workers.handle(board).is_none() {
             workers.open_missing(&local).await?;
@@ -145,14 +78,6 @@ impl SyncEngine {
         let membership_action = match action {
             ManagePerson::Role(role) => MembershipAction::RoleChanged(role),
             ManagePerson::Remove => MembershipAction::Removed,
-            ManagePerson::Leave => {
-                if members.get(&local.device_id) != Some(&Role::Manage) {
-                    self.app.request_board_leave(board).await?;
-                    self.nudge();
-                    return Ok(Some(BoardDeparture::Leaving));
-                }
-                MembershipAction::Left
-            }
         };
         let operation = match latest {
             Some(record)
@@ -198,7 +123,7 @@ impl SyncEngine {
                 if device_mismatches(&local, board, person, desired, &handle.roles().await?)
                     .is_empty()
                 {
-                    return Ok(local.board_departure(board));
+                    return Ok(());
                 }
                 retry.wait().await;
             }

@@ -123,7 +123,7 @@ impl Repairs {
 
             let conflicts = local.membership_conflicts(board.id);
             for &device in &conflicts {
-                if members.contains_key(&device) {
+                if device != local.device_id && members.contains_key(&device) {
                     let _ = self
                         .apply(
                             workers,
@@ -134,43 +134,6 @@ impl Repairs {
                         .await;
                 }
             }
-            let members = handle.roles().await?;
-            let mut published_leave = false;
-            for request in local.board_leave_requests(board.id) {
-                let person = request.leave.person;
-                let devices = local.membership_devices(board.id, person);
-                if !devices.contains(&request.leave.device)
-                    || conflicts.contains(&request.leave.device)
-                    || !members.contains_key(&request.leave.device)
-                    || local
-                        .latest_membership(board.id, person)
-                        .is_some_and(|record| record.change.action.role().is_none())
-                {
-                    continue;
-                }
-                if would_lose_managers(&members, &devices) {
-                    crate::status::record_error(
-                        &workers.changes,
-                        board.id,
-                        MembershipRefusal::LastManager.to_string(),
-                    );
-                    continue;
-                }
-                publish_change(
-                    &workers.app,
-                    local,
-                    &*handle,
-                    board.id,
-                    person,
-                    MembershipAction::Left,
-                )
-                .await?;
-                published_leave = true;
-            }
-            if published_leave {
-                continue;
-            }
-
             for saved in local.board_people(board.id) {
                 let mut person = saved.clone();
                 if person.key() == local.own_person_key() {
@@ -210,6 +173,9 @@ impl Repairs {
                     let Some(role) = current else { continue };
                     Some(role)
                 };
+                if person.key() == local.own_person_key() && desired.is_none() {
+                    continue;
+                }
                 let mut changes = reconcile_person(&person, &devices, &members, desired);
                 let losing_manage: BTreeSet<_> = changes
                     .iter()
@@ -276,7 +242,7 @@ impl Repairs {
                     .and_then(|record| match record.change.action {
                         MembershipAction::Invited(_) => Some(record.operation),
                         MembershipAction::RoleChanged(_) => record.change.incarnation,
-                        MembershipAction::Removed | MembershipAction::Left => None,
+                        MembershipAction::Removed => None,
                     })
                     .and_then(|invitation| {
                         local
@@ -326,7 +292,6 @@ impl Repairs {
                 }
                 if let Some(record) = authorized.filter(|record| !record.applied) {
                     let current = handle.roles().await?;
-                    // An authorized change can itself end its author's manager role.
                     if (applied_to_author || current.get(&record.actor) == Some(&Role::Manage))
                         && device_mismatches(local, board.id, person.key(), desired, &current)
                             .is_empty()

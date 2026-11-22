@@ -216,7 +216,7 @@ impl App {
         let local = self.fresh_local_state().await?;
         if local.device_leave_requested_at().is_some()
             || local.catalog.forgotten_boards.contains(&board)
-            || (local.board_departure(board).is_some() && !local.needs_readmission_replay(board))
+            || (local.board_removed(board) && !local.needs_readmission_replay(board))
         {
             return Err(SyncStoreError::BoardInactive);
         }

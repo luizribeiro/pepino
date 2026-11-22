@@ -23,7 +23,7 @@ pub(crate) async fn run(
         let writable = if let Ok(local) = app.fresh_local_state().await {
             let board = local.boards().iter().find(|board| board.id == id);
             let paused = board.is_none()
-                || local.board_departure(id).is_some()
+                || local.board_removed(id)
                 || local.waiting_for_access(id)
                 || local.check_device_write().is_err();
             let writable =

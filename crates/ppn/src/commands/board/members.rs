@@ -20,7 +20,7 @@ pub(super) fn run(
         Some(reference) => local.resolve_board(reference, "board")?,
         None => app.selected_board()?.0,
     };
-    if local.waiting_for_access(board.id) && local.board_departure(board.id).is_none() {
+    if local.waiting_for_access(board.id) && !local.board_removed(board.id) {
         return Err(CliError::new(
             ErrorKind::PermissionDenied,
             format!(
@@ -89,7 +89,7 @@ pub(super) fn run(
     }
     let reader_updates_unavailable = members.get(&local.device_id)
         == Some(&MemberState::Member(Role::Read))
-        && local.board_departure(board.id).is_none()
+        && !local.board_removed(board.id)
         && !local.card_exchanges().iter().any(|(&channel, route)| {
             route.board == board.id
                 && local.is_current_exchange(route, local.own_person_key())
@@ -112,7 +112,7 @@ pub(super) fn run(
         settings: context.render_settings()?,
         people,
         history: super::history::records(local, board.id),
-        departure: local.board_departure(board.id),
+        removed: local.board_removed(board.id),
         reader_updates_unavailable,
     }))
 }
@@ -161,7 +161,7 @@ struct Members {
     settings: RenderSettings,
     people: Vec<Value>,
     history: Vec<Value>,
-    departure: Option<pepino_app::BoardDeparture>,
+    removed: bool,
     reader_updates_unavailable: bool,
 }
 
@@ -170,8 +170,8 @@ impl Render for Members {
         let dates = self.settings.dates();
         let text = |value: &Value| single_line(value.as_str().unwrap_or_default());
         let mut lines = vec![format!("Members of {}", single_line(&self.board))];
-        if let Some(departure) = self.departure {
-            lines.push(format!("Membership {departure}. Showing local history."));
+        if self.removed {
+            lines.push("Membership removed. Showing local history.".into());
         }
         if self.reader_updates_unavailable {
             lines.push(
@@ -226,7 +226,6 @@ impl Render for Members {
             ("board".into(), json!(self.board)),
             ("people".into(), json!(self.people)),
             ("membership_history".into(), json!(self.history)),
-            ("departure".into(), json!(self.departure)),
             (
                 "reader_updates_unavailable".into(),
                 json!(self.reader_updates_unavailable),

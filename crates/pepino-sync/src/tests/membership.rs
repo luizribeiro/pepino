@@ -127,7 +127,7 @@ async fn reader_route_bursts_open_only_the_four_newest_channels_per_person() {
 }
 
 #[tokio::test]
-async fn repairs_keep_a_manager_and_never_apply_a_former_managers_intent() {
+async fn repairs_never_apply_a_former_managers_intent() {
     let dir = tempfile::tempdir().unwrap();
     let board = BoardId::from_bytes([20; 32]);
     let (app, former_manager) = members(dir.path(), board).await;
@@ -151,9 +151,6 @@ async fn repairs_keep_a_manager_and_never_apply_a_former_managers_intent() {
     let mut stale = intent(20, former, MembershipAction::RoleChanged(BoardRole::Manage));
     stale.change.revision = u64::MAX;
     app.record_membership(board, stale.clone()).await.unwrap();
-    let leaving = intent(21, me, MembershipAction::Left);
-    app.record_membership(board, leaving.clone()).await.unwrap();
-
     let node = Arc::new(Stub::new(me));
     let (changes, _) = watch::channel(Default::default());
     let (_stop, stopping) = watch::channel(());
@@ -186,8 +183,8 @@ async fn repairs_keep_a_manager_and_never_apply_a_former_managers_intent() {
         records[0].refusal,
         Some(MembershipRefusal::AuthorNoLongerManager)
     );
-    assert_eq!(records[1].refusal, Some(MembershipRefusal::LastManager));
-    assert_eq!(local.board_departure(board), None);
+    assert_eq!(records.len(), 1);
+    assert!(!local.board_removed(board));
     assert!(
         local
             .membership_parents(board, local.own_person_key())
@@ -440,4 +437,33 @@ async fn offline_removal_blocks_enrollment_until_a_fresh_invitation() {
         [(board, guest, None), (board, guest, Some(Role::Read))]
     );
     workers.abort().await;
+}
+
+#[tokio::test]
+async fn local_deletion_closes_only_its_board_worker() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::init(dir.path(), 0).await.unwrap();
+    let own = app.local_state().device_id;
+    let workshop = BoardId::from_bytes([34; 32]);
+    let greenhouse = BoardId::from_bytes([35; 32]);
+    app.register_created_board(workshop, "Workshop")
+        .await
+        .unwrap();
+    app.register_created_board(greenhouse, "Greenhouse")
+        .await
+        .unwrap();
+    let node = Arc::new(Stub::new(own));
+    let engine = crate::SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    for board in [workshop, greenhouse] {
+        node.set_joined_members(board, [(own, Role::Manage)].into());
+    }
+    app.forget_board(workshop, 1000).await.unwrap();
+    engine.nudge();
+    super::wait_for_status(&engine, |status| !status.boards.contains_key(&workshop)).await;
+    assert!(engine.status().boards.contains_key(&greenhouse));
+    assert!(engine.status().restart_required.is_none());
+    assert!(node.membership_changes().is_empty());
+    engine.shutdown().await.unwrap();
 }

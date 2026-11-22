@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use pepino_app::{BoardCards, BoardDeparture, BoardRole, LocalState, PersonKey};
+use pepino_app::{BoardCards, BoardRole, LocalState, PersonKey};
 use pepino_core::{BoardId, DeviceId};
 use pepino_node::NodeStatus;
 
 use crate::{Error, Transport, TransportBoard, board_workers::BoardWorkers};
 
-pub(crate) type Publications = BTreeMap<(BoardId, PersonKey, bool), (Vec<u8>, BTreeSet<DeviceId>)>;
+pub(crate) type Publications = BTreeMap<(BoardId, PersonKey), (Vec<u8>, BTreeSet<DeviceId>)>;
 
 pub(crate) async fn publish<T: Transport>(
     workers: &BoardWorkers<T>,
@@ -21,27 +21,20 @@ pub(crate) async fn publish<T: Transport>(
         let Some(access) = local.shared_access(board.id) else {
             continue;
         };
-        let departure = local.board_departure(board.id);
-        if matches!(
-            departure,
-            Some(BoardDeparture::Left | BoardDeparture::Removed)
-        ) || access.role == BoardRole::Read
+        if local.board_removed(board.id)
+            || access.role == BoardRole::Read
             || local.waiting_for_access(board.id)
         {
             continue;
         }
-        publish_own(workers, local, node, published, board.id, board.id).await?;
+        publish_own(workers, local, node, published, board.id).await?;
     }
     for (&channel, exchange) in local.card_exchanges() {
-        let departure = local.board_departure(exchange.board);
-        if matches!(
-            departure,
-            Some(BoardDeparture::Left | BoardDeparture::Removed)
-        ) {
+        if local.board_removed(exchange.board) {
             continue;
         }
         if local.is_current_exchange(exchange, local.own_person_key()) {
-            publish_own(workers, local, node, published, exchange.board, channel).await?;
+            publish_own(workers, local, node, published, channel).await?;
         }
         if let Some(person) = local.board_people(exchange.board).find(|person| {
             person.id == exchange.person && exchange.root.is_none_or(|root| root == person.key().1)
@@ -72,7 +65,6 @@ async fn publish_own<T: Transport>(
     local: &LocalState,
     node: &NodeStatus,
     published: &mut Publications,
-    board: BoardId,
     destination: BoardId,
 ) -> Result<(), Error> {
     let own = local.own_person_key();
@@ -94,20 +86,6 @@ async fn publish_own<T: Transport>(
         Err(pepino_app::AppError::InvalidInput { .. }) => (),
         Err(error) => return Err(error.into()),
     }
-    if let Some(request) = local
-        .board_leave_requests(board)
-        .find(|request| request.leave.person == own)
-    {
-        send(
-            workers,
-            node,
-            published,
-            destination,
-            own,
-            BoardCards::Leave(request.clone()),
-        )
-        .await?;
-    }
     Ok(())
 }
 
@@ -125,7 +103,7 @@ async fn send<T: Transport>(
     let Some(handle) = workers.handle(destination) else {
         return Ok(());
     };
-    let key = (destination, person, matches!(card, BoardCards::Leave(_)));
+    let key = (destination, person);
     let bytes = card.encode()?;
     if needs_publication(published.get(&key), &bytes, &node.connected_peers) {
         match handle.publish(bytes.clone()).await {

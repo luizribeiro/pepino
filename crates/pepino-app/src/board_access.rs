@@ -91,10 +91,8 @@ impl LocalState {
                 "waiting for board history to sync after readmission",
             ));
         }
-        if let Some(departure) = self.board_departure(board.id) {
-            return Err(denied(&format!(
-                "membership {departure}. Local data can still be read"
-            )));
+        if self.board_removed(board.id) {
+            return Err(denied("membership removed. Local data can still be read"));
         }
         if self.waiting_for_access(board.id) {
             return Err(denied("this device is waiting for access"));

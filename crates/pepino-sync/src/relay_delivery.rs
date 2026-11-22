@@ -89,7 +89,7 @@ pub(crate) async fn run(
             _ = stopping.changed() => return Ok(()),
             _ = tick.tick() => {
                 let step = async {
-                    if let Ok(local) = state_with_departures_released(&app).await {
+                    if let Ok(local) = state_with_removals_released(&app).await {
                         delivery.refresh(&local, &node, &app).await;
                     }
                 };
@@ -106,9 +106,9 @@ pub(crate) async fn run(
     }
 }
 
-async fn state_with_departures_released(app: &App) -> Result<LocalState, pepino_app::AppError> {
+async fn state_with_removals_released(app: &App) -> Result<LocalState, pepino_app::AppError> {
     let mut local = app.fresh_local_state().await?;
-    for board in local.departed_boards_on_relays().collect::<Vec<_>>() {
+    for board in local.removed_boards_on_relays().collect::<Vec<_>>() {
         local = app.release_board_relays(board, now_ms()).await?;
     }
     Ok(local)
@@ -127,20 +127,18 @@ impl Delivery {
         let allowed = local.check_device_write().is_ok();
         let mut pending = BTreeMap::<DeviceId, Vec<(BoardId, &BoardRelay)>>::new();
         let mut hints = BTreeSet::new();
-        for board in local.boards() {
-            for (relay, entry) in local.board_relays(board.id) {
-                if (entry.carry || entry.pending())
-                    && let Some(url) = &entry.relay_url
-                {
-                    hints.insert((relay, url.clone()));
-                }
-                if allowed
-                    && entry.revision.writer == local.device_id
-                    && (entry.pending() || entry.state == RelayState::Carrying)
-                    && (!entry.carry || local.board_departure(board.id).is_none())
-                {
-                    pending.entry(relay).or_default().push((board.id, entry));
-                }
+        for (board, relay, entry) in local.relay_requests() {
+            if (entry.carry || entry.pending())
+                && let Some(url) = &entry.relay_url
+            {
+                hints.insert((relay, url.clone()));
+            }
+            if allowed
+                && entry.revision.writer == local.device_id
+                && (entry.pending() || entry.state == RelayState::Carrying)
+                && (!entry.carry || !(local.board_removed(board) || local.board_forgotten(board)))
+            {
+                pending.entry(relay).or_default().push((board, entry));
             }
         }
         self.registered_hints.retain(|hint| hints.contains(hint));

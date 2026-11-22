@@ -226,8 +226,10 @@ async fn manager_authority<B: TransportBoard>(
     )
 }
 
-pub(crate) fn decode_board_cards(
+pub(crate) async fn decode_board_cards(
+    app: &App,
     board: BoardId,
+    operation: pepino_core::EventId,
     bytes: &[u8],
     status: &watch::Sender<Status>,
 ) -> Option<BoardCards> {
@@ -237,7 +239,14 @@ pub(crate) fn decode_board_cards(
             record_error(status, board, format!("read board identity cards: {error}"));
             None
         }
-        Err(_) => None,
+        Err(_) => {
+            let mut retry = Retry::new();
+            while let Err(error) = app.reject_unknown_board_card(board, operation).await {
+                record_error(status, board, format!("save rejected board card: {error}"));
+                retry.wait().await;
+            }
+            None
+        }
     }
 }
 
@@ -253,7 +262,9 @@ async fn ingest_cards<B: TransportBoard>(
         return false;
     }
     let mut retry = Retry::new();
-    while let Some(cards) = decode_board_cards(board, &delivery.bytes, status) {
+    while let Some(cards) =
+        decode_board_cards(app, board, delivery.operation, &delivery.bytes, status).await
+    {
         if let BoardCards::Membership(change) = cards {
             let outcome = match manager_authority(handle, delivery).await {
                 Ok(authority @ (ManagerAuthority::Current | ManagerAuthority::Former)) => app

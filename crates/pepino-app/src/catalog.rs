@@ -55,7 +55,11 @@ pub(crate) struct CatalogState {
     pub(crate) consumed_board_requests: BTreeMap<String, (BoardId, u64)>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) joined_shares: BTreeMap<BoardId, crate::board_install::JoinedShare>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "crate::board_membership::history::read_stored_membership"
+    )]
     pub(crate) membership:
         BTreeMap<BoardId, BTreeMap<pepino_core::EventId, crate::MembershipRecord>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -63,12 +67,12 @@ pub(crate) struct CatalogState {
         BTreeMap<BoardId, std::collections::VecDeque<pepino_core::EventId>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) dropped_membership_records: BTreeMap<BoardId, usize>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) board_leaves: BTreeMap<BoardId, BTreeMap<String, crate::SignedBoardLeave>>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(crate) observed_board_removals: BTreeSet<BoardId>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(crate) forgotten_boards: BTreeSet<BoardId>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    board_presence: BTreeMap<BoardId, BoardPresence>,
     joins: BTreeMap<BoardId, BoardJoinState>,
     created_here: BTreeSet<BoardId>,
     bundles: BTreeMap<DeviceId, String>,
@@ -85,10 +89,15 @@ pub(crate) struct CatalogState {
 }
 
 impl CatalogState {
-    pub(crate) fn forget_board(&mut self, board: BoardId) {
+    pub(crate) fn forget_board(&mut self, board: BoardId, device: DeviceId) {
         self.forgotten_boards.insert(board);
         self.revisions.remove(&board);
-        self.relays.remove(&board);
+        if let Some(relays) = self.relays.get_mut(&board) {
+            relays.retain(|_, writers| {
+                writers.retain(|writer, _| *writer == device);
+                !writers.is_empty()
+            });
+        }
         self.shared.remove(&board);
         self.people.remove(&board);
         self.pending_cards.remove(&board);
@@ -101,7 +110,6 @@ impl CatalogState {
         self.membership.remove(&board);
         self.refused_membership_order.remove(&board);
         self.dropped_membership_records.remove(&board);
-        self.board_leaves.remove(&board);
         self.observed_board_removals.remove(&board);
         self.joins.remove(&board);
         self.created_here.remove(&board);
@@ -137,12 +145,20 @@ struct Revision {
     name: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+struct BoardPresence {
+    generation: u64,
+    forgotten: bool,
+    writer: DeviceId,
+}
+
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Announcement {
     v: u32,
     identity: IdentityId,
     revisions: BTreeMap<BoardId, Revision>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    board_presence: BTreeMap<BoardId, BoardPresence>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     devices: BTreeMap<DeviceId, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -152,9 +168,11 @@ struct Announcement {
     shared: BTreeMap<BoardId, crate::SharedAccess>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     reader_routes: BTreeMap<BoardId, crate::CardExchange>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    board_leaves: BTreeMap<BoardId, BTreeMap<String, crate::SignedBoardLeave>>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "crate::board_membership::history::read_catalog_membership"
+    )]
     own_membership: BTreeMap<BoardId, Vec<crate::MembershipRecord>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     relays: crate::board_relays::RelayCatalog,
@@ -196,6 +214,7 @@ impl LocalState {
             v: crate::PROTOCOL_VERSION,
             identity: self.identity_id,
             revisions: self.catalog.revisions.clone(),
+            board_presence: self.catalog.board_presence.clone(),
             devices: BTreeMap::new(),
             roster: self.catalog.identity.edits().cloned().collect(),
             member: member.to_hex(),
@@ -212,19 +231,6 @@ impl LocalState {
                             .is_none_or(|root| root == self.own_person_key().1)
                 })
                 .map(|(&channel, &route)| (channel, route))
-                .collect(),
-            board_leaves: self
-                .catalog
-                .board_leaves
-                .iter()
-                .filter_map(|(&board, requests)| {
-                    let requests: BTreeMap<_, _> = requests
-                        .iter()
-                        .filter(|(_, request)| request.leave.person == self.own_person_key())
-                        .map(|(key, request)| (key.clone(), request.clone()))
-                        .collect();
-                    (!requests.is_empty()).then_some((board, requests))
-                })
                 .collect(),
             own_membership: self
                 .catalog
@@ -246,6 +252,37 @@ impl LocalState {
         let mut bytes = PREFIX.to_vec();
         bytes.extend(WireFormat::Cbor.encode(&announcement)?);
         Ok(bytes)
+    }
+
+    pub fn board_forgotten(&self, board: BoardId) -> bool {
+        self.catalog.forgotten_boards.contains(&board)
+    }
+
+    pub(crate) fn change_board_presence(
+        &mut self,
+        board: BoardId,
+        forgotten: bool,
+    ) -> Result<(), AppError> {
+        let generation = self
+            .catalog
+            .board_presence
+            .get(&board)
+            .map_or(0, |previous| previous.generation);
+        let generation = generation
+            .checked_add(1)
+            .ok_or_else(|| crate::app::invalid("board", "catalog generation exhausted"))?;
+        self.catalog.board_presence.insert(
+            board,
+            BoardPresence {
+                generation,
+                forgotten,
+                writer: self.device_id,
+            },
+        );
+        if !forgotten {
+            self.catalog.forgotten_boards.remove(&board);
+        }
+        Ok(())
     }
 
     pub(crate) fn name_board(&mut self, id: BoardId, name: &str) {
@@ -319,21 +356,52 @@ impl LocalState {
                 self.catalog.bundles.insert(signer, announcement.member);
             }
         }
+        let mut readmitted = BTreeSet::new();
+        for (&id, &presence) in &announcement.board_presence {
+            if id == board
+                || !self.active_roster_device(signer)
+                || !self.knows_roster_device(presence.writer)
+                || self
+                    .catalog
+                    .board_presence
+                    .get(&id)
+                    .is_some_and(|saved| *saved >= presence)
+                || (!presence.forgotten && !announcement.revisions.contains_key(&id))
+            {
+                continue;
+            }
+            self.catalog.board_presence.insert(id, presence);
+            if presence.forgotten {
+                self.forget_board(id, now);
+            } else if self.catalog.forgotten_boards.remove(&id) {
+                readmitted.insert(id);
+            }
+        }
+        let current = |local: &Self, id: BoardId| {
+            announcement.board_presence.get(&id) == local.catalog.board_presence.get(&id)
+        };
         for (id, revision) in announcement.revisions {
-            self.merge_board(id, revision);
+            if current(self, id) {
+                self.merge_board(id, revision);
+            }
         }
         for (id, access) in announcement.shared {
-            if id != self.catalog_board() && self.catalog.revisions.contains_key(&id) {
+            if id != self.catalog_board()
+                && current(self, id)
+                && self.catalog.revisions.contains_key(&id)
+            {
                 let saved = self.catalog.shared.entry(id).or_insert(access);
                 if saved.owner == access.owner && saved.owner_root.is_none() {
                     saved.owner_root = access.owner_root;
                 }
             }
         }
+        self.catalog.readmission_replays.extend(readmitted);
         let own = self.own_person_key();
         for (channel, route) in announcement.reader_routes {
             if route.person == own.0
                 && route.root.is_none_or(|root| root == own.1)
+                && current(self, route.board)
                 && self.shared_access(route.board).is_some()
             {
                 self.add_card_exchange(channel, route)?;
@@ -354,7 +422,7 @@ impl LocalState {
             .written_views
             .retain(|key| self.catalog.preferences.get(key).is_some());
         for (board, records) in announcement.own_membership {
-            if active_sender && self.shared_access(board).is_some() {
+            if active_sender && current(self, board) && self.shared_access(board).is_some() {
                 let stored = self.catalog.membership.entry(board).or_default();
                 for mut record in records
                     .into_iter()
@@ -372,18 +440,6 @@ impl LocalState {
                             }
                         })
                         .or_insert(record);
-                }
-            }
-        }
-        for (board, requests) in announcement.board_leaves {
-            if self.shared_access(board).is_some() {
-                for request in requests.into_values() {
-                    if request.leave.person == own
-                        && request.leave.board == board
-                        && request.verify()?
-                    {
-                        self.save_board_leave(board, request);
-                    }
                 }
             }
         }
@@ -439,10 +495,25 @@ impl App {
         let wire = WireFormat::Cbor;
         match wire.decode(bytes) {
             Ok(announcement) => {
-                self.try_update_local_state(move |local| {
-                    local.merge_catalog(board, signer, announcement, now)
-                })
-                .await?;
+                let guard = lock(&self.directory, self.lock_timeout).await?;
+                let previous = self.fresh_local_state().await?;
+                let mut local = previous.clone();
+                local.merge_catalog(board, signer, announcement, now)?;
+                if local != previous {
+                    for removed in previous
+                        .boards()
+                        .iter()
+                        .filter(|entry| local.board_forgotten(entry.id))
+                    {
+                        self.delete_board_history(removed.id).await?;
+                    }
+                    let directory = self.directory.clone();
+                    worker("save board catalog", move || {
+                        let _guard = guard;
+                        local.replace(&directory)
+                    })
+                    .await??;
+                }
             }
             Err(AppError::UnsupportedVersion {
                 requested,
@@ -575,6 +646,7 @@ fn ignores_legacy_device_claims_even_from_a_bootstrap_sender() {
     .unwrap();
     local.other_devices.insert(peer, "Ferrum".into());
     let announcement = Announcement {
+        board_presence: Default::default(),
         v: crate::PROTOCOL_VERSION,
         identity: local.identity_id,
         revisions: BTreeMap::new(),
@@ -583,7 +655,6 @@ fn ignores_legacy_device_claims_even_from_a_bootstrap_sender() {
         member: String::new(),
         shared: BTreeMap::new(),
         reader_routes: Default::default(),
-        board_leaves: Default::default(),
         own_membership: Default::default(),
         relays: Default::default(),
         preferences: Default::default(),
@@ -616,6 +687,7 @@ async fn trusted_catalog_discovery_leaves_shared_access_with_the_joining_device(
         admitted: source,
     };
     let announcement = || Announcement {
+        board_presence: Default::default(),
         v: crate::PROTOCOL_VERSION,
         identity: local.identity_id,
         revisions: [(
@@ -632,7 +704,6 @@ async fn trusted_catalog_discovery_leaves_shared_access_with_the_joining_device(
         member: String::new(),
         shared: [(house, access)].into(),
         reader_routes: Default::default(),
-        board_leaves: Default::default(),
         own_membership: Default::default(),
         relays: Default::default(),
         preferences: Default::default(),
@@ -685,6 +756,7 @@ fn the_bootstrap_catalog_sender_cannot_relay_own_membership() {
         relayed: false,
     };
     let announcement = Announcement {
+        board_presence: Default::default(),
         v: crate::PROTOCOL_VERSION,
         identity: local.identity_id,
         revisions: Default::default(),
@@ -693,14 +765,13 @@ fn the_bootstrap_catalog_sender_cannot_relay_own_membership() {
         member: String::new(),
         shared: Default::default(),
         reader_routes: Default::default(),
-        board_leaves: Default::default(),
         own_membership: [(shared, vec![record])].into(),
         relays: Default::default(),
         preferences: Default::default(),
     };
     local.merge_catalog(private, peer, announcement, 0).unwrap();
     assert_eq!(local.membership_history(shared).count(), 0);
-    assert_eq!(local.board_departure(shared), None);
+    assert!(!local.board_removed(shared));
 }
 
 #[cfg(test)]
@@ -746,6 +817,7 @@ fn a_newly_linked_device_keeps_relay_requests_from_its_bootstrap_sender() {
     };
     let identity = local.identity_id;
     let announcement = |writer| Announcement {
+        board_presence: Default::default(),
         v: crate::PROTOCOL_VERSION,
         identity,
         revisions: Default::default(),
@@ -754,7 +826,6 @@ fn a_newly_linked_device_keeps_relay_requests_from_its_bootstrap_sender() {
         member: String::new(),
         shared: Default::default(),
         reader_routes: Default::default(),
-        board_leaves: Default::default(),
         own_membership: Default::default(),
         relays: [(greenhouse, [(relay, request(writer))].into())].into(),
         preferences: Default::default(),
@@ -783,6 +854,7 @@ fn preference_announcement(
     preferences: crate::preferences::Preferences,
 ) -> Announcement {
     Announcement {
+        board_presence: Default::default(),
         v: crate::PROTOCOL_VERSION,
         identity: local.identity_id,
         revisions: Default::default(),
@@ -791,7 +863,6 @@ fn preference_announcement(
         member: String::new(),
         shared: Default::default(),
         reader_routes: Default::default(),
-        board_leaves: Default::default(),
         own_membership: Default::default(),
         relays: Default::default(),
         preferences,
@@ -945,4 +1016,56 @@ async fn recognizes_newer_catalogs_before_decoding_their_body() {
             .newer_catalog_version(),
         Some(crate::PROTOCOL_VERSION + 1)
     );
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn a_catalog_tombstone_wins_over_old_announcements_until_readmission() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
+    let keys = app.identity_credentials().unwrap();
+    let mut source = app
+        .reconcile_identity(keys.device_id(), &keys)
+        .await
+        .unwrap();
+    let private = source.catalog_board();
+    let workshop = BoardId::from_bytes([83; 32]);
+    let greenhouse = BoardId::from_bytes([84; 32]);
+    source.name_board(workshop, "Workshop");
+    source.name_board(greenhouse, "Greenhouse");
+    let announcement = |source: &LocalState| Announcement {
+        board_presence: source.catalog.board_presence.clone(),
+        revisions: source.catalog.revisions.clone(),
+        ..preference_announcement(source, Default::default())
+    };
+    let mut sibling = source.clone();
+    source.change_board_presence(workshop, true).unwrap();
+    source.forget_board(workshop, 1000);
+    let stale = sibling.clone();
+    for snapshot in [&source, &stale] {
+        sibling
+            .merge_catalog(private, source.device_id, announcement(snapshot), 1000)
+            .unwrap();
+    }
+    assert!(sibling.board_forgotten(workshop));
+    assert!(sibling.resolve_board("Workshop", "board").is_err());
+    assert_eq!(
+        sibling.resolve_board("Greenhouse", "board").unwrap().id,
+        greenhouse
+    );
+
+    let forgotten = source.clone();
+    source.change_board_presence(workshop, false).unwrap();
+    source.name_board(workshop, "Workshop");
+    for snapshot in [&source, &forgotten] {
+        sibling
+            .merge_catalog(private, source.device_id, announcement(snapshot), 1000)
+            .unwrap();
+    }
+    assert!(!sibling.board_forgotten(workshop));
+    assert_eq!(
+        sibling.resolve_board("Workshop", "board").unwrap().id,
+        workshop
+    );
+    assert!(sibling.needs_readmission_replay(workshop));
 }

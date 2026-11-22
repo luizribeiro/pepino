@@ -10,12 +10,7 @@ use crate::{
     inbox::decode_board_cards, retry::Retry,
 };
 
-use super::BoardWorkers;
-
-pub(super) struct CardWorker {
-    evict: oneshot::Sender<()>,
-    closed: oneshot::Receiver<()>,
-}
+use super::{BoardWorkers, WorkerStop};
 
 impl<T: Transport> BoardWorkers<T> {
     pub(super) async fn open_card_exchanges(&mut self, local: &LocalState) -> Result<(), Error> {
@@ -73,7 +68,7 @@ impl<T: Transport> BoardWorkers<T> {
         let (evict, evicted) = oneshot::channel();
         let (finished, closed) = oneshot::channel();
         self.card_workers
-            .insert(channel, CardWorker { evict, closed });
+            .insert(channel, WorkerStop { evict, closed });
         self.workers.spawn(async move {
             tokio::select! {
                 _ = evicted => (),
@@ -108,7 +103,15 @@ async fn receive<A: Acknowledgement>(
     while let Some(delivery) = stream.next().await {
         let Ok(delivery) = delivery else { continue };
         let mut retry = Retry::new();
-        while let Some(cards) = decode_board_cards(shared_board, &delivery.bytes, status) {
+        while let Some(cards) = decode_board_cards(
+            app,
+            shared_board,
+            delivery.operation,
+            &delivery.bytes,
+            status,
+        )
+        .await
+        {
             let local = match app.fresh_local_state().await {
                 Ok(local) => local,
                 Err(_) => {
@@ -122,12 +125,6 @@ async fn receive<A: Acknowledgement>(
             let accepted = match &cards {
                 BoardCards::Update(card) => {
                     card.id == exchange.person && exchange.root.is_none_or(|root| root == card.root)
-                }
-                BoardCards::Leave(request) => {
-                    request.leave.person.0 == exchange.person
-                        && exchange
-                            .root
-                            .is_none_or(|root| root == request.leave.person.1)
                 }
                 _ => false,
             };

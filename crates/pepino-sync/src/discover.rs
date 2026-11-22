@@ -88,6 +88,9 @@ async fn reconcile<T: Transport>(
         boards.app.remember_member_bundle(&member).await?;
         local = boards.app.fresh_local_state().await?;
     }
+    if boards.close_forgotten(&local).await {
+        return Ok(());
+    }
     boards.open_missing(&local).await?;
     let node_status = boards.node.status();
     for board in local.boards() {

@@ -12,14 +12,13 @@ pub enum MembershipAction {
     Invited(BoardRole),
     RoleChanged(BoardRole),
     Removed,
-    Left,
 }
 
 impl MembershipAction {
     pub fn role(self) -> Option<BoardRole> {
         match self {
             Self::Invited(role) | Self::RoleChanged(role) => Some(role),
-            Self::Removed | Self::Left => None,
+            Self::Removed => None,
         }
     }
 }
@@ -48,6 +47,62 @@ pub struct MembershipRecord {
     pub applied: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub relayed: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredMembership {
+    Supported(Box<MembershipRecord>),
+    Unknown(serde::de::IgnoredAny),
+}
+
+pub(crate) fn read_stored_membership<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<BoardId, BTreeMap<EventId, MembershipRecord>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let boards =
+        BTreeMap::<BoardId, BTreeMap<EventId, StoredMembership>>::deserialize(deserializer)?;
+    Ok(boards
+        .into_iter()
+        .map(|(board, records)| {
+            (
+                board,
+                records
+                    .into_iter()
+                    .filter_map(|(operation, record)| match record {
+                        StoredMembership::Supported(record) => Some((operation, *record)),
+                        StoredMembership::Unknown(_) => None,
+                    })
+                    .collect(),
+            )
+        })
+        .collect())
+}
+
+pub(crate) fn read_catalog_membership<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<BoardId, Vec<MembershipRecord>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let boards = BTreeMap::<BoardId, Vec<StoredMembership>>::deserialize(deserializer)?;
+    Ok(boards
+        .into_iter()
+        .map(|(board, records)| {
+            (
+                board,
+                records
+                    .into_iter()
+                    .filter_map(|record| match record {
+                        StoredMembership::Supported(record) => Some(*record),
+                        StoredMembership::Unknown(_) => None,
+                    })
+                    .collect(),
+            )
+        })
+        .collect())
 }
 
 fn is_false(value: &bool) -> bool {
@@ -201,7 +256,7 @@ impl LocalState {
             MembershipAction::RoleChanged(_) => records.values().any(|removal| {
                 concurrent_removal(removal) && !follows(&records, removal, record.operation)
             }),
-            MembershipAction::Left | MembershipAction::Removed => false,
+            MembershipAction::Removed => false,
         }
     }
 
@@ -543,15 +598,12 @@ mod tests {
             },
         });
         let removal = records[2].operation;
-        proptest!(|(saw_removal in any::<bool>(), leave in any::<bool>(), advisory_revisions in any::<[u64; 4]>())| {
+        proptest!(|(saw_removal in any::<bool>(), advisory_revisions in any::<[u64; 4]>())| {
             for manager_count in 2..=3 {
                 let mut records = records.clone();
                 for (index, record) in records.iter_mut().enumerate() {
                     record.actor = DeviceId::from_bytes([59 + (index % manager_count) as u8; 32]);
                     record.change.revision = if index == 0 { u64::MAX } else { advisory_revisions[index] };
-                }
-                if leave {
-                    records[2].change.action = MembershipAction::Left;
                 }
                 if saw_removal {
                     records[3].change.parents.insert(removal);
@@ -574,4 +626,40 @@ mod tests {
             }
         });
     }
+}
+
+#[cfg(test)]
+#[test]
+fn old_board_leave_records_do_not_mask_supported_membership() {
+    let board = BoardId::from_bytes([91; 32]);
+    let actor = DeviceId::from_bytes([92; 32]);
+    let invited = EventId::from_bytes([93; 32]);
+    let legacy = EventId::from_bytes([94; 32]);
+    let record = MembershipRecord {
+        operation: invited,
+        actor,
+        change: MembershipChange {
+            person: (pepino_core::IdentityId::from_bytes([95; 32]), actor),
+            action: MembershipAction::Invited(BoardRole::Write),
+            at: std::time::UNIX_EPOCH.into(),
+            revision: 1,
+            incarnation: None,
+            parents: Default::default(),
+        },
+        refusal: None,
+        applied: true,
+        relayed: false,
+    };
+    let mut old = serde_json::to_value(&record).unwrap();
+    old["operation"] = serde_json::json!(legacy);
+    old["change"]["action"] = serde_json::json!("left");
+    let stored = serde_json::json!({
+        "revisions": {},
+        "joins": {},
+        "created_here": [],
+        "bundles": {},
+        "membership": {board.to_string(): {invited.to_string(): &record, legacy.to_string(): old}},
+    });
+    let catalog: crate::catalog::CatalogState = serde_json::from_value(stored).unwrap();
+    assert_eq!(catalog.membership[&board], [(invited, record)].into());
 }

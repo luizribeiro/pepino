@@ -12,8 +12,6 @@ pub(crate) struct JoinedShare {
     relay_url: Option<String>,
     pub(crate) binding: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) card_exchange: Option<BoardId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     receipt: Option<String>,
 }
 
@@ -79,11 +77,13 @@ impl LocalState {
                 admitted: self.device_id,
             },
         );
-        let forgotten = self.catalog.forgotten_boards.remove(&id);
+        let forgotten = self.board_forgotten(id);
+        if forgotten {
+            self.change_board_presence(id, false)?;
+        }
         self.name_board(id, &grant.board.name);
         if existing.is_some() || forgotten {
             self.catalog.observed_board_removals.remove(&id);
-            self.catalog.board_leaves.remove(&id);
             self.catalog
                 .card_exchanges
                 .retain(|_, route| route.board != id);
@@ -107,7 +107,6 @@ impl LocalState {
                 peer_id: grant.peer.id,
                 relay_url: grant.peer.relay_url.clone(),
                 binding: grant.request.clone(),
-                card_exchange: grant.card_exchange,
                 receipt: Some(receipt),
             },
         );

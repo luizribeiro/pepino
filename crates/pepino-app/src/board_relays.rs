@@ -231,16 +231,24 @@ impl LocalState {
             .collect()
     }
 
+    pub fn relay_requests(&self) -> impl Iterator<Item = (BoardId, DeviceId, &BoardRelay)> {
+        self.catalog.relays.keys().copied().flat_map(|board| {
+            self.board_relays(board)
+                .map(move |(relay, entry)| (board, relay, entry))
+        })
+    }
+
     pub fn relay_copies(&self, board: BoardId) -> impl Iterator<Item = (DeviceId, RelayCopy)> {
         self.board_relays(board)
             .map(|(relay, entry)| (relay, entry.copy(self.device_id)))
     }
 
-    /// Boards this person has left whose relay copies this device handed over and can remove.
-    pub fn departed_boards_on_relays(&self) -> impl Iterator<Item = BoardId> {
-        self.boards().iter().map(|board| board.id).filter(|&board| {
-            self.board_departure_confirmed(board) && self.holds_relay_copies(board)
-        })
+    /// Removed boards whose relay copies this device can release.
+    pub fn removed_boards_on_relays(&self) -> impl Iterator<Item = BoardId> {
+        self.boards()
+            .iter()
+            .map(|board| board.id)
+            .filter(|&board| self.board_removal_confirmed(board) && self.holds_relay_copies(board))
     }
 
     fn holds_relay_copies(&self, board: BoardId) -> bool {
@@ -248,7 +256,7 @@ impl LocalState {
             .any(|(_, entry)| entry.releasable_by(self.device_id))
     }
 
-    fn release_relays(&mut self, board: BoardId, now: u64) {
+    pub(crate) fn release_relays(&mut self, board: BoardId, now: u64) {
         let device = self.device_id;
         for entry in self
             .catalog
@@ -349,7 +357,7 @@ impl App {
                     .ok_or_else(|| invalid("board", "this device has no such board"))?;
                 if carry
                     && (local.board_join_state(board) != BoardJoinState::Joined
-                        || local.board_departure(board).is_some()
+                        || local.board_removed(board)
                         || local.waiting_for_access(board))
                 {
                     return Err(AppError::PermissionDenied {
@@ -854,7 +862,7 @@ async fn releasing_a_board_asks_only_the_relays_this_device_handed_it_to() {
         .into()
     );
     assert!(before.holds_relay_copies(board));
-    assert_eq!(before.departed_boards_on_relays().count(), 0);
+    assert_eq!(before.removed_boards_on_relays().count(), 0);
 
     let later = requested + 60_000;
     let released = app.release_board_relays(board, later).await.unwrap();
