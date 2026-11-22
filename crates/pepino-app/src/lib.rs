@@ -34,6 +34,7 @@ mod initialize;
 mod list;
 mod log;
 mod people_names;
+mod preferences;
 pub use people_names::PersonKey;
 mod projection;
 mod protocol;
