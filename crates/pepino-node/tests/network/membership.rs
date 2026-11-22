@@ -193,6 +193,11 @@ async fn readmission_syncs_after_the_welcome_ciphertext_outgrows_512_bytes() {
     .expect("the receiving device should have the key-agreement log");
     let value: ciborium::Value = ciborium::from_reader(header.as_slice()).unwrap();
     assert!(largest_byte_string(&value) > 512);
+    for node in [&a, &b] {
+        let measured = node.status().boards[&alice.id()].largest_membership_header_item;
+        assert_eq!(measured, largest_byte_string(&value));
+        assert!(measured < pepino_node::HEADER_ITEM_WARNING);
+    }
     b.shutdown().await.unwrap();
     c.shutdown().await.unwrap();
     a.shutdown().await.unwrap();

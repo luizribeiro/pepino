@@ -58,6 +58,10 @@ pub enum NodeEvent {
         board: BoardId,
         count: usize,
     },
+    MembershipHeaderMeasured {
+        board: BoardId,
+        largest_item: usize,
+    },
     PeerSeen {
         peer: DeviceId,
     },

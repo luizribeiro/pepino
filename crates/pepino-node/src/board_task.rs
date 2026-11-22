@@ -18,6 +18,7 @@ use crate::{
     delivery::DeliveryWriter,
     delivery_item::Delivery,
     events::pipeline_error,
+    header_headroom::largest_control_item,
     membership_watch::{MembershipMonitor, is_removed},
     receipt::{Payload, Receipts},
     status::board_status,
@@ -67,6 +68,7 @@ impl BoardTask {
         let mut space = None;
         let mut requested = false;
         let mut initial_error = self.observe_removal().await.err();
+        self.measure_membership_headers().await;
         let result = loop {
             if let Some(error) = initial_error.take() {
                 break Err(error);
@@ -140,11 +142,22 @@ impl BoardTask {
         Ok(())
     }
 
+    async fn measure_membership_headers(&self) {
+        let board = self.lease.id;
+        if let Ok(largest_item) = largest_control_item(&self.acks.pool, board).await {
+            self.status.send(NodeEvent::MembershipHeaderMeasured {
+                board,
+                largest_item,
+            });
+        }
+    }
+
     async fn forward(&mut self, event: StreamEvent<Payload>) -> Result<(), Error> {
         match &event {
             StreamEvent::Space { members, inner, .. } => {
                 self.membership.update(members, inner);
                 self.observe_removal().await?;
+                self.measure_membership_headers().await;
             }
             StreamEvent::ReplayStarted { .. } => {
                 self.replay_status.send_replace(true);

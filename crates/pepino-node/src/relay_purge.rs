@@ -114,7 +114,7 @@ async fn purge(tx: &mut Transaction<'_, Sqlite>, board: BoardId) -> Result<(), E
     Ok(())
 }
 
-fn board_log(board: BoardId, domain: &[u8]) -> Result<Vec<u8>, Error> {
+pub(crate) fn board_log(board: BoardId, domain: &[u8]) -> Result<Vec<u8>, Error> {
     let mut bytes = board.as_bytes().to_vec();
     bytes.extend_from_slice(domain);
     encode_cbor(&LogId::digest(&bytes)).map_err(Error::storage)

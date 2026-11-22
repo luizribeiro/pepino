@@ -23,6 +23,14 @@ pub struct BoardStatus {
     pub caught_up: BTreeSet<DeviceId>,
     pub active_syncs: BTreeMap<(DeviceId, u64), SyncCounts>,
     pub operation_read_error: Option<String>,
+    pub largest_membership_header_item: usize,
+}
+
+impl BoardStatus {
+    /// Past this size the next welcome may exceed what peers can decode.
+    pub fn near_header_limit(&self) -> bool {
+        self.largest_membership_header_item > crate::HEADER_ITEM_WARNING
+    }
 }
 
 pub(crate) use tracking::{Status, WeakStatus};
@@ -152,6 +160,14 @@ mod tracking {
                             item.operation_read_error =
                                 Some(format!("read a board operation during sync: {error}"));
                         }
+                    }
+                }
+                NodeEvent::MembershipHeaderMeasured {
+                    board,
+                    largest_item,
+                } => {
+                    if let Some(item) = state.boards.get_mut(board) {
+                        item.largest_membership_header_item = *largest_item;
                     }
                 }
                 NodeEvent::CaughtUp { board, peer } => {
@@ -333,4 +349,33 @@ mod operation_read_errors {
         status.send(NodeEvent::BoardClosed { board: BOARD });
         assert!(!status.snapshot().boards.contains_key(&BOARD));
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_board_nears_the_header_limit_only_past_the_warning_size() {
+    use crate::{HEADER_ITEM_WARNING, NodeEvent};
+
+    let status = Status::default();
+    let board = BoardId::from_bytes([65; 32]);
+    let measured = |largest_item| {
+        status.send(NodeEvent::MembershipHeaderMeasured {
+            board,
+            largest_item,
+        });
+        status.snapshot().boards.get(&board).cloned()
+    };
+    assert_eq!(measured(13_000), None);
+    status.send(NodeEvent::BoardOpened {
+        board,
+        replaying: false,
+    });
+    assert!(!status.snapshot().boards[&board].near_header_limit());
+    assert!(!measured(547).unwrap().near_header_limit());
+    assert!(!measured(HEADER_ITEM_WARNING).unwrap().near_header_limit());
+    assert!(
+        measured(HEADER_ITEM_WARNING + 1)
+            .unwrap()
+            .near_header_limit()
+    );
 }
