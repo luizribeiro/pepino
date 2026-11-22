@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::{App, AppError, BoardJoinState, LocalState, PeerHint, app::invalid};
 
 const CLOCK_AHEAD: &str = "clock too far ahead of the relay";
+const NOT_TRUSTED: &str = "device is not trusted by the relay";
+const SUPERSEDED: &str = "the relay has a newer instruction";
 
 pub(crate) type RelayCatalog = BTreeMap<BoardId, BTreeMap<DeviceId, BoardRelay>>;
 
@@ -31,10 +33,13 @@ where
             let relays = relays
                 .into_iter()
                 .map(|(relay, entries)| {
-                    let entries = match entries {
+                    let mut entries = match entries {
                         Stored::Legacy(entry) => [(entry.revision.writer, entry)].into(),
                         Stored::Writers(entries) => entries,
                     };
+                    for entry in entries.values_mut() {
+                        entry.recover_legacy_copy();
+                    }
                     (relay, entries)
                 })
                 .collect();
@@ -51,6 +56,7 @@ pub enum RelayState {
     Carrying,
     RemovalPendingRestart,
     Refused,
+    NoLongerConfirmed,
     StillCarried,
     Removed,
 }
@@ -62,6 +68,7 @@ impl std::fmt::Display for RelayState {
             Self::Unreachable => "unreachable",
             Self::Carrying => "carrying",
             Self::Refused => "refused",
+            Self::NoLongerConfirmed => "no longer confirmed",
             Self::RemovalPendingRestart => "removal pending restart",
             Self::StillCarried => {
                 "removed for this device; the relay still carries it for another device"
@@ -86,6 +93,8 @@ pub struct BoardRelay {
     pub carry: bool,
     pub relay_url: Option<String>,
     pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub possible_copy: Option<bool>,
 }
 
 impl BoardRelay {
@@ -101,12 +110,18 @@ impl BoardRelay {
             && self.revision.writer == device
             && matches!(
                 self.state,
-                RelayState::Requested | RelayState::Unreachable | RelayState::Carrying
+                RelayState::Requested
+                    | RelayState::Unreachable
+                    | RelayState::Carrying
+                    | RelayState::NoLongerConfirmed
             )
     }
 
     fn copy(&self, device: DeviceId) -> RelayCopy {
         match (self.carry, self.state) {
+            (true, RelayState::RemovalPendingRestart) if self.has_possible_copy() => {
+                RelayCopy::Kept
+            }
             (true, RelayState::Refused)
             | (_, RelayState::Removed | RelayState::RemovalPendingRestart) => RelayCopy::Absent,
             (false, RelayState::Requested) if self.revision.writer == device => {
@@ -118,7 +133,10 @@ impl BoardRelay {
 
     fn stamped_by_a_fast_clock(&self, now: u64) -> bool {
         self.revision.sequence > now.saturating_add(pepino_node::RELAY_CLOCK_TOLERANCE_MS)
-            || (self.state == RelayState::Refused && self.reason.as_deref() == Some(CLOCK_AHEAD))
+            || (matches!(
+                self.state,
+                RelayState::Refused | RelayState::NoLongerConfirmed
+            ) && self.reason.as_deref() == Some(CLOCK_AHEAD))
     }
 
     // No relay accepted a revision it refused as ahead of its clock, and a relay that holds a
@@ -130,6 +148,26 @@ impl BoardRelay {
         Some(now.max(self.revision.sequence.checked_add(1)?))
     }
 
+    fn has_possible_copy(&self) -> bool {
+        self.possible_copy == Some(true)
+            || matches!(
+                self.state,
+                RelayState::Carrying | RelayState::NoLongerConfirmed
+            )
+    }
+
+    fn recover_legacy_copy(&mut self) {
+        // A legacy refusal could have replaced a confirmed copy.
+        if self.possible_copy.is_none()
+            && self.carry
+            && self.state == RelayState::Refused
+            && matches!(self.reason.as_deref(), Some(NOT_TRUSTED | SUPERSEDED))
+        {
+            self.state = RelayState::NoLongerConfirmed;
+            self.possible_copy = Some(true);
+        }
+    }
+
     fn record(&mut self, answer: Option<RelayAnswer>) {
         let (state, reason) = match answer {
             None => (RelayState::Unreachable, None),
@@ -137,22 +175,27 @@ impl BoardRelay {
             Some(RelayAnswer::RemovalPendingRestart) => (RelayState::RemovalPendingRestart, None),
             Some(RelayAnswer::Removed) => (RelayState::Removed, None),
             Some(RelayAnswer::StillCarried) => (RelayState::StillCarried, None),
-            Some(RelayAnswer::NotTrusted) => (
-                RelayState::Refused,
-                Some("device is not trusted by the relay"),
-            ),
+            Some(RelayAnswer::NotTrusted) => (RelayState::Refused, Some(NOT_TRUSTED)),
             Some(RelayAnswer::AtCapacity) => (
                 RelayState::Refused,
                 Some("relay has reached its board limit"),
             ),
-            Some(RelayAnswer::Superseded) => (
-                RelayState::Refused,
-                Some("the relay has a newer instruction"),
-            ),
+            Some(RelayAnswer::Superseded) => (RelayState::Refused, Some(SUPERSEDED)),
             Some(RelayAnswer::ClockAhead) => (RelayState::Refused, Some(CLOCK_AHEAD)),
             _ => return,
         };
+        let confirmed = self.has_possible_copy();
+        let state = if self.carry && confirmed && state == RelayState::Refused {
+            RelayState::NoLongerConfirmed
+        } else {
+            state
+        };
         if state >= self.state {
+            self.possible_copy = Some(match state {
+                RelayState::Carrying => true,
+                RelayState::Removed | RelayState::StillCarried => false,
+                _ => confirmed,
+            });
             self.state = state;
             self.reason = reason.map(str::to_owned);
         }
@@ -227,6 +270,7 @@ impl LocalState {
                     carry: false,
                     relay_url: entry.relay_url.take(),
                     reason: None,
+                    possible_copy: Some(entry.has_possible_copy()),
                 };
             }
         }
@@ -254,7 +298,7 @@ impl LocalState {
             if !self.boards().iter().any(|entry| entry.id == board) {
                 continue;
             }
-            for (node, incoming) in relays {
+            for (node, mut incoming) in relays {
                 if incoming.revision.writer != signer
                     || incoming.revision.sequence > latest
                     || pepino_node::validate_relay_id(node).is_err()
@@ -265,6 +309,7 @@ impl LocalState {
                 {
                     continue;
                 }
+                incoming.recover_legacy_copy();
                 let known = self.catalog.relays.entry(board).or_default();
                 let entry = known
                     .entry(node)
@@ -351,6 +396,7 @@ impl App {
                         carry,
                         relay_url,
                         reason: None,
+                        possible_copy: Some(previous.is_some_and(BoardRelay::has_possible_copy)),
                     },
                 );
             }
@@ -384,7 +430,11 @@ impl App {
     ) -> Result<(), AppError> {
         self.update_local(move |local| {
             if let Some(entry) = local.relay_request(board, relay, revision)
-                && (entry.pending() || (entry.state == RelayState::Carrying && answer.is_some()))
+                && (entry.pending()
+                    || (matches!(
+                        entry.state,
+                        RelayState::Carrying | RelayState::NoLongerConfirmed
+                    ) && answer.is_some()))
             {
                 entry.record(answer);
             }
@@ -432,6 +482,7 @@ fn a_legacy_relay_record_is_loaded_under_its_requesting_device() {
         carry: true,
         relay_url: Some("https://relay.example/".into()),
         reason: None,
+        possible_copy: None,
     };
     let mut data = serde_json::to_value(crate::catalog::CatalogState::default()).unwrap();
     data["relays"] = serde_json::json!({(board.to_string()): {(relay.to_string()): legacy}});
@@ -440,6 +491,27 @@ fn a_legacy_relay_record_is_loaded_under_its_requesting_device() {
     let roundtrip: crate::catalog::CatalogState =
         serde_json::from_value(serde_json::to_value(&catalog).unwrap()).unwrap();
     assert_eq!(roundtrip, catalog);
+
+    for possible_copy in [None, Some(false)] {
+        let refused = BoardRelay {
+            state: RelayState::Refused,
+            reason: Some(NOT_TRUSTED.into()),
+            possible_copy,
+            ..legacy.clone()
+        };
+        let mut data = serde_json::to_value(crate::catalog::CatalogState::default()).unwrap();
+        data["relays"] = serde_json::json!({(board.to_string()): {(relay.to_string()): refused}});
+        let catalog: crate::catalog::CatalogState = serde_json::from_value(data).unwrap();
+        let entry = &catalog.relays[&board][&relay][&writer];
+        assert_eq!(
+            (entry.state, entry.copy(writer)),
+            if possible_copy.is_none() {
+                (RelayState::NoLongerConfirmed, RelayCopy::Kept)
+            } else {
+                (RelayState::Refused, RelayCopy::Absent)
+            }
+        );
+    }
 }
 
 #[cfg(test)]
@@ -454,6 +526,7 @@ fn a_request_stamped_ahead_of_the_relay_clock_is_refused_with_the_cause() {
         carry: true,
         relay_url: Some("https://relay.example".into()),
         reason: None,
+        possible_copy: None,
     };
     request.record(Some(RelayAnswer::ClockAhead));
     assert_eq!(request.state, RelayState::Refused);
@@ -477,6 +550,7 @@ fn a_removal_that_leaves_the_board_with_another_requester_is_not_shown_as_remove
         carry,
         relay_url: Some("https://relay.example/".into()),
         reason: None,
+        possible_copy: None,
     };
     let mut removal = request(false);
     removal.record(Some(RelayAnswer::StillCarried));
@@ -612,6 +686,7 @@ fn announced_requests_are_kept_only_from_their_writer_and_near_the_clock() {
         carry: true,
         relay_url: Some("https://relay.example/".into()),
         reason: None,
+        possible_copy: None,
     };
     let rejected: RelayCatalog = [(
         greenhouse,
@@ -823,4 +898,80 @@ async fn releasing_a_board_asks_only_the_relays_this_device_handed_it_to() {
     let answered = app.fresh_local_state().await.unwrap();
     assert_eq!(copies(&answered)[&carrying], RelayCopy::Absent);
     assert_eq!(copies(&answered)[&unanswered], RelayCopy::Kept);
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn a_recheck_refusal_preserves_the_copy_and_queues_its_removal() {
+    for answer in [RelayAnswer::NotTrusted, RelayAnswer::Superseded] {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
+        let board = app.local_state().board_id();
+        let device = app.local_state().device_id;
+        let relay = pepino_node::DeviceCredentials::load_or_create(dir.path().join("relay.cbor"))
+            .unwrap()
+            .device_id();
+        let now = 1_795_300_000_000;
+        let peer = PeerHint {
+            id: relay,
+            relay_url: Some("https://relay.example/".into()),
+        };
+        let request = app
+            .set_board_relay(vec![board], peer.clone(), true, now)
+            .await
+            .unwrap();
+        let revision = request.board_relays(board).next().unwrap().1.revision;
+        app.record_relay_answer(board, relay, revision, Some(RelayAnswer::Carrying))
+            .await
+            .unwrap();
+        app.record_relay_answer(board, relay, revision, Some(answer))
+            .await
+            .unwrap();
+        let uncertain = app.fresh_local_state().await.unwrap();
+        assert_eq!(
+            uncertain.relay_copies(board).collect::<Vec<_>>(),
+            [(relay, RelayCopy::Kept)]
+        );
+        assert_eq!(
+            uncertain.board_relays(board).next().unwrap().1.state,
+            RelayState::NoLongerConfirmed
+        );
+        let retried = app
+            .set_board_relay(vec![board], peer.clone(), true, now + 1000)
+            .await
+            .unwrap();
+        let revision = retried.board_relays(board).next().unwrap().1.revision;
+        app.record_relay_answer(board, relay, revision, Some(answer))
+            .await
+            .unwrap();
+        let released = app.release_board_relays(board, now + 2000).await.unwrap();
+        let entry = released.board_relays(board).next().unwrap().1;
+        assert_eq!(entry.revision.writer, device);
+        assert!(!entry.carry);
+        assert_eq!(
+            released.relay_copies(board).collect::<Vec<_>>(),
+            [(relay, RelayCopy::RemovalPending)]
+        );
+        app.record_relay_answer(board, relay, entry.revision, Some(answer))
+            .await
+            .unwrap();
+        let refused = app.fresh_local_state().await.unwrap();
+        assert_eq!(
+            refused.relay_copies(board).collect::<Vec<_>>(),
+            [(relay, RelayCopy::Kept)]
+        );
+        let requested = app
+            .set_board_relay(vec![board], peer, false, now + 3000)
+            .await
+            .unwrap();
+        let revision = requested.board_relays(board).next().unwrap().1.revision;
+        app.record_relay_answer(board, relay, revision, Some(RelayAnswer::Removed))
+            .await
+            .unwrap();
+        let removed = app.fresh_local_state().await.unwrap();
+        assert_eq!(
+            removed.relay_copies(board).collect::<Vec<_>>(),
+            [(relay, RelayCopy::Absent)]
+        );
+    }
 }

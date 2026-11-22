@@ -139,6 +139,11 @@ impl Entry {
         let reason = self.reason.as_ref().map_or(String::new(), |reason| {
             format!(" ({})", single_line(reason))
         });
+        let possible_copy = if self.state == pepino_app::RelayState::NoLongerConfirmed {
+            "; the relay may still hold a copy"
+        } else {
+            ""
+        };
         let removal = !self.carry
             && matches!(
                 self.state,
@@ -148,7 +153,7 @@ impl Entry {
             );
         let operation = if removal { "removal " } else { "" };
         format!(
-            "{}  {}  {operation}{}{reason}",
+            "{}  {}  {operation}{}{reason}{possible_copy}",
             self.relay, self.requester_name, self.state
         )
     }
@@ -239,6 +244,7 @@ fn a_copy_kept_for_another_device_is_listed_as_such() {
             carry: false,
             relay_url: None,
             reason: None,
+            possible_copy: None,
         },
         "Seed tablet".into(),
     );
@@ -249,4 +255,32 @@ fn a_copy_kept_for_another_device_is_listed_as_such() {
         )
     );
     assert_eq!(json!(entry)["state"], "still_carried");
+}
+
+#[cfg(test)]
+#[test]
+fn an_unconfirmed_recheck_reports_the_possible_copy_in_both_formats() {
+    let relay = DeviceId::from_bytes([33; 32]);
+    let entry = Entry::new(
+        relay,
+        &BoardRelay {
+            revision: pepino_node::RelayRevision {
+                sequence: 1_795_300_000_000,
+                writer: DeviceId::from_bytes([74; 32]),
+            },
+            state: pepino_app::RelayState::NoLongerConfirmed,
+            carry: true,
+            relay_url: None,
+            reason: Some("device is not trusted by the relay".into()),
+            possible_copy: Some(true),
+        },
+        "Seed tablet".into(),
+    );
+    assert_eq!(
+        entry.human(),
+        format!(
+            "{relay}  Seed tablet  no longer confirmed (device is not trusted by the relay); the relay may still hold a copy"
+        )
+    );
+    assert_eq!(json!(entry)["state"], "no_longer_confirmed");
 }

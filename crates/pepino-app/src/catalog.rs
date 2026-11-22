@@ -742,6 +742,7 @@ fn a_newly_linked_device_keeps_relay_requests_from_its_bootstrap_sender() {
         carry: true,
         relay_url: Some("https://relay.example/".into()),
         reason: None,
+        possible_copy: None,
     };
     let identity = local.identity_id;
     let announcement = |writer| Announcement {

@@ -57,7 +57,8 @@ answer. The requesting daemon periodically checks whether the relay still
 carries its request. `carrying` means the relay accepted the board; leave
 the device online a little longer so the history can copy across. A refusal
 states its reason, such as an untrusted device or a full relay. Fix the cause
-and run `add` again.
+and run `add` again. A refused recheck shows “no longer confirmed” because
+the relay may still hold its copy.
 
 A relay with a configured relay server prints its address as
 `NODE_ID@https://…`. Use that form from devices outside the relay's local

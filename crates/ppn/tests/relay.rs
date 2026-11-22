@@ -488,11 +488,11 @@ mod network {
             until(
                 || states(host),
                 |rows| {
-                    rows.get(&device_id)
-                        .is_some_and(|state| matches!(state.as_str(), "removed" | "refused"))
-                        && rows
-                            .get(&sibling_id)
-                            .is_some_and(|state| state == "refused")
+                    rows.get(&device_id).is_some_and(|state| {
+                        matches!(state.as_str(), "removed" | "no_longer_confirmed")
+                    }) && rows
+                        .get(&sibling_id)
+                        .is_some_and(|state| state == "refused")
                 },
                 WAIT,
             );
