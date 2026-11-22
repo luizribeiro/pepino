@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{App, AppError, BoardJoinState, LocalState, PeerHint, app::invalid};
 
+const CLOCK_AHEAD: &str = "clock too far ahead of the relay";
+
 pub(crate) type RelayCatalog = BTreeMap<BoardId, BTreeMap<DeviceId, BoardRelay>>;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -72,7 +74,17 @@ impl BoardRelay {
         }
     }
 
+    fn stamped_by_a_fast_clock(&self, now: u64) -> bool {
+        self.revision.sequence > now.saturating_add(pepino_node::RELAY_CLOCK_TOLERANCE_MS)
+            || (self.state == RelayState::Refused && self.reason.as_deref() == Some(CLOCK_AHEAD))
+    }
+
+    // No relay accepted a revision it refused as ahead of its clock, and a relay that holds a
+    // newer one answers `Superseded`, so starting again from the clock cannot undo anything.
     fn sequence_after(&self, now: u64) -> Option<u64> {
+        if self.stamped_by_a_fast_clock(now) {
+            return Some(now);
+        }
         Some(now.max(self.revision.sequence.checked_add(1)?))
     }
 
@@ -96,10 +108,7 @@ impl BoardRelay {
                 RelayState::Refused,
                 Some("the relay has a newer instruction"),
             ),
-            Some(RelayAnswer::ClockAhead) => (
-                RelayState::Refused,
-                Some("clock too far ahead of the relay"),
-            ),
+            Some(RelayAnswer::ClockAhead) => (RelayState::Refused, Some(CLOCK_AHEAD)),
             _ => return,
         };
         if state >= self.state {
@@ -346,6 +355,89 @@ fn a_request_stamped_ahead_of_the_relay_clock_is_refused_with_the_cause() {
         Some("clock too far ahead of the relay")
     );
     assert!(!request.pending());
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn requests_stamped_by_a_fast_clock_restart_from_the_corrected_clock() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
+    let board = app.local_state().board_id();
+    let relay = |name: &str| {
+        pepino_node::DeviceCredentials::load_or_create(dir.path().join(name))
+            .unwrap()
+            .device_id()
+    };
+    let [refused, unanswered, refused_nearby, nearby] = [
+        "refused.cbor",
+        "unanswered.cbor",
+        "refused-nearby.cbor",
+        "nearby.cbor",
+    ]
+    .map(relay);
+    let peer = |id| PeerHint {
+        id,
+        relay_url: None,
+    };
+    let now = 1_795_300_000_000;
+    let a_year_ahead = now + 365 * 24 * 3600 * 1000;
+    let within_tolerance = now + pepino_node::RELAY_CLOCK_TOLERANCE_MS;
+    let writer = app.local_state().device_id;
+    for (id, sequence, refused) in [
+        (refused, a_year_ahead, true),
+        (unanswered, a_year_ahead, false),
+        (refused_nearby, within_tolerance, true),
+        (nearby, within_tolerance, false),
+    ] {
+        app.set_board_relay(vec![board], peer(id), true, sequence)
+            .await
+            .unwrap();
+        if refused {
+            let revision = RelayRevision { sequence, writer };
+            app.record_relay_answer(board, id, revision, Some(RelayAnswer::ClockAhead))
+                .await
+                .unwrap();
+        }
+    }
+
+    for (id, carry, reissued) in [
+        (refused, true, now),
+        (unanswered, false, now),
+        (refused_nearby, true, now),
+        (nearby, false, within_tolerance + 1),
+    ] {
+        let local = app
+            .set_board_relay(vec![board], peer(id), carry, now)
+            .await
+            .unwrap();
+        let entries: BTreeMap<_, _> = local.board_relays(board).collect();
+        assert_eq!(entries[&id].revision.sequence, reissued);
+        assert_eq!(entries[&id].state, RelayState::Requested);
+        assert_eq!(entries[&id].carry, carry);
+    }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn releasing_a_board_requested_with_a_fast_clock_starts_from_the_corrected_clock() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
+    let board = app.local_state().board_id();
+    let relay = pepino_node::DeviceCredentials::load_or_create(dir.path().join("relay.cbor"))
+        .unwrap()
+        .device_id();
+    let peer = PeerHint {
+        id: relay,
+        relay_url: None,
+    };
+    let now = 1_795_300_000_000;
+    app.set_board_relay(vec![board], peer, true, now + 86_400_000)
+        .await
+        .unwrap();
+    let released = app.release_board_relays(board, now).await.unwrap();
+    let (_, removal) = released.board_relays(board).next().unwrap();
+    assert!(!removal.carry);
+    assert_eq!(removal.revision.sequence, now);
 }
 
 #[cfg(test)]
