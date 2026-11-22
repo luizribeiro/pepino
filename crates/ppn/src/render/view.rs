@@ -22,9 +22,13 @@ impl Render for ViewDefinition {
     }
 }
 
-pub(super) fn saved_views(response: &Response) -> Result<String, CliError> {
+pub(super) fn saved_views(response: &Response, color: bool) -> Result<String, CliError> {
     match response {
-        Response::Views { views } => Ok(views.iter().map(list_row).collect::<Vec<_>>().join("\n")),
+        Response::Views { views } => Ok(views
+            .iter()
+            .map(|view| list_row(view, color))
+            .collect::<Vec<_>>()
+            .join("\n")),
         Response::ViewSaved { view, replaced } => {
             let verb = if *replaced { "Replaced" } else { "Saved" };
             Ok(format!("{verb} {}", view.name))
@@ -37,12 +41,23 @@ pub(super) fn saved_views(response: &Response) -> Result<String, CliError> {
     }
 }
 
-fn list_row(view: &SavedView) -> String {
-    if let Some(label) = &view.recovered_as {
+fn list_row(view: &SavedView, color: bool) -> String {
+    let mut row = if let Some(label) = &view.recovered_as {
         format!("{label} [@{}]  {}", view.name, view.filter)
     } else {
         definition(view)
+    };
+    if let (Some(by), Some(at)) = (&view.updated_by, &view.updated_at) {
+        let suffix = format!("  (updated by {} at {at})", by.name);
+        if color {
+            row.push_str("\x1b[2m");
+            row.push_str(&suffix);
+            row.push_str("\x1b[0m");
+        } else {
+            row.push_str(&suffix);
+        }
     }
+    row
 }
 
 fn definition(view: &SavedView) -> String {
@@ -84,7 +99,7 @@ mod tests {
         );
         for (response, expected) in cases {
             let response: Response = serde_json::from_value(response).unwrap();
-            assert_eq!(saved_views(&response).unwrap(), expected);
+            assert_eq!(saved_views(&response, false).unwrap(), expected);
         }
     }
 }

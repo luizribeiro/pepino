@@ -441,3 +441,136 @@ fn transitively_linked_devices_share_the_roster_and_render_its_names() {
     assert_eq!(offline["identity"]["cache_stale"], true);
     assert_eq!(offline["identity"]["roster"], renamed);
 }
+
+#[test]
+fn saved_views_follow_linked_devices_and_converge_after_offline_edits() {
+    let (_dir, network) = network();
+    let titanium = Host::owner(&network);
+    let ferrum = Host::new(&network);
+    join(&ferrum, &titanium.add(&ferrum.request("Ferrum"), &[]));
+
+    let view = |host: &Host, name: &str| {
+        view_list(host)
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == name)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null)
+    };
+    titanium.run(&["view", "save", "weekend", "tag:hardware"]);
+    until(
+        || view(&ferrum, "weekend"),
+        |row| row["filter"] == "tag:hardware",
+        WAIT,
+    );
+
+    ferrum.run(&["view", "save", "weekend", "tag:garden"]);
+    let changed = until(
+        || view(&titanium, "weekend"),
+        |row| row["filter"] == "tag:garden",
+        WAIT,
+    );
+    assert_view_writer(&changed, &ferrum, "Ferrum");
+    assert_eq!(
+        ferrum.json(&["view", "show", "weekend"])["view"],
+        serde_json::json!({"name":"weekend","filter":"tag:garden"})
+    );
+
+    titanium.run(&["view", "rm", "weekend"]);
+    until(
+        || view(&ferrum, "weekend"),
+        serde_json::Value::is_null,
+        WAIT,
+    );
+
+    ferrum.run(&["view", "save", "parts", "tag:hardware"]);
+    until(
+        || view(&titanium, "parts"),
+        |row| row["filter"] == "tag:hardware",
+        WAIT,
+    );
+    titanium.stop();
+    ferrum.stop();
+    titanium.run(&["view", "save", "maintenance", "@parts"]);
+    ferrum.run(&["view", "rm", "parts"]);
+    titanium.run(&["view", "save", "offline", "tag:hardware"]);
+    ferrum.run(&["view", "save", "offline", "tag:garden"]);
+    titanium.start();
+    ferrum.start();
+
+    let (desktop, tablet) = until(
+        || (view(&titanium, "offline"), view(&ferrum, "offline")),
+        |(a, b)| a["filter"].is_string() && a["filter"] == b["filter"],
+        WAIT,
+    );
+    let (changed, loser, winner, winner_name) = if desktop["filter"] == "tag:hardware" {
+        assert!(desktop["updated_by"].is_null());
+        (&tablet, &ferrum, &titanium, "Titanium")
+    } else {
+        assert_eq!(desktop["filter"], "tag:garden");
+        assert!(tablet["updated_by"].is_null());
+        (&desktop, &titanium, &ferrum, "Ferrum")
+    };
+    assert_view_writer(changed, winner, winner_name);
+    let stamp = changed["updated_at"].as_str().unwrap();
+    let suffix = format!("  (updated by {winner_name} at {stamp})");
+    let human = loser.run(&["view", "ls"]);
+    assert!(human.contains(&format!(
+        "offline  {}{suffix}",
+        desktop["filter"].as_str().unwrap()
+    )));
+    let colored = loser.output(&["view", "ls", "--color", "always"]);
+    assert!(colored.status.success(), "{colored:?}");
+    assert!(String::from_utf8_lossy(&colored.stdout).contains(&format!("\x1b[2m{suffix}\x1b[0m")));
+
+    until(
+        || view(&titanium, "parts"),
+        serde_json::Value::is_null,
+        WAIT,
+    );
+    let error = task_error(
+        titanium.output(&["ls", "@maintenance", "--json"]),
+        2,
+        "invalid_input",
+    );
+    assert_eq!(error["term"], "@parts");
+    assert_eq!(error["view_chain"], serde_json::json!(["maintenance"]));
+
+    let cobalt = Host::new(&network);
+    join(&cobalt, &titanium.add(&cobalt.request("Cobalt"), &[]));
+    until(
+        || view(&cobalt, "maintenance"),
+        |row| row["filter"] == "@parts",
+        WAIT,
+    );
+    until(
+        || view(&cobalt, "offline"),
+        |row| row["filter"] == desktop["filter"],
+        WAIT,
+    );
+    assert!(view(&cobalt, "weekend").is_null());
+    assert!(view(&cobalt, "parts").is_null());
+    assert!(view(&cobalt, "offline")["updated_by"].is_null());
+}
+
+fn view_list(host: &Host) -> serde_json::Value {
+    host.json(&["view", "ls"])["views"].clone()
+}
+
+fn assert_view_writer(view: &serde_json::Value, host: &Host, name: &str) {
+    let devices = host.json(&["device", "ls"]);
+    let writer = devices["devices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["this_device"] == true)
+        .unwrap();
+    assert_eq!(
+        view["updated_by"],
+        serde_json::json!({"id":writer["id"],"name":name})
+    );
+    let updated =
+        chrono::DateTime::parse_from_rfc3339(view["updated_at"].as_str().unwrap()).unwrap();
+    assert_eq!(updated.offset().local_minus_utc(), 0);
+}

@@ -63,6 +63,10 @@ pub struct SavedView {
     pub filter: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovered_as: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_by: Option<crate::NamedRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -78,6 +82,8 @@ impl SavedView {
             name,
             filter,
             recovered_as: None,
+            updated_by: None,
+            updated_at: None,
         }
     }
 
@@ -179,10 +185,25 @@ impl LocalState {
     }
 
     fn listed_views(&self) -> Vec<SavedView> {
+        let devices = self.devices();
         self.view_values()
-            .map(|(name, _, value)| {
+            .map(|(name, entry, value)| {
                 let mut view = SavedView::new(name.into(), value.filter);
                 view.recovered_as = value.recovered_as;
+                if entry.writer != self.device_id
+                    && self
+                        .catalog
+                        .written_views
+                        .contains(&format!("{VIEW_PREFIX}{name}"))
+                {
+                    let id = entry.writer.to_string();
+                    let name = devices
+                        .get(&entry.writer)
+                        .cloned()
+                        .unwrap_or_else(|| id.clone());
+                    view.updated_by = Some(crate::NamedRecord { id, name });
+                    view.updated_at = crate::Hlc::from(entry.hlc).utc();
+                }
                 view
             })
             .collect()
@@ -207,9 +228,12 @@ impl LocalState {
             .map(serde_json::to_string)
             .transpose()
             .map_err(|error| invalid("preference", error))?;
+        let key = format!("{VIEW_PREFIX}{name}");
         self.catalog
             .preferences
-            .write(format!("{VIEW_PREFIX}{name}"), value, self.device_id, now)
+            .write(key.clone(), value, self.device_id, now)?;
+        self.catalog.written_views.insert(key);
+        Ok(())
     }
 
     pub(super) fn migrate_views(&mut self, now: u64) -> Result<(), AppError> {

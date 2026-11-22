@@ -20,6 +20,8 @@ pub(crate) struct CatalogState {
         skip_serializing_if = "crate::preferences::Preferences::is_empty"
     )]
     pub(crate) preferences: crate::preferences::Preferences,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) written_views: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) shared: BTreeMap<BoardId, crate::SharedAccess>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -321,6 +323,9 @@ impl LocalState {
             self.merge_relays(signer, announcement.relays, now);
         }
         self.catalog.preferences.merge(announcement.preferences);
+        self.catalog
+            .written_views
+            .retain(|key| self.catalog.preferences.get(key).is_some());
         for (board, records) in announcement.own_membership {
             if active_sender && self.shared_access(board).is_some() {
                 let stored = self.catalog.membership.entry(board).or_default();
