@@ -117,11 +117,11 @@ impl Preferences {
             return Err(clock_error());
         }
         let entry = Preference::new(&key, value, writer, hlc);
-        let deleted = entry.value.is_none();
-        self.0.insert(key, entry);
-        if deleted {
-            self.trim_tombstones();
+        if entry.value.is_none() {
+            self.0.remove(&key);
+            self.trim_tombstones(MAX_TOMBSTONES - 1);
         }
+        self.0.insert(key, entry);
         Ok(())
     }
 
@@ -148,18 +148,18 @@ impl Preferences {
             live += usize::from(entry.value.is_some());
             entry.value.is_none() || live <= MAX_LIVE
         });
-        self.trim_tombstones();
+        self.trim_tombstones(MAX_TOMBSTONES);
     }
 
-    fn trim_tombstones(&mut self) {
+    fn trim_tombstones(&mut self, limit: usize) {
         let mut tombstones: Vec<_> = self
             .0
             .iter()
             .filter(|(_, entry)| entry.value.is_none())
             .map(|(key, entry)| (entry.revision(), key))
             .collect();
-        if tombstones.len() > MAX_TOMBSTONES {
-            let excess = tombstones.len() - MAX_TOMBSTONES;
+        if tombstones.len() > limit {
+            let excess = tombstones.len() - limit;
             tombstones.select_nth_unstable(excess);
             let expired: Vec<_> = tombstones[..excess]
                 .iter()
@@ -202,6 +202,38 @@ mod tests {
     use proptest::prelude::*;
 
     const NOW: u64 = 1_800_000_000_000;
+
+    #[test]
+    fn a_local_delete_survives_a_full_register_of_newer_tombstones() {
+        let key = "view/weekend";
+        let me = DeviceId::from_bytes([1; 32]);
+        let laptop = DeviceId::from_bytes([9; 32]);
+        let mut prefs = Preferences::default();
+        prefs
+            .write(key.into(), Some("tag:garden".into()), me, NOW)
+            .unwrap();
+        let offline_peer = prefs.clone();
+        let ahead = NOW + pepino_core::MAX_CLOCK_SKEW_MS;
+        let mut newer = Preferences::default();
+        for index in 0..MAX_TOMBSTONES {
+            newer
+                .write(format!("view/junk-{index:04}"), None, laptop, ahead)
+                .unwrap();
+        }
+        let oldest = newer
+            .iter()
+            .min_by_key(|(_, entry)| entry.revision())
+            .unwrap()
+            .0
+            .to_owned();
+        prefs.merge(newer, NOW);
+        prefs.write(key.into(), None, me, NOW + 1_000).unwrap();
+        assert_eq!(prefs.get(key).unwrap().value, None);
+        assert_eq!(prefs.iter().count(), MAX_TOMBSTONES);
+        assert!(prefs.get(&oldest).is_none());
+        prefs.merge(offline_peer, NOW + 2_000);
+        assert_eq!(prefs.get(key).unwrap().value, None);
+    }
 
     fn event(key: &str, value: Option<&str>, writer: u8, counter: u32) -> Preferences {
         let hlc = Hlc {
