@@ -331,6 +331,7 @@ fn drop_boards(
             Err(CliError::new(ErrorKind::NotFound, message)
                 .with_hint("Run ppn relay boards to list the handles."))
         }
+        Outcome::Error { message, .. } => Err(CliError::new(ErrorKind::Failure, message)),
         _ => Err(CliError::new(
             ErrorKind::Failure,
             "Could not drop the boards.",
