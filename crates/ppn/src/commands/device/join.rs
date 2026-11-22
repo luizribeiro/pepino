@@ -101,7 +101,16 @@ pub(crate) fn wait_for_boards(
                     "Expected a peer hint acknowledgement",
                 )),
             });
+        let wait_for_service = || {
+            process::wait_for_service(client, wait.saturating_sub(start.elapsed()))
+                .map_err(unreachable)
+        };
         match outcome {
+            Ok(Outcome::Error { code, .. })
+                if code == "daemon_unreachable" && !remaining.is_zero() =>
+            {
+                wait_for_service()?;
+            }
             Ok(Outcome::Error { message, .. }) => {
                 return Err(CliError::new(ErrorKind::Failure, message));
             }
@@ -114,8 +123,7 @@ pub(crate) fn wait_for_boards(
                             std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::TimedOut
                         )) =>
             {
-                process::wait_for_service(client, wait.saturating_sub(start.elapsed()))
-                    .map_err(unreachable)?;
+                wait_for_service()?;
             }
             Err(error) => return Err(unreachable(error)),
         }
@@ -172,4 +180,85 @@ impl Render for JoinResult {
             ("message".into(), json!((!joined).then_some(PENDING))),
         ])
     }
+}
+
+#[cfg(test)]
+#[test]
+fn waiting_for_a_board_spans_a_daemon_restart() {
+    use ppn::daemon::protocol::{DaemonStatus, Network, Request, Response, VERSION};
+    use std::{
+        io::{BufRead, BufReader, Write},
+        os::unix::{fs::PermissionsExt, net::UnixListener},
+        thread,
+    };
+
+    let dir = tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir()
+        .unwrap();
+    let client = Client {
+        path: dir.path().join("join.sock"),
+    };
+    let listener = UnixListener::bind(&client.path).unwrap();
+    let board = BoardId::from_bytes([65; 32]);
+    let peer = pepino_app::PeerHint {
+        id: DeviceId::from_bytes([66; 32]),
+        relay_url: None,
+    };
+    let server = thread::spawn(move || {
+        let status = |starting_ms| Outcome::Status {
+            status: DaemonStatus {
+                pid: 1,
+                uptime_ms: 43,
+                network: Network {
+                    starting_ms,
+                    ..Default::default()
+                },
+                peer_syncs: Default::default(),
+                relay: None,
+            },
+        };
+        let mut replies = [
+            Outcome::Error {
+                code: "daemon_unreachable".into(),
+                message: "The daemon is still starting.".into(),
+            },
+            status(Some(12)),
+            status(None),
+            Outcome::PeerHintRegistered,
+            Outcome::BoardJoinState {
+                boards: [(board, BoardJoinState::Joined)].into(),
+            },
+        ]
+        .into_iter();
+        for expected in [
+            "register_peer_hint",
+            "status",
+            "status",
+            "register_peer_hint",
+            "board_join_state",
+        ] {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).unwrap();
+            let request: Request = serde_json::from_str(&line).unwrap();
+            let operation = serde_json::to_value(request.request).unwrap();
+            assert_eq!(operation["op"], expected);
+            serde_json::to_writer(
+                &mut stream,
+                &Response {
+                    v: VERSION,
+                    result: replies.next().unwrap(),
+                },
+            )
+            .unwrap();
+            stream.write_all(b"\n").unwrap();
+        }
+    });
+    let outcome = wait_for_boards(&client, peer, Duration::from_secs(5), Some(board)).unwrap();
+    let Outcome::BoardJoinState { boards } = outcome else {
+        panic!("{outcome:?}")
+    };
+    assert_eq!(boards[&board], BoardJoinState::Joined);
+    server.join().unwrap();
 }

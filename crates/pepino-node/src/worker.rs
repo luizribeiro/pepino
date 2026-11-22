@@ -133,9 +133,7 @@ fn stop_runtime(
         cleanup.block_on(async {
             tokio::time::timeout(WRITER_LIMIT, pool.begin_with("BEGIN IMMEDIATE"))
                 .await
-                .map_err(|_| {
-                    Error::Storage("timed out waiting for the node database writer".into())
-                })?
+                .map_err(|_| Error::ShutdownWriterTimeout)?
                 .map_err(Error::storage)
         })
     });
@@ -275,4 +273,25 @@ mod tests {
         done.await.unwrap().unwrap();
         start(&database).await.unwrap().shutdown().await.unwrap();
     }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn a_shutdown_writer_timeout_releases_the_node_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("node.sqlite");
+    let worker = Worker::start(&path, oneshot::channel().1).await.unwrap();
+    let pool = crate::node::open_database(&path, false).await.unwrap();
+    worker.pool.set(pool).unwrap();
+    let external = crate::node::open_database(&path, false).await.unwrap();
+    let writer = external.begin_with("BEGIN IMMEDIATE").await.unwrap();
+
+    assert!(matches!(
+        worker.shutdown().await,
+        Err(Error::ShutdownWriterTimeout)
+    ));
+    writer.rollback().await.unwrap();
+    external.close().await;
+    let reopened = Worker::start(&path, oneshot::channel().1).await.unwrap();
+    reopened.shutdown().await.unwrap();
 }

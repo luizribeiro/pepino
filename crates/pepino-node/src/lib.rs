@@ -99,6 +99,8 @@ pub enum Error {
     Worker(String),
     #[error("node data directory is still in use (lock: {0})")]
     DirectoryInUse(std::path::PathBuf),
+    #[error("node storage: timed out waiting for the node database writer")]
+    ShutdownWriterTimeout,
     #[error("node storage: {0}")]
     Storage(String),
     #[error("node operation: {0}")]

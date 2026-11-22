@@ -206,14 +206,32 @@ async fn cycle(
                 {
                     Ok(())
                 }
+                Err(pepino_sync::Error::ShutdownTimeout) if matches!(outcome, Ok(End::Restart)) => {
+                    log(
+                        level,
+                        LogLevel::Warn,
+                        "the sync engine cancelled its remaining workers after reaching the shutdown deadline",
+                    );
+                    Ok(())
+                }
                 result => result.map_err(|error| shutdown_failure("the sync engine", error)),
             };
         }
         let node = Arc::try_unwrap(node)
             .map_err(|_| shutdown_failure("the network node", "sync workers still hold it"))?;
-        node.shutdown()
-            .await
-            .map_err(|error| shutdown_failure("the network node", error))?;
+        match node.shutdown().await {
+            // The worker reports this after closing its pool and releasing the directory lock.
+            Err(pepino_node::Error::ShutdownWriterTimeout)
+                if matches!(outcome, Ok(End::Restart)) =>
+            {
+                log(
+                    level,
+                    LogLevel::Warn,
+                    "the network node closed after reaching the database writer deadline",
+                );
+            }
+            result => result.map_err(|error| shutdown_failure("the network node", error))?,
+        }
         engine_stop?;
     }
     outcome
