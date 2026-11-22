@@ -32,6 +32,53 @@ fn stopping_an_inactive_daemon_succeeds_in_a_pipe() {
     }
 }
 
+#[test]
+fn a_daemon_control_timeout_reports_that_the_request_was_sent() {
+    use std::{
+        io::{BufRead, BufReader},
+        os::unix::{fs::PermissionsExt, net::UnixListener},
+    };
+
+    let (sandbox, _) = uninitialized_task_sandbox();
+    std::fs::set_permissions(sandbox.home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let path = sandbox.home.path().join("daemon.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    listener.set_nonblocking(true).unwrap();
+
+    for extra in [&[][..], &["--json"][..]] {
+        let output = sandbox
+            .command()
+            .env("PPN_DAEMON_SOCKET_PATH", &path)
+            .args(["daemon", "status"])
+            .args(extra)
+            .output()
+            .unwrap();
+
+        // The fake daemon leaves the request unanswered until the client deadline passes.
+        let (connection, _) = listener
+            .accept()
+            .unwrap_or_else(|error| panic!("accept daemon request: {error}. CLI: {output:?}"));
+        let mut request = String::new();
+        BufReader::new(connection).read_line(&mut request).unwrap();
+        assert_eq!(as_json(&request)["request"]["op"], "status");
+
+        let message = if extra.is_empty() {
+            assert_eq!(output.status.code(), Some(6), "{output:?}");
+            assert!(output.stdout.is_empty(), "{output:?}");
+            String::from_utf8(output.stderr).unwrap()
+        } else {
+            task_error(output, 6, "daemon_unreachable")["message"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        assert!(
+            message.contains("The daemon did not reply within 250ms."),
+            "{message}"
+        );
+    }
+}
+
 #[cfg(pepino_network_tests)]
 #[path = "daemon_support/mod.rs"]
 mod support;

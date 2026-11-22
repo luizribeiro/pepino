@@ -28,11 +28,7 @@ impl Client {
         Builder::new_current_thread()
             .enable_all()
             .build()?
-            .block_on(async {
-                timeout(limit, exchange(&self.path, operation))
-                    .await
-                    .map_err(|_| io::ErrorKind::TimedOut)?
-            })
+            .block_on(exchange(&self.path, operation, limit))
     }
 
     pub fn nudge(&self) -> io::Result<()> {
@@ -71,24 +67,37 @@ pub fn unavailable(error: &io::Error) -> bool {
     )
 }
 
-async fn exchange(path: &Path, operation: Operation) -> io::Result<Outcome> {
-    let mut stream = UnixStream::connect(path).await?;
-    framing::write(
-        &mut stream,
-        &Request {
-            v: VERSION,
-            request: operation,
-        },
-    )
-    .await?;
-    let response: Response = framing::read(&mut stream).await?;
-    if response.v != VERSION {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Unsupported daemon protocol version",
-        ));
-    }
-    Ok(response.result)
+async fn exchange(path: &Path, operation: Operation, limit: Duration) -> io::Result<Outcome> {
+    let mut sent = false;
+    let result = timeout(limit, async {
+        let mut stream = UnixStream::connect(path).await?;
+        framing::write(
+            &mut stream,
+            &Request {
+                v: VERSION,
+                request: operation,
+            },
+        )
+        .await?;
+        sent = true;
+        let response: Response = framing::read(&mut stream).await?;
+        if response.v != VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Unsupported daemon protocol version",
+            ));
+        }
+        Ok(response.result)
+    })
+    .await;
+    result.map_err(|_| {
+        let message = if sent {
+            format!("The daemon did not reply within {limit:?}. The request may still be running.")
+        } else {
+            format!("Sending the request to the daemon took longer than {limit:?}.")
+        };
+        io::Error::new(io::ErrorKind::TimedOut, message)
+    })?
 }
 
 #[cfg(test)]
