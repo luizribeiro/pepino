@@ -56,7 +56,8 @@ mod network {
             .unwrap();
         let version = pepino_app::PROTOCOL_VERSION + 1;
         runtime.block_on(async {
-            let app = pepino_app::App::open(&fixture.data, 0).await.unwrap();
+            let now = pepino_app::wall_time_ms();
+            let app = pepino_app::App::open(&fixture.data, now).await.unwrap();
             let local = app.local_state();
             let mut bytes = b"pepino-board-catalog\0".to_vec();
             bytes.extend(
@@ -69,7 +70,7 @@ mod network {
                     .unwrap(),
             );
             for _ in 0..2 {
-                app.receive_catalog(local.catalog_board(), local.device_id, &bytes)
+                app.receive_catalog(local.catalog_board(), local.device_id, &bytes, now)
                     .await
                     .unwrap();
             }
