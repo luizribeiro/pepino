@@ -302,10 +302,10 @@ impl LocalState {
                 self.add_card_exchange(channel, route)?;
             }
         }
+        // A device linked while its inviter is offline only ever sees the inviter's
+        // announcements as a bootstrap sender, so relay requests cannot wait for the roster.
+        self.merge_relays(announcement.relays);
         let active_sender = self.active_roster_device(signer);
-        if active_sender {
-            self.merge_relays(announcement.relays);
-        }
         for (board, records) in announcement.own_membership {
             if active_sender && self.shared_access(board).is_some() {
                 let stored = self.catalog.membership.entry(board).or_default();
@@ -625,4 +625,63 @@ fn the_bootstrap_catalog_sender_cannot_relay_own_membership() {
     local.merge_catalog(private, peer, announcement).unwrap();
     assert_eq!(local.membership_history(shared).count(), 0);
     assert_eq!(local.board_departure(shared), None);
+}
+
+#[cfg(test)]
+#[test]
+fn a_newly_linked_device_keeps_relay_requests_from_its_bootstrap_sender() {
+    use crate::{BoardRelay, RelayState};
+    use pepino_node::RelayRevision;
+
+    let dir = tempfile::tempdir().unwrap();
+    let relay = pepino_node::DeviceCredentials::load_or_create(dir.path().join("relay.cbor"))
+        .unwrap()
+        .device_id();
+    let tablet = DeviceId::from_bytes([74; 32]);
+    let laptop = DeviceId::from_bytes([75; 32]);
+    let stranger = DeviceId::from_bytes([81; 32]);
+    let greenhouse = BoardId::from_bytes([76; 32]);
+    let mut local = LocalState::new(
+        crate::OpenOptions::default().try_into().unwrap(),
+        tablet,
+        greenhouse,
+    )
+    .unwrap();
+    local.other_devices.insert(laptop, "Laptop".into());
+    assert_eq!(local.roster_root(), None);
+    let request = BoardRelay {
+        revision: RelayRevision {
+            sequence: 1_795_300_000_000,
+            writer: laptop,
+        },
+        state: RelayState::Carrying,
+        carry: true,
+        relay_url: Some("https://relay.example/".into()),
+        reason: None,
+    };
+    let announcement = || Announcement {
+        v: crate::PROTOCOL_VERSION,
+        identity: local.identity_id,
+        revisions: Default::default(),
+        devices: Default::default(),
+        roster: Default::default(),
+        member: String::new(),
+        shared: Default::default(),
+        reader_routes: Default::default(),
+        board_leaves: Default::default(),
+        own_membership: Default::default(),
+        relays: [(greenhouse, [(relay, request.clone())].into())].into(),
+    };
+    let (from_stranger, from_laptop) = (announcement(), announcement());
+    local
+        .merge_catalog(greenhouse, stranger, from_stranger)
+        .unwrap();
+    assert_eq!(local.board_relays(greenhouse).count(), 0);
+    local
+        .merge_catalog(greenhouse, laptop, from_laptop)
+        .unwrap();
+    assert_eq!(
+        local.board_relays(greenhouse).collect::<Vec<_>>(),
+        [(relay, &request)]
+    );
 }
