@@ -11,8 +11,8 @@ all [your devices](devices.md), and any board except your first can be
 $ ppn board new Workshop
 $ ppn board rename Workshop 'Tool Shed'
 $ ppn board ls
-* Home (003257)  4/6 open  joined  idle
-  Tool Shed (847796)  1/1 open  joined  idle
+* Home (003257)  4/6 open  joined
+  Tool Shed (847796)  1/1 open  joined
 Selected board: Home (003257) via current
 ```
 

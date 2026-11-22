@@ -167,6 +167,23 @@ fn creates_through_the_daemon_and_renders_renames() {
     ));
     assert_eq!(created["board"]["name"], "Workshop");
     assert_eq!(created["board"]["membership"], "joined");
+    fixture.run(&["sync"]);
+    let listing = fixture.run(&["board", "ls"]);
+    assert!(
+        listing
+            .lines()
+            .any(|line| line.contains("Workshop") && line.ends_with("joined")),
+        "{listing}"
+    );
+    let json = as_json(&fixture.run(&["board", "ls", "--json"]));
+    let workshop = json["boards"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|board| board["name"] == "Workshop")
+        .unwrap();
+    assert_eq!(workshop["membership"], "joined");
+    assert_eq!(workshop["sync"], "idle");
     let pid = fixture.ready()["pid"].clone();
     assert!(success(command(&["board", "new", "Workshop"])).contains("Workshop"));
     let board = created["board"]["id"].as_str().unwrap();

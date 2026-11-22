@@ -333,7 +333,15 @@ fn document(
         } else {
             sync
         };
-        let activity = sync.replace('_', " ");
+        let activity = if matches!(response, Response::Boards { .. })
+            && (sync == "paused"
+                || (state == pepino_app::BoardJoinState::Joined
+                    && matches!(sync, "idle" | "offline")))
+        {
+            String::new()
+        } else {
+            format!("  {}", sync.replace('_', " "))
+        };
         let sharing = if info.shared {
             info.owner
                 .as_ref()
@@ -354,7 +362,7 @@ fn document(
             membership(state)
         };
         rows.push(format!(
-            "{} {} ({})  {}/{} open  {}  {activity}{sharing}",
+            "{} {} ({})  {}/{} open  {}{activity}{sharing}",
             if info.current { "*" } else { " " },
             single_line(&info.board.name),
             short.get(id),
@@ -421,7 +429,7 @@ pub(super) fn board_activity(
         Some(board) if board.last_error.is_some() => "error",
         Some(board) if board.starting_up => "starting_up",
         Some(board)
-            if board.events_waiting == Some(0)
+            if board.events_waiting.unwrap_or_default() == 0
                 && !board.active
                 && !board.enrollment_pending
                 && state == pepino_app::BoardJoinState::Joined =>
@@ -429,6 +437,7 @@ pub(super) fn board_activity(
             "idle"
         }
         Some(_) => "pending",
+        None if network.is_some() && state == pepino_app::BoardJoinState::Joined => "idle",
         None if network.is_some() => "pending",
         None => "offline",
     };
