@@ -214,7 +214,11 @@ pub struct Board {
     pub last_sent: Option<chrono::DateTime<chrono::Utc>>,
     pub last_received: Option<chrono::DateTime<chrono::Utc>>,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub near_member_limit: bool,
 }
+
+pub const NEAR_MEMBER_LIMIT_NOTICE: &str = "this board is approaching the size at which new members can no longer be added. See \"Boards with many removals\" in docs/sharing.md.";
 
 #[cfg(test)]
 mod tests {

@@ -64,6 +64,11 @@ pub fn snapshot(status: pepino_sync::Status) -> Network {
                             .get(&id)
                             .and_then(|node| node.operation_read_error.clone())
                             .or(board.last_error),
+                        near_member_limit: status
+                            .node
+                            .boards
+                            .get(&id)
+                            .is_some_and(pepino_node::BoardStatus::near_header_limit),
                     },
                 )
             })
@@ -112,7 +117,30 @@ mod tests {
             pepino_app::BoardJoinState::Joined
         );
         assert_eq!(network.boards[&board.to_string()].events_waiting, None);
+        assert!(!network.boards[&board.to_string()].near_member_limit);
         assert!(network.boards[&board.to_string()].starting_up);
+    }
+
+    #[test]
+    fn a_board_is_near_the_member_limit_once_a_membership_header_item_passes_the_warning_size() {
+        let board = BoardId::from_bytes([51; 32]);
+        let near = |largest_membership_header_item| {
+            let mut status = pepino_sync::Status::default();
+            status.boards.entry(board).or_default();
+            status.node.boards.insert(
+                board,
+                pepino_node::BoardStatus {
+                    largest_membership_header_item,
+                    ..Default::default()
+                },
+            );
+            let network = snapshot(status);
+            serde_json::to_value(&network.boards[&board.to_string()]).unwrap()["near_member_limit"]
+                .clone()
+        };
+        assert_eq!(near(547), false);
+        assert_eq!(near(pepino_node::HEADER_ITEM_WARNING), false);
+        assert_eq!(near(pepino_node::HEADER_ITEM_WARNING + 1), true);
     }
 
     #[test]

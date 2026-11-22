@@ -125,3 +125,15 @@ To delete them, stop the daemon and forget the board, on every device:
 ppn daemon stop
 ppn board forget House --yes
 ```
+
+## Boards with many removals
+
+Each time a person or device is removed from a board, the board's keys
+change, and every later invitation carries all the keys the inviting device
+has kept. That bundle grows with each removal, and past a fixed size other
+devices cannot read the invitation, so nobody new can be added. When a board
+reaches three quarters of that size, `ppn status` shows a warning on the
+board and `near_member_limit` is `true` in `ppn status --json`; the daemon
+log has the same warning once. This takes on the order of 150 removals.
+There is no way to shrink the bundle yet: to keep adding people, create a
+new board and move the work there.

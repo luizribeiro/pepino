@@ -1,6 +1,11 @@
 use pepino_app::{OpenOptions, ReadRequest, Request};
 use ppn::app::AppClient;
-use ppn::daemon::{address::socket_path, client::Client, network::membership, protocol::Network};
+use ppn::daemon::{
+    address::socket_path,
+    client::Client,
+    network::membership,
+    protocol::{Board, NEAR_MEMBER_LIMIT_NOTICE, Network},
+};
 use ppn::error::{CliError, shorten_message_ids};
 use ppn::help_tree::example_help;
 use ppn::output::CommandResult;
@@ -354,11 +359,52 @@ fn describe_network(network: &Network, settings: &RenderSettings) -> String {
             time(board.last_sent),
             time(board.last_received)
         );
-        if let Some(error) = &board.last_error {
-            let _ = write!(text, ", Last error: {}", describe_sync_error(error));
-        }
+        text.push_str(&describe_board_problems(board));
     }
     text
+}
+
+fn describe_board_problems(board: &Board) -> String {
+    let mut text = String::new();
+    if let Some(error) = &board.last_error {
+        text = format!(", Last error: {}", describe_sync_error(error));
+    }
+    if board.near_member_limit {
+        text.push_str("\n    Warning: ");
+        text.push_str(NEAR_MEMBER_LIMIT_NOTICE);
+    }
+    text
+}
+
+#[cfg(test)]
+#[test]
+fn board_problems_list_the_last_error_then_the_member_limit_warning() {
+    let board = |last_error: Option<&str>, near_member_limit| Board {
+        starting_up: false,
+        enrollment_pending: false,
+        active: false,
+        events_waiting: Some(0),
+        published: 12,
+        received: 31,
+        last_sent: None,
+        last_received: None,
+        last_error: last_error.map(Into::into),
+        near_member_limit,
+    };
+    assert_eq!(describe_board_problems(&board(None, false)), "");
+    assert_eq!(
+        describe_board_problems(&board(None, true)),
+        "\n    Warning: this board is approaching the size at which new members can no longer be added. See \"Boards with many removals\" in docs/sharing.md."
+    );
+    assert_eq!(
+        describe_board_problems(&board(
+            Some("publish 0303: the operation was not submitted"),
+            true
+        )),
+        format!(
+            ", Last error: Could not publish 0303: the operation was not submitted.\n    Warning: {NEAR_MEMBER_LIMIT_NOTICE}"
+        )
+    );
 }
 
 fn describe_sync_error(error: &str) -> String {

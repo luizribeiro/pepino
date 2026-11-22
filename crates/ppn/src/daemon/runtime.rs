@@ -1,12 +1,13 @@
 use std::{
     cell::OnceCell,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::{self, Write},
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use futures_util::StreamExt;
+use pepino_core::BoardId;
 use pepino_node::{Node, NodeSettings};
 use pepino_sync::SyncEngine;
 use tokio::{
@@ -240,11 +241,16 @@ async fn the_startup_warning_fires_once_without_ending_startup() {
 
 async fn log_status(engine: &SyncEngine, level: LogLevel, upgrade_logged: &mut bool) {
     let mut logged_errors = BTreeMap::new();
+    let mut near_limit = BTreeSet::new();
     let mut changes = std::pin::pin!(engine.status_changes());
     while let Some(status) = changes.next().await {
         if !*upgrade_logged && status.newer_catalog.is_some() {
             log(level, LogLevel::Warn, pepino_app::CATALOG_UPGRADE_NOTICE);
             *upgrade_logged = true;
+        }
+        for id in newly_near_member_limit(&mut near_limit, &status.node) {
+            let notice = super::protocol::NEAR_MEMBER_LIMIT_NOTICE;
+            log(level, LogLevel::Warn, &format!("board {id}: {notice}"));
         }
         let mut current_errors = BTreeMap::new();
         for (id, board) in status.node.boards {
@@ -258,6 +264,41 @@ async fn log_status(engine: &SyncEngine, level: LogLevel, upgrade_logged: &mut b
         logged_errors = current_errors;
     }
     std::future::pending().await
+}
+
+fn newly_near_member_limit(
+    warned: &mut BTreeSet<BoardId>,
+    node: &pepino_node::NodeStatus,
+) -> Vec<BoardId> {
+    node.boards
+        .iter()
+        .filter(|(id, board)| board.near_header_limit() && warned.insert(**id))
+        .map(|(id, _)| *id)
+        .collect()
+}
+
+#[cfg(test)]
+#[test]
+fn a_board_near_the_member_limit_is_reported_once() {
+    let house = BoardId::from_bytes([65; 32]);
+    let allotment = BoardId::from_bytes([66; 32]);
+    let mut node = pepino_node::NodeStatus::default();
+    let measure = |node: &mut pepino_node::NodeStatus, board, largest| {
+        node.boards
+            .entry(board)
+            .or_default()
+            .largest_membership_header_item = largest;
+    };
+    let mut warned = BTreeSet::new();
+    measure(&mut node, house, 547);
+    measure(&mut node, allotment, 1_236);
+    assert!(newly_near_member_limit(&mut warned, &node).is_empty());
+    measure(&mut node, house, pepino_node::HEADER_ITEM_WARNING + 1);
+    assert_eq!(newly_near_member_limit(&mut warned, &node), [house]);
+    measure(&mut node, house, pepino_node::HEADER_ITEM_LIMIT);
+    measure(&mut node, allotment, 14_000);
+    assert_eq!(newly_near_member_limit(&mut warned, &node), [allotment]);
+    assert!(newly_near_member_limit(&mut warned, &node).is_empty());
 }
 
 pub(super) fn shutdown_failure(component: &str, error: impl std::fmt::Display) -> CliError {
