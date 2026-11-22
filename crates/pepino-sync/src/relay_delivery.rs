@@ -109,7 +109,7 @@ async fn state_with_departures_released(app: &App) -> Result<LocalState, pepino_
     Ok(local)
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| {

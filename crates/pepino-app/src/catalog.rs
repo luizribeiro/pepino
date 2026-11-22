@@ -257,6 +257,7 @@ impl LocalState {
         board: BoardId,
         signer: DeviceId,
         announcement: Announcement,
+        now: u64,
     ) -> Result<(), AppError> {
         if board != self.catalog_board()
             || self.identity_id != announcement.identity
@@ -304,7 +305,7 @@ impl LocalState {
         }
         // A device linked while its inviter is offline only ever sees the inviter's
         // announcements as a bootstrap sender, so relay requests cannot wait for the roster.
-        self.merge_relays(announcement.relays);
+        self.merge_relays(signer, announcement.relays, now);
         let active_sender = self.active_roster_device(signer);
         for (board, records) in announcement.own_membership {
             if active_sender && self.shared_access(board).is_some() {
@@ -384,13 +385,14 @@ impl App {
         board: BoardId,
         signer: DeviceId,
         bytes: &[u8],
+        now: u64,
     ) -> Result<bool, AppError> {
         let Some(bytes) = bytes.strip_prefix(PREFIX) else {
             return Ok(false);
         };
         if let Ok(announcement) = WireFormat::Cbor.decode(bytes) {
             self.try_update_local_state(move |local| {
-                local.merge_catalog(board, signer, announcement)
+                local.merge_catalog(board, signer, announcement, now)
             })
             .await?;
         }
@@ -514,7 +516,7 @@ fn ignores_legacy_device_claims_even_from_a_bootstrap_sender() {
         own_membership: Default::default(),
         relays: Default::default(),
     };
-    local.merge_catalog(board, peer, announcement).unwrap();
+    local.merge_catalog(board, peer, announcement, 0).unwrap();
     assert_eq!(local.devices()[&peer], "Ferrum");
     assert!(!local.devices().contains_key(&stranger));
 }
@@ -564,7 +566,7 @@ async fn trusted_catalog_discovery_leaves_shared_access_with_the_joining_device(
     };
     let private = local.catalog_board();
     let incoming = announcement();
-    local.merge_catalog(private, source, incoming).unwrap();
+    local.merge_catalog(private, source, incoming, 0).unwrap();
     assert_eq!(local.resolve_board("House", "board").unwrap().id, house);
     assert!(local.waiting_for_access(house));
     assert!(local.shared_peers().next().is_none());
@@ -622,7 +624,7 @@ fn the_bootstrap_catalog_sender_cannot_relay_own_membership() {
         own_membership: [(shared, vec![record])].into(),
         relays: Default::default(),
     };
-    local.merge_catalog(private, peer, announcement).unwrap();
+    local.merge_catalog(private, peer, announcement, 0).unwrap();
     assert_eq!(local.membership_history(shared).count(), 0);
     assert_eq!(local.board_departure(shared), None);
 }
@@ -674,11 +676,11 @@ fn a_newly_linked_device_keeps_relay_requests_from_its_bootstrap_sender() {
     };
     let (from_stranger, from_laptop) = (announcement(), announcement());
     local
-        .merge_catalog(greenhouse, stranger, from_stranger)
+        .merge_catalog(greenhouse, stranger, from_stranger, 1_795_300_060_000)
         .unwrap();
     assert_eq!(local.board_relays(greenhouse).count(), 0);
     local
-        .merge_catalog(greenhouse, laptop, from_laptop)
+        .merge_catalog(greenhouse, laptop, from_laptop, 1_795_300_060_000)
         .unwrap();
     assert_eq!(
         local.board_relays(greenhouse).collect::<Vec<_>>(),

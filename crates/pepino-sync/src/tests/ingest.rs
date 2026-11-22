@@ -431,7 +431,11 @@ async fn a_pending_leave_pauses_incoming_task_updates() {
     let member = node.member_info().await.unwrap();
     node.shutdown().await.unwrap();
     let catalog = roster.encode_catalog(&member).unwrap();
-    assert!(app.receive_catalog(board, peer, &catalog).await.unwrap());
+    assert!(
+        app.receive_catalog(board, peer, &catalog, directory::NOW)
+            .await
+            .unwrap()
+    );
     app.record_leave_request(std::time::SystemTime::now().into())
         .await
         .unwrap();

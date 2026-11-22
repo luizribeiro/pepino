@@ -183,14 +183,18 @@ impl LocalState {
             .filter(|entry| entry.revision == revision && entry.pending())
     }
 
-    pub(crate) fn merge_relays(&mut self, relays: RelayCatalog) {
+    /// Keeps the requests that the announcing device wrote itself. A request names its writer
+    /// as the device that delivers it, so no other device may speak for it.
+    pub(crate) fn merge_relays(&mut self, signer: DeviceId, relays: RelayCatalog, now: u64) {
+        let latest = now.saturating_add(pepino_node::RELAY_CLOCK_TOLERANCE_MS);
         for (board, relays) in relays {
             if !self.boards().iter().any(|entry| entry.id == board) {
                 continue;
             }
-            let known = self.catalog.relays.entry(board).or_default();
             for (node, incoming) in relays {
-                if pepino_node::validate_relay_id(node).is_err()
+                if incoming.revision.writer != signer
+                    || incoming.revision.sequence > latest
+                    || pepino_node::validate_relay_id(node).is_err()
                     || incoming
                         .relay_url
                         .as_deref()
@@ -198,6 +202,7 @@ impl LocalState {
                 {
                     continue;
                 }
+                let known = self.catalog.relays.entry(board).or_default();
                 let entry = known.entry(node).or_insert_with(|| incoming.clone());
                 if incoming > *entry {
                     *entry = incoming;
@@ -438,6 +443,70 @@ async fn releasing_a_board_requested_with_a_fast_clock_starts_from_the_corrected
     let (_, removal) = released.board_relays(board).next().unwrap();
     assert!(!removal.carry);
     assert_eq!(removal.revision.sequence, now);
+}
+
+#[cfg(test)]
+#[test]
+fn announced_requests_are_kept_only_from_their_writer_and_near_the_clock() {
+    let dir = tempfile::tempdir().unwrap();
+    let relay = |name: &str| {
+        pepino_node::DeviceCredentials::load_or_create(dir.path().join(name))
+            .unwrap()
+            .device_id()
+    };
+    let tablet = DeviceId::from_bytes([74; 32]);
+    let laptop = DeviceId::from_bytes([75; 32]);
+    let phone = DeviceId::from_bytes([77; 32]);
+    let greenhouse = BoardId::from_bytes([76; 32]);
+    let unknown_board = BoardId::from_bytes([78; 32]);
+    let mut local = LocalState::new(
+        crate::OpenOptions::default().try_into().unwrap(),
+        tablet,
+        greenhouse,
+    )
+    .unwrap();
+    let now = 1_795_300_000_000;
+    let latest = now + pepino_node::RELAY_CLOCK_TOLERANCE_MS;
+    let request = |writer, sequence| BoardRelay {
+        revision: RelayRevision { sequence, writer },
+        state: RelayState::Requested,
+        carry: true,
+        relay_url: Some("https://relay.example/".into()),
+        reason: None,
+    };
+    let rejected: RelayCatalog = [(
+        greenhouse,
+        [
+            (relay("names-this-device.cbor"), request(tablet, u64::MAX)),
+            (relay("names-the-phone.cbor"), request(phone, now)),
+            (relay("far-future.cbor"), request(laptop, latest + 1)),
+            (relay("end-of-revisions.cbor"), request(laptop, u64::MAX)),
+        ]
+        .into(),
+    )]
+    .into();
+    local.merge_relays(laptop, rejected, now);
+    assert_eq!(local.board_relays(greenhouse).count(), 0);
+    assert!(local.catalog.relays.is_empty());
+
+    let [carrying, skewed] = ["carrying.cbor", "skewed.cbor"].map(relay);
+    let accepted: RelayCatalog = [
+        (
+            greenhouse,
+            [
+                (carrying, request(laptop, now - 60_000)),
+                (skewed, request(laptop, latest)),
+            ]
+            .into(),
+        ),
+        (unknown_board, [(carrying, request(laptop, now))].into()),
+    ]
+    .into();
+    local.merge_relays(laptop, accepted.clone(), now);
+    assert_eq!(
+        local.catalog.relays,
+        [(greenhouse, accepted[&greenhouse].clone())].into()
+    );
 }
 
 #[cfg(test)]

@@ -7,8 +7,8 @@ use pepino_store::{AppendOutcome, StoreError};
 use tokio::sync::watch;
 
 use crate::{
-    Acknowledgement, Delivery, DeliveryStream, Error, Status, TransportBoard, retry::Retry,
-    status::record_error,
+    Acknowledgement, Delivery, DeliveryStream, Error, Status, TransportBoard,
+    relay_delivery::now_ms, retry::Retry, status::record_error,
 };
 
 pub(crate) async fn run<B: TransportBoard>(
@@ -163,7 +163,7 @@ async fn ingest_catalog<A>(
     let mut retry = Retry::new();
     loop {
         match app
-            .receive_catalog(board, delivery.signer, &delivery.bytes)
+            .receive_catalog(board, delivery.signer, &delivery.bytes, now_ms())
             .await
         {
             Ok(false) => return false,
