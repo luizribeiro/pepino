@@ -58,12 +58,12 @@ pub fn snapshot(status: pepino_sync::Status) -> Network {
                         received: board.received,
                         last_sent: board.last_published_at.map(Into::into),
                         last_received: board.last_received_at.map(Into::into),
-                        last_error: status
+                        last_error: board.last_error,
+                        read_error: status
                             .node
                             .boards
                             .get(&id)
-                            .and_then(|node| node.operation_read_error.clone())
-                            .or(board.last_error),
+                            .and_then(|node| node.operation_read_error.clone()),
                         near_member_limit: status
                             .node
                             .boards
@@ -144,17 +144,16 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_board_operation_takes_precedence_as_the_last_error() {
+    fn an_unreadable_board_operation_is_reported_beside_the_last_error() {
         let board = BoardId::from_bytes([51; 32]);
-        let unreadable = "read a board operation during sync: failed decoding incoming header bytes: DecodingHeader(LengthTooLarge)";
+        let unreadable = "read a board operation during sync: failed decoding incoming header bytes: could not decode header from cbor: LengthTooLarge";
+        let publish = "publish 0303: the operation was not submitted";
         let mut status = pepino_sync::Status::default();
-        status.boards.entry(board).or_default().last_error =
-            Some("publish 0303: the operation was not submitted".into());
-        let published = snapshot(status.clone());
-        assert_eq!(
-            published.boards[&board.to_string()].last_error.as_deref(),
-            Some("publish 0303: the operation was not submitted")
-        );
+        status.boards.entry(board).or_default().last_error = Some(publish.into());
+        let published = serde_json::to_value(snapshot(status.clone())).unwrap();
+        let published = &published["boards"][board.to_string()];
+        assert_eq!(published["last_error"], publish);
+        assert!(published.get("read_error").is_none());
         status.node.boards.insert(
             board,
             pepino_node::BoardStatus {
@@ -162,11 +161,8 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(
-            snapshot(status).boards[&board.to_string()]
-                .last_error
-                .as_deref(),
-            Some(unreadable)
-        );
+        let both = serde_json::to_value(snapshot(status)).unwrap();
+        assert_eq!(both["boards"][board.to_string()]["last_error"], publish);
+        assert_eq!(both["boards"][board.to_string()]["read_error"], unreadable);
     }
 }

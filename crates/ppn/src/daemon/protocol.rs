@@ -214,6 +214,8 @@ pub struct Board {
     pub last_sent: Option<chrono::DateTime<chrono::Utc>>,
     pub last_received: Option<chrono::DateTime<chrono::Utc>>,
     pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_error: Option<String>,
     #[serde(default)]
     pub near_member_limit: bool,
 }

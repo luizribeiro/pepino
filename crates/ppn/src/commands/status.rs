@@ -369,6 +369,9 @@ fn describe_board_problems(board: &Board) -> String {
     if let Some(error) = &board.last_error {
         text = format!(", Last error: {}", describe_sync_error(error));
     }
+    if let Some(error) = &board.read_error {
+        text.push_str(&format!(", Read error: {}", describe_sync_error(error)));
+    }
     if board.near_member_limit {
         text.push_str("\n    Warning: ");
         text.push_str(NEAR_MEMBER_LIMIT_NOTICE);
@@ -380,6 +383,7 @@ fn describe_board_problems(board: &Board) -> String {
 #[test]
 fn board_problems_list_the_last_error_then_the_member_limit_warning() {
     let board = |last_error: Option<&str>, near_member_limit| Board {
+        read_error: None,
         starting_up: false,
         enrollment_pending: false,
         active: false,
@@ -404,6 +408,16 @@ fn board_problems_list_the_last_error_then_the_member_limit_warning() {
         format!(
             ", Last error: Could not publish 0303: the operation was not submitted.\n    Warning: {NEAR_MEMBER_LIMIT_NOTICE}"
         )
+    );
+    let unreadable = Board {
+        read_error: Some(
+            "read a board operation during sync: failed decoding incoming header bytes: LengthTooLarge".into(),
+        ),
+        ..board(Some("publish 0303: the operation was not submitted"), false)
+    };
+    assert_eq!(
+        describe_board_problems(&unreadable),
+        ", Last error: Could not publish 0303: the operation was not submitted., Read error: Could not read a board operation during sync: failed decoding incoming header bytes: LengthTooLarge."
     );
 }
 

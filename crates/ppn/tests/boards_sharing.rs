@@ -727,20 +727,20 @@ fn status_reports_an_unreadable_header_during_initial_board_sync() {
     );
     let status = until(
         || owner.json(&["status"]),
-        |status| status["network"]["boards"][&board_id]["last_error"].is_string(),
+        |status| status["network"]["boards"][&board_id]["read_error"].is_string(),
         WAIT,
     );
-    let error = status["network"]["boards"][&board_id]["last_error"]
+    let error = status["network"]["boards"][&board_id]["read_error"]
         .as_str()
         .unwrap();
     assert!(
         error.contains("could not decode corrupted 'header' value"),
         "{error}"
     );
-    let human = owner.run(&["status"]);
-    assert!(
-        human.contains("Last error: Could not read a board operation during sync"),
-        "{human}"
+    until(
+        || owner.run(&["status"]),
+        |human| human.contains("Read error: Could not read a board operation during sync"),
+        WAIT,
     );
     until(
         || std::fs::read_to_string(owner.data.join("daemon.log")).unwrap(),

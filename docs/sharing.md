@@ -16,8 +16,9 @@ version; upgrade together. Builds from before the fix for readmitted devices
 cannot read some membership changes on boards with several removals, so
 upgrade every device and relay that syncs the board. When a device cannot
 read an operation, `ppn status` marks the board with
-`Last error: Could not read a board operation during sync` and the daemon
-log has a matching warning.
+`Read error: Could not read a board operation during sync` (`read_error` in
+`--json`) and the daemon log has a matching warning. It clears after the
+next sync that completes cleanly.
 
 ## Invite someone
 
