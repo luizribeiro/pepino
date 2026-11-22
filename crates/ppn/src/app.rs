@@ -90,6 +90,15 @@ impl AppClient {
         Ok(local)
     }
 
+    pub fn release_board_relays(
+        &self,
+        board: pepino_core::BoardId,
+    ) -> Result<pepino_app::LocalState, CliError> {
+        Ok(self
+            .runtime
+            .block_on(self.app.release_board_relays(board, self.now_ms))?)
+    }
+
     pub fn forget_board(&mut self, board: pepino_core::BoardId) -> Result<(), CliError> {
         self.runtime.block_on(self.app.forget_board(board))?;
         Ok(())

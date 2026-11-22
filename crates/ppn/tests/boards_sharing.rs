@@ -942,3 +942,84 @@ fn the_original_inviter_can_leave_after_promoting_a_successor() {
             .contains("Forgot House")
     );
 }
+
+#[test]
+fn a_removed_member_has_its_relays_delete_the_board_before_forgetting_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = dir.path().file_name().unwrap().to_str().unwrap();
+    let owner = host(network, "Ada", "Titanium", "Ada private");
+    owner.run(&["board", "new", "House"]);
+    let guest = host(network, "Ben", "Zinc", "Ben private");
+    join(&owner, &guest, "write");
+    let guest_id = guest.json(&["status"])["device"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let relay = Host::new(network);
+    let relay_id = relay.json(&["relay", "init"])["node_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    common::success(
+        relay
+            .command()
+            .env("PPN_TRUSTED_DEVICES", &guest_id)
+            .args(["daemon", "start"])
+            .output()
+            .unwrap(),
+    );
+    let silent = Host::new(network);
+    let silent_id = silent.json(&["relay", "init"])["node_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for id in [&relay_id, &silent_id] {
+        guest.run(&["board", "relay", "add", id, "--board", "House"]);
+    }
+    let requests = || {
+        let listing = guest.json(&["board", "relay", "ls", "--board", "House"]);
+        listing["boards"][0]["relays"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                let relay = entry["relay"].as_str().unwrap().to_owned();
+                let state = entry["state"].as_str().unwrap().to_owned();
+                (relay, (entry["carry"] == true, state))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    until(
+        requests,
+        |requests| requests[&relay_id] == (true, "carrying".into()),
+        WAIT,
+    );
+
+    owner.run(&["board", "remove", "Ben", "--board", "House", "--yes"]);
+    until(
+        requests,
+        |requests| {
+            requests[&relay_id] == (false, "removed".into())
+                && requests[&silent_id] == (false, "unreachable".into())
+        },
+        WAIT,
+    );
+    assert_eq!(
+        relay.json(&["status"])["relay"]["boards_by_device"][&guest_id],
+        0
+    );
+
+    guest.stop();
+    let forgotten = guest.output(&["board", "forget", "House", "--yes", "--json"]);
+    assert!(forgotten.status.success(), "{forgotten:?}");
+    let document: Value = serde_json::from_slice(&forgotten.stdout).unwrap();
+    assert_eq!(document["forgotten"], true);
+    assert_eq!(
+        document["relay_copies_kept"],
+        serde_json::json!([silent_id])
+    );
+    let warning = String::from_utf8_lossy(&forgotten.stderr).into_owned();
+    assert!(warning.contains(&silent_id) && warning.contains("ppn relay drop"));
+    assert!(!warning.contains(&relay_id));
+    relay.stop();
+}

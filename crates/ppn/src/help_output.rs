@@ -60,7 +60,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "board forget" => (
             "board_forget",
-            "board Board with its full ID and name\nforgotten Whether the local application history was deleted",
+            "board Board with its full ID and name\nforgotten Whether the local application history was deleted\nrelay_copies_kept Node IDs of relays that still hold the board's ciphertext",
         ),
         "board ls" => (
             "boards",

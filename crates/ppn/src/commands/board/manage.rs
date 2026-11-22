@@ -1,6 +1,7 @@
 use std::{path::Path, time::Duration};
 
-use pepino_app::{BoardDeparture, MUTUAL_REMOVAL_RISK, ManagePerson};
+use pepino_app::{BoardDeparture, MUTUAL_REMOVAL_RISK, ManagePerson, RelayCopy};
+use pepino_core::DeviceId;
 use pepino_node::{MemberState, Node};
 use ppn::{
     app::AppClient,
@@ -184,6 +185,7 @@ pub(super) fn forget(context: &Context<'_>, reference: &str) -> Result<CommandRe
         "Delete the local task and membership history for {}?",
         single_line(&board.name)
     ))?;
+    let mut kept = Vec::new();
     if confirmed {
         let directory = &context.config()?.config.data_dir.value;
         let _lease = ppn::daemon::socket::lease(&directory.as_path().join("daemon.lock")).map_err(
@@ -199,8 +201,19 @@ pub(super) fn forget(context: &Context<'_>, reference: &str) -> Result<CommandRe
                 }
             },
         )?;
+        let released = app.release_board_relays(board.id)?;
+        kept = relays_keeping_a_copy(released.relay_copies(board.id))?;
         app.forget_board(board.id)?;
     }
+    let warnings: Vec<_> = kept
+        .iter()
+        .map(|relay| {
+            format!(
+                "Relay {relay} keeps its copy of {}. Run ppn relay drop on the relay to delete it.",
+                single_line(&board.name)
+            )
+        })
+        .collect();
     Ok(CommandResult::document(ResultDocument {
         human: if confirmed {
             format!("Forgot {} on this device.", single_line(&board.name))
@@ -211,8 +224,56 @@ pub(super) fn forget(context: &Context<'_>, reference: &str) -> Result<CommandRe
             ("kind".into(), json!("board_forget")),
             ("board".into(), json!(board)),
             ("forgotten".into(), json!(confirmed)),
+            ("relay_copies_kept".into(), json!(kept)),
         ]),
-    }))
+    })
+    .with_warnings(warnings))
+}
+
+fn relays_keeping_a_copy(
+    copies: impl Iterator<Item = (DeviceId, RelayCopy)>,
+) -> Result<Vec<DeviceId>, CliError> {
+    let mut kept = Vec::new();
+    for (relay, copy) in copies {
+        match copy {
+            RelayCopy::Absent => (),
+            RelayCopy::Kept => kept.push(relay),
+            RelayCopy::RemovalPending => {
+                return Err(CliError::new(
+                    ErrorKind::Busy,
+                    "A relay has not yet answered the request to delete its copy of this board.",
+                )
+                .with_hint(
+                    "Run ppn daemon start, wait until ppn board relay ls shows the removal as removed or unreachable, then run ppn daemon stop and retry.",
+                ));
+            }
+        }
+    }
+    Ok(kept)
+}
+
+#[cfg(test)]
+#[test]
+fn forgetting_waits_for_pending_relay_removals_and_names_the_copies_kept() {
+    let [greenhouse_relay, attic_relay, cellar_relay] =
+        [31, 47, 59].map(|byte| DeviceId::from_bytes([byte; 32]));
+    let settled = [
+        (greenhouse_relay, RelayCopy::Absent),
+        (attic_relay, RelayCopy::Kept),
+        (cellar_relay, RelayCopy::Kept),
+    ];
+    assert_eq!(
+        relays_keeping_a_copy(settled.into_iter()).unwrap(),
+        [attic_relay, cellar_relay]
+    );
+    assert_eq!(relays_keeping_a_copy([].into_iter()).unwrap(), []);
+    let waiting = [
+        (attic_relay, RelayCopy::Kept),
+        (greenhouse_relay, RelayCopy::RemovalPending),
+    ];
+    let error = relays_keeping_a_copy(waiting.into_iter()).unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::Busy);
+    assert!(error.to_string().contains("has not yet answered"));
 }
 
 struct ResultDocument {
