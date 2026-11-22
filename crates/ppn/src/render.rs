@@ -10,6 +10,10 @@ mod text;
 
 pub use text::{assignee_label, single_line, truncate_title};
 
+pub fn plural<'a, N: From<u8> + PartialEq>(count: N, one: &'a str, many: &'a str) -> &'a str {
+    if count == N::from(1) { one } else { many }
+}
+
 mod listing;
 mod row;
 

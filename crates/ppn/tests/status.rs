@@ -164,3 +164,15 @@ fn status_reports_time_since_the_last_contact_with_a_roster_device() {
             .contains("No contact with any other device for 3 days")
     );
 }
+
+#[test]
+fn a_single_device_uses_singular_counts_in_a_pipe() {
+    let (sandbox, _) = common::task_sandbox();
+    for args in [&["status"][..], &["identity", "show"]] {
+        let human = sandbox.run(args);
+        assert!(human.contains(" · 1 device"), "{human}");
+        assert!(!human.contains(" · 1 devices"), "{human}");
+    }
+    let status = common::as_json(&sandbox.run(&["status", "--json"]));
+    assert_eq!(status["identity"]["roster"].as_array().unwrap().len(), 1);
+}

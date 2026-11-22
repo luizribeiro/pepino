@@ -385,7 +385,10 @@ impl From<AppError> for CliError {
                 diagnostic.hint = Some(format!("Choose a device ID from {}.", ids.join(", ")));
             }
             AppError::AmbiguousId { task, count, .. } => {
-                diagnostic.message = format!("Task reference {task} matches {count} tasks");
+                diagnostic.message = format!(
+                    "Task reference {task} matches {count} {}",
+                    crate::render::plural(*count, "task", "tasks")
+                );
                 diagnostic.hint = Some("Use a longer task ID.".into());
             }
             AppError::Conflict {

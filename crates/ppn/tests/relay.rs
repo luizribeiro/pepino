@@ -205,7 +205,7 @@ mod network {
         );
         assert!(!status.to_string().contains(&board));
         let human = relay.run(&["status"]);
-        assert!(human.contains("Carrying 1 of 1 boards"));
+        assert!(human.contains("Carrying 1 of 1 board"));
         assert!(!human.contains(&board));
 
         a.stop();
@@ -406,7 +406,7 @@ mod network {
             |output| output.status.success(),
             WAIT,
         );
-        assert!(String::from_utf8_lossy(&remaining.stdout).contains("Dropped 1 boards"));
+        assert!(String::from_utf8_lossy(&remaining.stdout).contains("Dropped 1 board"));
         until(|| carried(&relay), |count| *count == Some(0), WAIT);
         assert_eq!(relay.json(&["daemon", "status"])["pid"], pid);
         let raw_id: pepino_core::BoardId = board.parse().unwrap();

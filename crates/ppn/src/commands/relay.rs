@@ -3,6 +3,7 @@ use std::time::Duration;
 use pepino_app::OpenOptions;
 use pepino_core::DeviceId;
 use pepino_node::RelayDrop;
+use ppn::render::plural;
 use ppn::{
     config::Config,
     daemon::{
@@ -129,23 +130,30 @@ impl Render for Status {
             use std::fmt::Write;
             let _ = write!(
                 text,
-                "\n{} · {} bytes stored · {} rejected instructions\nPeers seen {}",
+                "\n{} · {} {} stored · {} rejected {}\nPeers seen {}",
                 carrying(status),
                 status.bytes_stored,
+                plural(status.bytes_stored, "byte", "bytes"),
                 status.rejected_instructions,
+                plural(status.rejected_instructions, "instruction", "instructions"),
                 status.peers.len()
             );
             for peer in &status.peers {
                 let _ = write!(text, "\n  Peer {peer}");
             }
             for (node, count) in &status.boards_by_device {
-                let _ = write!(text, "\n{node}  {count} boards");
+                let _ = write!(
+                    text,
+                    "\n{node}  {count} {}",
+                    plural(*count, "board", "boards")
+                );
             }
             if status.removal_pending_restart != 0 {
                 let _ = write!(
                     text,
-                    "\n{} boards with removal pending restart",
-                    status.removal_pending_restart
+                    "\n{} {} with removal pending restart",
+                    status.removal_pending_restart,
+                    plural(status.removal_pending_restart, "board", "boards")
                 );
             }
         } else {
@@ -172,9 +180,10 @@ fn carried_boards(status: &pepino_node::RelayStatus) -> usize {
 
 fn carrying(status: &pepino_node::RelayStatus) -> String {
     format!(
-        "Carrying {} of {} boards",
+        "Carrying {} of {} {}",
         carried_boards(status),
-        status.max_boards
+        status.max_boards,
+        plural(status.max_boards, "board", "boards")
     )
 }
 
@@ -244,7 +253,11 @@ impl Render for Boards {
         use std::fmt::Write;
         let mut text = carrying(&self.0);
         for (&node, count) in &self.0.boards_by_device {
-            let _ = write!(text, "\n{node}  {count} boards");
+            let _ = write!(
+                text,
+                "\n{node}  {count} {}",
+                plural(*count, "board", "boards")
+            );
             for board in self.requested_by(node) {
                 let pending = if board.removal_pending {
                     " (removal pending restart)"
@@ -292,14 +305,22 @@ impl Dropped {
     fn consequence(&self) -> String {
         match self.0.purged {
             0 => "Other devices still request them, so the relay keeps its copies.".into(),
-            purged => format!("The relay restarts its node and deletes {purged} stored copies."),
+            purged => format!(
+                "The relay restarts its node and deletes {purged} stored {}.",
+                plural(purged, "copy", "copies")
+            ),
         }
     }
 }
 
 impl Render for Dropped {
     fn human(&self, _: &Terminal) -> String {
-        format!("Dropped {} boards. {}", self.0.boards, self.consequence())
+        format!(
+            "Dropped {} {}. {}",
+            self.0.boards,
+            plural(self.0.boards, "board", "boards"),
+            self.consequence()
+        )
     }
 
     fn json_fields(self) -> Map<String, Value> {
@@ -406,7 +427,7 @@ fn a_drop_reports_whether_the_relay_deletes_copies() {
     });
     assert_eq!(
         purged.consequence(),
-        "The relay restarts its node and deletes 1 stored copies."
+        "The relay restarts its node and deletes 1 stored copy."
     );
     let fields = purged.json_fields();
     assert_eq!(

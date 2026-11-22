@@ -49,9 +49,9 @@ and `ppn status` shows the progress. To give up before joining, run
 
 ```console
 $ ppn device ls
-desktop (504ed2) · active · member of 1 of 1 boards · joined · this device · added by 803f57 on 2026-11-22 05:04
+desktop (504ed2) · active · member of 1 of 1 board · joined · this device · added by 803f57 on 2026-11-22 05:04
   Home (003257) · joined
-laptop (803f57) · active · member of 1 of 1 boards · seen on the board · first device · last seen 2026-11-22 05:04
+laptop (803f57) · active · member of 1 of 1 board · seen on the board · first device · last seen 2026-11-22 05:04
   Home (003257) · member
 ```
 

@@ -4,7 +4,7 @@ use ppn::{
     error::{CliError, ErrorKind},
     help_tree::example_help,
     output::CommandResult,
-    render::{short_id, single_line},
+    render::{plural, short_id, single_line},
     terminal::Context,
 };
 
@@ -53,11 +53,12 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
             .find(|device| device.first_device)
             .map(|device| format!(" · {} (first device)", single_line(&device.name)))
             .unwrap_or_default();
+        let count = identity.roster.len();
+        let noun = plural(count, "device", "devices");
         Ok(format!(
-            "{} ({}) · {} devices{first_device}",
+            "{} ({}) · {count} {noun}{first_device}",
             single_line(&identity.display_name),
             short_id(&identity.id),
-            identity.roster.len()
         ))
     })
 }

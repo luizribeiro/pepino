@@ -3,7 +3,7 @@ use pepino_core::DeviceId;
 use ppn::{
     app::AppClient,
     daemon::{address::socket_path, client::Client},
-    render::{short_id, single_line},
+    render::{plural, short_id, single_line},
 };
 use serde::Serialize;
 
@@ -160,8 +160,10 @@ impl Render for Devices {
                         state => state,
                     };
                     text.push_str(&format!(
-                        " · member of {} of {} boards · {state}",
-                        device.member_of, device.total_boards
+                        " · member of {} of {} {} · {state}",
+                        device.member_of,
+                        device.total_boards,
+                        plural(device.total_boards, "board", "boards")
                     ));
                 }
                 if device.first_device {

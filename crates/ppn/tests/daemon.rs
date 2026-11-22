@@ -207,7 +207,7 @@ fn sync_drains_the_local_outbox_without_peers() {
         .output()
         .unwrap();
     let human = success(output);
-    assert!(human.contains("Published 1 events"), "{human}");
+    assert!(human.contains("Published 1 event"), "{human}");
     assert!(
         human.contains("Synced with 0 devices.\n0 events waiting to be sent"),
         "{human}"
@@ -244,7 +244,7 @@ fn sync_drains_the_local_outbox_without_peers() {
         error["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("1 events waiting to be sent")
+            .contains("1 event waiting to be sent")
     );
     lock.unlock().unwrap();
     fixture.run(&["sync", "--json"]);

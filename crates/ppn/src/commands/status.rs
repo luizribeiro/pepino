@@ -4,7 +4,7 @@ use ppn::daemon::{address::socket_path, client::Client, network::membership, pro
 use ppn::error::{CliError, shorten_message_ids};
 use ppn::help_tree::example_help;
 use ppn::output::CommandResult;
-use ppn::render::{short_id, single_line};
+use ppn::render::{plural, short_id, single_line};
 use ppn::response::{ResponseExt, Status};
 use ppn::terminal::{Context, RenderSettings};
 
@@ -104,7 +104,7 @@ fn document(
     let contact = match no_contact_days {
         Some(days @ 1..) => format!(
             "\nNo contact with any other device for {days} {}",
-            if days == 1 { "day" } else { "days" }
+            plural(days, "day", "days")
         ),
         None if roster.len() > 1 => "\nNo contact with any other device yet".into(),
         _ => String::new(),
@@ -217,11 +217,12 @@ fn document(
             let network = human_network
                 .as_deref()
                 .unwrap_or("offline (daemon not running)");
+            let device_count = identity.roster.len();
+            let device_noun = plural(device_count, "device", "devices");
             Ok(format!(
-                "Identity: {} ({}) · {} devices{roster_note}\nRejected roster entries: {}\nRejected board card entries: {rejected_board_card_entries}\nDropped board cards: {dropped_board_cards}\nDropped refused membership records: {dropped_membership_records}\nDevice: {} (node ID {}){notice}{contact}\nBoard: {} ({})\n{selected_line}\nMembership:\n  {membership_rows}\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}{upgrade_line}",
+                "Identity: {} ({}) · {device_count} {device_noun}{roster_note}\nRejected roster entries: {}\nRejected board card entries: {rejected_board_card_entries}\nDropped board cards: {dropped_board_cards}\nDropped refused membership records: {dropped_membership_records}\nDevice: {} (node ID {}){notice}{contact}\nBoard: {} ({})\n{selected_line}\nMembership:\n  {membership_rows}\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}{upgrade_line}",
                 single_line(&identity.display_name),
                 short_id(&identity.id),
-                identity.roster.len(),
                 identity.rejected_roster_entries,
                 single_line(&device.name),
                 short_id(&device.id),
@@ -288,8 +289,9 @@ fn describe_network(network: &Network, settings: &RenderSettings) -> String {
     use std::fmt::Write;
 
     let mut text = format!(
-        "{} peers seen, {} connected",
+        "{} {} seen, {} connected",
         network.peers_seen.len(),
+        plural(network.peers_seen.len(), "peer", "peers"),
         network.peers_connected.len()
     );
     for (id, board) in &network.boards {
@@ -307,15 +309,17 @@ fn describe_network(network: &Network, settings: &RenderSettings) -> String {
         } else {
             ""
         };
-        let error = board.last_error.as_deref().map(describe_sync_error);
-        let error = error.as_deref().unwrap_or("None.");
+        let events = plural(board.events_waiting.unwrap_or_default(), "event", "events");
         let _ = write!(
             text,
-            "\n  Board {}: {starting}{pending} events waiting to be sent, last sent {}, last received {}, Last error: {error}",
+            "\n  Board {}: {starting}{pending} {events} waiting to be sent, last sent {}, last received {}",
             short_id(id),
             time(board.last_sent),
             time(board.last_received)
         );
+        if let Some(error) = &board.last_error {
+            let _ = write!(text, ", Last error: {}", describe_sync_error(error));
+        }
     }
     text
 }

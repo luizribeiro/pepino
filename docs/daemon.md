@@ -8,7 +8,7 @@ The daemon sends your changes to other devices and applies theirs.
 
 ```console
 $ ppn sync --timeout 20s
-Published 1 events to the local node, received 28 events. Synced with 1 device: laptop.
+Published 1 event to the local node, received 28 events. Synced with 1 device: laptop.
 $ ppn status
 ```
 

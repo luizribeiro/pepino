@@ -5,7 +5,7 @@ use pepino_core::DeviceId;
 use super::{network::membership, protocol::Network};
 use crate::{
     output::Render,
-    render::{short_id, single_line},
+    render::{plural, short_id, single_line},
     terminal::Terminal,
 };
 use serde_json::{Map, Value, json};
@@ -53,17 +53,18 @@ impl Summary {
                     .map_or_else(|| short_id(device.id).to_owned(), single_line)
             })
             .collect::<Vec<_>>();
-        let noun = if names.len() == 1 {
-            "device"
-        } else {
-            "devices"
-        };
+        let noun = plural(names.len(), "device", "devices");
+        let published_events = plural(published, "event", "events");
+        let received_events = plural(received, "event", "events");
         let mut text = format!(
-            "Published {published} events to the local node, received {received} events. Synced with {} {noun}",
+            "Published {published} {published_events} to the local node, received {received} {received_events}. Synced with {} {noun}",
             names.len()
         );
         if names.is_empty() {
-            text.push_str(&format!(".\n{pending} events waiting to be sent"));
+            text.push_str(&format!(
+                ".\n{pending} {} waiting to be sent",
+                plural(pending, "event", "events")
+            ));
         } else {
             text.push_str(&format!(": {}.", names.join(", ")));
         }

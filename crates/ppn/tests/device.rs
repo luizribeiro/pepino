@@ -90,7 +90,7 @@ fn device_ls_reports_the_current_device_in_human_and_json_output() {
     assert!(
         sandbox
             .run(&["device", "ls"])
-            .contains("active · member of 1 of 1 boards · joined · this device")
+            .contains("active · member of 1 of 1 board · joined · this device")
     );
 
     let (empty, _) = uninitialized_task_sandbox();
