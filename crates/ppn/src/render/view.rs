@@ -24,7 +24,7 @@ impl Render for ViewDefinition {
 
 pub(super) fn saved_views(response: &Response, color: bool) -> Result<String, CliError> {
     match response {
-        Response::Views { views } => Ok(views
+        Response::Views { views, .. } => Ok(views
             .iter()
             .map(|view| list_row(view, color))
             .collect::<Vec<_>>()

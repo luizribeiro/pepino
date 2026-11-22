@@ -170,10 +170,12 @@ impl App {
                 local.reconcile_identity(local.device_id, &keys, None)?;
             }
             if migrate_views {
-                local.migrate_views(now)?;
+                local.migrate_views(now);
             }
-            app.persist_local(local, guard).await?;
-            app.migrate_on_write = false;
+            if local != app.local {
+                app.persist_local(local, guard).await?;
+                app.migrate_on_write = false;
+            }
         }
         Ok(app)
     }

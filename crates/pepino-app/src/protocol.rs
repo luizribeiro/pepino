@@ -251,6 +251,8 @@ pub enum Response {
     },
     Views {
         views: Vec<SavedView>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        not_imported: Vec<String>,
     },
     Tasks {
         tasks: Vec<TaskSummary>,

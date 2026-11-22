@@ -94,11 +94,30 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
             return Ok(CommandResult::document(render::ViewDefinition(view)));
         }
     }?;
-    let empty = matches!(&response, pepino_app::Response::Views { views } if views.is_empty());
+    let (empty, warning) = match &response {
+        pepino_app::Response::Views {
+            views,
+            not_imported,
+        } => (
+            views.is_empty(),
+            (!not_imported.is_empty()).then(|| {
+                format!(
+                    "Could not import saved views: {}",
+                    not_imported
+                        .iter()
+                        .map(|name| ppn::render::single_line(name))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }),
+        ),
+        _ => (false, None),
+    };
     Ok(
         CommandResult::app_document(context, response, |response, settings| {
             render::saved_views(response, settings.terminal.color)
         })?
-        .with_human_note(empty.then(|| "No saved views.".into())),
+        .with_human_note(empty.then(|| "No saved views.".into()))
+        .with_warnings(warning),
     )
 }

@@ -132,7 +132,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "view ls" => (
             "views",
-            "views Saved filters ordered by name, with recovered_as, updated_by and updated_at when applicable",
+            "views Saved filters ordered by name, with recovered_as, updated_by and updated_at when applicable\nnot_imported Legacy view names that could not be imported, when present",
         ),
         "view save" => (
             "view_saved",

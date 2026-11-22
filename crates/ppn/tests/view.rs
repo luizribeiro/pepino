@@ -256,3 +256,36 @@ fn legacy_views_migrate_once_and_keep_a_conflicting_filter() {
     assert_eq!(as_json(&sandbox.run(&["view", "ls", "--json"])), listing);
     assert_eq!(std::fs::read(path).unwrap(), bytes);
 }
+
+#[test]
+fn view_list_reports_unimported_legacy_names_without_blocking_other_commands() {
+    let (sandbox, data) = task_sandbox();
+    let path = data.join("local.json");
+    let mut local: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    local["saved_views"] = json!({"huge":"x".repeat(5000),"repairs":"tag:hardware"});
+    std::fs::write(&path, serde_json::to_vec(&local).unwrap()).unwrap();
+
+    let human = sandbox.command().args(["view", "ls"]).output().unwrap();
+    assert!(human.status.success());
+    assert_eq!(human.stdout, b"repairs  tag:hardware\n");
+    assert_eq!(
+        human.stderr,
+        b"warning: Could not import saved views: huge\n"
+    );
+    let json = sandbox
+        .command()
+        .args(["view", "ls", "--json"])
+        .output()
+        .unwrap();
+    assert!(json.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&json.stdout).unwrap()["not_imported"],
+        json!(["huge"])
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&json.stderr).unwrap()["kind"],
+        "warning"
+    );
+    sandbox.run(&["status"]);
+}

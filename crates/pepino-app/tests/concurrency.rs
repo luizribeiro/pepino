@@ -187,6 +187,7 @@ async fn simultaneous_view_saves_preserve_both_definitions() {
             .await
             .unwrap(),
         Response::Views {
+            not_imported: Vec::new(),
             views: vec![
                 SavedView::new("hardware".into(), "tag:hardware".into()),
                 SavedView::new("winter".into(), "is:open due:tomorrow".into()),

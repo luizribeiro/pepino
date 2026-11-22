@@ -16,6 +16,10 @@ use crate::{
 const VIEW_PREFIX: &str = "view/";
 const MAX_NAME_BYTES: usize = 64;
 
+fn view_key(name: &str) -> String {
+    format!("{VIEW_PREFIX}{name}")
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
 pub(crate) struct SavedViews(BTreeMap<String, String>);
@@ -127,6 +131,7 @@ impl App {
             }),
             now,
         )?;
+        local.saved_views.remove(&name);
         self.persist_local(local, guard).await?;
         Ok(Response::ViewSaved {
             view: SavedView::new(name, canonical),
@@ -163,6 +168,7 @@ impl App {
         }
         let mut local = self.local.clone();
         local.write_view(&name, None, now)?;
+        local.saved_views.remove(&name);
         self.persist_local(local, guard).await?;
         Ok(Response::ViewDeleted {
             view: SavedView::new(name, filter),
@@ -172,6 +178,12 @@ impl App {
     pub(super) fn list_views(&self) -> Response {
         Response::Views {
             views: self.local.listed_views(),
+            not_imported: self
+                .local
+                .saved_views
+                .iter()
+                .map(|(name, _)| name.into())
+                .collect(),
         }
     }
 }
@@ -186,15 +198,13 @@ impl LocalState {
 
     fn listed_views(&self) -> Vec<SavedView> {
         let devices = self.devices();
-        self.view_values()
+        let mut views: BTreeMap<_, _> = self
+            .view_values()
             .map(|(name, entry, value)| {
                 let mut view = SavedView::new(name.into(), value.filter);
                 view.recovered_as = value.recovered_as;
                 if entry.writer != self.device_id
-                    && self
-                        .catalog
-                        .written_views
-                        .contains(&format!("{VIEW_PREFIX}{name}"))
+                    && self.catalog.written_views.contains(&view_key(name))
                 {
                     let id = entry.writer.to_string();
                     let name = devices
@@ -204,15 +214,28 @@ impl LocalState {
                     view.updated_by = Some(crate::NamedRecord { id, name });
                     view.updated_at = crate::Hlc::from(entry.hlc).utc();
                 }
-                view
+                (name, view)
             })
-            .collect()
+            .collect();
+        for (name, filter) in self.legacy_views() {
+            views.insert(name, SavedView::new(name.into(), filter.into()));
+        }
+        views.into_values().collect()
+    }
+
+    fn legacy_views(&self) -> impl Iterator<Item = (&str, &str)> {
+        let read_only = self.check_device_write().is_err();
+        self.saved_views.iter().filter(move |_| read_only)
     }
 
     pub(crate) fn view_filters(&self) -> SavedViews {
         SavedViews(
             self.view_values()
                 .map(|(name, _, value)| (name.into(), value.filter))
+                .chain(
+                    self.legacy_views()
+                        .map(|(name, filter)| (name.into(), filter.into())),
+                )
                 .collect(),
         )
     }
@@ -228,7 +251,7 @@ impl LocalState {
             .map(serde_json::to_string)
             .transpose()
             .map_err(|error| invalid("preference", error))?;
-        let key = format!("{VIEW_PREFIX}{name}");
+        let key = view_key(name);
         self.catalog
             .preferences
             .write(key.clone(), value, self.device_id, now)?;
@@ -236,35 +259,56 @@ impl LocalState {
         Ok(())
     }
 
-    pub(super) fn migrate_views(&mut self, now: u64) -> Result<(), AppError> {
+    pub(super) fn migrate_views(&mut self, now: u64) {
         let legacy = std::mem::take(&mut self.saved_views);
         for (name, filter) in legacy.iter() {
-            validate_name(name)?;
-            let entry = self
-                .catalog
-                .preferences
-                .get(&format!("{VIEW_PREFIX}{name}"));
-            let (key, recovered_as) = if let Some(entry) = entry {
-                if decode_view(entry).is_some_and(|saved| saved.filter == filter) {
-                    continue;
-                }
-                (
-                    self.recovery_name(name, &legacy),
-                    Some(format!("{name} (from {})", self.device_name())),
-                )
-            } else {
-                (name.into(), None)
-            };
-            self.write_view(
-                &key,
-                Some(ViewValue {
-                    filter: filter.into(),
-                    recovered_as,
-                }),
-                now,
-            )?;
+            if self.import_legacy_view(name, filter, &legacy, now).is_err() {
+                self.saved_views.insert(name.into(), filter.into());
+            }
         }
-        Ok(())
+    }
+
+    fn import_legacy_view(
+        &mut self,
+        name: &str,
+        filter: &str,
+        legacy: &SavedViews,
+        now: u64,
+    ) -> Result<(), AppError> {
+        validate_name(name)?;
+        if let Some(entry) = self.catalog.preferences.get(&view_key(name)) {
+            if decode_view(entry).is_some_and(|saved| saved.filter == filter) {
+                return Ok(());
+            }
+            return self.recover_view(name, filter, legacy, now);
+        }
+        self.write_view(
+            name,
+            Some(ViewValue {
+                filter: filter.into(),
+                recovered_as: None,
+            }),
+            now,
+        )
+    }
+
+    fn recover_view(
+        &mut self,
+        name: &str,
+        filter: &str,
+        legacy: &SavedViews,
+        now: u64,
+    ) -> Result<(), AppError> {
+        let key = self.recovery_name(name, legacy);
+        let label = format!("{name} (from {})", self.device_name());
+        self.write_view(
+            &key,
+            Some(ViewValue {
+                filter: filter.into(),
+                recovered_as: Some(label),
+            }),
+            now,
+        )
     }
 
     fn recovery_name(&self, name: &str, legacy: &SavedViews) -> String {
@@ -283,7 +327,7 @@ impl LocalState {
                 && self
                     .catalog
                     .preferences
-                    .get(&format!("{VIEW_PREFIX}{candidate}"))
+                    .get(&view_key(&candidate))
                     .is_none()
             {
                 return candidate;
@@ -368,7 +412,7 @@ mod tests {
         });
         std::fs::write(&path, serde_json::to_vec(&local).unwrap()).unwrap();
         let app = App::open(dir.path(), 30).await.unwrap();
-        let Response::Views { views } = app.list_views() else {
+        let Response::Views { views, .. } = app.list_views() else {
             panic!("expected list of views");
         };
         let ordinary = |name| {
@@ -398,6 +442,89 @@ mod tests {
         let reopened = App::open(dir.path(), 40).await.unwrap();
         assert_eq!(reopened.list_views(), app.list_views());
         assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+
+    #[tokio::test]
+    async fn an_oversized_or_invalid_legacy_view_does_not_prevent_open() {
+        let dir = tempfile::tempdir().unwrap();
+        drop(App::init(dir.path(), 10).await.unwrap());
+        let path = dir.path().join(crate::state::FILE_NAME);
+        let mut local: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let big = format!("tag:garden {}", "x".repeat(5000));
+        local["saved_views"] = serde_json::json!({
+            "weekend": "tag:garden",
+            "huge": big,
+            "invalid name": "tag:tools"
+        });
+        std::fs::write(&path, serde_json::to_vec(&local).unwrap()).unwrap();
+
+        for _ in 0..2 {
+            let app = App::open(dir.path(), 30).await.unwrap();
+            let Response::Views {
+                views,
+                not_imported,
+            } = app.list_views()
+            else {
+                panic!("expected view data");
+            };
+            assert_eq!(
+                views,
+                [SavedView::new("weekend".into(), "tag:garden".into())]
+            );
+            assert_eq!(not_imported, ["huge", "invalid name"]);
+            assert_eq!(app.local.saved_views.get("huge"), Some(big.as_str()));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_revoked_device_can_still_read_its_legacy_views() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = App::init(dir.path(), 10).await.unwrap();
+        let root = app.local.device_id;
+        let mut local = app.local.clone();
+        local.device_id = pepino_core::DeviceId::from_bytes([42; 32]);
+        local.catalog.observed_catalog_removal = Some(crate::Revocation {
+            by: root,
+            at: std::time::UNIX_EPOCH.into(),
+        });
+        local
+            .write_view(
+                "repairs",
+                Some(ViewValue {
+                    filter: "tag:garden".into(),
+                    recovered_as: None,
+                }),
+                10,
+            )
+            .unwrap();
+        local
+            .saved_views
+            .insert("repairs".into(), "tag:hardware".into());
+        assert!(local.check_device_write().is_err());
+        assert_eq!(local.view_filters().get("repairs"), Some("tag:hardware"));
+        assert_eq!(
+            local.listed_views(),
+            [SavedView::new("repairs".into(), "tag:hardware".into())]
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_import_retries_when_a_live_slot_becomes_available() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::init(dir.path(), 10).await.unwrap();
+        for n in 0..257 {
+            app.local
+                .saved_views
+                .insert(format!("view-{n:03}"), "tag:garden".into());
+        }
+        app.local.migrate_views(20);
+        assert_eq!(app.local.view_filters().iter().count(), 256);
+        assert_eq!(app.local.saved_views.get("view-256"), Some("tag:garden"));
+        app.local.write_view("view-000", None, 21).unwrap();
+        app.local.migrate_views(22);
+        assert_eq!(app.local.view_filters().get("view-256"), Some("tag:garden"));
+        assert!(app.local.saved_views.is_empty());
     }
 
     #[test]
