@@ -64,6 +64,9 @@ scripts/test-under-load.sh 5 8
 The arguments are the number of suite runs and of busy-loop processes. The
 harness finishes every run, prints the output of failed ones, keeps logs
 under `target/test-under-load.*`, and fails if any run failed.
+For failed runs it also saves the `ppn` daemon test sandboxes in
+`run-N-sandboxes`. The `test-name` file in each retained sandbox identifies
+the test that created it.
 
 ### Scale tests
 

@@ -1,5 +1,17 @@
 use std::{os::unix::fs::DirBuilderExt, path::Path, process::Command};
 
+pub fn tempdir() -> tempfile::TempDir {
+    let mut home = tempfile::tempdir().unwrap();
+    if std::env::var_os("PEPINO_KEEP_TEST_SANDBOXES").is_some() {
+        home.disable_cleanup(true);
+        let thread = std::thread::current();
+        if let Some(test) = thread.name() {
+            std::fs::write(home.path().join("test-name"), test).unwrap();
+        }
+    }
+    home
+}
+
 pub fn isolate(command: &mut Command, home: &Path) {
     for (name, _) in std::env::vars_os() {
         if name.to_string_lossy().starts_with("XDG_") {

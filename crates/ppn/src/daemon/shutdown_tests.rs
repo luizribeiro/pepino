@@ -110,7 +110,7 @@ impl Drop for Daemon {
 
 #[test]
 fn an_interrupted_daemon_reopens_the_same_data_directory() {
-    let home = tempfile::tempdir().unwrap();
+    let home = sandbox::tempdir();
     let config = config(home.path(), "pepino-signal-reopen");
     let path = config.data_dir.value.as_path();
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -147,7 +147,7 @@ impl Pair {
         let tempdir = || {
             temporary_dir
                 .and_then(|dir| tempfile::tempdir_in(dir).ok())
-                .unwrap_or_else(|| tempfile::tempdir().unwrap())
+                .unwrap_or_else(sandbox::tempdir)
         };
         let owner = tempdir();
         let peer = tempdir();

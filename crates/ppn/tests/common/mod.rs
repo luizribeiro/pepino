@@ -129,7 +129,7 @@ pub struct ConfigSandbox {
 
 impl ConfigSandbox {
     pub fn new() -> Self {
-        let home = tempfile::tempdir().unwrap();
+        let home = sandbox::tempdir();
         let config_dir = if cfg!(target_os = "macos") {
             home.path().join("Library/Application Support/pepino")
         } else {
