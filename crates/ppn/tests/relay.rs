@@ -45,6 +45,23 @@ fn relay_role_is_explicit_and_exclusive_without_a_terminal() {
     );
 }
 
+#[test]
+fn relay_boards_needs_a_relay_directory_and_a_running_daemon() {
+    let device = ConfigSandbox::new();
+    success(device.command().args(["init"]).output().unwrap());
+    let relay = ConfigSandbox::new();
+    success(relay.command().args(["relay", "init"]).output().unwrap());
+    let run =
+        |sandbox: &ConfigSandbox, args: &[&str]| sandbox.command().args(args).output().unwrap();
+    let boards = ["relay", "boards", "--json"];
+    task_error(run(&device, &boards), 5, "permission_denied");
+    let offline = task_error(run(&relay, &boards), 6, "daemon_unreachable");
+    assert!(offline["message"].as_str().unwrap().contains("not running"));
+    let human = run(&relay, &["relay", "boards"]);
+    assert_eq!(human.status.code(), Some(6));
+    assert!(String::from_utf8_lossy(&human.stderr).contains("ppn daemon start"));
+}
+
 #[cfg(pepino_network_tests)]
 #[path = "common/wait.rs"]
 mod wait;
@@ -223,6 +240,7 @@ mod network {
 
     struct Fleet {
         device: Host,
+        device_id: String,
         relay: Host,
         address: String,
     }
@@ -250,6 +268,7 @@ mod network {
         );
         Fleet {
             device,
+            device_id,
             relay,
             address,
         }
@@ -261,6 +280,7 @@ mod network {
             device,
             relay,
             address,
+            ..
         } = fleet();
         let pid = relay.json(&["daemon", "status"])["pid"].clone();
         with_db(&relay.data.join("relay.sqlite"), false, async |db| {
@@ -278,6 +298,47 @@ mod network {
             "{log}"
         );
         assert!(log.contains("restarting the relay node"), "{log}");
+        device.stop();
+        relay.stop();
+    }
+
+    #[test]
+    fn the_operator_lists_carried_boards() {
+        let Fleet {
+            device,
+            device_id,
+            relay,
+            address,
+        } = fleet();
+        let board = device.json(&["board", "show"])["board"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        device.run(&["board", "new", "Seed House"]);
+        device.run(&["board", "relay", "add", &address, "--all-boards"]);
+        wait_state(&device, "Greenhouse", "carrying");
+        wait_state(&device, "Seed House", "carrying");
+
+        let listing = relay.json(&["relay", "boards"]);
+        assert_eq!(listing["kind"], "relay_boards");
+        assert_eq!(listing["count"], 2);
+        assert_eq!(listing["max_boards"], 64);
+        assert_eq!(listing["devices"][0]["node_id"], device_id.as_str());
+        let handles: Vec<_> = listing["devices"][0]["boards"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|board| board["handle"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(handles.len(), 2);
+        let human = relay.run(&["relay", "boards"]);
+        assert!(human.contains("Carrying 2 of 64 boards"));
+        assert!(human.contains(&format!("{device_id}  2 boards")));
+        for text in [&human, &listing.to_string()] {
+            assert!(handles.iter().all(|handle| text.contains(handle)));
+            assert!(!text.contains(&board));
+        }
+
         device.stop();
         relay.stop();
     }

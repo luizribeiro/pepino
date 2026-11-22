@@ -78,6 +78,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "relay",
             "node_id Full relay node ID\naddress Node ID with the HTTPS relay URL when configured\nrelay_url Configured connection URL or null",
         ),
+        "relay boards" => (
+            "relay_boards",
+            "count Boards carried\nmax_boards Board limit shared by all trusted devices\ndevices Requesting device node IDs, each with an opaque handle and removal state per board",
+        ),
         "board new" | "board use" | "board rename" => (
             "board",
             "board Affected board with counts, membership and sync activity",

@@ -3,7 +3,12 @@ use std::time::Duration;
 use pepino_app::OpenOptions;
 use pepino_core::DeviceId;
 use ppn::{
-    daemon::{address::socket_path, client::Client, protocol::Operation},
+    config::Config,
+    daemon::{
+        address::socket_path,
+        client::Client,
+        protocol::{Operation, Outcome},
+    },
     error::{CliError, ErrorKind},
     help_tree::example_help,
     output::{CommandResult, Render},
@@ -12,7 +17,7 @@ use ppn::{
 use serde_json::{Map, Value, json};
 
 #[derive(clap::Args)]
-#[command(about = "Manage this relay's node credentials.", after_help = example_help(&["ppn relay init", "ppn relay show --json"]))]
+#[command(about = "Manage this relay's node credentials and carried boards.", after_help = example_help(&["ppn relay init", "ppn relay show --json", "ppn relay boards"]))]
 pub struct Args {
     #[command(subcommand)]
     action: Action,
@@ -26,6 +31,9 @@ enum Action {
     /// Show this relay's node ID and connection address.
     #[command(after_help = example_help(&["ppn relay show --json"]))]
     Show,
+    /// List the boards a running relay carries, by requesting device.
+    #[command(after_help = example_help(&["ppn relay boards --json"]))]
+    Boards,
 }
 
 struct RelayInfo {
@@ -85,6 +93,7 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
                 .block_on(pepino_app::init_relay(directory, path, options))?
         }
         Action::Show => pepino_app::relay_credentials(directory, path)?,
+        Action::Boards => return boards(context),
     };
     Ok(CommandResult::document(RelayInfo::from_config(
         config,
@@ -104,9 +113,8 @@ impl Render for Status {
             use std::fmt::Write;
             let _ = write!(
                 text,
-                "\nCarrying {} of {} boards · {} bytes stored · {} rejected instructions\nPeers seen {}",
-                status.boards_by_device.values().sum::<usize>(),
-                status.max_boards,
+                "\n{} · {} bytes stored · {} rejected instructions\nPeers seen {}",
+                carrying(status),
                 status.bytes_stored,
                 status.rejected_instructions,
                 status.peers.len()
@@ -139,33 +147,118 @@ impl Render for Status {
     }
 }
 
-pub fn status(context: &Context<'_>) -> Result<CommandResult, CliError> {
-    let config = &context.config()?.config;
-    let keys = pepino_app::relay_credentials(
+fn carrying(status: &pepino_node::RelayStatus) -> String {
+    format!(
+        "Carrying {} of {} boards",
+        status.boards_by_device.values().sum::<usize>(),
+        status.max_boards
+    )
+}
+
+fn relay_keys(config: &Config) -> Result<pepino_node::DeviceCredentials, CliError> {
+    Ok(pepino_app::relay_credentials(
         config.data_dir.value.as_path(),
         config.credentials_file.value.as_path(),
-    )?;
+    )?)
+}
+
+/// Returns `None` when no daemon is running.
+fn call(config: &Config, operation: Operation) -> Result<Option<Outcome>, CliError> {
     let client = Client {
         path: socket_path(config),
     };
-    let carrying = match client.call_with(Operation::Status, Duration::from_secs(2)) {
-        Ok(ppn::daemon::protocol::Outcome::Status { status }) => status.relay,
-        Ok(_) => {
-            return Err(CliError::new(
-                ErrorKind::Failure,
-                "Could not read the relay status.",
-            ));
-        }
-        Err(error) if ppn::daemon::client::unavailable(&error) => None,
-        Err(_) => {
-            return Err(CliError::new(
-                ErrorKind::DaemonUnreachable,
-                "Could not reach the relay daemon.",
-            ));
-        }
-    };
+    match client.call_with(operation, Duration::from_secs(2)) {
+        Ok(outcome) => Ok(Some(outcome)),
+        Err(error) if ppn::daemon::client::unavailable(&error) => Ok(None),
+        Err(_) => Err(CliError::new(
+            ErrorKind::DaemonUnreachable,
+            "Could not reach the relay daemon.",
+        )),
+    }
+}
+
+fn running_status(config: &Config) -> Result<Option<pepino_node::RelayStatus>, CliError> {
+    match call(config, Operation::Status)? {
+        Some(Outcome::Status { status }) => Ok(status.relay),
+        Some(_) => Err(CliError::new(
+            ErrorKind::Failure,
+            "Could not read the relay status.",
+        )),
+        None => Ok(None),
+    }
+}
+
+fn not_running() -> CliError {
+    CliError::new(
+        ErrorKind::DaemonUnreachable,
+        "The relay daemon is not running.",
+    )
+    .with_hint("Run ppn daemon start.")
+}
+
+pub fn status(context: &Context<'_>) -> Result<CommandResult, CliError> {
+    let config = &context.config()?.config;
+    let keys = relay_keys(config)?;
     Ok(CommandResult::document(Status {
         info: RelayInfo::from_config(config, keys.device_id()),
-        carrying,
+        carrying: running_status(config)?,
     }))
+}
+
+struct Boards(pepino_node::RelayStatus);
+
+impl Boards {
+    fn requested_by(&self, device: DeviceId) -> impl Iterator<Item = &pepino_node::CarriedBoard> {
+        self.0
+            .boards
+            .iter()
+            .filter(move |board| board.requested_by == device)
+    }
+}
+
+impl Render for Boards {
+    fn human(&self, _: &Terminal) -> String {
+        use std::fmt::Write;
+        let mut text = carrying(&self.0);
+        for (&node, count) in &self.0.boards_by_device {
+            let _ = write!(text, "\n{node}  {count} boards");
+            for board in self.requested_by(node) {
+                let pending = if board.removal_pending {
+                    " (removal pending restart)"
+                } else {
+                    ""
+                };
+                let _ = write!(text, "\n  {}{pending}", board.handle);
+            }
+        }
+        text
+    }
+
+    fn json_fields(self) -> Map<String, Value> {
+        let devices: Vec<_> = self
+            .0
+            .boards_by_device
+            .keys()
+            .map(|&node| {
+                let boards: Vec<_> = self
+                    .requested_by(node)
+                    .map(|board| json!({"handle": board.handle, "removal_pending": board.removal_pending}))
+                    .collect();
+                json!({"node_id": node, "boards": boards})
+            })
+            .collect();
+        Map::from_iter([
+            ("kind".into(), json!("relay_boards")),
+            ("count".into(), json!(self.0.boards.len())),
+            ("max_boards".into(), json!(self.0.max_boards)),
+            ("devices".into(), json!(devices)),
+        ])
+    }
+}
+
+fn boards(context: &Context<'_>) -> Result<CommandResult, CliError> {
+    let config = &context.config()?.config;
+    relay_keys(config)?;
+    let status = running_status(config)?.ok_or_else(not_running)?;
+    Ok(CommandResult::document(Boards(status)))
 }
