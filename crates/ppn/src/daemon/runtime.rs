@@ -123,7 +123,7 @@ async fn cycle(
         _ = terminate.recv() => return Ok(End::Stopped),
         _ = interrupt.recv() => return Ok(End::Stopped),
         result = timeout(STARTUP_LIMIT, Node::spawn(settings.clone())) => {
-            Arc::new(result.ok().and_then(Result::ok).ok_or_else(|| failure("Could not start the network node."))?)
+            Arc::new(started_component("the network node", result)?)
         }
     };
     let engine = tokio::select! {
@@ -151,7 +151,7 @@ async fn cycle(
             };
             end
         }
-        Some(_) => Err(failure("Could not start the sync engine.")),
+        Some(result) => started_component("the sync engine", result).map(|_| End::Stopped),
         None => Ok(End::Stopped),
     };
     let node = Arc::try_unwrap(node)
@@ -174,6 +174,21 @@ async fn log_catalog_upgrade(engine: &SyncEngine, level: LogLevel, logged: &mut 
         }
     }
     std::future::pending().await
+}
+
+fn started_component<T, E: std::fmt::Display>(
+    component: &str,
+    result: Result<Result<T, E>, tokio::time::error::Elapsed>,
+) -> Result<T, CliError> {
+    match result {
+        Ok(result) => {
+            result.map_err(|error| failure(&format!("Could not start {component}. {error}")))
+        }
+        Err(_) => Err(failure(&format!(
+            "Could not start {component}. Startup took longer than {} seconds.",
+            STARTUP_LIMIT.as_secs(),
+        ))),
+    }
 }
 
 pub(super) fn shutdown_failure(component: &str, error: impl std::fmt::Display) -> CliError {

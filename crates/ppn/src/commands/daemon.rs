@@ -50,6 +50,7 @@ pub fn run(
     let client = Client {
         path: socket_path(config),
     };
+    let mut already_stopped = false;
     let (action, status) = match args.action {
         Action::Run => {
             let detached = process::detach().map_err(unreachable)?;
@@ -65,14 +66,9 @@ pub fn run(
             Some(ensure_running(&client, context, selection, true)?),
         ),
         Action::Stop => {
-            if let Err(error) =
-                process::stop(&client, context.timeout.unwrap_or(process::STOP_LIMIT))
-            {
-                if unavailable(&error) {
-                    check_directory(context)?;
-                }
-                return Err(unreachable(error));
-            }
+            already_stopped =
+                !process::stop(&client, context.timeout.unwrap_or(process::STOP_LIMIT))
+                    .map_err(unreachable)?;
             ("stopped", None)
         }
         Action::Status => {
@@ -85,6 +81,7 @@ pub fn run(
     };
     Ok(CommandResult::document(State {
         action,
+        already_stopped,
         status,
         socket_path: client.path,
     }))
@@ -107,8 +104,16 @@ pub fn ensure_running(
     selection: Option<&Path>,
     allow_start: bool,
 ) -> Result<DaemonStatus, CliError> {
-    if let Some(status) = client.status().map_err(unreachable)? {
-        return Ok(status);
+    match client.status() {
+        Ok(Some(status)) => return Ok(status),
+        Ok(None) => (),
+        Err(error)
+            if allow_start
+                && matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::TimedOut
+                ) => {}
+        Err(error) => return Err(unreachable(error)),
     }
     check_directory(context)?;
     if !allow_start {

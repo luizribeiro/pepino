@@ -4,7 +4,7 @@ use common::*;
 #[test]
 fn daemon_commands_report_missing_initialization_without_creating_state() {
     let (sandbox, data) = uninitialized_task_sandbox();
-    for action in ["run", "start", "stop", "status"] {
+    for action in ["run", "start", "status"] {
         let output = sandbox
             .command()
             .args(["daemon", action, "--json"])
@@ -18,6 +18,20 @@ fn daemon_commands_report_missing_initialization_without_creating_state() {
     }
 }
 
+#[test]
+fn stopping_an_inactive_daemon_succeeds_in_a_pipe() {
+    for (sandbox, _) in [task_sandbox(), uninitialized_task_sandbox()] {
+        assert_eq!(
+            sandbox.run(&["daemon", "stop"]).trim(),
+            "The daemon is not running."
+        );
+        let stopped = as_json(&sandbox.run(&["daemon", "stop", "--json"]));
+        assert_eq!(stopped["action"], "stopped");
+        assert_eq!(stopped["running"], false);
+        assert!(stopped["pid"].is_null());
+    }
+}
+
 #[cfg(pepino_network_tests)]
 #[path = "daemon_support/mod.rs"]
 mod support;
@@ -25,6 +39,35 @@ mod support;
 #[cfg(pepino_network_tests)]
 #[path = "common/wait.rs"]
 mod wait;
+
+#[cfg(pepino_network_tests)]
+#[test]
+fn daemon_start_reports_a_corrupt_node_database() {
+    let fixture = support::Fixture::new("");
+    std::fs::write(fixture.data.join("node.sqlite"), b"invalid SQLite header").unwrap();
+    for json in [false, true] {
+        let mut command = fixture.command();
+        command.args(["daemon", "start"]);
+        if json {
+            command.arg("--json");
+        }
+        let output = command.output().unwrap();
+        let message = if json {
+            task_error(output, 6, "daemon_unreachable")["message"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        } else {
+            assert_eq!(output.status.code(), Some(6), "{output:?}");
+            String::from_utf8(output.stderr).unwrap()
+        };
+        assert!(
+            message.contains("Could not start the network node"),
+            "{message}"
+        );
+        assert!(message.contains("not a database"), "{message}");
+    }
+}
 
 #[cfg(pepino_network_tests)]
 mod network {
@@ -163,6 +206,10 @@ mod network {
         fixture.signal(Signal::SIGKILL);
         assert!(!fixture.wait_foreground().status.success());
         assert!(fixture.socket.exists());
+        assert_eq!(
+            fixture.run(&["daemon", "stop"]).trim(),
+            "The daemon is not running."
+        );
         let running = as_json(&fixture.run(&["daemon", "start", "--json"]));
         let pid = running["pid"].as_u64().unwrap();
         assert_ne!(pid, u64::from(dead));
@@ -173,12 +220,9 @@ mod network {
         );
         assert_eq!(fixture.run(&["daemon", "stop"]).trim(), "Daemon stopped");
         fixture.assert_stopped();
-        let output = fixture
-            .command()
-            .args(["daemon", "stop", "--json"])
-            .output()
-            .unwrap();
-        assert_json_error(output, 6, "daemon_unreachable");
+        let stopped = as_json(&fixture.run(&["daemon", "stop", "--json"]));
+        assert_eq!(stopped["action"], "stopped");
+        assert_eq!(stopped["running"], false);
     }
 }
 #[test]

@@ -7,6 +7,7 @@ use crate::{output::Render, terminal::Terminal};
 
 pub struct State {
     pub action: &'static str,
+    pub already_stopped: bool,
     pub status: Option<DaemonStatus>,
     pub socket_path: PathBuf,
 }
@@ -21,6 +22,7 @@ impl Render for State {
                 humantime::format_duration(std::time::Duration::from_millis(status.uptime_ms)),
                 self.socket_path.display()
             ),
+            (None, "stopped") if self.already_stopped => "The daemon is not running.".into(),
             (None, "stopped") => "Daemon stopped".into(),
             (None, _) => format!("Daemon not running\nSocket {}", self.socket_path.display()),
         }
@@ -52,6 +54,7 @@ impl Render for State {
 fn reports_an_inactive_daemon_with_its_socket_path() {
     let state = State {
         action: "status",
+        already_stopped: false,
         status: None,
         socket_path: "/srv/release/control.sock".into(),
     };
