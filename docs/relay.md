@@ -57,6 +57,12 @@ replication has had time to finish. `unreachable` requests continue retrying.
 A refusal gives the reason, such as the device being untrusted or the relay
 being full. Reissue `add` after resolving the refusal.
 
+The relay refuses a request stamped more than ten minutes ahead of its own
+clock and the device shows `clock too far ahead of the relay`. Correct the
+device clock and reissue the request. When the relay already holds a newer
+instruction for the board, the device moves its request past it and sends it
+once more by itself.
+
 Any joined member of a shared board can give its ID to a relay that trusts
 their device. The operator learns the board ID and can see ciphertext sizes,
 sync timing, and which node IDs sync. Board IDs cannot be rotated. Keep them
@@ -76,3 +82,30 @@ device may show `removal pending restart` before the final `removed` receipt.
 `ppn status` on the relay reports per-device board counts, stored
 replication bytes, peers seen, and rejected instructions. The board limit
 applies to new admissions. Lowering it leaves existing copies available.
+
+Leaving a board, or being removed from it, makes the device that handed the
+board over ask each relay to delete its copy. `ppn board forget` waits for
+those answers. It warns about every relay that keeps a copy, for example one
+that another device asked or that no longer trusts this device. The relay
+operator can then drop the board as described below.
+
+## Inspect and evict boards on the relay
+
+```sh
+ppn relay boards
+ppn relay drop HANDLE --yes
+ppn relay drop --from NODE_ID --yes
+```
+
+`ppn relay boards` asks the running relay daemon for the boards it carries,
+grouped by the device that requested them. Each board has a handle that is
+only meaningful on this relay and reveals nothing about the board ID.
+`ppn relay drop` deletes the stored copy of one board, or of every board a
+device requested, in the same way as a removal request from a device. The
+relay restarts its node to do so.
+
+The board limit is shared by all trusted devices. Any one of them can use
+the whole allowance. Removing a node ID from `trusted_devices` stops further
+instructions from that device and leaves the boards it handed over in place.
+Evict them with `ppn relay drop --from NODE_ID`. A device that is still
+trusted can hand a dropped board over again.
