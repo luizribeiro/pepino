@@ -41,7 +41,7 @@ impl App {
         let mut local = self.fresh_local_state().await?;
         local.check_invitable(board)?;
         if local.boards().iter().any(|known| known.id == board) {
-            local.change_board_presence(board, true)?;
+            local.change_board_presence(board, true, now)?;
             local.forget_board(board, now);
             self.delete_board_history(board).await?;
             let directory = self.directory.clone();

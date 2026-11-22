@@ -215,7 +215,7 @@ impl App {
         let _guard = lock(&self.directory, self.lock_timeout).await?;
         let local = self.fresh_local_state().await?;
         if local.device_leave_requested_at().is_some()
-            || local.catalog.forgotten_boards.contains(&board)
+            || local.board_forgotten(board)
             || (local.board_removed(board) && !local.needs_readmission_replay(board))
         {
             return Err(SyncStoreError::BoardInactive);
@@ -231,13 +231,7 @@ impl App {
         bytes: &[u8],
     ) -> Result<(), SyncStoreError> {
         let _guard = lock(&self.directory, self.lock_timeout).await?;
-        if self
-            .fresh_local_state()
-            .await?
-            .catalog
-            .forgotten_boards
-            .contains(&board)
-        {
+        if self.fresh_local_state().await?.board_forgotten(board) {
             return Ok(());
         }
         Ok(self.store.record_undecodable(board, signer, bytes).await?)
@@ -267,14 +261,7 @@ impl App {
             .store
             .mark_published_for(board, event, operation, node_instance)
             .await;
-        if saved.is_err()
-            && self
-                .fresh_local_state()
-                .await?
-                .catalog
-                .forgotten_boards
-                .contains(&board)
-        {
+        if saved.is_err() && self.fresh_local_state().await?.board_forgotten(board) {
             return Ok(());
         }
         Ok(saved?)

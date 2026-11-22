@@ -54,12 +54,24 @@ per-board activity in `boards`. The CLI adds `selected_board` to `board ls`,
 
 Person-level membership cards record invitations, role changes, and removals.
 A receiving device checks the author's Manage role both at the signed
-authorization heads and in its current transport view. A local board deletion
-changes only the private catalog. Its optional `board_presence` map carries
-generations for deletions and re-invitations. At equal generations a deletion
-wins over an invitation. Older catalog snapshots cannot restore a deleted board.
-Leaving revokes nothing. A manager must remove the person to stop sharing with
-their devices.
+authorization heads and in its current transport view. Before enrolling a
+device, a reconciling manager checks that the effective invitation covers the
+transport removals of the person's non-revoked devices. Signed heads supply
+the causal order. Current Manage supplies authority.
+
+The private catalog's separate `board_presence_register` uses the preferences
+register rules for `board/<id>`. Installing a grant writes a live entry.
+Leaving or forgetting writes a tombstone. The later entry by `(HLC, event ID)`
+wins. Entries from unknown writers or more than 24 hours ahead of the local
+clock are ignored. Each register keeps up to 256 live entries and 1,024
+tombstones. Devices discard tombstones for boards absent from their local
+catalog and register.
+
+As with saved views, skew within the 24-hour window can change which offline
+edit wins. An older snapshot can restore a board after the relevant tombstone
+expires from the bounded register, or on a device that never knew the board
+and discarded its tombstone. Leaving revokes nothing. A manager must remove
+the person to stop sharing with their devices.
 
 ## Identity roster
 

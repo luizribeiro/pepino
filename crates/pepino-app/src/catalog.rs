@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::{lock, worker};
 use crate::identity::SignedEdit;
+use crate::preferences::Preferences;
 use crate::{App, AppError, BoardJoinState, LocalBoard, LocalState, Response, WireFormat};
 
 pub const CATALOG_UPGRADE_NOTICE: &str =
@@ -69,10 +70,14 @@ pub(crate) struct CatalogState {
     pub(crate) dropped_membership_records: BTreeMap<BoardId, usize>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(crate) observed_board_removals: BTreeSet<BoardId>,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub(crate) forgotten_boards: BTreeSet<BoardId>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    board_presence: BTreeMap<BoardId, BoardPresence>,
+    #[serde(default, rename = "forgotten_boards", skip_serializing)]
+    legacy_forgotten_boards: BTreeSet<BoardId>,
+    #[serde(
+        default,
+        rename = "board_presence_register",
+        skip_serializing_if = "Preferences::is_empty"
+    )]
+    board_presence: Preferences,
     joins: BTreeMap<BoardId, BoardJoinState>,
     created_here: BTreeSet<BoardId>,
     bundles: BTreeMap<DeviceId, String>,
@@ -90,7 +95,6 @@ pub(crate) struct CatalogState {
 
 impl CatalogState {
     pub(crate) fn forget_board(&mut self, board: BoardId, device: DeviceId) {
-        self.forgotten_boards.insert(board);
         self.revisions.remove(&board);
         if let Some(relays) = self.relays.get_mut(&board) {
             relays.retain(|_, writers| {
@@ -145,11 +149,14 @@ struct Revision {
     name: String,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-struct BoardPresence {
-    generation: u64,
-    forgotten: bool,
-    writer: DeviceId,
+fn presence_key(board: BoardId) -> String {
+    format!("board/{board}")
+}
+
+fn presence_board(key: &str) -> Option<BoardId> {
+    let encoded = key.strip_prefix("board/")?;
+    let board: BoardId = encoded.parse().ok()?;
+    (board.to_string() == encoded).then_some(board)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -157,8 +164,12 @@ struct Announcement {
     v: u32,
     identity: IdentityId,
     revisions: BTreeMap<BoardId, Revision>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    board_presence: BTreeMap<BoardId, BoardPresence>,
+    #[serde(
+        default,
+        rename = "board_presence_register",
+        skip_serializing_if = "Preferences::is_empty"
+    )]
+    board_presence: Preferences,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     devices: BTreeMap<DeviceId, String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -208,13 +219,17 @@ impl LocalState {
 
     pub fn encode_catalog(&self, member: &MemberInfo) -> Result<Vec<u8>, AppError> {
         let mut preferences = self.catalog.preferences.clone();
-        preferences.retain_valid(crate::wall_time_ms());
+        let now = crate::wall_time_ms();
+        preferences.retain_valid(now);
         preferences.retain_writers(|writer| self.knows_roster_device(writer));
+        let mut board_presence = self.catalog.board_presence.clone();
+        board_presence.retain_valid(now);
+        board_presence.retain_writers(|writer| self.knows_roster_device(writer));
         let announcement = Announcement {
             v: crate::PROTOCOL_VERSION,
             identity: self.identity_id,
             revisions: self.catalog.revisions.clone(),
-            board_presence: self.catalog.board_presence.clone(),
+            board_presence,
             devices: BTreeMap::new(),
             roster: self.catalog.identity.edits().cloned().collect(),
             member: member.to_hex(),
@@ -255,34 +270,82 @@ impl LocalState {
     }
 
     pub fn board_forgotten(&self, board: BoardId) -> bool {
-        self.catalog.forgotten_boards.contains(&board)
+        self.catalog
+            .board_presence
+            .get(&presence_key(board))
+            .is_some_and(|entry| entry.value.is_none())
     }
 
     pub(crate) fn change_board_presence(
         &mut self,
         board: BoardId,
         forgotten: bool,
+        now: u64,
     ) -> Result<(), AppError> {
-        let generation = self
-            .catalog
-            .board_presence
-            .get(&board)
-            .map_or(0, |previous| previous.generation);
-        let generation = generation
-            .checked_add(1)
-            .ok_or_else(|| crate::app::invalid("board", "catalog generation exhausted"))?;
-        self.catalog.board_presence.insert(
-            board,
-            BoardPresence {
-                generation,
-                forgotten,
-                writer: self.device_id,
-            },
-        );
-        if !forgotten {
-            self.catalog.forgotten_boards.remove(&board);
+        self.catalog.board_presence.write(
+            presence_key(board),
+            (!forgotten).then(|| "present".into()),
+            self.device_id,
+            now,
+        )
+    }
+
+    pub(crate) fn migrate_board_presence(&mut self) -> Result<(), AppError> {
+        for board in std::mem::take(&mut self.catalog.legacy_forgotten_boards) {
+            if self
+                .catalog
+                .board_presence
+                .get(&presence_key(board))
+                .is_none()
+            {
+                self.change_board_presence(board, true, 0)?;
+            }
         }
         Ok(())
+    }
+
+    fn merge_board_presence(
+        &mut self,
+        incoming: &Preferences,
+        revisions: &BTreeMap<BoardId, Revision>,
+        now: u64,
+    ) {
+        let previous = self.catalog.board_presence.clone();
+        let mut allowed = incoming.clone();
+        allowed.retain_entries(|key, entry| {
+            let Some(id) = presence_board(key) else {
+                return false;
+            };
+            id != self.catalog_board()
+                && self.knows_roster_device(entry.writer)
+                && match entry.value.as_deref() {
+                    None => {
+                        self.boards().iter().any(|board| board.id == id)
+                            || previous.get(key).is_some()
+                    }
+                    Some("present") => revisions.contains_key(&id),
+                    Some(_) => false,
+                }
+        });
+        self.catalog.board_presence.merge(allowed, now);
+        let changes: Vec<_> = self
+            .catalog
+            .board_presence
+            .iter()
+            .filter(|(key, entry)| previous.get(key) != Some(*entry))
+            .filter_map(|(key, entry)| Some((presence_board(key)?, entry.value.is_none())))
+            .collect();
+        for (id, forgotten) in changes {
+            if forgotten {
+                self.forget_board(id, now);
+            } else if previous
+                .get(&presence_key(id))
+                .is_some_and(|entry| entry.value.is_none())
+                || self.board_removed(id)
+            {
+                self.catalog.readmission_replays.insert(id);
+            }
+        }
     }
 
     pub(crate) fn name_board(&mut self, id: BoardId, name: &str) {
@@ -302,7 +365,7 @@ impl LocalState {
     }
 
     fn merge_board(&mut self, id: BoardId, revision: Revision) {
-        if self.catalog.forgotten_boards.contains(&id)
+        if self.board_forgotten(id)
             || revision.name.trim().is_empty()
             || self
                 .catalog
@@ -356,29 +419,12 @@ impl LocalState {
                 self.catalog.bundles.insert(signer, announcement.member);
             }
         }
-        let mut readmitted = BTreeSet::new();
-        for (&id, &presence) in &announcement.board_presence {
-            if id == board
-                || !self.active_roster_device(signer)
-                || !self.knows_roster_device(presence.writer)
-                || self
-                    .catalog
-                    .board_presence
-                    .get(&id)
-                    .is_some_and(|saved| *saved >= presence)
-                || (!presence.forgotten && !announcement.revisions.contains_key(&id))
-            {
-                continue;
-            }
-            self.catalog.board_presence.insert(id, presence);
-            if presence.forgotten {
-                self.forget_board(id, now);
-            } else if self.catalog.forgotten_boards.remove(&id) {
-                readmitted.insert(id);
-            }
+        if self.active_roster_device(signer) {
+            self.merge_board_presence(&announcement.board_presence, &announcement.revisions, now);
         }
         let current = |local: &Self, id: BoardId| {
-            announcement.board_presence.get(&id) == local.catalog.board_presence.get(&id)
+            let key = presence_key(id);
+            announcement.board_presence.get(&key) == local.catalog.board_presence.get(&key)
         };
         for (id, revision) in announcement.revisions {
             if current(self, id) {
@@ -396,7 +442,6 @@ impl LocalState {
                 }
             }
         }
-        self.catalog.readmission_replays.extend(readmitted);
         let own = self.own_person_key();
         for (channel, route) in announcement.reader_routes {
             if route.person == own.0
@@ -1039,7 +1084,7 @@ async fn a_catalog_tombstone_wins_over_old_announcements_until_readmission() {
         ..preference_announcement(source, Default::default())
     };
     let mut sibling = source.clone();
-    source.change_board_presence(workshop, true).unwrap();
+    source.change_board_presence(workshop, true, 1000).unwrap();
     source.forget_board(workshop, 1000);
     let stale = sibling.clone();
     for snapshot in [&source, &stale] {
@@ -1055,7 +1100,7 @@ async fn a_catalog_tombstone_wins_over_old_announcements_until_readmission() {
     );
 
     let forgotten = source.clone();
-    source.change_board_presence(workshop, false).unwrap();
+    source.change_board_presence(workshop, false, 3000).unwrap();
     source.name_board(workshop, "Workshop");
     for snapshot in [&source, &forgotten] {
         sibling
@@ -1069,3 +1114,6 @@ async fn a_catalog_tombstone_wins_over_old_announcements_until_readmission() {
     );
     assert!(sibling.needs_readmission_replay(workshop));
 }
+
+#[cfg(test)]
+mod presence_tests;

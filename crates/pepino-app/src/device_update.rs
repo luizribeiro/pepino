@@ -29,10 +29,11 @@ impl App {
             return Ok(());
         }
         self.update_local(move |local| {
-            let observed = members
-                .into_iter()
-                .filter(|(board, _)| !local.catalog.forgotten_boards.contains(board));
-            local.catalog.observed_members.extend(observed);
+            for (board, members) in members {
+                if !local.board_forgotten(board) {
+                    local.catalog.observed_members.insert(board, members);
+                }
+            }
             local.prune_card_exchanges();
             for (id, time) in last_seen {
                 let time = chrono::DateTime::<chrono::Utc>::from(time).timestamp_millis();

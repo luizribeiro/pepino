@@ -43,7 +43,7 @@ impl LocalState {
         admission: &BoardAdmission,
     ) -> Result<(), AppError> {
         self.check_invitable(board)?;
-        if self.catalog.forgotten_boards.contains(&board) {
+        if self.board_forgotten(board) {
             return Ok(());
         }
         if admission.device == manager {

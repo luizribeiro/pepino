@@ -23,7 +23,12 @@ impl LocalState {
         })
     }
 
-    fn install_share(&mut self, grant: &BoardGrant, receipt: String) -> Result<(), AppError> {
+    pub(crate) fn install_share(
+        &mut self,
+        grant: &BoardGrant,
+        receipt: String,
+        now: u64,
+    ) -> Result<(), AppError> {
         let id = grant.board.id;
         self.check_invitable(id)?;
         if self
@@ -34,8 +39,7 @@ impl LocalState {
             || grant.recipient != self.device_id
             || (grant.owner.id == self.identity_id
                 && (grant.owner.key() != self.own_person_key()
-                    || (self.shared_access(id).is_none()
-                        && !self.catalog.forgotten_boards.contains(&id))))
+                    || (self.shared_access(id).is_none() && !self.board_forgotten(id))))
         {
             return Err(invalid(
                 "grant",
@@ -78,9 +82,7 @@ impl LocalState {
             },
         );
         let forgotten = self.board_forgotten(id);
-        if forgotten {
-            self.change_board_presence(id, false)?;
-        }
+        self.change_board_presence(id, false, now)?;
         self.name_board(id, &grant.board.name);
         if existing.is_some() || forgotten {
             self.catalog.observed_board_removals.remove(&id);
@@ -174,7 +176,7 @@ impl App {
                         "this grant does not match the saved request",
                     ));
                 }
-                local.install_share(&grant, receipt)
+                local.install_share(&grant, receipt, crate::wall_time_ms())
             })
             .await?;
         Ok((board, peer, local.board_join_state(board)))
@@ -224,7 +226,9 @@ async fn joining_adds_one_board_to_the_existing_local_catalog() {
             relay_url: None,
         },
     };
-    local.install_share(&grant, "grant digest".into()).unwrap();
+    local
+        .install_share(&grant, "grant digest".into(), 1000)
+        .unwrap();
     assert!(local.catalog.board_request.is_none());
     assert_eq!(local.boards().len(), 2);
     assert_eq!(
@@ -236,5 +240,9 @@ async fn joining_adds_one_board_to_the_existing_local_catalog() {
     assert_eq!(local.board_join_state(id), BoardJoinState::WaitingToBeAdded);
     assert!(local.shared_peers().next() == Some(grant.peer.clone()));
     grant.board.id = BoardId::from_bytes([85; 32]);
-    assert!(local.install_share(&grant, "other digest".into()).is_err());
+    assert!(
+        local
+            .install_share(&grant, "other digest".into(), 1000)
+            .is_err()
+    );
 }

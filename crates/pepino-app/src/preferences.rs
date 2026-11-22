@@ -125,6 +125,11 @@ impl Preferences {
         Ok(())
     }
 
+    pub(crate) fn retain_entries(&mut self, keep: impl FnMut(&str, &Preference) -> bool) {
+        let mut keep = keep;
+        self.0.retain(|key, entry| keep(key, entry));
+    }
+
     pub(crate) fn retain_valid(&mut self, now: u64) {
         self.0.retain(|key, entry| entry.valid(key, now));
     }

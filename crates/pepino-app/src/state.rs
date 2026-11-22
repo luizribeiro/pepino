@@ -278,6 +278,7 @@ impl LocalState {
         }
         let catalog = local.catalog_board();
         local.catalog.load_refused_membership_order();
+        local.migrate_board_presence()?;
         local
             .catalog
             .identity

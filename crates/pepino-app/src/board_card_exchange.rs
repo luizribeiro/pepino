@@ -124,7 +124,7 @@ impl LocalState {
         channel: BoardId,
         exchange: CardExchange,
     ) -> Result<(), AppError> {
-        if self.catalog.forgotten_boards.contains(&exchange.board) {
+        if self.board_forgotten(exchange.board) {
             return Ok(());
         }
         if self.boards().iter().any(|board| board.id == channel)
