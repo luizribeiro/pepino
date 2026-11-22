@@ -6,6 +6,7 @@ use std::{
 
 pub const WAIT: Duration = Duration::from_secs(60);
 
+#[track_caller]
 pub fn until<T: Debug>(
     mut observe: impl FnMut() -> T,
     condition: impl Fn(&T) -> bool,

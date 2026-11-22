@@ -38,10 +38,12 @@ impl Host {
         self.command().args(args).output().unwrap()
     }
 
+    #[track_caller]
     pub fn run(&self, args: &[&str]) -> String {
         success(self.output(args))
     }
 
+    #[track_caller]
     pub fn json(&self, args: &[&str]) -> Value {
         as_json(&success(
             self.command().args(args).arg("--json").output().unwrap(),

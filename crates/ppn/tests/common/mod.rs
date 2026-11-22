@@ -153,6 +153,7 @@ impl ConfigSandbox {
     }
 }
 
+#[track_caller]
 pub fn success(output: Output) -> String {
     assert!(output.status.success(), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
