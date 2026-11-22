@@ -33,6 +33,7 @@ pub struct App {
     pub(super) lock_timeout: Duration,
     pub(super) clock: Clock,
     migrate_on_write: bool,
+    initialized: bool,
     pub(super) selected: Option<BoardId>,
     pub(super) all_boards: bool,
 }
@@ -146,6 +147,7 @@ impl App {
         let mut app = Self {
             clock: Clock::from_hlc(hlc),
             migrate_on_write,
+            initialized: fresh,
             selected: None,
             all_boards: false,
             store,
@@ -188,6 +190,10 @@ impl App {
         self.selected
             .and_then(|id| self.local.boards().iter().find(|board| board.id == id))
             .unwrap_or_else(|| self.local.current_board())
+    }
+
+    pub fn initialized(&self) -> bool {
+        self.initialized
     }
 
     pub fn local_state(&self) -> &LocalState {

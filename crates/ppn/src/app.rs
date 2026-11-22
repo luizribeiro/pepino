@@ -77,6 +77,10 @@ impl AppClient {
         })
     }
 
+    pub fn initialized(&self) -> bool {
+        self.app.initialized()
+    }
+
     pub fn set_board_relay(
         &self,
         boards: Vec<pepino_core::BoardId>,

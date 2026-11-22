@@ -24,7 +24,7 @@ pub fn run(context: &Context<'_>, _: Args) -> Result<CommandResult, CliError> {
         .ok()
         .flatten()
         .map(|status| status.network);
-    document(context, client, network)
+    document(context, client, network, None)
 }
 
 #[derive(clap::Args)]
@@ -51,13 +51,16 @@ pub fn init(context: &Context<'_>, args: InitArgs) -> Result<CommandResult, CliE
         board_name: args.board,
         ..OpenOptions::default()
     };
-    document(context, AppClient::init(context, options)?, None)
+    let client = AppClient::init(context, options)?;
+    let initialized = client.initialized();
+    document(context, client, None, Some(initialized))
 }
 
 fn document(
     context: &Context<'_>,
     mut client: AppClient,
     network: Option<Network>,
+    initialized: Option<bool>,
 ) -> Result<CommandResult, CliError> {
     let response = client.call(Request::Read(ReadRequest::Status))?;
     let local = client.local_state();
@@ -213,6 +216,18 @@ fn document(
                 counts,
                 protocol_version,
             } = response.status()?;
+            if let Some(initialized) = initialized {
+                return Ok(if initialized {
+                    format!(
+                        "Initialised pepino.\nIdentity: {}\nDevice: {}\nBoard: {}\nNext, run ppn add to create a task.",
+                        single_line(&identity.display_name),
+                        single_line(&device.name),
+                        single_line(&board.name)
+                    )
+                } else {
+                    "Pepino is already initialised.".into()
+                });
+            }
             let skipped = &counts.skipped;
             let network = human_network
                 .as_deref()

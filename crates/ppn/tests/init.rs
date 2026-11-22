@@ -23,6 +23,12 @@ fn init_names_the_local_records_and_is_idempotent() {
     assert!(output.contains("Identity: Ada Gardener"));
     assert!(output.contains("Device: Garden laptop"));
     assert!(output.contains("Board: Greenhouse"));
+    assert!(output.contains("ppn add"));
+    assert_eq!(output.lines().count(), 5);
+    assert_eq!(
+        sandbox.run(&["init"]).trim(),
+        "Pepino is already initialised."
+    );
     let before = std::fs::read(data.join("local.json")).unwrap();
     let status = sandbox.run(&["status", "--json"]);
     let document = as_json(&status);
