@@ -11,8 +11,10 @@ fn view_saves_lists_shows_and_applies_a_filter() {
     assert!(empty.status.success());
     assert!(empty.stdout.is_empty());
     assert_eq!(empty.stderr, b"No saved views.\n");
-    let json = as_json(&sandbox.run(&["view", "ls", "--json"]));
-    assert_eq!(json["views"], serde_json::json!([]));
+    assert_eq!(
+        as_json(&sandbox.run(&["view", "ls", "--json"])),
+        json!({"schema":1,"kind":"views","views":[]})
+    );
     assert_eq!(
         sandbox.run(&["view", "save", "weekend", "tag:hardware"]),
         "Saved weekend\n"
@@ -34,6 +36,10 @@ fn view_saves_lists_shows_and_applies_a_filter() {
     let tasks = as_json(&sandbox.run(&["ls", "@weekend", "--json"]));
     assert_eq!(tasks["total"], 1);
     assert_eq!(tasks["tasks"][0]["id"], project.blocker);
+    assert_eq!(
+        sandbox.run(&["ls", "@weekend"]),
+        sandbox.run(&["ls", "tag:hardware"])
+    );
     let output = sandbox
         .command()
         .args(["view", "show", "missing", "--json"])
@@ -57,6 +63,10 @@ fn view_can_replace_and_remove_a_filter() {
     assert_eq!(
         replaced,
         json!({"schema":1,"kind":"view_saved","view":definition,"replaced":true})
+    );
+    assert_eq!(
+        sandbox.run(&["view", "save", "weekend", "tag:garden"]),
+        "Replaced weekend\n"
     );
     let tasks = as_json(&sandbox.run(&["ls", "@weekend", "--json"]));
     assert_eq!(tasks["tasks"][0]["id"], project.parent);
