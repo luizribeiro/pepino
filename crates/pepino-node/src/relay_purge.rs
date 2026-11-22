@@ -112,7 +112,10 @@ mod tests {
     use super::*;
     use crate::{
         relay_control::RelayInstruction,
-        relay_ledger::{Ledger, prepare},
+        relay_ledger::{
+            Ledger, prepare,
+            tests::{NOW, open},
+        },
     };
     use pepino_core::DeviceId;
 
@@ -141,11 +144,7 @@ mod tests {
         let y = BoardId::from_bytes(*b"YYboard-id-secret-0123456789abcd");
         let trusted = DeviceId::from_bytes([17; 32]);
         {
-            let pool = crate::node::open_database(&path, true).await.unwrap();
-            p2panda_store::sqlite::run_pending_migrations(&pool)
-                .await
-                .unwrap();
-            prepare(&pool).await.unwrap();
+            let pool = open(&path).await;
             let mut ledger = Ledger::load(pool.clone(), [trusted].into(), 8)
                 .await
                 .unwrap();
@@ -156,7 +155,7 @@ mod tests {
                     carry: true,
                 };
                 assert_eq!(
-                    ledger.apply(trusted, add).await.unwrap(),
+                    ledger.apply(trusted, add, NOW).await.unwrap(),
                     RelayAnswer::Carrying
                 );
             }
@@ -190,7 +189,7 @@ mod tests {
                 carry: false,
             };
             assert_eq!(
-                ledger.apply(trusted, rm).await.unwrap(),
+                ledger.apply(trusted, rm, NOW).await.unwrap(),
                 RelayAnswer::RemovalPendingRestart
             );
             drop(ledger);

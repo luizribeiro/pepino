@@ -69,6 +69,10 @@ impl BoardRelay {
                 RelayState::Refused,
                 Some("the relay has a newer instruction"),
             ),
+            Some(RelayAnswer::ClockAhead) => (
+                RelayState::Refused,
+                Some("clock too far ahead of the relay"),
+            ),
             _ => return,
         };
         if state >= self.state {
@@ -209,4 +213,26 @@ impl App {
         })
         .await
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_request_stamped_ahead_of_the_relay_clock_is_refused_with_the_cause() {
+    let mut request = BoardRelay {
+        revision: RelayRevision {
+            sequence: 1_795_300_000_000,
+            writer: DeviceId::from_bytes([17; 32]),
+        },
+        state: RelayState::Requested,
+        carry: true,
+        relay_url: Some("https://relay.example".into()),
+        reason: None,
+    };
+    request.record(Some(RelayAnswer::ClockAhead));
+    assert_eq!(request.state, RelayState::Refused);
+    assert_eq!(
+        request.reason.as_deref(),
+        Some("clock too far ahead of the relay")
+    );
+    assert!(!request.pending());
 }

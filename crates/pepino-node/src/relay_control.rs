@@ -39,16 +39,18 @@ pub enum RelayAnswer {
     RemovalPendingRestart = 3,
     Removed = 4,
     Superseded = 5,
+    ClockAhead = 6,
 }
 
 impl RelayAnswer {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Carrying,
         Self::NotTrusted,
         Self::AtCapacity,
         Self::RemovalPendingRestart,
         Self::Removed,
         Self::Superseded,
+        Self::ClockAhead,
     ];
 
     // Every answer seals to the same length, so its ciphertext size does not reveal the outcome.

@@ -10,6 +10,8 @@ use crate::{
     relay_control::{RelayAnswer, RelayInstruction, RelayRevision},
 };
 
+const CLOCK_TOLERANCE_MS: u64 = 10 * 60 * 1000;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(super) struct Record {
     pub(super) revision: RelayRevision,
@@ -116,9 +118,13 @@ impl Ledger {
         &mut self,
         writer: DeviceId,
         instruction: RelayInstruction,
+        now_ms: u64,
     ) -> Result<RelayAnswer, Error> {
         if !self.is_trusted(writer) {
             return self.reject().await;
+        }
+        if instruction.sequence > now_ms.saturating_add(CLOCK_TOLERANCE_MS) {
+            return Ok(RelayAnswer::ClockAhead);
         }
         let key = Hash::digest(instruction.board.as_bytes());
         let key = key.as_bytes().as_slice();
@@ -177,9 +183,20 @@ pub(super) fn encode(record: &Record) -> Result<Vec<u8>, Error> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    pub(crate) const NOW: u64 = 1_795_300_000_000;
+
+    pub(crate) async fn open(path: &std::path::Path) -> SqlitePool {
+        let pool = crate::node::open_database(path, true).await.unwrap();
+        p2panda_store::sqlite::run_pending_migrations(&pool)
+            .await
+            .unwrap();
+        prepare(&pool).await.unwrap();
+        pool
+    }
 
     proptest! {
         #[test]
@@ -213,13 +230,7 @@ mod tests {
     #[tokio::test]
     async fn trust_and_capacity_gate_durable_admission() {
         let dir = tempfile::tempdir().unwrap();
-        let pool = crate::node::open_database(&dir.path().join("relay.sqlite"), true)
-            .await
-            .unwrap();
-        p2panda_store::sqlite::run_pending_migrations(&pool)
-            .await
-            .unwrap();
-        prepare(&pool).await.unwrap();
+        let pool = open(&dir.path().join("relay.sqlite")).await;
         let trusted = DeviceId::from_bytes([17; 32]);
         let stranger = DeviceId::from_bytes([27; 32]);
         let mut ledger = Ledger::load(pool.clone(), [trusted].into(), 1)
@@ -231,7 +242,7 @@ mod tests {
             carry: true,
         };
         assert_eq!(
-            ledger.apply(stranger, add(57)).await.unwrap(),
+            ledger.apply(stranger, add(57), NOW).await.unwrap(),
             RelayAnswer::NotTrusted
         );
         assert!(ledger.records.is_empty());
@@ -240,21 +251,21 @@ mod tests {
             ..add(59)
         };
         assert_eq!(
-            ledger.apply(trusted, unknown_removal).await.unwrap(),
+            ledger.apply(trusted, unknown_removal, NOW).await.unwrap(),
             RelayAnswer::Removed
         );
         assert!(ledger.records.is_empty());
         assert_eq!(
-            ledger.apply(trusted, add(57)).await.unwrap(),
+            ledger.apply(trusted, add(57), NOW).await.unwrap(),
             RelayAnswer::Carrying
         );
         assert_eq!(
-            ledger.apply(trusted, add(58)).await.unwrap(),
+            ledger.apply(trusted, add(58), NOW).await.unwrap(),
             RelayAnswer::AtCapacity
         );
         assert_eq!(ledger.records.len(), 1);
         assert_eq!(
-            ledger.apply(trusted, add(57)).await.unwrap(),
+            ledger.apply(trusted, add(57), NOW).await.unwrap(),
             RelayAnswer::Carrying
         );
         let restored = Ledger::load(pool.clone(), [trusted].into(), 1)
@@ -265,5 +276,57 @@ mod tests {
         assert_eq!(restored.rejected, 1);
         let empty = Ledger::load(pool, [].into(), 64).await.unwrap();
         assert!(!empty.is_trusted(trusted));
+    }
+
+    #[tokio::test]
+    async fn revisions_far_ahead_of_the_relay_clock_leave_no_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = open(&dir.path().join("relay.sqlite")).await;
+        let laptop = DeviceId::from_bytes([17; 32]);
+        let mut ledger = Ledger::load(pool.clone(), [laptop].into(), 2)
+            .await
+            .unwrap();
+        let greenhouse = BoardId::from_bytes([57; 32]);
+        let instruction = |board, sequence, carry| RelayInstruction {
+            board,
+            sequence,
+            carry,
+        };
+        let latest_allowed = NOW + CLOCK_TOLERANCE_MS;
+        assert_eq!(
+            ledger
+                .apply(laptop, instruction(greenhouse, latest_allowed, true), NOW)
+                .await
+                .unwrap(),
+            RelayAnswer::Carrying
+        );
+        let seed_house = BoardId::from_bytes([58; 32]);
+        for (board, sequence, carry) in [
+            (seed_house, latest_allowed + 1, true),
+            (seed_house, u64::MAX, true),
+            (greenhouse, u64::MAX, false),
+        ] {
+            assert_eq!(
+                ledger
+                    .apply(laptop, instruction(board, sequence, carry), NOW)
+                    .await
+                    .unwrap(),
+                RelayAnswer::ClockAhead
+            );
+        }
+        let restored = Ledger::load(pool, [laptop].into(), 2).await.unwrap();
+        assert_eq!(restored.records.len(), 1);
+        assert_eq!(restored.counts(), [(laptop, 1)].into());
+        assert_eq!(
+            ledger
+                .apply(
+                    laptop,
+                    instruction(greenhouse, latest_allowed + 1, false),
+                    NOW + 1
+                )
+                .await
+                .unwrap(),
+            RelayAnswer::RemovalPendingRestart
+        );
     }
 }

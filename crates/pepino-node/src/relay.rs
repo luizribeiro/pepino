@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use futures_util::StreamExt;
@@ -141,7 +141,10 @@ impl Relay {
             let Some(instruction) = incoming.open(&self.keys) else {
                 return Ok(None);
             };
-            let answer = self.ledger.apply(incoming.author, instruction).await?;
+            let answer = self
+                .ledger
+                .apply(incoming.author, instruction, now_ms())
+                .await?;
             if answer == RelayAnswer::Carrying {
                 match self
                     .node
@@ -170,6 +173,14 @@ impl Relay {
         drop((channel, ledger));
         node.shutdown().await
     }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            elapsed.as_millis().try_into().unwrap_or(u64::MAX)
+        })
 }
 
 fn update_status(status: &watch::Sender<RelayStatus>, ledger: &Ledger) {
