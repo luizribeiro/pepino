@@ -39,6 +39,9 @@ pub enum ReadRequest {
         tasks: Vec<String>,
     },
     ListViews,
+    ShowView {
+        name: String,
+    },
     BoardList,
     BoardShow {
         board: Option<String>,
@@ -247,6 +250,9 @@ pub enum Response {
         replaced: bool,
     },
     ViewDeleted {
+        view: SavedView,
+    },
+    ViewShown {
         view: SavedView,
     },
     Views {

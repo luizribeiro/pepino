@@ -62,6 +62,7 @@ response_views! {
     },
     view_saved => ViewSaved { view: &'a SavedView, replaced: &'a bool },
     view_deleted => ViewDeleted { view: &'a SavedView },
+    view_shown => ViewShown { view: &'a SavedView },
     views => Views { views: &'a [SavedView] },
 }
 

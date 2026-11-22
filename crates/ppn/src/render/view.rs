@@ -33,7 +33,9 @@ pub(super) fn saved_views(response: &Response, color: bool) -> Result<String, Cl
             let verb = if *replaced { "Replaced" } else { "Saved" };
             Ok(format!("{verb} {}", view.name))
         }
-        Response::ViewDeleted { view } => Ok(format!("Removed {}", view.name)),
+        Response::ViewDeleted { view } => {
+            Ok(format!("Removed {}", ppn::render::single_line(&view.name)))
+        }
         _ => Err(CliError::new(
             ErrorKind::Failure,
             "Expected a saved view response.",
@@ -61,7 +63,7 @@ fn list_row(view: &SavedView, color: bool) -> String {
 }
 
 fn definition(view: &SavedView) -> String {
-    format!("{}  {}", view.name, view.filter)
+    format!("{}  {}", ppn::render::single_line(&view.name), view.filter)
 }
 
 #[cfg(test)]

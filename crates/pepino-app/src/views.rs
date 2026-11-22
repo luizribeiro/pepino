@@ -147,6 +147,13 @@ impl App {
         now: u64,
         guard: File,
     ) -> Result<Response, AppError> {
+        if let Some(view) = self.local.unimported_view(&name) {
+            let mut local = self.local.clone();
+            local.saved_views.remove(&name);
+            local.catalog.migrated_views.remove(&name);
+            self.persist_local(local, guard).await?;
+            return Ok(Response::ViewDeleted { view });
+        }
         validate_name(&name)?;
         let mut views = self.local.view_filters();
         let Some(filter) = views.remove(&name) else {
@@ -182,6 +189,14 @@ impl App {
             views: self.local.listed_views(),
             not_imported: self.local.not_imported_views(),
         }
+    }
+
+    pub(super) fn show_view(&self, name: &str) -> Result<Response, AppError> {
+        let view = match self.local.unimported_view(name) {
+            Some(view) => view,
+            None => SavedView::find_by_name(&self.local.listed_views(), name)?.clone(),
+        };
+        Ok(Response::ViewShown { view })
     }
 }
 
@@ -300,14 +315,29 @@ impl LocalState {
             self.catalog
                 .migrated_views
                 .iter()
-                .filter_map(|(name, filter)| {
-                    let entry = self.catalog.preferences.get(&view_key(name))?;
-                    (entry.writer != self.device_id
-                        && decode_view(entry).is_none_or(|view| view.filter != filter))
-                    .then_some(name)
-                }),
+                .filter_map(|(name, filter)| self.unrecovered_view(name, filter).then_some(name)),
         );
         names.into_iter().map(str::to_owned).collect()
+    }
+
+    fn unrecovered_view(&self, name: &str, filter: &str) -> bool {
+        self.catalog
+            .preferences
+            .get(&view_key(name))
+            .is_some_and(|entry| {
+                entry.writer != self.device_id
+                    && decode_view(entry).is_none_or(|view| view.filter != filter)
+            })
+    }
+
+    fn unimported_view(&self, name: &str) -> Option<SavedView> {
+        let filter = self.saved_views.get(name).or_else(|| {
+            self.catalog
+                .migrated_views
+                .get(name)
+                .filter(|filter| self.unrecovered_view(name, filter))
+        })?;
+        Some(SavedView::new(name.into(), filter.into()))
     }
 
     pub(crate) fn migration_echoes(&self, incoming: &Preferences, now: u64) -> Vec<String> {

@@ -1,5 +1,5 @@
 use clap::Subcommand;
-use pepino_app::{ReadRequest, Request, SavedView, WriteRequest};
+use pepino_app::{ReadRequest, Request, WriteRequest};
 use ppn::app::AppClient;
 use ppn::error::CliError;
 use ppn::help_tree::example_help;
@@ -89,8 +89,8 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
             client.call(Request::Write(WriteRequest::DeleteView { name, force }))
         }
         Action::Show { name } => {
-            let response = client.call(Request::Read(ReadRequest::ListViews))?;
-            let view = SavedView::find_by_name(response.views()?.views, &name)?.clone();
+            let response = client.call(Request::Read(ReadRequest::ShowView { name }))?;
+            let view = response.view_shown()?.view.clone();
             return Ok(CommandResult::document(render::ViewDefinition(view)));
         }
     }?;
@@ -102,7 +102,7 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
             views.is_empty(),
             (!not_imported.is_empty()).then(|| {
                 format!(
-                    "Could not import saved views: {}",
+                    "Could not import saved views: {}. Remove with `ppn view rm NAME` or save again under a valid name.",
                     not_imported
                         .iter()
                         .map(|name| ppn::render::single_line(name))

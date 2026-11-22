@@ -263,7 +263,8 @@ fn view_list_reports_unimported_legacy_names_without_blocking_other_commands() {
     let path = data.join("local.json");
     let mut local: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    local["saved_views"] = json!({"huge":"x".repeat(5000),"repairs":"tag:hardware"});
+    let huge = "x".repeat(5000);
+    local["saved_views"] = json!({"Bad Name":"is:open","huge":huge,"repairs":"tag:hardware"});
     std::fs::write(&path, serde_json::to_vec(&local).unwrap()).unwrap();
 
     let human = sandbox.command().args(["view", "ls"]).output().unwrap();
@@ -271,7 +272,7 @@ fn view_list_reports_unimported_legacy_names_without_blocking_other_commands() {
     assert_eq!(human.stdout, b"repairs  tag:hardware\n");
     assert_eq!(
         human.stderr,
-        b"warning: Could not import saved views: huge\n"
+        b"warning: Could not import saved views: Bad Name, huge. Remove with `ppn view rm NAME` or save again under a valid name.\n"
     );
     let json = sandbox
         .command()
@@ -281,11 +282,45 @@ fn view_list_reports_unimported_legacy_names_without_blocking_other_commands() {
     assert!(json.status.success());
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&json.stdout).unwrap()["not_imported"],
-        json!(["huge"])
+        json!(["Bad Name", "huge"])
     );
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&json.stderr).unwrap()["kind"],
         "warning"
+    );
+
+    assert_eq!(
+        sandbox.run(&["view", "show", "Bad Name"]),
+        "Bad Name  is:open\n"
+    );
+    let shown = as_json(&sandbox.run(&["view", "show", "huge", "--json"]));
+    assert_eq!(shown["view"], json!({"name":"huge","filter":huge}));
+    let removed = as_json(&sandbox.run(&["view", "rm", "Bad Name", "--json"]));
+    assert_eq!(
+        removed["view"],
+        json!({"name":"Bad Name","filter":"is:open"})
+    );
+    assert_eq!(sandbox.run(&["view", "rm", "huge"]), "Removed huge\n");
+    for action in ["show", "rm"] {
+        let missing = sandbox
+            .command()
+            .args(["view", action, "huge", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(task_error(missing, 3, "not_found")["view"], "huge");
+    }
+    let cleared = sandbox
+        .command()
+        .args(["view", "ls", "--json"])
+        .output()
+        .unwrap();
+    assert!(cleared.status.success());
+    assert!(cleared.stderr.is_empty());
+    let current: serde_json::Value = serde_json::from_slice(&cleared.stdout).unwrap();
+    assert!(current.get("not_imported").is_none());
+    assert_eq!(
+        current["views"],
+        json!([{"name":"repairs","filter":"tag:hardware"}])
     );
     sandbox.run(&["status"]);
 }
