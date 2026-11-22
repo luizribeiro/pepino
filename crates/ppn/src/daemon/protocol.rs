@@ -56,6 +56,9 @@ pub enum Operation {
         action: pepino_app::ManagePerson,
         accept_risk: bool,
     },
+    RelayDrop {
+        boards: pepino_node::RelayDrop,
+    },
     Stop,
 }
 
@@ -128,6 +131,9 @@ pub enum Outcome {
     BoardManaged {
         departure: Option<pepino_app::BoardDeparture>,
     },
+    RelayDropped {
+        boards: usize,
+    },
     Stopping,
     Error {
         code: String,
@@ -136,6 +142,14 @@ pub enum Outcome {
 }
 
 impl Outcome {
+    pub(super) fn ends_serving(&self) -> Option<super::server::End> {
+        match self {
+            Self::Stopping => Some(super::server::End::Stopped),
+            Self::RelayDropped { .. } => Some(super::server::End::Restart),
+            _ => None,
+        }
+    }
+
     pub(super) fn error(code: &str, message: &str) -> Self {
         Self::Error {
             code: code.into(),

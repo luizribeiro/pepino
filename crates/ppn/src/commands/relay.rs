@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use pepino_app::OpenOptions;
 use pepino_core::DeviceId;
+use pepino_node::RelayDrop;
 use ppn::{
     config::Config,
     daemon::{
@@ -34,6 +35,20 @@ enum Action {
     /// List the boards a running relay carries, by requesting device.
     #[command(after_help = example_help(&["ppn relay boards --json"]))]
     Boards,
+    /// Delete a running relay's stored copy of one board, or of every board a device requested.
+    #[command(after_help = example_help(&["ppn relay drop 3f9a12c4d5e6 --yes", "ppn relay drop --from NODE_ID --yes"]))]
+    Drop {
+        /// Board handle from ppn relay boards.
+        #[arg(
+            value_name = "HANDLE",
+            required_unless_present = "from",
+            conflicts_with = "from"
+        )]
+        handle: Option<String>,
+        /// Drop every board requested by this device node ID.
+        #[arg(long, value_name = "NODE-ID")]
+        from: Option<String>,
+    },
 }
 
 struct RelayInfo {
@@ -94,6 +109,7 @@ pub fn run(context: &Context<'_>, args: Args) -> Result<CommandResult, CliError>
         }
         Action::Show => pepino_app::relay_credentials(directory, path)?,
         Action::Boards => return boards(context),
+        Action::Drop { handle, from } => return drop_boards(context, handle, from),
     };
     Ok(CommandResult::document(RelayInfo::from_config(
         config,
@@ -261,4 +277,63 @@ fn boards(context: &Context<'_>) -> Result<CommandResult, CliError> {
     relay_keys(config)?;
     let status = running_status(config)?.ok_or_else(not_running)?;
     Ok(CommandResult::document(Boards(status)))
+}
+
+struct Dropped(usize);
+
+impl Render for Dropped {
+    fn human(&self, _: &Terminal) -> String {
+        format!(
+            "Dropped {} boards. The relay restarts its node and deletes the stored copies.",
+            self.0
+        )
+    }
+
+    fn json_fields(self) -> Map<String, Value> {
+        Map::from_iter([
+            ("kind".into(), json!("relay_drop")),
+            ("dropped".into(), json!(self.0)),
+        ])
+    }
+}
+
+fn drop_boards(
+    context: &Context<'_>,
+    handle: Option<String>,
+    from: Option<String>,
+) -> Result<CommandResult, CliError> {
+    let config = &context.config()?.config;
+    relay_keys(config)?;
+    let boards = match (handle, from) {
+        (Some(handle), _) => RelayDrop::Handle(handle),
+        (None, Some(node)) => RelayDrop::From(node.parse().map_err(|_| {
+            CliError::new(
+                ErrorKind::InvalidInput,
+                "Expected a 64-digit device node ID.",
+            )
+        })?),
+        (None, None) => {
+            return Err(CliError::new(
+                ErrorKind::Usage,
+                "Give a board handle or --from NODE-ID.",
+            ));
+        }
+    };
+    if !context.confirm("Delete this relay's stored copy of the selected boards?")? {
+        return Err(CliError::new(
+            ErrorKind::ConfirmationRequired,
+            "Relay drop was not confirmed.",
+        ));
+    }
+    match call(config, Operation::RelayDrop { boards })?.ok_or_else(not_running)? {
+        Outcome::RelayDropped { boards } => Ok(CommandResult::document(Dropped(boards))),
+        Outcome::Error { code, message } if code == "not_found" => {
+            Err(CliError::new(ErrorKind::NotFound, message)
+                .with_hint("Run ppn relay boards to list the handles."))
+        }
+        _ => Err(CliError::new(
+            ErrorKind::Failure,
+            "Could not drop the boards.",
+        )),
+    }
 }

@@ -188,6 +188,10 @@ pub(super) async fn operate(
                 ),
             }
         }
+        Operation::RelayDrop { .. } => Outcome::error(
+            "permission_denied",
+            "This daemon runs a device. Use the relay's data directory for relay operations.",
+        ),
         Operation::Stop => Outcome::Stopping,
     }
 }

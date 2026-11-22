@@ -55,6 +55,8 @@ pub(super) async fn serve_with(
     handle: impl AsyncFn(Operation, Instant) -> Outcome,
 ) -> io::Result<End> {
     let stop = Notify::new();
+    let restart_requested = Notify::new();
+    let ends = (&stop, &restart_requested);
     tokio::pin!(restart);
     let mut reads = FuturesUnordered::new();
     let mut requests = FuturesUnordered::new();
@@ -64,6 +66,7 @@ pub(super) async fn serve_with(
             biased;
             _ = stop.notified() => return Ok(End::Stopped),
             _ = &mut restart => return Ok(End::Restart),
+            _ = restart_requested.notified() => return Ok(End::Restart),
             _ = requests.next(), if !requests.is_empty() => (),
             _ = waits.next(), if !waits.is_empty() => (),
             read = reads.next(), if !reads.is_empty() => {
@@ -71,13 +74,13 @@ pub(super) async fn serve_with(
                 if let Some(Some((stream, operation))) = read {
                     if operation.as_ref().is_ok_and(|op| op.wait_ms().is_some()) {
                         if waits.len() < WAITS {
-                            waits.push(respond(stream, operation, &stop, &handle, started));
+                            waits.push(respond(stream, operation, ends, &handle, started));
                         } else {
                             let busy = Outcome::error("busy", "Too many outstanding control waits.");
-                            requests.push(respond(stream, Err(Box::new(busy)), &stop, &handle, started));
+                            requests.push(respond(stream, Err(Box::new(busy)), ends, &handle, started));
                         }
                     } else {
-                        requests.push(respond(stream, operation, &stop, &handle, started));
+                        requests.push(respond(stream, operation, ends, &handle, started));
                     }
                 }
             }
@@ -97,7 +100,7 @@ async fn read_request(mut stream: UnixStream) -> Option<(UnixStream, Decoded)> {
 async fn respond(
     mut stream: UnixStream,
     operation: Decoded,
-    stop: &Notify,
+    (stop, restart): (&Notify, &Notify),
     handle: &impl AsyncFn(Operation, Instant) -> Outcome,
     started: Instant,
 ) {
@@ -105,14 +108,16 @@ async fn respond(
         Ok(operation) => handle(operation, started).await,
         Err(error) => *error,
     };
-    let stopping = matches!(outcome, Outcome::Stopping);
+    let end = outcome.ends_serving();
     let response = Response {
         v: VERSION,
         result: outcome,
     };
     let _ = timeout(IO_LIMIT, framing::write(&mut stream, &response)).await;
-    if stopping {
-        stop.notify_one();
+    match end {
+        Some(End::Stopped) => stop.notify_one(),
+        Some(End::Restart) => restart.notify_one(),
+        None => (),
     }
 }
 

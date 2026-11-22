@@ -82,6 +82,10 @@ pub(super) fn for_command(command: &Command) -> Value {
             "relay_boards",
             "count Boards carried\nmax_boards Board limit shared by all trusted devices\ndevices Requesting device node IDs, each with an opaque handle and removal state per board",
         ),
+        "relay drop" => (
+            "relay_drop",
+            "dropped Number of boards whose stored copy the relay deletes",
+        ),
         "board new" | "board use" | "board rename" => (
             "board",
             "board Affected board with counts, membership and sync activity",

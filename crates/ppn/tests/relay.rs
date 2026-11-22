@@ -46,20 +46,46 @@ fn relay_role_is_explicit_and_exclusive_without_a_terminal() {
 }
 
 #[test]
-fn relay_boards_needs_a_relay_directory_and_a_running_daemon() {
+fn relay_board_commands_need_a_relay_directory_and_a_running_daemon() {
     let device = ConfigSandbox::new();
     success(device.command().args(["init"]).output().unwrap());
     let relay = ConfigSandbox::new();
     success(relay.command().args(["relay", "init"]).output().unwrap());
     let run =
         |sandbox: &ConfigSandbox, args: &[&str]| sandbox.command().args(args).output().unwrap();
-    let boards = ["relay", "boards", "--json"];
-    task_error(run(&device, &boards), 5, "permission_denied");
-    let offline = task_error(run(&relay, &boards), 6, "daemon_unreachable");
-    assert!(offline["message"].as_str().unwrap().contains("not running"));
+    let node = "ab".repeat(32);
+    let from = ["relay", "drop", "--from", &node, "--yes", "--json"];
+    for arguments in [
+        &["relay", "boards", "--json"][..],
+        &["relay", "drop", "3f9a12c4d5e6", "--yes", "--json"],
+        &from,
+    ] {
+        task_error(run(&device, arguments), 5, "permission_denied");
+        let offline = task_error(run(&relay, arguments), 6, "daemon_unreachable");
+        assert!(offline["message"].as_str().unwrap().contains("not running"));
+    }
     let human = run(&relay, &["relay", "boards"]);
     assert_eq!(human.status.code(), Some(6));
     assert!(String::from_utf8_lossy(&human.stderr).contains("ppn daemon start"));
+    task_error(
+        run(&relay, &["relay", "drop", "3f9a12c4d5e6", "--json"]),
+        1,
+        "confirmation_required",
+    );
+    task_error(
+        run(
+            &relay,
+            &["relay", "drop", "--from", "laptop", "--yes", "--json"],
+        ),
+        2,
+        "invalid_input",
+    );
+    for usage in [
+        &["relay", "drop"][..],
+        &["relay", "drop", "3f9a12c4d5e6", "--from", &node],
+    ] {
+        assert_eq!(run(&relay, usage).status.code(), Some(2));
+    }
 }
 
 #[cfg(pepino_network_tests)]
@@ -302,14 +328,20 @@ mod network {
         relay.stop();
     }
 
+    fn carried(relay: &Host) -> Option<u64> {
+        let output = relay.output(&["relay", "boards", "--json"]);
+        serde_json::from_slice::<Value>(&output.stdout).ok()?["count"].as_u64()
+    }
+
     #[test]
-    fn the_operator_lists_carried_boards() {
+    fn the_operator_lists_and_drops_carried_boards() {
         let Fleet {
             device,
             device_id,
             relay,
             address,
         } = fleet();
+        let pid = relay.json(&["daemon", "status"])["pid"].clone();
         let board = device.json(&["board", "show"])["board"]["id"]
             .as_str()
             .unwrap()
@@ -339,6 +371,36 @@ mod network {
             assert!(!text.contains(&board));
         }
 
+        let drop = ["relay", "drop", &handles[0]];
+        assert_json_error(
+            relay.output(&[&drop[..], &["--json"]].concat()),
+            1,
+            "confirmation_required",
+        );
+        assert_json_error(
+            relay.output(&["relay", "drop", "0123456789ab", "--yes", "--json"]),
+            3,
+            "not_found",
+        );
+        assert_eq!(carried(&relay), Some(2));
+        let dropped = relay.json(&[&drop[..], &["--yes"]].concat());
+        assert_eq!(dropped["kind"], "relay_drop");
+        assert_eq!(dropped["dropped"], 1);
+        until(|| carried(&relay), |count| *count == Some(1), WAIT);
+        let remaining = until(
+            || relay.output(&["relay", "drop", "--from", &device_id, "--yes"]),
+            |output| output.status.success(),
+            WAIT,
+        );
+        assert!(String::from_utf8_lossy(&remaining.stdout).contains("Dropped 1 boards"));
+        until(|| carried(&relay), |count| *count == Some(0), WAIT);
+        assert_eq!(relay.json(&["daemon", "status"])["pid"], pid);
+        let raw_id: pepino_core::BoardId = board.parse().unwrap();
+        assert_private_files(&relay.data, &[board.as_bytes(), raw_id.as_bytes()]);
+
+        device.run(&["board", "relay", "add", &address, "--board", "Greenhouse"]);
+        wait_state(&device, "Greenhouse", "carrying");
+        until(|| carried(&relay), |count| *count == Some(1), WAIT);
         device.stop();
         relay.stop();
     }

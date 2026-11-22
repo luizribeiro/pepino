@@ -140,6 +140,11 @@ async fn cycle(
                 },
                 Err(error) => Outcome::error("failure", &format!("Could not read the relay status. {error}")),
             },
+            Operation::RelayDrop { boards } => match monitor.drop_boards(boards).await {
+                Ok(0) => Outcome::error("not_found", "No carried board matches."),
+                Ok(boards) => Outcome::RelayDropped { boards },
+                Err(error) => Outcome::error("failure", &format!("Could not drop the boards. {error}")),
+            },
             Operation::Stop => Outcome::Stopping,
             _ => Outcome::error("permission_denied", "This daemon runs in relay mode. Use a device data directory for device operations."),
         }) => match result {
