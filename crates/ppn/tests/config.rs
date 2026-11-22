@@ -416,6 +416,16 @@ fn config_help_lists_environment_variables_from_the_settings_table() {
         assert!(help.contains(entry["variable"].as_str().unwrap()));
         assert!(help.contains(entry["value"].as_str().unwrap()));
     }
+    for variable in ["PPN_BOARD", "PPN_JSON", "PPN_NO_DAEMON"] {
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| entry["variable"] == variable)
+                .count(),
+            1,
+            "{variable}"
+        );
+    }
     let bootstrap = entries
         .iter()
         .find(|entry| entry["variable"] == "PPN_BOOTSTRAP_NODES")

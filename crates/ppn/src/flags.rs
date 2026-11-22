@@ -9,6 +9,7 @@ use crate::error::{CliError, ErrorKind};
 use crate::terminal::Color;
 
 pub const BOARD_ENV: &str = "PPN_BOARD";
+pub const NO_DAEMON_ENV: &str = "PPN_NO_DAEMON";
 
 pub(crate) const JSON_ENV: &str = "PPN_JSON";
 

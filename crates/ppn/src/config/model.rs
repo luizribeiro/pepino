@@ -11,7 +11,7 @@ use super::{
     ValueError,
 };
 use super::{env, validate};
-use crate::terminal::Color;
+use crate::{flags, terminal::Color};
 use toml::de::DeValue;
 
 pub const DEFAULT_RELAY_URLS: &[&str] = &[
@@ -77,13 +77,34 @@ pub(crate) struct Key {
     pub apply: fn(&mut Draft<'_>, &Input<'_>, &Source, &mut Validator<'_>),
 }
 
-pub fn environment_variables() -> impl Iterator<Item = EnvironmentVariable> {
-    std::iter::once(EnvironmentVariable {
+const COMMAND_ENVIRONMENT: &[EnvironmentVariable] = &[
+    EnvironmentVariable {
         variable: CONFIG_ENV,
         key: "File selection",
         value: "Path to one required TOML file. --config takes precedence.",
-    })
-    .chain(keys().map(|key| key.environment))
+    },
+    EnvironmentVariable {
+        variable: flags::BOARD_ENV,
+        key: "Board selection",
+        value: "Board name or ID prefix. --board takes precedence.",
+    },
+    EnvironmentVariable {
+        variable: flags::JSON_ENV,
+        key: "Output format",
+        value: "Set to 1 for JSON output.",
+    },
+    EnvironmentVariable {
+        variable: flags::NO_DAEMON_ENV,
+        key: "Daemon startup",
+        value: "Set to 1 to disable automatic daemon startup.",
+    },
+];
+
+pub fn environment_variables() -> impl Iterator<Item = EnvironmentVariable> {
+    COMMAND_ENVIRONMENT
+        .iter()
+        .copied()
+        .chain(keys().map(|key| key.environment))
 }
 
 pub(crate) fn keys() -> impl Iterator<Item = &'static Key> {
@@ -249,10 +270,7 @@ mod tests {
                 .keys()
                 .copied()
                 .collect::<std::collections::BTreeSet<_>>(),
-            environment_variables()
-                .skip(1)
-                .map(|variable| variable.key)
-                .collect()
+            keys().map(|key| key.environment.key).collect()
         );
         assert!(values.values().all(|value| value["source"] == "default"));
         assert_eq!(values["log_level"]["value"], "info");

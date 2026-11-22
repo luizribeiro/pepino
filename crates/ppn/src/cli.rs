@@ -17,7 +17,7 @@ use clap::{
 use ppn::app::InvocationTime;
 use ppn::config::{self, Env, Flags, Platform, PlatformDirs};
 use ppn::error::CliError;
-use ppn::flags::{Globals, json_from_env, json_on_command_line};
+use ppn::flags::{Globals, NO_DAEMON_ENV, json_from_env, json_on_command_line};
 use ppn::help_tree::example_help;
 use ppn::output::{CommandResult, finish};
 use ppn::terminal::{Context, Terminal};
@@ -181,7 +181,7 @@ fn execute(inputs: &ProcessInputs) -> (Result<CommandResult, CliError>, bool, Te
 
 impl ProcessInputs {
     fn daemon_enabled(&self) -> bool {
-        config::env_value(&self.env, "PPN_NO_DAEMON").ok().flatten() != Some("1")
+        config::env_value(&self.env, NO_DAEMON_ENV).ok().flatten() != Some("1")
     }
 
     pub(crate) fn files(
