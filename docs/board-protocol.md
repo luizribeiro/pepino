@@ -1,4 +1,10 @@
-# Board additions to application protocol v2
+# Protocol notes
+
+Reference for people working on pepino itself: the board, identity, and
+preference parts of application protocol v2. To script `ppn`, read
+[Scripting and configuration](scripting.md) instead.
+
+## Boards
 
 The v2 JSON and CBOR envelopes accept optional `board` and `all_boards` fields.
 A board reference can be an exact name, a full ID, or a unique hexadecimal ID prefix
