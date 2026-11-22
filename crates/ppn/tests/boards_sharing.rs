@@ -952,14 +952,16 @@ fn leave_checks_the_synced_role_after_an_offline_demotion() {
         "--yes",
         "--i-understand-mutual-removal-risk",
     ]);
-    let status = guest.json(&["status"]);
-    assert!(
-        status["boards"]
+    let role = || {
+        guest.json(&["status"])["boards"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|board| { board["name"] == "House" && board["role"] == "manage" })
-    );
+            .find(|board| board["name"] == "House")
+            .unwrap()["role"]
+            .clone()
+    };
+    assert_eq!(role(), "manage");
     owner.stop();
     guest.start();
     let args = ["board", "leave", "--board", "House", "--yes"];
@@ -967,6 +969,7 @@ fn leave_checks_the_synced_role_after_an_offline_demotion() {
     assert_eq!(offline.status.code(), Some(5), "{offline:?}");
     assert!(String::from_utf8_lossy(&offline.stderr).contains("current board role is unknown"));
     owner.start();
+    until(role, |role| role == "write", WAIT);
     let leave = guest.json(&args);
     assert_eq!(leave["departure"], "leaving");
     assert_eq!(leave["complete"], false);
