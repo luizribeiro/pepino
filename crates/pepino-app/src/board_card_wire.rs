@@ -143,11 +143,12 @@ impl BoardCards {
         bytes.starts_with(PREFIX)
     }
 
-    pub fn decode(bytes: &[u8]) -> Option<Self> {
-        WireFormat::Cbor
-            .decode::<Message<Self>>(bytes.strip_prefix(PREFIX)?)
-            .ok()
-            .map(|message| message.cards)
+    pub fn decode(bytes: &[u8]) -> Result<Option<Self>, AppError> {
+        let Some(body) = bytes.strip_prefix(PREFIX) else {
+            return Ok(None);
+        };
+        let message = WireFormat::Cbor.decode::<Message<Self>>(body)?;
+        Ok(Some(message.cards))
     }
 }
 
@@ -272,12 +273,12 @@ async fn card_updates_cannot_introduce_people() {
         .encode()
         .unwrap();
     assert!(BoardCards::is_board_card(&update));
-    assert!(BoardCards::decode(b"task event").is_none());
+    assert!(BoardCards::decode(b"task event").unwrap().is_none());
     app.receive_board_cards(
         id,
         local.device_id,
         None,
-        BoardCards::decode(&update).unwrap(),
+        BoardCards::decode(&update).unwrap().unwrap(),
     )
     .await
     .unwrap();

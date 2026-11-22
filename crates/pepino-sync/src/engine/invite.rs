@@ -209,7 +209,7 @@ impl SyncEngine {
             })
             .transpose()?;
         self.app.register_card_exchange(channel, exchange).await?;
-        workers.start_card_exchange(handle, channel)?;
+        workers.start_card_exchange(handle, channel, exchange.board)?;
         if recipient != local.device_id {
             let handle = workers
                 .handle(channel)

@@ -3,9 +3,12 @@ use std::sync::Arc;
 use futures_util::StreamExt;
 use pepino_app::{App, BoardCards, LocalState};
 use pepino_core::BoardId;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 
-use crate::{Acknowledgement, DeliveryStream, Error, Transport, TransportBoard, retry::Retry};
+use crate::{
+    Acknowledgement, DeliveryStream, Error, Status, Transport, TransportBoard,
+    inbox::decode_board_cards, retry::Retry,
+};
 
 use super::BoardWorkers;
 
@@ -49,7 +52,7 @@ impl<T: Transport> BoardWorkers<T> {
                 Err(pepino_node::Error::BoardRestartRequired(_)) => continue,
                 Err(error) => return Err(error.into()),
             };
-            self.start_card_exchange(board, channel)?;
+            self.start_card_exchange(board, channel, exchange.board)?;
         }
         Ok(())
     }
@@ -58,6 +61,7 @@ impl<T: Transport> BoardWorkers<T> {
         &mut self,
         mut board: T::Board,
         channel: BoardId,
+        shared_board: BoardId,
     ) -> Result<(), Error> {
         let stream = board.deliveries()?;
         let board = Arc::new(board);
@@ -65,6 +69,7 @@ impl<T: Transport> BoardWorkers<T> {
         let mut stopping = self.stopping.clone();
         let mut closing = self.closing.clone();
         let app = self.app.clone();
+        let changes = self.changes.clone();
         let (evict, evicted) = oneshot::channel();
         let (finished, closed) = oneshot::channel();
         self.card_workers
@@ -75,7 +80,7 @@ impl<T: Transport> BoardWorkers<T> {
                 () = async {
                     tokio::select! {
                         _ = stopping.changed() => (),
-                        () = receive(&app, channel, stream) => (),
+                        () = receive(&app, channel, shared_board, stream, &changes) => (),
                     }
                     let _ = closing.changed().await;
                 } => (),
@@ -95,13 +100,15 @@ impl<T: Transport> BoardWorkers<T> {
 
 async fn receive<A: Acknowledgement>(
     app: &App,
-    channel: pepino_core::BoardId,
+    channel: BoardId,
+    shared_board: BoardId,
     mut stream: DeliveryStream<A>,
+    status: &watch::Sender<Status>,
 ) {
     while let Some(delivery) = stream.next().await {
         let Ok(delivery) = delivery else { continue };
         let mut retry = Retry::new();
-        while let Some(cards) = BoardCards::decode(&delivery.bytes) {
+        while let Some(cards) = decode_board_cards(shared_board, &delivery.bytes, status) {
             let local = match app.fresh_local_state().await {
                 Ok(local) => local,
                 Err(_) => {

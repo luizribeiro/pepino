@@ -104,6 +104,7 @@ are saved locally and propagate through the first board when daemons sync.
 Known devices' past work displays the current identity name.
 
 Upgrade all of your devices together.
+For this release, everyone on a shared board must upgrade together.
 
 On upgrade, each device publishes the additions it recorded on that host
 once its own admission is in the synced roster. The originating device

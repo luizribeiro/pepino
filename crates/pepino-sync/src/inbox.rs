@@ -1,6 +1,6 @@
 use std::{future::poll_fn, task::Poll, time::Duration};
 
-use pepino_app::{App, BoardCards, SyncStoreError};
+use pepino_app::{App, AppError, BoardCards, SyncStoreError};
 use pepino_core::BoardId;
 use pepino_node::{OperationRole, Role};
 use pepino_store::{AppendOutcome, StoreError};
@@ -226,6 +226,21 @@ async fn manager_authority<B: TransportBoard>(
     )
 }
 
+pub(crate) fn decode_board_cards(
+    board: BoardId,
+    bytes: &[u8],
+    status: &watch::Sender<Status>,
+) -> Option<BoardCards> {
+    match BoardCards::decode(bytes) {
+        Ok(cards) => cards,
+        Err(error @ AppError::UnsupportedVersion { .. }) => {
+            record_error(status, board, format!("read board identity cards: {error}"));
+            None
+        }
+        Err(_) => None,
+    }
+}
+
 async fn ingest_cards<B: TransportBoard>(
     app: &App,
     board: BoardId,
@@ -238,7 +253,7 @@ async fn ingest_cards<B: TransportBoard>(
         return false;
     }
     let mut retry = Retry::new();
-    while let Some(cards) = BoardCards::decode(&delivery.bytes) {
+    while let Some(cards) = decode_board_cards(board, &delivery.bytes, status) {
         if let BoardCards::Membership(change) = cards {
             let outcome = match manager_authority(handle, delivery).await {
                 Ok(authority @ (ManagerAuthority::Current | ManagerAuthority::Former)) => app

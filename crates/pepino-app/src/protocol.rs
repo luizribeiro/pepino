@@ -470,7 +470,9 @@ pub enum AppError {
     Busy,
     #[error("storage error: {reason}")]
     Storage { retryable: bool, reason: String },
-    #[error("protocol version {requested} is unsupported (supported version {supported})")]
+    #[error(
+        "protocol version {requested} is unsupported (supported version {supported}). Upgrade the older pepino or client."
+    )]
     UnsupportedVersion { requested: u32, supported: u32 },
     #[error("write was committed: {reason}")]
     WriteCommitted { reason: String },

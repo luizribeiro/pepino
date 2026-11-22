@@ -7,6 +7,37 @@ use super::{WAIT, directory, stub::Stub};
 use crate::SyncEngine;
 
 #[tokio::test]
+async fn incompatible_shared_board_cards_report_an_upgrade_before_acknowledging() {
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([15; 32]);
+    let local = DeviceId::from_bytes([16; 32]);
+    let peer = DeviceId::from_bytes([17; 32]);
+    let app = directory::prepare(dir.path(), board, local).await;
+    let node = Arc::new(Stub::new(local));
+    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    let version = pepino_app::PROTOCOL_VERSION;
+    for other_version in [1, version + 1] {
+        let body = pepino_app::WireFormat::Cbor
+            .encode(&json!({"v":other_version,"cards":{"membership":null}}))
+            .unwrap();
+        let bytes = [b"pepino-board-people\0".as_slice(), &body].concat();
+        let mut receipt = node.deliver(board, peer, bytes);
+        tokio::time::timeout(WAIT, receipt.wait_for(|done| *done))
+            .await
+            .unwrap()
+            .unwrap();
+        let status = engine.status();
+        let error = status.boards[&board].last_error.as_deref().unwrap();
+        assert!(error.contains(&format!("protocol version {other_version} is unsupported")));
+        assert!(error.contains("Upgrade the older pepino or client"));
+        assert_eq!(app.store().statistics(board).await.unwrap().total, 0);
+    }
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn malformed_payloads_are_retained_before_acknowledging_and_ingest_continues() {
     let dir = tempfile::tempdir().unwrap();
     let board = BoardId::from_bytes([15; 32]);

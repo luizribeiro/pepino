@@ -154,6 +154,22 @@ fn versioned_messages_have_a_shared_json_and_cbor_codec() {
 #[test]
 fn both_codecs_check_the_version_before_the_operation_and_reject_extra_fields() {
     for format in [WireFormat::Json, WireFormat::Cbor] {
+        let old = format
+            .encode(&json!({"v":1,"request":{"op":"status"}}))
+            .unwrap();
+        let error = format.decode::<WireRequest>(&old).unwrap_err();
+        assert_eq!(
+            error,
+            AppError::UnsupportedVersion {
+                requested: 1,
+                supported: PROTOCOL_VERSION
+            }
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("Upgrade the older pepino or client")
+        );
         let future = format
             .encode(&json!({"v":PROTOCOL_VERSION+1,"request":{"op":"reorder_board"}}))
             .unwrap();
