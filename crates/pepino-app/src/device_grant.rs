@@ -108,6 +108,12 @@ impl LocalState {
             .unwrap_or(BoardJoinState::Joined)
     }
 
+    pub(crate) fn granted_by(&self, device: DeviceId) -> bool {
+        self.link
+            .as_ref()
+            .is_some_and(|link| link.peer_id == device)
+    }
+
     pub fn peer_hint(&self) -> Option<PeerHint> {
         self.link.as_ref().map(|link| PeerHint {
             id: link.peer_id,
