@@ -1,164 +1,107 @@
-# Link a second device
+# Link your devices
 
-Use these commands to work on the same boards from two hosts. Start on a
-host that has no Pepino identity. The other host must already have run
-`ppn init` or joined the identity.
+Use the same identity and boards on several machines, see which devices you
+have, and remove one. Linking passes two secret codes between the machines: a
+request from the new device and a grant from an existing one.
 
-On the new host, prepare the device. Pepino writes the request code to
-stdout and shows the device name, fingerprint, and expiry on stderr.
+## Link a second device
 
-```sh
-umask 077
-ppn device request --name ferrum > request.txt
+Both machines need the same `network` setting
+([configuration](scripting.md#configure-ppn)) and a way to reach each other:
+the same local network, or the internet through the default relay servers.
+The existing device must be online.
+
+1. On the new machine, which must not have run `ppn init`, create a request:
+
+   ```console
+   $ umask 077
+   $ ppn device request --name desktop > request.txt
+   Device desktop, fingerprint XXXX-XXXX-XXXX-XXXX. This request code is secret. Expires 2027-02-20 05:04.
+   ```
+
+2. Move `request.txt` to a device you already use, over a channel you trust.
+   There, check that the fingerprint matches the one the new machine printed,
+   then create the grant:
+
+   ```sh
+   ppn device add --from-file request.txt --fingerprint XXXX-XXXX-XXXX-XXXX > grant.txt
+   ```
+
+   On a terminal you can omit `--fingerprint`; `ppn` shows the fingerprint
+   and asks you to confirm.
+
+3. Move `grant.txt` back to the new machine and join:
+
+   ```console
+   $ ppn device join --from-file grant.txt --timeout 60s
+   Device joined. Initial sync complete. Granted by laptop (803f57).
+   ```
+
+A request is valid for 90 days. The new device gets your role on every board. Delete both files afterwards:
+the request holds a one-time secret and the grant holds your board IDs.
+
+If the join cannot reach the granting device in time, it exits with status 7.
+The join is kept; the daemon completes it when the other device is reachable,
+and `ppn status` shows the progress. To give up before joining, run
+`ppn device request --cancel`.
+
+## See and rename your devices
+
+```console
+$ ppn device ls
+desktop (504ed2) · active · member of 1 of 1 boards · joined · this device · added by 803f57 on 2026-11-22 05:04
+  Home (003257) · joined
+laptop (803f57) · active · member of 1 of 1 boards · seen on the board · first device · last seen 2026-11-22 05:04
+  Home (003257) · member
 ```
 
-**Keep both the request and grant codes secret.** Transfer them through a
-private channel. The request contains the device name, signed member
-information with a 90-day lifetime, and a random secret. The device's
-private key stays on the new host. Repeating the request prints the same
-code until it needs to be refreshed. Pepino refreshes codes with less than
-a day left or with invalid member information. Use the new fingerprint
-when a code is refreshed.
-
-On an existing device, compare the name and fingerprint shown on the new
-host before enrolling it. From a terminal, run `ppn device add`, paste the
-code at the hidden prompt, and confirm only if the displayed fingerprint
-matches. With input from a pipe or file, pass the fingerprint you verified.
-
 ```sh
-ppn device add - --fingerprint 9XF5-HK7M-QS6V-RY24 < request.txt > grant.txt
-ppn device add --from-file request.txt --fingerprint 9XF5-HK7M-QS6V-RY24
+ppn device ls --active              # hide revoked devices
+ppn device rename 'Garden laptop'   # this device
+ppn device rename desktop Workbench # another device
+ppn identity rename 'Ada G'         # the name other people see
 ```
 
-Substitute the fingerprint shown on the requesting device. You can omit
-`-` when piping the code in. A positional code remains supported and
-will be visible in process listings. `--yes` confirms the addition without
-a fingerprint check. Use `--name NAME` to set the enrolled device's name.
+## Remove a device
 
-The existing device needs manage access to every board. The new device
-receives its role on each board. If some boards fail, Pepino reports the
-outcomes and you can retry with the same request.
-
-The grant contains the granting device's signature, a MAC tied to the
-request secret, the identity ID and display name, the two devices' names,
-board IDs and names, and the granting device's connection hint. Back on the new host, read the
-grant from stdin or a file. With terminal input, `ppn device join` prompts
-for the code without echoing it.
+To retire a device you still have, run this on it:
 
 ```sh
-ppn device join - --timeout 30s < grant.txt
-ppn device join --from-file grant.txt
+ppn device leave --yes
 ```
 
-Join verifies the code against the saved request and shows the signing
-device. The grant bootstraps the join. The first board carries the
-authoritative identity record, which the daemon syncs during the join. Keep that device's daemon running and reachable, either on the
-same LAN with mDNS or through a common relay. Both hosts need the same
-network name.
+The device stops syncing at once, and the first device completes the removal
+the next time it is online. The command prints the data directory and
+credentials file to delete if you want to wipe the machine.
 
-If the wait expires, `ppn device join` exits 7 with error code `pending`.
-The daemon keeps the join and will complete it when the granting device
-becomes reachable. JSON errors include the grantor and the per-board
-states. You can safely repeat the join with the same grant. Sync and join
-waits accept a maximum of five minutes.
-
-Before installing a grant, use `ppn device request --cancel` to remove a
-pending request and its node database so you can run `ppn init`.
-
-With `--json`, the request code is in `request` and the grant code is in
-`grant.code`. Both results identify the code as secret and include the
-request fingerprint and device ID.
-
-## Check the join
-
-Run `ppn status` on the new host to see whether each board is joined,
-waiting to be added, or waiting for its first sync. Run `ppn sync` to
-check progress and `ppn ls` to see the replicated tasks. `ppn device ls`
-shows the shared roster alongside what this host observes. The roster
-includes each device's name, who added it, when it was added, and whether
-it is active or revoked. The observations show board membership, the most
-recent sighting, and which row describes this host. A late join can still
-be pending on some boards.
-
-In `ppn device ls --json`, compare `roster` across hosts. The `devices`
-array includes this host's observations, with `member_of`, `total_boards`,
-`boards`, and `last_seen`. `state` describes the local observation and
-`roster_state` describes the shared record. The creator and entries from
-an older roster can have unknown add metadata. `ppn status` reports when
-the cached roster may be stale and counts rejected roster edits.
-
-## Manage identity and device names
+To remove a device you no longer control, run this on the first device:
 
 ```sh
-ppn identity show
-ppn identity rename 'Ada Gardener'
-ppn device rename 'Garden laptop'
-ppn device rename ferrum 'Greenhouse tablet'
+ppn device revoke Workbench --yes
 ```
 
-A device reference accepts a name, full device ID, or a unique ID prefix
-of four or more hexadecimal digits. Use a full ID if multiple devices
-have the same name. New names must contain one line of text and have at
-most 1,024 UTF-8 bytes after trimming surrounding whitespace. Renames
-are saved locally and propagate through the first board when daemons sync.
-Known devices' past work displays the current identity name.
+Removal changes the keys of every board, so the removed device cannot read
+anything new. It keeps everything it already had. Once it learns of the
+removal, its write commands fail with status 5.
 
-Upgrade all of your devices together.
-For this release, everyone on a shared board must upgrade together.
+To use a removed machine again, delete its data directory and link it as a
+new device.
 
-On upgrade, each device publishes the additions it recorded on that host
-once its own admission is in the synced roster. The originating device
-creates the initial record. Older additions keep an unknown add time.
+## Protect the first device
 
-## Removing a device
+The device where you ran `ppn init` anchors your identity. `ppn device ls`
+marks it `first device`. Only it can revoke devices, it cannot be revoked or
+leave, and you cannot move that role to another device.
 
-From the first device, run `ppn device revoke 'Greenhouse tablet'`.
-The confirmation shows the key fingerprint and boards affected. Pass
-`--yes` when running without a terminal. Use `--json` for per-board
-results. The signed revocation stays in the roster, and linked managers'
-daemons retry any board they could not update. You can also rerun the
-command. If membership is unavailable locally, sync the board and retry.
-Grant another device Manage on any board where the target is the only
-manager before revoking it. The node API exposes `BoardHandle::set_role`
-to promote a member on a particular board.
+- **If you lose it**, your other devices keep working and can still link new
+  ones, but you can no longer revoke any device.
+- **If it is stolen**, the thief holds an identity you cannot revoke. Run
+  `ppn init` in a fresh data directory to create a new identity, ask to be
+  re-invited to shared boards, and ask their managers to
+  [remove the old identity](sharing.md#change-a-role-or-remove-someone).
 
-The first device anchors the identity. Only it can revoke devices, so keep it.
-If you lose it, you can still use and link devices, but you lose the ability
-to revoke them. If it is stolen, create a new identity and ask to be re-invited
-to shared boards. Moving the anchor to another device is unsupported.
+## Back up a device
 
-On a linked device, run `ppn device leave` (or `ppn device leave --yes` in a
-script). The daemon publishes a signed request and the host pauses task sync.
-The first device's daemon processes the request. `ppn status` and
-`ppn device ls` show the pending leave. To wipe the retired host, wait for
-removal, stop its daemon, and delete the data directory and credentials file listed by the
-command. Delete copies in backups separately if you want them wiped too.
-
-Removal rotates board keys. The removed device cannot read new data even
-if it still receives encrypted traffic. It keeps everything it already
-had, and its old tasks still display with the identity's name. A device
-that receives the removal can read its local history, and write commands
-fail with exit code 5. A device removed while offline may never receive
-the notice because peers reject its new sync connections. It can still
-show stale data and accept local edits that cannot sync. `ppn status`
-shows how long it has had no contact with another device when that
-information is available. `ppn device ls --active` hides revoked devices.
-
-A revoked device can be linked again only from the first device.
-Readmission restores access to the full board history, including the
-interval when the device was removed. To re-link the same device key,
-stop its daemon and move its data directory aside. In the fresh data
-directory, restore the credentials and a clean `node.sqlite` backup
-from before retirement. Keep the old task database and local state in
-the archive. If the only copy of `node.sqlite` may contain offline
-drafts written after removal, use fresh credentials and link it as a
-new device. Run `ppn device request`
-in the fresh directory and complete `device add` and `device join` as
-above. The daemon rebuilds the task cache from the boards.
-
-## Back up the node database
-
-Back up `node.sqlite` along with the device's credentials and local
-state. `node.sqlite` holds the device's board membership and encryption
-keys and cannot be rebuilt from the credentials file. If a device loses
-`node.sqlite`, it must be linked again from another device.
+Back up the whole data directory; `ppn status` prints its path. A device
+that loses the keys in it must be linked again as a new device. Your tasks
+survive on your other devices.
