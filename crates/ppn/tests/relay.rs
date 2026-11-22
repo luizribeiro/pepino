@@ -185,7 +185,12 @@ mod network {
         let refusal = wait_state(&a, "Seed House", "refused");
         assert!(refusal["reason"].as_str().unwrap().contains("board limit"));
 
-        assert_private_files(&relay.data, &[first_title, second_title, extra_title]);
+        let titles = [
+            first_title.as_bytes(),
+            second_title.as_bytes(),
+            extra_title.as_bytes(),
+        ];
+        assert_private_files(&relay.data, &titles);
         let rm = ["board", "relay", "rm", &address, "--board", "Greenhouse"];
         let denied = [&rm[..], &["--json"]].concat();
         assert_json_error(a.output(&denied), 1, "confirmation_required");
@@ -201,9 +206,16 @@ mod network {
         for hash in [&first_hash, &extra_hash, &second_hash] {
             assert!(!has_ciphertext(&relay.data, hash));
         }
+        let raw_id: pepino_core::BoardId = board.parse().unwrap();
         assert_private_files(
             &relay.data,
-            &[first_title, extra_title, second_title, &board],
+            &[
+                titles[0],
+                titles[1],
+                titles[2],
+                board.as_bytes(),
+                raw_id.as_bytes(),
+            ],
         );
         a.stop();
         relay.stop();
@@ -271,7 +283,7 @@ mod network {
             })
     }
 
-    fn assert_private_files(dir: &Path, secrets: &[&str]) {
+    fn assert_private_files(dir: &Path, secrets: &[&[u8]]) {
         use std::os::unix::fs::PermissionsExt;
         for entry in fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
@@ -281,9 +293,7 @@ mod network {
                 let bytes = fs::read(&path).unwrap();
                 for secret in secrets {
                     assert!(
-                        !bytes
-                            .windows(secret.len())
-                            .any(|window| window == secret.as_bytes()),
+                        !bytes.windows(secret.len()).any(|window| window == *secret),
                         "secret found in {}",
                         path.display()
                     );
