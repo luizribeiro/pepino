@@ -30,11 +30,12 @@ fn relay_role_is_explicit_and_exclusive_without_a_terminal() {
         assert!(String::from_utf8_lossy(&error.stderr).contains("data directory is a relay"));
         let args = [arguments, &["--json"]].concat();
         let error = task_error(run(&args), 5, "permission_denied");
-        assert!(error["message"].as_str().unwrap().contains("Converting"));
+        let message = error["message"].as_str().unwrap();
+        assert!(message.contains("use a separate data directory for a device"));
     }
     let device = ConfigSandbox::new();
     success(device.command().args(["init"]).output().unwrap());
-    task_error(
+    let error = task_error(
         device
             .command()
             .args(["relay", "init", "--json"])
@@ -43,6 +44,19 @@ fn relay_role_is_explicit_and_exclusive_without_a_terminal() {
         5,
         "permission_denied",
     );
+    let message = error["message"].as_str().unwrap();
+    assert!(message.contains("is a device; use a separate data directory for a relay"));
+    let error = task_error(
+        device
+            .command()
+            .args(["relay", "show", "--json"])
+            .output()
+            .unwrap(),
+        5,
+        "permission_denied",
+    );
+    let message = error["message"].as_str().unwrap();
+    assert!(message.contains("is not a relay. Run ppn relay init in an unused data directory."));
 }
 
 #[test]

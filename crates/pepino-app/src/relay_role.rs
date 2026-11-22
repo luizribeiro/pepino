@@ -18,17 +18,18 @@ pub fn is_relay(directory: &Path) -> Result<bool, AppError> {
 
 pub(super) fn require_device(directory: &Path) -> Result<(), AppError> {
     if is_relay(directory)? {
-        return Err(role_error(directory, "This data directory is a relay."));
+        return Err(role_error(
+            directory,
+            "This data directory is a relay; use a separate data directory for a device.",
+        ));
     }
     Ok(())
 }
 
-fn role_error(directory: &Path, description: &str) -> AppError {
+fn role_error(directory: &Path, reason: &str) -> AppError {
     AppError::PermissionDenied {
         path: directory.display().to_string(),
-        reason: format!(
-            "{description} Converting between device and relay directories is out of scope. Use a different data directory."
-        ),
+        reason: reason.into(),
     }
 }
 
@@ -53,7 +54,7 @@ pub async fn init_relay(
         if exists(&directory.join(name))? {
             return Err(role_error(
                 directory,
-                "This data directory contains device state.",
+                "This data directory is a device; use a separate data directory for a relay.",
             ));
         }
     }
@@ -72,7 +73,7 @@ pub fn relay_credentials(directory: &Path, key_path: &Path) -> Result<DeviceCred
     if !exists(&marker)? {
         return Err(role_error(
             directory,
-            "Run ppn relay init in an unused data directory.",
+            "This data directory is not a relay. Run ppn relay init in an unused data directory.",
         ));
     }
     let bytes =
