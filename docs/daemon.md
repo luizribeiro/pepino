@@ -12,7 +12,8 @@ Published 1 event to the local node, received 28 events. Synced with 1 device: l
 $ ppn status
 ```
 
-`ppn sync` waits until the pending changes are exchanged, 30 seconds by
+`ppn sync` reports the events exchanged during that call and waits for pending
+changes, 30 seconds by
 default and five minutes at most. It exits with status 1 if work is still
 pending when the wait ends. `ppn status` shows your identity, boards, how many
 peers the daemon sees, and how many events wait to be sent.

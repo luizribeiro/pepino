@@ -135,6 +135,7 @@ async fn cycle(
                         pid: std::process::id(),
                         uptime_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
                         network: Default::default(),
+                        peer_syncs: Default::default(),
                         relay: Some(relay),
                     }
                 },

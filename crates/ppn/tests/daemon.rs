@@ -263,7 +263,10 @@ fn sync_drains_the_local_outbox_without_peers() {
     let boards = result["network"]["boards"].as_object().unwrap();
     let (board_id, board) = boards.iter().next().unwrap();
     assert_eq!(board["events_waiting"], 0);
-    assert_eq!(board["published"], 1);
+    assert_eq!(board["published"], 0);
+    assert_eq!(board["received"], 0);
+    assert!(result["synced_devices"].as_array().unwrap().is_empty());
+    assert!(fixture.run(&["sync"]).contains("Published 0 events"));
     let lock = std::fs::File::open(fixture.data.join("local.lock")).unwrap();
     lock.lock().unwrap();
     append_task_with_directory_locked(&fixture.data);

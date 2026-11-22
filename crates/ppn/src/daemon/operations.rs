@@ -27,21 +27,29 @@ pub(super) async fn operate(
             engine.nudge();
             Outcome::Nudged
         }
-        Operation::Status => Outcome::Status {
-            status: DaemonStatus {
-                pid: std::process::id(),
-                uptime_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-                network: snapshot(engine.status()),
-                relay: None,
-            },
-        },
+        Operation::Status => {
+            let state = engine.status();
+            Outcome::Status {
+                status: DaemonStatus {
+                    pid: std::process::id(),
+                    uptime_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+                    peer_syncs: state.node.peer_syncs.clone(),
+                    network: snapshot(state),
+                    relay: None,
+                },
+            }
+        }
         Operation::WaitIdle { timeout_ms } => {
             let idle = engine.wait_idle(Duration::from_millis(timeout_ms)).await;
             match idle {
-                Ok(()) | Err(pepino_sync::Error::Timeout) => Outcome::Synced {
-                    idle: idle.is_ok(),
-                    network: snapshot(engine.status()),
-                },
+                Ok(()) | Err(pepino_sync::Error::Timeout) => {
+                    let state = engine.status();
+                    Outcome::Synced {
+                        idle: idle.is_ok(),
+                        peer_syncs: state.node.peer_syncs.clone(),
+                        network: snapshot(state),
+                    }
+                }
                 Err(error) => failure("sync_unavailable", "Could not wait for sync", &error),
             }
         }

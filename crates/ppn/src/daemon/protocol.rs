@@ -110,6 +110,8 @@ pub enum Outcome {
     Synced {
         idle: bool,
         network: Network,
+        #[serde(default)]
+        peer_syncs: BTreeMap<DeviceId, u64>,
     },
     MemberAdded,
     MemberAddIncomplete {
@@ -174,6 +176,8 @@ pub struct DaemonStatus {
     pub pid: u32,
     pub uptime_ms: u64,
     pub network: Network,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub peer_syncs: BTreeMap<DeviceId, u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relay: Option<pepino_node::RelayStatus>,
 }

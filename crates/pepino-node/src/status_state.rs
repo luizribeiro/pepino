@@ -10,6 +10,7 @@ pub struct NodeStatus {
     pub last_seen: BTreeMap<DeviceId, std::time::SystemTime>,
     pub connected_peers: BTreeSet<DeviceId>,
     pub synced_peers: BTreeSet<DeviceId>,
+    pub peer_syncs: BTreeMap<DeviceId, u64>,
     pub boards: BTreeMap<BoardId, BoardStatus>,
 }
 
@@ -145,6 +146,8 @@ mod tracking {
                     if let Some(item) = state.boards.get_mut(board) {
                         item.caught_up.insert(*peer);
                         item.synced_with_peer = true;
+                        let count = state.peer_syncs.entry(*peer).or_default();
+                        *count = count.saturating_add(1);
                         state.synced_peers.insert(*peer);
                         state.peers_seen.insert(*peer);
                         state.last_seen.insert(*peer, std::time::SystemTime::now());

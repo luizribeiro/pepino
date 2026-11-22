@@ -32,30 +32,63 @@ pub fn run(
     let client = Client {
         path: socket_path(config),
     };
+    let before = client.status().ok().flatten();
     ensure_running(
         &client,
         context,
         selection,
         enabled && config.daemon.autostart.value,
     )?;
-    if !matches!(
-        client.call(Operation::Nudge).map_err(unreachable)?,
-        Outcome::Nudged
-    ) {
-        return Err(protocol_error());
-    }
     let operation = Operation::WaitIdle { timeout_ms };
     let outcome = client
         .call_with(operation, wait.saturating_add(Duration::from_secs(2)))
         .map_err(unreachable)?;
-    let (idle, network) = match outcome {
-        Outcome::Synced { idle, network } => (idle, network),
+    let (idle, mut network, peer_syncs) = match outcome {
+        Outcome::Synced {
+            idle,
+            network,
+            peer_syncs,
+        } => (idle, network, peer_syncs),
         Outcome::Error { message, .. } => return Err(CliError::new(ErrorKind::Failure, message)),
         _ => return Err(protocol_error()),
     };
-    let devices = pepino_app::LocalState::load(config.data_dir.value.as_path())
-        .map(|local| local.devices())
-        .unwrap_or_default();
+    for (id, board) in &mut network.boards {
+        if let Some(previous) = before
+            .as_ref()
+            .and_then(|state| state.network.boards.get(id))
+        {
+            board.published = board.published.saturating_sub(previous.published);
+            board.received = board.received.saturating_sub(previous.received);
+        }
+        if board.published == 0 {
+            board.last_sent = None;
+        }
+        if board.received == 0 {
+            board.last_received = None;
+        }
+    }
+    network.peers_synced.retain(|id| {
+        id.parse::<pepino_core::DeviceId>().ok().is_some_and(|id| {
+            let count = peer_syncs.get(&id).copied().unwrap_or_default();
+            let seen = before
+                .as_ref()
+                .and_then(|state| state.peer_syncs.get(&id))
+                .copied()
+                .unwrap_or_default();
+            count > seen
+        })
+    });
+    let devices = pepino_app::LocalState::load(config.data_dir.value.as_path()).map_or_else(
+        |_| Default::default(),
+        |local| {
+            local
+                .boards()
+                .iter()
+                .flat_map(|board| local.author_devices(board.id))
+                .map(|(device, (_, name))| (device, name))
+                .collect()
+        },
+    );
     let settings = context.render_settings()?;
     let describe_time = |time| settings.dates().timestamp(time, &settings.terminal);
     let summary = Summary {
