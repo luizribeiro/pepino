@@ -10,7 +10,7 @@ use p2panda_encryption::crypto::{
     x25519::{PublicKey, SecretKey},
 };
 use pepino_core::{BoardId, DeviceId};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use tokio::time::{Interval, MissedTickBehavior, interval};
 
 use crate::{DeviceCredentials, Error, Node};
@@ -33,12 +33,35 @@ pub struct RelayInstruction {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RelayAnswer {
-    Carrying,
-    NotTrusted,
-    AtCapacity,
-    RemovalPendingRestart,
-    Removed,
-    Superseded,
+    Carrying = 0,
+    NotTrusted = 1,
+    AtCapacity = 2,
+    RemovalPendingRestart = 3,
+    Removed = 4,
+    Superseded = 5,
+}
+
+impl RelayAnswer {
+    const ALL: [Self; 6] = [
+        Self::Carrying,
+        Self::NotTrusted,
+        Self::AtCapacity,
+        Self::RemovalPendingRestart,
+        Self::Removed,
+        Self::Superseded,
+    ];
+
+    // Every answer seals to the same length, so its ciphertext size does not reveal the outcome.
+    fn encode(self) -> [u8; 1] {
+        [self as u8]
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        let &[code] = bytes else {
+            return None;
+        };
+        Self::ALL.into_iter().find(|answer| *answer as u8 == code)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -61,13 +84,12 @@ impl Envelope {
         to: DeviceId,
         challenge: [u8; 16],
         direction: Direction,
-        body: &impl Serialize,
+        bytes: &[u8],
     ) -> Result<Self, Error> {
         let key = control_public_key(to)?;
         let aad = associated_data(author, to, challenge, direction);
-        let bytes = p2panda_core::cbor::encode_cbor(body).map_err(|_| control_error())?;
         let sealed =
-            hpke_seal(&key, Some(CONTEXT), Some(&aad), &bytes).map_err(|_| control_error())?;
+            hpke_seal(&key, Some(CONTEXT), Some(&aad), bytes).map_err(|_| control_error())?;
         Ok(Self {
             to,
             challenge,
@@ -76,7 +98,7 @@ impl Envelope {
         })
     }
 
-    fn open<T: DeserializeOwned>(&self, author: DeviceId, keys: &DeviceCredentials) -> Option<T> {
+    fn open(&self, author: DeviceId, keys: &DeviceCredentials) -> Option<Vec<u8>> {
         if self.to != keys.device_id() {
             return None;
         }
@@ -84,8 +106,7 @@ impl Envelope {
         let secret = p2panda_spaces::Credentials::from(&keys.0).signing_key();
         let scalar = ed25519_dalek::SigningKey::from_bytes(secret.as_bytes()).to_scalar_bytes();
         let key = SecretKey::from_bytes(scalar);
-        let bytes = hpke_open(&self.sealed, &key, Some(CONTEXT), Some(&aad)).ok()?;
-        p2panda_core::cbor::decode_cbor_strict(&bytes[..]).ok()
+        hpke_open(&self.sealed, &key, Some(CONTEXT), Some(&aad)).ok()
     }
 }
 
@@ -137,8 +158,12 @@ pub(crate) struct IncomingInstruction {
 
 impl IncomingInstruction {
     pub fn open(&self, keys: &DeviceCredentials) -> Option<RelayInstruction> {
-        self.envelope.open(self.author, keys)
+        decode_instruction(&self.envelope.open(self.author, keys)?)
     }
+}
+
+fn decode_instruction(bytes: &[u8]) -> Option<RelayInstruction> {
+    p2panda_core::cbor::decode_cbor_strict(bytes).ok()
 }
 
 impl Node {
@@ -185,7 +210,8 @@ impl RelayChannel {
         challenge: [u8; 16],
         instruction: RelayInstruction,
     ) -> Result<(), Error> {
-        self.send_message(relay, challenge, Direction::Instruction, &instruction)
+        let bytes = p2panda_core::cbor::encode_cbor(&instruction).map_err(|_| control_error())?;
+        self.send_message(relay, challenge, Direction::Instruction, &bytes)
             .await
     }
 
@@ -198,7 +224,7 @@ impl RelayChannel {
             incoming.author,
             incoming.challenge,
             Direction::Answer,
-            &answer,
+            &answer.encode(),
         )
         .await
     }
@@ -208,9 +234,9 @@ impl RelayChannel {
         to: DeviceId,
         challenge: [u8; 16],
         direction: Direction,
-        body: &impl Serialize,
+        bytes: &[u8],
     ) -> Result<(), Error> {
-        let envelope = Envelope::seal(self.id, to, challenge, direction, body)?;
+        let envelope = Envelope::seal(self.id, to, challenge, direction, bytes)?;
         self.tx.publish(envelope).await.map_err(Error::node)
     }
 
@@ -224,7 +250,9 @@ impl RelayChannel {
             let body = message.body();
             if author == relay
                 && body.direction == Direction::Answer
-                && let Some(answer) = body.open(author, keys)
+                && let Some(answer) = body
+                    .open(author, keys)
+                    .and_then(|bytes| RelayAnswer::decode(&bytes))
             {
                 return Some((body.challenge, answer));
             }
@@ -260,31 +288,66 @@ fn instruction_encoding_binds_sender_recipient_direction_and_challenge() {
         sequence: 49,
         carry: true,
     };
+    let instruction_bytes = p2panda_core::cbor::encode_cbor(&instruction).unwrap();
     let envelope = Envelope::seal(
         device,
         relay.device_id(),
         [7; 16],
         Direction::Instruction,
-        &instruction,
+        &instruction_bytes,
     )
     .unwrap();
     let bytes = p2panda_core::cbor::encode_cbor(&envelope).unwrap();
     assert!(!bytes.windows(32).any(|part| part == board.as_bytes()));
     let mut decoded: Envelope = p2panda_core::cbor::decode_cbor(&bytes[..]).unwrap();
     assert_eq!(
-        decoded.open::<RelayInstruction>(device, &relay),
+        decoded
+            .open(device, &relay)
+            .and_then(|bytes| decode_instruction(&bytes)),
         Some(instruction)
     );
-    assert_eq!(
-        decoded.open::<RelayInstruction>(stranger.device_id(), &relay),
-        None
-    );
-    assert_eq!(decoded.open::<RelayInstruction>(device, &stranger), None);
+    assert_eq!(decoded.open(stranger.device_id(), &relay), None);
+    assert_eq!(decoded.open(device, &stranger), None);
     decoded.challenge[0] ^= 1;
-    assert_eq!(decoded.open::<RelayInstruction>(device, &relay), None);
+    assert_eq!(decoded.open(device, &relay), None);
     decoded.challenge[0] ^= 1;
     decoded.direction = Direction::Answer;
-    assert_eq!(decoded.open::<RelayInstruction>(device, &relay), None);
+    assert_eq!(decoded.open(device, &relay), None);
+}
+
+#[cfg(test)]
+#[test]
+fn all_answers_have_the_same_encrypted_length() {
+    let dir = tempfile::tempdir().unwrap();
+    let relay = DeviceCredentials::load_or_create(dir.path().join("relay.cbor")).unwrap();
+    let device = DeviceCredentials::load_or_create(dir.path().join("device.cbor")).unwrap();
+    let lengths: std::collections::BTreeSet<_> = RelayAnswer::ALL
+        .into_iter()
+        .map(|answer| {
+            let envelope = Envelope::seal(
+                relay.device_id(),
+                device.device_id(),
+                [17; 16],
+                Direction::Answer,
+                &answer.encode(),
+            )
+            .unwrap();
+            assert_eq!(
+                envelope
+                    .open(relay.device_id(), &device)
+                    .and_then(|bytes| RelayAnswer::decode(&bytes)),
+                Some(answer)
+            );
+            (
+                envelope.sealed.ciphertext.len(),
+                p2panda_core::cbor::encode_cbor(&envelope).unwrap().len(),
+            )
+        })
+        .collect();
+    assert_eq!(lengths.len(), 1);
+    for malformed in [&[][..], &[0, 0], &[RelayAnswer::ALL.len() as u8], &[255]] {
+        assert_eq!(RelayAnswer::decode(malformed), None);
+    }
 }
 
 #[cfg(test)]
