@@ -5,7 +5,7 @@ use ppn::{
     error::{CliError, ErrorKind},
     help_tree::example_help,
     output::{CommandResult, Render},
-    render::single_line,
+    render::{short_id, single_line},
     terminal::{Context, Terminal},
 };
 use serde::Serialize;
@@ -115,17 +115,20 @@ pub(super) struct Entry {
     relay: DeviceId,
     state: pepino_app::RelayState,
     requested_by: DeviceId,
+    #[serde(skip)]
+    requester_name: String,
     relay_url: Option<String>,
     reason: Option<String>,
     carry: bool,
 }
 
 impl Entry {
-    fn new(relay: DeviceId, entry: &BoardRelay) -> Self {
+    fn new(relay: DeviceId, entry: &BoardRelay, requester_name: String) -> Self {
         Self {
             relay,
             state: entry.state,
             requested_by: entry.revision.writer,
+            requester_name,
             relay_url: entry.relay_url.clone(),
             reason: entry.reason.clone(),
             carry: entry.carry,
@@ -144,14 +147,24 @@ impl Entry {
                     | pepino_app::RelayState::Refused
             );
         let operation = if removal { "removal " } else { "" };
-        format!("{}  {operation}{}{reason}", self.relay, self.state)
+        format!(
+            "{}  {}  {operation}{}{reason}",
+            self.relay, self.requester_name, self.state
+        )
     }
 }
 
 pub(super) fn entries(local: &LocalState, board: BoardId) -> Vec<Entry> {
+    let names = local.devices();
     local
         .board_relays(board)
-        .map(|(relay, entry)| Entry::new(relay, entry))
+        .map(|(relay, entry)| {
+            let name = names.get(&entry.revision.writer).map_or_else(
+                || short_id(&entry.revision.writer.to_string()).to_owned(),
+                |name| single_line(name),
+            );
+            Entry::new(relay, entry, name)
+        })
         .collect()
 }
 
@@ -171,7 +184,11 @@ fn list(local: &LocalState, boards: &[BoardId], relay: Option<DeviceId>) -> List
             .filter(|board| boards.contains(&board.id))
             .map(|board| {
                 let mut relays = entries(local, board.id);
-                relays.retain(|entry| relay.is_none_or(|relay| entry.relay == relay));
+                relays.retain(|entry| {
+                    relay.is_none_or(|relay| {
+                        entry.relay == relay && entry.requested_by == local.device_id
+                    })
+                });
                 Board {
                     board: board.name.clone(),
                     relays,
@@ -223,10 +240,13 @@ fn a_copy_kept_for_another_device_is_listed_as_such() {
             relay_url: None,
             reason: None,
         },
+        "Seed tablet".into(),
     );
     assert_eq!(
         entry.human(),
-        format!("{relay}  removed for this device; the relay still carries it for another device")
+        format!(
+            "{relay}  Seed tablet  removed for this device; the relay still carries it for another device"
+        )
     );
     assert_eq!(json!(entry)["state"], "still_carried");
 }

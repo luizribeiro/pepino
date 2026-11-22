@@ -45,14 +45,16 @@ On a trusted device, give the address printed by `ppn relay show`:
 ```console
 $ ppn board relay add RELAY_NODE_ID --board 'Tool Shed'
 Tool Shed
-  RELAY_NODE_ID  requested
+  RELAY_NODE_ID  laptop  requested
 $ ppn board relay ls --board 'Tool Shed'
 Tool Shed
-  RELAY_NODE_ID  carrying
+  RELAY_NODE_ID  laptop  carrying
 ```
 
 `--all-boards` hands over every board on the device. The device keeps asking
-until the relay answers. `carrying` means the relay accepted the board; leave
+until the relay answers. The listing keeps each requesting device’s last
+answer. The requesting daemon periodically checks whether the relay still
+carries its request. `carrying` means the relay accepted the board; leave
 the device online a little longer so the history can copy across. A refusal
 states its reason, such as an untrusted device or a full relay. Fix the cause
 and run `add` again.

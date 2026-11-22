@@ -18,8 +18,12 @@ pub(crate) struct CatalogState {
     revisions: BTreeMap<BoardId, Revision>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     newer_catalog: Option<u32>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) relays: crate::board_relays::RelayCatalog,
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "crate::board_relays::read_local_relays"
+    )]
+    pub(crate) relays: crate::board_relays::LocalRelayCatalog,
     #[serde(
         default,
         skip_serializing_if = "crate::preferences::Preferences::is_empty"
@@ -195,7 +199,7 @@ impl LocalState {
             devices: BTreeMap::new(),
             roster: self.catalog.identity.edits().cloned().collect(),
             member: member.to_hex(),
-            relays: self.catalog.relays.clone(),
+            relays: self.own_relay_requests(),
             preferences,
             shared: self.catalog.shared.clone(),
             reader_routes: self

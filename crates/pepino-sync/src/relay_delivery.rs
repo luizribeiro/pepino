@@ -14,6 +14,7 @@ use pepino_node::{
 use tokio::sync::watch;
 
 const RETRY: Duration = Duration::from_secs(2);
+const RECHECK: Duration = Duration::from_secs(15);
 const REPORT_UNREACHABLE_AFTER: Duration = Duration::from_secs(15);
 
 struct Attempt {
@@ -21,6 +22,8 @@ struct Attempt {
     challenge: [u8; 16],
     since: Instant,
     advanced: bool,
+    checking: bool,
+    checked_at: Option<Instant>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -38,6 +41,8 @@ impl Attempt {
             challenge,
             since: Instant::now(),
             advanced: false,
+            checking: false,
+            checked_at: None,
         }
     }
 
@@ -49,7 +54,7 @@ impl Attempt {
     }
 
     fn step(&mut self, receipt: RelayReceipt) -> Step {
-        if receipt.answer == RelayAnswer::Superseded && !self.advanced {
+        if receipt.answer == RelayAnswer::Superseded && !self.advanced && !self.checking {
             self.advanced = true;
             Step::AdvancePast(receipt.relay_sequence)
         } else {
@@ -131,7 +136,7 @@ impl Delivery {
                 }
                 if allowed
                     && entry.revision.writer == local.device_id
-                    && entry.pending()
+                    && (entry.pending() || entry.state == RelayState::Carrying)
                     && (!entry.carry || local.board_departure(board.id).is_none())
                 {
                     pending.entry(relay).or_default().push((board.id, entry));
@@ -225,6 +230,20 @@ impl Connection {
                 .or_insert_with(|| Attempt::new(entry.revision));
             if attempt.revision != entry.revision {
                 *attempt = attempt.renewed(entry.revision);
+            }
+            attempt.checking = entry.carry
+                && matches!(
+                    entry.state,
+                    RelayState::Carrying | RelayState::RemovalPendingRestart
+                );
+            if attempt.checking {
+                if attempt
+                    .checked_at
+                    .is_some_and(|sent| sent.elapsed() < RECHECK)
+                {
+                    continue;
+                }
+                attempt.checked_at = Some(Instant::now());
             }
             let instruction = RelayInstruction {
                 board,

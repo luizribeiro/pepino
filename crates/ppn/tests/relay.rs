@@ -296,6 +296,10 @@ mod network {
     fn fleet() -> Fleet {
         let root = tempfile::tempdir().unwrap();
         let name = root.path().file_name().unwrap().to_str().unwrap();
+        fleet_on(name)
+    }
+
+    fn fleet_on(name: &str) -> Fleet {
         let device = Host::owner(name);
         let relay = Host::new(name);
         let device_id = device.json(&["status"])["device"]["id"]
@@ -425,6 +429,75 @@ mod network {
         until(|| carried(&relay), |count| *count == Some(1), WAIT);
         device.stop();
         relay.stop();
+    }
+
+    #[test]
+    fn sibling_relay_answers_stay_separate_and_refresh_after_an_operator_drop() {
+        let root = tempfile::tempdir().unwrap();
+        let network = root.path().file_name().unwrap().to_str().unwrap();
+        let Fleet {
+            device,
+            device_id,
+            relay,
+            address,
+        } = fleet_on(network);
+        let sibling = Host::new(network);
+        let grant = device.add(&sibling.request("Seed tablet"), &[]);
+        assert_eq!(
+            sibling.json(&["device", "join", &grant, "--timeout", "60s"])["joined"],
+            true
+        );
+        let sibling_id = sibling.json(&["status"])["device"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        device.run(&["board", "relay", "add", &address]);
+        wait_state(&device, "Greenhouse", "carrying");
+        sibling.run(&["board", "relay", "add", &address]);
+        let states = |host: &Host| {
+            let listing = host.json(&["board", "relay", "ls"]);
+            let rows = listing["boards"][0]["relays"].as_array().unwrap();
+            rows.iter()
+                .map(|row| {
+                    (
+                        row["requested_by"].as_str().unwrap().to_owned(),
+                        row["state"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        for host in [&device, &sibling] {
+            until(
+                || states(host),
+                |rows| {
+                    rows.get(&device_id)
+                        .is_some_and(|state| state == "carrying")
+                        && rows
+                            .get(&sibling_id)
+                            .is_some_and(|state| state == "refused")
+                },
+                WAIT,
+            );
+            let listing = host.run(&["board", "relay", "ls"]);
+            assert!(listing.contains("Titanium  carrying"), "{listing}");
+            assert!(listing.contains("Seed tablet  refused"), "{listing}");
+        }
+        relay.run(&["relay", "drop", "--from", &device_id, "--yes"]);
+        until(|| carried(&relay), |count| *count == Some(0), WAIT);
+        for host in [&device, &sibling] {
+            until(
+                || states(host),
+                |rows| {
+                    rows.get(&device_id)
+                        .is_some_and(|state| matches!(state.as_str(), "removed" | "refused"))
+                        && rows
+                            .get(&sibling_id)
+                            .is_some_and(|state| state == "refused")
+                },
+                WAIT,
+            );
+        }
+        assert_eq!(carried(&relay), Some(0));
     }
 
     fn wait_state(host: &Host, board: &str, state: &str) -> Value {

@@ -262,11 +262,13 @@ pub(super) fn forget(context: &Context<'_>, reference: &str) -> Result<CommandRe
 fn relays_keeping_a_copy(
     copies: impl Iterator<Item = (DeviceId, RelayCopy)>,
 ) -> Result<Vec<DeviceId>, CliError> {
-    let mut kept = Vec::new();
+    let mut kept = std::collections::BTreeSet::new();
     for (relay, copy) in copies {
         match copy {
             RelayCopy::Absent => (),
-            RelayCopy::Kept => kept.push(relay),
+            RelayCopy::Kept => {
+                kept.insert(relay);
+            }
             RelayCopy::RemovalPending => {
                 return Err(CliError::new(
                     ErrorKind::Busy,
@@ -278,7 +280,7 @@ fn relays_keeping_a_copy(
             }
         }
     }
-    Ok(kept)
+    Ok(kept.into_iter().collect())
 }
 
 #[cfg(test)]

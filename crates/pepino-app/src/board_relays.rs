@@ -10,6 +10,39 @@ const CLOCK_AHEAD: &str = "clock too far ahead of the relay";
 
 pub(crate) type RelayCatalog = BTreeMap<BoardId, BTreeMap<DeviceId, BoardRelay>>;
 
+type Writers = BTreeMap<DeviceId, BoardRelay>;
+pub(crate) type LocalRelayCatalog = BTreeMap<BoardId, BTreeMap<DeviceId, Writers>>;
+
+pub(crate) fn read_local_relays<'de, D>(deserializer: D) -> Result<LocalRelayCatalog, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Stored {
+        Legacy(BoardRelay),
+        Writers(Writers),
+    }
+
+    let boards = BTreeMap::<BoardId, BTreeMap<DeviceId, Stored>>::deserialize(deserializer)?;
+    Ok(boards
+        .into_iter()
+        .map(|(board, relays)| {
+            let relays = relays
+                .into_iter()
+                .map(|(relay, entries)| {
+                    let entries = match entries {
+                        Stored::Legacy(entry) => [(entry.revision.writer, entry)].into(),
+                        Stored::Writers(entries) => entries,
+                    };
+                    (relay, entries)
+                })
+                .collect();
+            (board, relays)
+        })
+        .collect())
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RelayState {
@@ -64,13 +97,18 @@ impl BoardRelay {
     }
 
     fn releasable_by(&self, device: DeviceId) -> bool {
-        self.carry && self.revision.writer == device && self.state != RelayState::Refused
+        self.carry
+            && self.revision.writer == device
+            && matches!(
+                self.state,
+                RelayState::Requested | RelayState::Unreachable | RelayState::Carrying
+            )
     }
 
     fn copy(&self, device: DeviceId) -> RelayCopy {
         match (self.carry, self.state) {
             (true, RelayState::Refused)
-            | (false, RelayState::Removed | RelayState::RemovalPendingRestart) => RelayCopy::Absent,
+            | (_, RelayState::Removed | RelayState::RemovalPendingRestart) => RelayCopy::Absent,
             (false, RelayState::Requested) if self.revision.writer == device => {
                 RelayCopy::RemovalPending
             }
@@ -96,11 +134,9 @@ impl BoardRelay {
         let (state, reason) = match answer {
             None => (RelayState::Unreachable, None),
             Some(RelayAnswer::Carrying) if self.carry => (RelayState::Carrying, None),
-            Some(RelayAnswer::RemovalPendingRestart) if !self.carry => {
-                (RelayState::RemovalPendingRestart, None)
-            }
-            Some(RelayAnswer::Removed) if !self.carry => (RelayState::Removed, None),
-            Some(RelayAnswer::StillCarried) if !self.carry => (RelayState::StillCarried, None),
+            Some(RelayAnswer::RemovalPendingRestart) => (RelayState::RemovalPendingRestart, None),
+            Some(RelayAnswer::Removed) => (RelayState::Removed, None),
+            Some(RelayAnswer::StillCarried) => (RelayState::StillCarried, None),
             Some(RelayAnswer::NotTrusted) => (
                 RelayState::Refused,
                 Some("device is not trusted by the relay"),
@@ -129,7 +165,27 @@ impl LocalState {
             .relays
             .get(&board)
             .into_iter()
-            .flat_map(|entries| entries.iter().map(|(&id, entry)| (id, entry)))
+            .flat_map(|entries| {
+                entries
+                    .iter()
+                    .flat_map(|(&id, entries)| entries.values().map(move |entry| (id, entry)))
+            })
+    }
+
+    pub(crate) fn own_relay_requests(&self) -> RelayCatalog {
+        self.catalog
+            .relays
+            .iter()
+            .filter_map(|(&board, relays)| {
+                let entries: BTreeMap<_, _> = relays
+                    .iter()
+                    .filter_map(|(&relay, requests)| {
+                        Some((relay, requests.get(&self.device_id)?.clone()))
+                    })
+                    .collect();
+                (!entries.is_empty()).then_some((board, entries))
+            })
+            .collect()
     }
 
     pub fn relay_copies(&self, board: BoardId) -> impl Iterator<Item = (DeviceId, RelayCopy)> {
@@ -157,6 +213,7 @@ impl LocalState {
             .get_mut(&board)
             .into_iter()
             .flat_map(BTreeMap::values_mut)
+            .filter_map(|requests| requests.get_mut(&device))
         {
             if entry.releasable_by(device)
                 && let Some(sequence) = entry.sequence_after(now)
@@ -175,7 +232,7 @@ impl LocalState {
         }
     }
 
-    fn pending_relay(
+    fn relay_request(
         &mut self,
         board: BoardId,
         relay: DeviceId,
@@ -184,8 +241,9 @@ impl LocalState {
         self.catalog
             .relays
             .get_mut(&board)?
-            .get_mut(&relay)
-            .filter(|entry| entry.revision == revision && entry.pending())
+            .get_mut(&relay)?
+            .get_mut(&revision.writer)
+            .filter(|entry| entry.revision == revision)
     }
 
     /// Keeps the requests that the announcing device wrote itself. A request names its writer
@@ -208,7 +266,11 @@ impl LocalState {
                     continue;
                 }
                 let known = self.catalog.relays.entry(board).or_default();
-                let entry = known.entry(node).or_insert_with(|| incoming.clone());
+                let entry = known
+                    .entry(node)
+                    .or_default()
+                    .entry(signer)
+                    .or_insert_with(|| incoming.clone());
                 if incoming > *entry {
                     *entry = incoming;
                 }
@@ -251,12 +313,19 @@ impl App {
                     });
                 }
 
-                let entries = local.catalog.relays.entry(board).or_default();
-                let previous = entries.get(&peer.id);
+                let entries = local
+                    .catalog
+                    .relays
+                    .entry(board)
+                    .or_default()
+                    .entry(peer.id)
+                    .or_default();
+                let previous = entries.get(&local.device_id);
                 let relay_url = peer
                     .relay_url
                     .clone()
-                    .or_else(|| previous.and_then(|entry| entry.relay_url.clone()));
+                    .or_else(|| previous.and_then(|entry| entry.relay_url.clone()))
+                    .or_else(|| entries.values().find_map(|entry| entry.relay_url.clone()));
                 if previous.is_some_and(|entry| {
                     entry.revision.writer == local.device_id
                         && entry.carry == carry
@@ -272,7 +341,7 @@ impl App {
                         .ok_or_else(|| invalid("relay", "revision space exhausted"))?,
                 };
                 entries.insert(
-                    peer.id,
+                    local.device_id,
                     BoardRelay {
                         revision: RelayRevision {
                             sequence,
@@ -314,7 +383,9 @@ impl App {
         answer: Option<RelayAnswer>,
     ) -> Result<(), AppError> {
         self.update_local(move |local| {
-            if let Some(entry) = local.pending_relay(board, relay, revision) {
+            if let Some(entry) = local.relay_request(board, relay, revision)
+                && (entry.pending() || (entry.state == RelayState::Carrying && answer.is_some()))
+            {
                 entry.record(answer);
             }
         })
@@ -332,7 +403,8 @@ impl App {
         // A relay must not be able to push a request so far ahead that nothing can follow it.
         let latest = now.saturating_add(pepino_node::RELAY_CLOCK_TOLERANCE_MS);
         self.update_local(move |local| {
-            if let Some(entry) = local.pending_relay(board, relay, revision)
+            if let Some(entry) = local.relay_request(board, relay, revision)
+                && entry.pending()
                 && relay_sequence <= latest
                 && let Some(sequence) = relay_sequence.checked_add(1)
                 && sequence > entry.revision.sequence
@@ -343,6 +415,31 @@ impl App {
         })
         .await
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_legacy_relay_record_is_loaded_under_its_requesting_device() {
+    let board = BoardId::from_bytes([29; 32]);
+    let relay = DeviceId::from_bytes([31; 32]);
+    let writer = DeviceId::from_bytes([33; 32]);
+    let legacy = BoardRelay {
+        revision: RelayRevision {
+            sequence: 1_795_300_000_000,
+            writer,
+        },
+        state: RelayState::Carrying,
+        carry: true,
+        relay_url: Some("https://relay.example/".into()),
+        reason: None,
+    };
+    let mut data = serde_json::to_value(crate::catalog::CatalogState::default()).unwrap();
+    data["relays"] = serde_json::json!({(board.to_string()): {(relay.to_string()): legacy}});
+    let catalog: crate::catalog::CatalogState = serde_json::from_value(data).unwrap();
+    assert_eq!(catalog.relays[&board][&relay][&writer], legacy);
+    let roundtrip: crate::catalog::CatalogState =
+        serde_json::from_value(serde_json::to_value(&catalog).unwrap()).unwrap();
+    assert_eq!(roundtrip, catalog);
 }
 
 #[cfg(test)]
@@ -401,7 +498,7 @@ fn a_removal_that_leaves_the_board_with_another_requester_is_not_shown_as_remove
 
     let mut addition = request(true);
     addition.record(Some(RelayAnswer::StillCarried));
-    assert_eq!(addition, request(true));
+    assert_eq!(addition.state, RelayState::StillCarried);
 }
 
 #[cfg(test)]
@@ -545,9 +642,13 @@ fn announced_requests_are_kept_only_from_their_writer_and_near_the_clock() {
     ]
     .into();
     local.merge_relays(laptop, accepted.clone(), now);
+    assert!(local.own_relay_requests().is_empty());
     assert_eq!(
-        local.catalog.relays,
-        [(greenhouse, accepted[&greenhouse].clone())].into()
+        local
+            .board_relays(greenhouse)
+            .map(|(relay, entry)| (relay, entry.clone()))
+            .collect::<BTreeMap<_, _>>(),
+        accepted[&greenhouse],
     );
 }
 
@@ -658,7 +759,10 @@ async fn releasing_a_board_asks_only_the_relays_this_device_handed_it_to() {
     let tablet = DeviceId::from_bytes([91; 32]);
     app.update_local(move |local| {
         let entries = local.catalog.relays.get_mut(&board).unwrap();
-        entries.get_mut(&foreign).unwrap().revision.writer = tablet;
+        let entries = entries.get_mut(&foreign).unwrap();
+        let mut entry = entries.remove(&device).unwrap();
+        entry.revision.writer = tablet;
+        entries.insert(tablet, entry);
     })
     .await
     .unwrap();
