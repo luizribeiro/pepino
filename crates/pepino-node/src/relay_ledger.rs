@@ -41,8 +41,9 @@ impl Record {
             (true, true, _) | (true, false, true) => {
                 (RelayAnswer::Carrying, Some(instruction.board))
             }
-            (true, false, false) => (RelayAnswer::AtCapacity, None),
+            (true, false, false) => return (None, RelayAnswer::AtCapacity),
             (false, true, _) => (RelayAnswer::RemovalPendingRestart, Some(instruction.board)),
+            (false, false, _) if previous.is_none() => return (None, RelayAnswer::Removed),
             (false, false, _) => (RelayAnswer::Removed, None),
         };
         (
@@ -190,17 +191,21 @@ mod tests {
             let authors = [DeviceId::from_bytes([61; 32]), DeviceId::from_bytes([73; 32])];
             let mut deliveries: Vec<_> = order.into_iter().enumerate().collect();
             deliveries.sort_by_key(|(_, value)| *value);
-            let mut record = None;
+            let mut record = Some(Record {
+                revision: RelayRevision { sequence: 0, writer: authors[0] },
+                answer: RelayAnswer::Carrying,
+                board: Some(board),
+            });
             for (index, _) in deliveries {
                 let carry = if index == 7 { latest_carries } else { index % 2 == 0 };
-                let instruction = RelayInstruction { board, sequence: (index / 2) as u64, carry };
+                let instruction = RelayInstruction { board, sequence: 1 + (index / 2) as u64, carry };
                 let (next, _) = Record::next(record, authors[index % 2], instruction, true);
                 record = next.or(record);
             }
             let record = record.unwrap();
-            prop_assert_eq!(record.revision, RelayRevision { sequence: 3, writer: authors[1] });
+            prop_assert_eq!(record.revision, RelayRevision { sequence: 4, writer: authors[1] });
             prop_assert_eq!(record.answer == RelayAnswer::Carrying, latest_carries);
-            let old_add = RelayInstruction { board, sequence: 3, carry: true };
+            let old_add = RelayInstruction { board, sequence: 4, carry: true };
             prop_assert_eq!(Record::next(Some(record), authors[0], old_add, true), (None, RelayAnswer::Superseded));
         }
     }
@@ -230,6 +235,15 @@ mod tests {
             RelayAnswer::NotTrusted
         );
         assert!(ledger.records.is_empty());
+        let unknown_removal = RelayInstruction {
+            carry: false,
+            ..add(59)
+        };
+        assert_eq!(
+            ledger.apply(trusted, unknown_removal).await.unwrap(),
+            RelayAnswer::Removed
+        );
+        assert!(ledger.records.is_empty());
         assert_eq!(
             ledger.apply(trusted, add(57)).await.unwrap(),
             RelayAnswer::Carrying
@@ -238,6 +252,7 @@ mod tests {
             ledger.apply(trusted, add(58)).await.unwrap(),
             RelayAnswer::AtCapacity
         );
+        assert_eq!(ledger.records.len(), 1);
         assert_eq!(
             ledger.apply(trusted, add(57)).await.unwrap(),
             RelayAnswer::Carrying
@@ -246,6 +261,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(restored.counts(), [(trusted, 1)].into());
+        assert_eq!(restored.records.len(), 1);
         assert_eq!(restored.rejected, 1);
         let empty = Ledger::load(pool, [].into(), 64).await.unwrap();
         assert!(!empty.is_trusted(trusted));
