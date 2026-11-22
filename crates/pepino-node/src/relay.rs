@@ -92,8 +92,8 @@ pub struct Relay {
 }
 
 impl Relay {
-    /// Deletes the stored data of boards whose removal was recorded. This can take long for a
-    /// large board, so it is separate from [`Relay::start`], which callers put a time limit on.
+    /// Deletes the stored data of boards whose removal was recorded. Purging a large board can
+    /// take long, so callers must not put their node startup limit on it.
     pub async fn purge_removed(settings: &NodeSettings) -> Result<(), Error> {
         let pool = crate::node::open_database(&settings.database_path, true).await?;
         let purged = async {
