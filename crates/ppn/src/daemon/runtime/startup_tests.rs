@@ -114,3 +114,34 @@ async fn a_control_connection_accepted_during_startup_survives_readiness() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn stop_joins_the_engine_when_workers_start_before_readiness() {
+    timeout(Duration::from_secs(60), async {
+        let startup = Startup::new().await;
+        let (prepared, preparing) = oneshot::channel();
+        let (release, wait) = oneshot::channel();
+        let cycle = startup.run(prepared, wait);
+        tokio::pin!(cycle);
+        let stopped = tokio::select! {
+            _ = &mut cycle => panic!("daemon exited without draining engine startup"),
+            stopped = async {
+                preparing.await.unwrap();
+                startup.request("stop").await
+            } => stopped,
+        };
+        assert_eq!(stopped["result"]["kind"], "stopping");
+        assert!(futures_util::poll!(&mut cycle).is_pending());
+        release.send(()).unwrap();
+
+        assert!(matches!(cycle.await.unwrap(), End::Stopped));
+        Node::spawn(startup.settings.clone())
+            .await
+            .unwrap()
+            .shutdown()
+            .await
+            .unwrap();
+    })
+    .await
+    .unwrap();
+}

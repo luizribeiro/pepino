@@ -606,18 +606,21 @@ fn status_reports_startup_while_the_node_waits_for_its_database() {
 #[test]
 fn stop_during_startup_releases_the_socket_and_store() {
     let mut fixture = support::Fixture::new("");
-    let (runtime, mut writer) = hold_daemon_startup(&mut fixture);
-    let stopped = as_json(&fixture.run(&["daemon", "stop", "--json"]));
-    assert_eq!(stopped["action"], "stopped");
-    assert_eq!(stopped["running"], false);
-    let exit = as_json(&success(fixture.wait_foreground()));
-    assert_eq!(exit["action"], "stopped");
-    fixture.assert_stopped();
-    runtime.block_on(async {
-        sqlx::query("ROLLBACK").execute(&mut writer).await.unwrap();
-    });
-    fixture.foreground();
-    fixture.run(&["daemon", "stop"]);
-    success(fixture.wait_foreground());
-    fixture.assert_stopped();
+    // Exercise both the first startup and startup using an existing WAL database.
+    for _ in 0..2 {
+        let (runtime, mut writer) = hold_daemon_startup(&mut fixture);
+        let stopped = as_json(&fixture.run(&["daemon", "stop", "--json"]));
+        assert_eq!(stopped["action"], "stopped");
+        assert_eq!(stopped["running"], false);
+        let exit = as_json(&success(fixture.wait_foreground()));
+        assert_eq!(exit["action"], "stopped");
+        fixture.assert_stopped();
+        runtime.block_on(async {
+            sqlx::query("ROLLBACK").execute(&mut writer).await.unwrap();
+        });
+        fixture.foreground();
+        fixture.run(&["daemon", "stop"]);
+        success(fixture.wait_foreground());
+        fixture.assert_stopped();
+    }
 }

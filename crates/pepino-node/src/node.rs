@@ -27,14 +27,30 @@ pub struct Node {
 
 impl Node {
     pub async fn spawn(settings: NodeSettings) -> Result<Self, Error> {
-        Self::spawn_mode(settings, false).await
+        Self::spawn_mode(settings, false, std::future::pending())
+            .await?
+            .ok_or(Error::Closed)
+    }
+
+    /// Stop startup on request and join the network worker before returning.
+    pub async fn spawn_until_stopped(
+        settings: NodeSettings,
+        stopping: impl Future<Output = ()>,
+    ) -> Result<Option<Self>, Error> {
+        Self::spawn_mode(settings, false, stopping).await
     }
 
     pub(crate) async fn spawn_relay(settings: NodeSettings) -> Result<Self, Error> {
-        Self::spawn_mode(settings, true).await
+        Self::spawn_mode(settings, true, std::future::pending())
+            .await?
+            .ok_or(Error::Closed)
     }
 
-    async fn spawn_mode(settings: NodeSettings, relay: bool) -> Result<Self, Error> {
+    async fn spawn_mode(
+        settings: NodeSettings,
+        relay: bool,
+        stopping: impl Future<Output = ()>,
+    ) -> Result<Option<Self>, Error> {
         let mut builder = settings.builder()?;
         if relay {
             builder = builder.ack_policy(p2panda::node::AckPolicy::Automatic);
@@ -45,50 +61,54 @@ impl Node {
         let (transport, transport_rx) = tokio::sync::oneshot::channel();
         let worker = Worker::start(&settings.database_path, transport_rx).await?;
         let worker_pool = worker.pool.clone();
-        let started = worker
-            .run(async move {
-                let pool = open_database(&settings.database_path, relay).await?;
-                worker_pool.set(pool.clone()).map_err(|_| Error::Closed)?;
-                p2panda_store::sqlite::run_pending_migrations(&pool)
-                    .await
-                    .map_err(Error::storage)?;
-                if relay {
-                    crate::relay_ledger::prepare(&pool).await?;
+        let start = worker.run(async move {
+            let pool = open_database(&settings.database_path, relay).await?;
+            p2panda_store::sqlite::run_pending_migrations(&pool)
+                .await
+                .map_err(Error::storage)?;
+            if relay {
+                crate::relay_ledger::prepare(&pool).await?;
+            }
+            let instance_id = database_instance_id(&pool).await?;
+            let acks = AckStore::create(pool.clone()).await?;
+            // The shutdown writer guard is needed once upstream tasks can start.
+            worker_pool.set(pool.clone()).map_err(|_| Error::Closed)?;
+            let inner = builder
+                .database_pool(pool.clone())
+                .spawn()
+                .await
+                .map(Arc::new)
+                .map_err(Error::node)?;
+            transport
+                .send(Transport {
+                    inner: inner.clone(),
+                    boards: worker_boards,
+                })
+                .map_err(|_| Error::Closed)?;
+            let mut system = inner.event_stream().await.map_err(Error::node)?;
+            let status = Status::default();
+            let broadcaster = status.clone();
+            tokio::spawn(async move {
+                let mut peers = std::collections::HashMap::new();
+                while let Some(event) = system.next().await {
+                    peer_session(&broadcaster, &mut peers, event);
                 }
-                let instance_id = database_instance_id(&pool).await?;
-                let acks = AckStore::create(pool.clone()).await?;
-                let inner = builder
-                    .database_pool(pool.clone())
-                    .spawn()
-                    .await
-                    .map(Arc::new)
-                    .map_err(Error::node)?;
-                transport
-                    .send(Transport {
-                        inner: inner.clone(),
-                        boards: worker_boards,
-                    })
-                    .map_err(|_| Error::Closed)?;
-                let mut system = inner.event_stream().await.map_err(Error::node)?;
-                let status = Status::default();
-                let broadcaster = status.clone();
-                tokio::spawn(async move {
-                    let mut peers = std::collections::HashMap::new();
-                    while let Some(event) = system.next().await {
-                        peer_session(&broadcaster, &mut peers, event);
-                    }
-                });
-                Ok((inner, acks, status, instance_id))
-            })
-            .await;
+            });
+            Ok((inner, acks, status, instance_id))
+        });
+        let started = tokio::select! {
+            biased;
+            () = stopping => Ok(None),
+            result = start => result.map(Some),
+        };
         let (inner, acks, status, instance_id) = match started {
-            Ok(started) => started,
-            Err(error) => {
+            Ok(Some(started)) => started,
+            other => {
                 worker.shutdown().await?;
-                return Err(error);
+                return other.map(|_| None);
             }
         };
-        Ok(Self {
+        Ok(Some(Self {
             instance_id,
             inner,
             worker,
@@ -96,7 +116,7 @@ impl Node {
             boards,
             status,
             publish_confirmation_timeout,
-        })
+        }))
     }
 
     pub(crate) fn pool(&self) -> Result<&sqlx::SqlitePool, Error> {

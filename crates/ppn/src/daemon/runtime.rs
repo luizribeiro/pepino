@@ -12,7 +12,7 @@ use tokio::{
     net::UnixListener,
     runtime::Builder,
     signal::unix::{Signal, SignalKind, signal},
-    sync::Notify,
+    sync::{Notify, oneshot},
 };
 
 use crate::{
@@ -132,38 +132,66 @@ async fn cycle(
     let startup = Instant::now();
     let engine = OnceCell::new();
     let ready = Notify::new();
+    let (stop_start, stopping) = oneshot::channel();
     let mut node = None;
     let outcome = {
         let start = async {
-            let transport =
-                Arc::new(Node::spawn(settings.clone()).await.map_err(|error| {
-                    failure(&format!("Could not start the network node. {error}"))
-                })?);
+            let transport = Node::spawn_until_stopped(settings.clone(), async {
+                let _ = stopping.await;
+            })
+            .await
+            .map_err(|error| failure(&format!("Could not start the network node. {error}")))?;
+            let Some(transport) = transport else {
+                return Ok(());
+            };
+            let transport = Arc::new(transport);
             node = Some(transport.clone());
             let sync = start_engine(transport)
                 .await
                 .map_err(|error| failure(&format!("Could not start the sync engine. {error}")))?;
-            let sync = engine.get_or_init(|| sync);
+            engine.get_or_init(|| sync);
             ready.notify_one();
-            log(level, LogLevel::Info, "daemon ready");
-            log_catalog_upgrade(sync, level, upgrade_logged).await;
-            unreachable!("status monitoring does not end")
+            Ok::<_, CliError>(())
         };
+        let control = async {
+            tokio::select! {
+                biased;
+                _ = terminate.recv() => Ok(End::Stopped),
+                _ = interrupt.recv() => Ok(End::Stopped),
+                result = server::serve(listener, &engine, &ready, started, startup) => result.map_err(socket_error),
+                () = startup_warning(STARTUP_WARNING, || {
+                    if engine.get().is_none() {
+                        let message = format!(
+                            "daemon still starting after {} seconds",
+                            STARTUP_WARNING.as_secs()
+                        );
+                        log(level, LogLevel::Warn, &message);
+                    }
+                }) => unreachable!("startup warning does not end control service"),
+            }
+        };
+        tokio::pin!(start, control);
         tokio::select! {
             biased;
-            _ = terminate.recv() => Ok(End::Stopped),
-            _ = interrupt.recv() => Ok(End::Stopped),
-            result = server::serve(listener, &engine, &ready, started, startup) => result.map_err(socket_error),
-            result = start => result,
-            () = startup_warning(STARTUP_WARNING, || {
-                if engine.get().is_none() {
-                    let message = format!(
-                        "daemon still starting after {} seconds",
-                        STARTUP_WARNING.as_secs()
-                    );
-                    log(level, LogLevel::Warn, &message);
+            outcome = &mut control => {
+                let _ = stop_start.send(());
+                // Once the node is live, the engine must hand back its workers for shutdown.
+                start.await.and(outcome)
+            }
+            result = &mut start => match result {
+                Err(error) => Err(error),
+                Ok(()) => {
+                    let Some(sync) = engine.get() else {
+                        return Ok(End::Stopped);
+                    };
+                    log(level, LogLevel::Info, "daemon ready");
+                    tokio::select! {
+                        biased;
+                        outcome = &mut control => outcome,
+                        () = log_catalog_upgrade(sync, level, upgrade_logged) => unreachable!("status monitoring does not end"),
+                    }
                 }
-            }) => unreachable!("startup warning does not end control service"),
+            }
         }
     };
     if let Some(node) = node {
