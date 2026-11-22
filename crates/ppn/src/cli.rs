@@ -154,6 +154,7 @@ fn execute(inputs: &ProcessInputs) -> (Result<CommandResult, CliError>, bool, Te
             let verbose = cli.globals.verbose;
             let selection = cli.globals.config.clone();
             let result = dispatch(cli, &context, inputs, json)
+                .map_err(|error| error.localize(&context))
                 .map(|output| output.with_warnings(context.take_board_notice()));
 
             if result.is_ok() && context.wrote() && inputs.daemon_enabled() {

@@ -206,6 +206,21 @@ fn two_identities_share_one_board_and_edit_each_others_work() {
     assert_eq!(invitee["role"], "write");
     assert_eq!(invitee["invited_by"]["name"], "Luiz");
     assert!(chrono::DateTime::parse_from_rfc3339(invitee["invited_at"].as_str().unwrap()).is_ok());
+    let at = invitee["invited_at"].as_str().unwrap();
+    assert!(!at.contains('.'), "{at}");
+    for args in [
+        &["board", "members", "House"][..],
+        &["log", "--board", "House", "--all"],
+    ] {
+        let human = ana.run(args);
+        assert!(!human.contains(at), "{human}");
+        let day = chrono::DateTime::parse_from_rfc3339(at)
+            .unwrap()
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d")
+            .to_string();
+        assert!(human.contains(&day), "{human}");
+    }
     common::task_error(
         ana.output(&["board", "members", "Missing", "--json"]),
         3,

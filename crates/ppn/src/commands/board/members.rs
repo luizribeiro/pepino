@@ -5,8 +5,8 @@ use ppn::{
     app::AppClient,
     error::{CliError, ErrorKind},
     output::{CommandResult, Render},
-    render::single_line,
-    terminal::{Context, Terminal},
+    render::{single_line, utc_seconds},
+    terminal::{Context, RenderSettings, Terminal},
 };
 use serde_json::{Map, Value, json};
 
@@ -77,7 +77,7 @@ pub(super) fn run(
             Some(json!({"id": key.0, "root": key.1, "name": labels.get(key), "device_id": device}))
         });
         people.push(json!({"id": person.id, "root": person.key().1, "name": labels.get(&person.key()).map(String::as_str).unwrap_or_else(|| person.name()), "role": role, "mixed_roles": roles.len() > 1, "former_member": former, "enrollment_blocked": false, "devices": rows,
-            "invited_at": person.invited_at, "invited_by": inviter, "invited_by_device_id": person.invited_by}));
+            "invited_at": person.invited_at.map(utc_seconds), "invited_by": inviter, "invited_by_device_id": person.invited_by}));
     }
     if people.is_empty() {
         let roster = local.roster();
@@ -109,6 +109,7 @@ pub(super) fn run(
         });
     Ok(CommandResult::document(Members {
         board: board.name.clone(),
+        settings: context.render_settings()?,
         people,
         history: super::history::records(local, board.id),
         departure: local.board_departure(board.id),
@@ -141,17 +142,23 @@ fn devices<'a>(
             _ => "waiting_for_manager",
         };
         let added_at = device.added_at.and_then(|time| {
-            i64::try_from(time.wall_ms).ok().and_then(chrono::DateTime::from_timestamp_millis)
+            i64::try_from(time.wall_ms).ok().and_then(chrono::DateTime::from_timestamp_millis).map(utc_seconds)
+        });
+        let revocation = device.revocation.as_ref().map(|record| {
+            let mut revocation = json!(record);
+            revocation["at"] = json!(utc_seconds(record.at));
+            revocation
         });
         json!({
             "id": device.id, "name": device.name, "membership": membership, "role": role_name(state),
-            "added_at": added_at, "revocation": device.revocation,
+            "added_at": added_at, "revocation": revocation,
         })
     }).collect()
 }
 
 struct Members {
     board: String,
+    settings: RenderSettings,
     people: Vec<Value>,
     history: Vec<Value>,
     departure: Option<pepino_app::BoardDeparture>,
@@ -160,6 +167,7 @@ struct Members {
 
 impl Render for Members {
     fn human(&self, _: &Terminal) -> String {
+        let dates = self.settings.dates();
         let text = |value: &Value| single_line(value.as_str().unwrap_or_default());
         let mut lines = vec![format!("Members of {}", single_line(&self.board))];
         if let Some(departure) = self.departure {
@@ -181,7 +189,7 @@ impl Render for Members {
             if person["mixed_roles"].as_bool() == Some(true) {
                 line.push_str(" · device roles differ");
             }
-            if let Some(at) = person["invited_at"].as_str() {
+            if let Some(at) = dates.json_timestamp(&person["invited_at"]) {
                 let by = person["invited_by"]["name"]
                     .as_str()
                     .or_else(|| person["invited_by_device_id"].as_str())
@@ -195,16 +203,20 @@ impl Render for Members {
                     text(&device["name"]),
                     text(&device["membership"]).replace('_', " ")
                 );
-                if let Some(at) = device["added_at"].as_str() {
+                if let Some(at) = dates.json_timestamp(&device["added_at"]) {
                     row.push_str(&format!(" · added {at}"));
                 }
-                if let Some(at) = device["revocation"]["at"].as_str() {
+                if let Some(at) = dates.json_timestamp(&device["revocation"]["at"]) {
                     row.push_str(&format!(" · revoked {at}"));
                 }
                 lines.push(row);
             }
         }
-        lines.extend(self.history.iter().map(super::history::line));
+        lines.extend(
+            self.history
+                .iter()
+                .map(|row| super::history::line(row, dates)),
+        );
         lines.join("\n")
     }
 

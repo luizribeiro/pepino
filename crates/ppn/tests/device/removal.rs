@@ -132,6 +132,16 @@ fn online_revocation_rotates_access_across_boards_and_preserves_history() {
             .unwrap()
             .contains("revoked from identity Ada Gardener")
     );
+    let at = error["at"].as_str().unwrap();
+    assert!(
+        chrono::DateTime::parse_from_rfc3339(at).is_ok() && !at.contains('.'),
+        "{at}"
+    );
+    let human = tablet.output(&["add", "Retired draft"]);
+    assert_eq!(human.status.code(), Some(5));
+    let diagnostic = String::from_utf8_lossy(&human.stderr);
+    assert!(diagnostic.contains("revoked from identity Ada Gardener"));
+    assert!(!diagnostic.contains(at), "{diagnostic}");
     for host in [&owner, &peer, &tablet] {
         assert!(check_task(host, "Sharpen the pruning shears"));
     }

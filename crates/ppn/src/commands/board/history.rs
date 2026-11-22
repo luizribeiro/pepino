@@ -1,6 +1,6 @@
 use pepino_app::{LocalState, MembershipAction};
 use pepino_core::BoardId;
-use ppn::render::single_line;
+use ppn::render::{Dates, single_line, utc_seconds};
 use serde_json::{Value, json};
 
 pub(crate) fn records(local: &LocalState, board: BoardId) -> Vec<Value> {
@@ -23,7 +23,7 @@ pub(crate) fn records(local: &LocalState, board: BoardId) -> Vec<Value> {
         rows.push((
             change.change.at,
             json!({
-                "operation_id": change.operation, "at": change.change.at, "action": action,
+                "operation_id": change.operation, "at": utc_seconds(change.change.at), "action": action,
                 "person": {"id": key.0, "root": key.1, "name": people.get(&key)},
                 "actor": actor(change.actor), "role": change.change.action.role(),
                 "applied": change.applied && change.refusal.is_none(),
@@ -39,7 +39,7 @@ pub(crate) fn records(local: &LocalState, board: BoardId) -> Vec<Value> {
         }) && let (Some(at), Some(by)) = (person.invited_at, person.invited_by)
         {
             rows.push((at, json!({
-                "at": at, "action": "invited", "person": {"id": person.id, "root": person.key().1,
+                "at": utc_seconds(at), "action": "invited", "person": {"id": person.id, "root": person.key().1,
                     "name": people.get(&person.key())}, "actor": actor(by), "role": null
             })));
         }
@@ -48,7 +48,7 @@ pub(crate) fn records(local: &LocalState, board: BoardId) -> Vec<Value> {
     rows.into_iter().map(|(_, row)| row).collect()
 }
 
-pub(crate) fn line(row: &Value) -> String {
+pub(crate) fn line(row: &Value, dates: Dates<'_>) -> String {
     let name = single_line(
         row["person"]["name"]
             .as_str()
@@ -61,7 +61,7 @@ pub(crate) fn line(row: &Value) -> String {
             .or(row["actor"]["device_id"].as_str())
             .unwrap_or("unknown"),
     );
-    let at = row["at"].as_str().unwrap_or_default();
+    let at = dates.json_timestamp(&row["at"]).unwrap_or_default();
     let role = row["role"].as_str().unwrap_or_default();
     let line = match row["action"].as_str() {
         Some("invited") if role.is_empty() => format!("{at} · {by} invited {name}"),

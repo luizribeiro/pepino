@@ -103,6 +103,8 @@ pub struct CliError {
     kind: ErrorKind,
     code: &'static str,
     message: String,
+    #[serde(skip)]
+    human_message: Option<String>,
     hint: Option<String>,
     #[serde(flatten)]
     details: Map<String, Value>,
@@ -118,9 +120,27 @@ impl CliError {
             kind,
             code: kind.code(),
             message: message.into(),
+            human_message: None,
             hint: None,
             details: Map::new(),
         }
+    }
+
+    pub fn localize(mut self, context: &crate::terminal::Context<'_>) -> Self {
+        if let (Some(identity), Some(by), Some(at)) = (
+            self.details.get("identity").and_then(Value::as_str),
+            self.details.get("by").and_then(Value::as_str),
+            self.details.get("at"),
+        ) && let Ok(settings) = context.render_settings()
+            && let Some(at) = settings.dates().json_timestamp(at)
+        {
+            self.human_message = Some(revoked_message(identity, &at, by));
+        }
+        self
+    }
+
+    pub fn human_message(&self) -> &str {
+        self.human_message.as_deref().unwrap_or(&self.message)
     }
 
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
@@ -232,12 +252,12 @@ impl CliError {
             .filter_map(Value::as_str)
             .collect();
         let term = self.details.get("term").and_then(Value::as_str);
-        let fragments = std::iter::once(self.message.as_str())
+        let fragments = std::iter::once(self.human_message())
             .chain(self.hint.as_deref())
             .chain(term)
             .chain(candidates.iter().copied());
         let ids = ShortIds::new(fragments.flat_map(hex_ids).map(|(_, id)| id));
-        writeln!(stderr, "error: {}", display_ids(&self.message, &ids))?;
+        writeln!(stderr, "error: {}", display_ids(self.human_message(), &ids))?;
         for id in candidates {
             writeln!(stderr, "  {}", display_ids(id, &ids))?;
         }
@@ -309,6 +329,10 @@ impl From<AppError> for CliError {
         };
         let mut diagnostic = Self::new(kind, error.to_string());
         match &error {
+            AppError::DeviceRevoked { identity, at, by } => {
+                diagnostic.message =
+                    revoked_message(identity, &crate::render::utc_seconds(*at), &by.to_string());
+            }
             AppError::IncompatibleLocalState { version, directory } => {
                 diagnostic.message = format!(
                     "Local state version {version} in {directory} cannot be upgraded because its device and board IDs are not real keys and spaces."
@@ -425,7 +449,10 @@ impl From<AppError> for CliError {
             }
             _ => {}
         }
-        if let Ok(Value::Object(mut details)) = serde_json::to_value(error) {
+        if let Ok(Value::Object(mut details)) = serde_json::to_value(&error) {
+            if let AppError::DeviceRevoked { at, .. } = &error {
+                details.insert("at".into(), crate::render::utc_seconds(*at).into());
+            }
             details.remove("kind");
             for key in ["deleted_task", "task_on_other_boards"] {
                 if let Some(Value::Object(task)) = details.remove(key) {
@@ -467,6 +494,10 @@ impl From<AppError> for CliError {
         }
         diagnostic
     }
+}
+
+fn revoked_message(identity: &str, at: &str, by: &str) -> String {
+    format!("This device was revoked from identity {identity} on {at} by {by}.")
 }
 
 fn input_root(path: &str) -> &str {

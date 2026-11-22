@@ -55,7 +55,7 @@ pub fn run(context: &Context<'_>, args: Args, verbose: bool) -> Result<CommandRe
             }
             let membership = human_history
                 .iter()
-                .map(super::board::history::line)
+                .map(|row| super::board::history::line(row, settings.dates()))
                 .collect::<Vec<_>>()
                 .join("\n");
             Ok(format!("{tasks}\n{membership}"))

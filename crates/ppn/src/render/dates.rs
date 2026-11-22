@@ -64,10 +64,19 @@ impl Dates<'_> {
                 terminal,
             );
         }
+        self.local_timestamp(time)
+    }
+
+    pub fn local_timestamp(self, time: DateTime<chrono::Utc>) -> String {
         format_calendar(
             time.with_timezone(&self.time.offset),
             &format!("{} %H:%M", self.format),
         )
+    }
+
+    pub fn json_timestamp(self, value: &serde_json::Value) -> Option<String> {
+        let time = DateTime::parse_from_rfc3339(value.as_str()?).ok()?;
+        Some(self.local_timestamp(time.to_utc()))
     }
 
     pub fn local_date(self, clock: Hlc) -> String {

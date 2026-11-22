@@ -72,7 +72,9 @@ fn document(
         .map(|error| {
             format!(
                 "\n{}",
-                shorten_message_ids(&single_line(&error.to_string()))
+                shorten_message_ids(&single_line(
+                    CliError::from(error).localize(context).human_message()
+                ))
             )
         })
         .unwrap_or_default();

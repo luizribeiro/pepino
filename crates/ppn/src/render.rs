@@ -6,6 +6,10 @@ mod dates;
 
 pub use dates::Dates;
 
+pub fn utc_seconds(time: chrono::DateTime<chrono::Utc>) -> String {
+    time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
 mod text;
 
 pub use text::{assignee_label, single_line, truncate_title};
