@@ -91,3 +91,5 @@ optional string value. The latest change by `(HLC, event ID)` wins on all
 devices of the identity, and a null value records a deletion.
 Keys are limited to 128 bytes and values to 1,024 bytes. The catalog holds up
 to 256 live keys and the 1,024 most recent tombstones.
+“Last changed by” is advisory between an identity’s own devices. Catalog peers
+can relay preferences written by current or former devices of that identity.

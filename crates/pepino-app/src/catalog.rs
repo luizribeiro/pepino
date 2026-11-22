@@ -169,6 +169,7 @@ impl LocalState {
     pub fn encode_catalog(&self, member: &MemberInfo) -> Result<Vec<u8>, AppError> {
         let mut preferences = self.catalog.preferences.clone();
         preferences.retain_valid(unix_ms());
+        preferences.retain_writers(|writer| self.knows_roster_device(writer));
         let announcement = Announcement {
             v: crate::PROTOCOL_VERSION,
             identity: self.identity_id,
@@ -324,9 +325,9 @@ impl LocalState {
         if active_sender || self.granted_by(signer) {
             self.merge_relays(signer, announcement.relays, now);
         }
-        self.catalog
-            .preferences
-            .merge(announcement.preferences, now);
+        let mut preferences = announcement.preferences;
+        preferences.retain_writers(|writer| self.knows_roster_device(writer));
+        self.catalog.preferences.merge(preferences, now);
         self.catalog
             .written_views
             .retain(|key| self.catalog.preferences.get(key).is_some());
@@ -731,5 +732,77 @@ fn a_newly_linked_device_keeps_relay_requests_from_its_bootstrap_sender() {
     assert_eq!(
         local.board_relays(greenhouse).collect::<Vec<_>>(),
         [(relay, &request(laptop))]
+    );
+}
+
+#[cfg(test)]
+fn preference_announcement(
+    local: &LocalState,
+    preferences: crate::preferences::Preferences,
+) -> Announcement {
+    Announcement {
+        v: crate::PROTOCOL_VERSION,
+        identity: local.identity_id,
+        revisions: Default::default(),
+        devices: Default::default(),
+        roster: Default::default(),
+        member: String::new(),
+        shared: Default::default(),
+        reader_routes: Default::default(),
+        board_leaves: Default::default(),
+        own_membership: Default::default(),
+        relays: Default::default(),
+        preferences,
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn bootstrap_accepts_relayed_preferences_only_from_known_writers() {
+    let tablet = DeviceId::from_bytes([74; 32]);
+    let laptop = DeviceId::from_bytes([75; 32]);
+    let stranger = DeviceId::from_bytes([81; 32]);
+    let board = BoardId::from_bytes([76; 32]);
+    let now = 1_800_000_000_000;
+    let mut local = LocalState::new(
+        crate::OpenOptions::default().try_into().unwrap(),
+        tablet,
+        board,
+    )
+    .unwrap();
+    local.other_devices.insert(laptop, "Laptop".into());
+    let mut prefs = crate::preferences::Preferences::default();
+    prefs
+        .write(
+            "view/foreign".into(),
+            Some(r#"{"filter":"tag:garden"}"#.into()),
+            stranger,
+            now,
+        )
+        .unwrap();
+    prefs
+        .write(
+            "view/known".into(),
+            Some(r#"{"filter":"tag:hardware"}"#.into()),
+            tablet,
+            now,
+        )
+        .unwrap();
+    local
+        .merge_catalog(
+            board,
+            stranger,
+            preference_announcement(&local, prefs.clone()),
+            now,
+        )
+        .unwrap();
+    assert!(local.catalog.preferences.is_empty());
+    local
+        .merge_catalog(board, laptop, preference_announcement(&local, prefs), now)
+        .unwrap();
+    assert!(local.catalog.preferences.get("view/foreign").is_none());
+    assert_eq!(
+        local.catalog.preferences.get("view/known").unwrap().writer,
+        tablet
     );
 }

@@ -129,6 +129,10 @@ impl Preferences {
         self.0.retain(|key, entry| entry.valid(key, now));
     }
 
+    pub(crate) fn retain_writers(&mut self, knows_device: impl Fn(DeviceId) -> bool) {
+        self.0.retain(|_, entry| knows_device(entry.writer));
+    }
+
     pub(crate) fn merge(&mut self, incoming: Self, now: u64) {
         for (key, entry) in incoming.0 {
             if entry.valid(&key, now)
