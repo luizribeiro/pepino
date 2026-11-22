@@ -39,6 +39,7 @@ impl App {
     pub async fn forget_board(&self, board: BoardId, now: u64) -> Result<LocalState, AppError> {
         let guard = lock(&self.directory, self.lock_timeout).await?;
         let mut local = self.fresh_local_state().await?;
+        local.check_device_write()?;
         local.check_invitable(board)?;
         if local.boards().iter().any(|known| known.id == board) {
             local.change_board_presence(board, true, now)?;
@@ -109,4 +110,33 @@ async fn forgetting_queues_only_the_selected_boards_relay_removal() {
     let reopened = app.fresh_local_state().await.unwrap();
     assert_eq!(local, reopened);
     assert!(app.forget_board(local.catalog_board(), 2000).await.is_err());
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn forgetting_after_device_revocation_cannot_publish_a_tombstone() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::init(dir.path(), 0).await.unwrap();
+    let workshop = BoardId::from_bytes([73; 32]);
+    app.register_created_board(workshop, "Workshop")
+        .await
+        .unwrap();
+    let mut local = app.fresh_local_state().await.unwrap();
+    let root = local.device_id;
+    local.device_id = pepino_core::DeviceId::from_bytes([74; 32]);
+    local.catalog.observed_catalog_removal = Some(crate::Revocation {
+        by: root,
+        at: std::time::UNIX_EPOCH.into(),
+    });
+    local.replace(dir.path()).unwrap();
+    assert!(matches!(
+        app.forget_board(workshop, 2000).await,
+        Err(AppError::DeviceRevoked { .. })
+    ));
+    let reopened = app.fresh_local_state().await.unwrap();
+    assert!(!reopened.board_forgotten(workshop));
+    assert_eq!(
+        reopened.resolve_board("Workshop", "board").unwrap().id,
+        workshop
+    );
 }
