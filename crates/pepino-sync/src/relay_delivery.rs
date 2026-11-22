@@ -103,15 +103,18 @@ pub(crate) async fn run(
 
 async fn state_with_departures_released(app: &App) -> Result<LocalState, pepino_app::AppError> {
     let mut local = app.fresh_local_state().await?;
-    let now = SystemTime::now()
+    for board in local.departed_boards_on_relays().collect::<Vec<_>>() {
+        local = app.release_board_relays(board, now_ms()).await?;
+    }
+    Ok(local)
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| {
             elapsed.as_millis().try_into().unwrap_or(u64::MAX)
-        });
-    for board in local.departed_boards_on_relays().collect::<Vec<_>>() {
-        local = app.release_board_relays(board, now).await?;
-    }
-    Ok(local)
+        })
 }
 
 impl Delivery {
@@ -200,7 +203,7 @@ impl Delivery {
         let revision = attempt.revision;
         let _ = match attempt.step(receipt) {
             Step::AdvancePast(sequence) => {
-                app.advance_relay_revision(board, relay, revision, sequence)
+                app.advance_relay_revision(board, relay, revision, sequence, now_ms())
                     .await
             }
             Step::Record(answer) => {

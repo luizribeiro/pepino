@@ -308,9 +308,13 @@ impl App {
         relay: DeviceId,
         revision: RelayRevision,
         relay_sequence: u64,
+        now: u64,
     ) -> Result<(), AppError> {
+        // A relay must not be able to push a request so far ahead that nothing can follow it.
+        let latest = now.saturating_add(pepino_node::RELAY_CLOCK_TOLERANCE_MS);
         self.update_local(move |local| {
             if let Some(entry) = local.pending_relay(board, relay, revision)
+                && relay_sequence <= latest
                 && let Some(sequence) = relay_sequence.checked_add(1)
                 && sequence > entry.revision.sequence
             {
@@ -367,7 +371,8 @@ async fn a_superseded_request_moves_past_the_relay_revision() {
     assert_eq!(original.sequence, requested);
 
     let relay_sequence = requested + 240_000;
-    app.advance_relay_revision(board, relay, original, relay_sequence)
+    let now = relay_sequence - 1_000;
+    app.advance_relay_revision(board, relay, original, relay_sequence, now)
         .await
         .unwrap();
     let advanced = request(&app.fresh_local_state().await.unwrap());
@@ -376,12 +381,14 @@ async fn a_superseded_request_moves_past_the_relay_revision() {
     assert_eq!(advanced.state, RelayState::Requested);
     assert!(advanced.carry);
 
+    let too_far = now + pepino_node::RELAY_CLOCK_TOLERANCE_MS + 1;
     for (revision, sequence) in [
         (original, relay_sequence + 9),
         (advanced.revision, requested),
-        (advanced.revision, u64::MAX),
+        (advanced.revision, too_far),
+        (advanced.revision, u64::MAX - 1),
     ] {
-        app.advance_relay_revision(board, relay, revision, sequence)
+        app.advance_relay_revision(board, relay, revision, sequence, now)
             .await
             .unwrap();
         assert_eq!(request(&app.fresh_local_state().await.unwrap()), advanced);
@@ -397,7 +404,7 @@ async fn a_superseded_request_moves_past_the_relay_revision() {
     .unwrap();
     let refused = request(&app.fresh_local_state().await.unwrap());
     assert_eq!(refused.state, RelayState::Refused);
-    app.advance_relay_revision(board, relay, refused.revision, relay_sequence + 9)
+    app.advance_relay_revision(board, relay, refused.revision, relay_sequence + 9, now)
         .await
         .unwrap();
     assert_eq!(request(&app.fresh_local_state().await.unwrap()), refused);

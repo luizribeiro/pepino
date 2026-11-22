@@ -10,7 +10,7 @@ use crate::{
     relay_control::{RelayAnswer, RelayInstruction, RelayRevision},
 };
 
-const CLOCK_TOLERANCE_MS: u64 = 10 * 60 * 1000;
+pub const CLOCK_TOLERANCE_MS: u64 = 10 * 60 * 1000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(super) struct Record {
