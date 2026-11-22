@@ -153,6 +153,13 @@ pub struct CarriedBoard {
     pub removal_pending: bool,
 }
 
+/// How many boards a drop ended requests for, and how many of them lost their last requester.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DroppedBoards {
+    pub boards: usize,
+    pub purged: usize,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RelayDrop {
@@ -319,13 +326,13 @@ impl Ledger {
             .collect()
     }
 
-    /// Ends every selected request and returns how many boards that touched. A board left without
-    /// requesters is purged at the next node start.
+    /// Ends every selected request. A board left without requesters is purged at the next node
+    /// start.
     pub(super) async fn drop_boards(
         &mut self,
         selection: &RelayDrop,
         now_ms: u64,
-    ) -> Result<usize, Error> {
+    ) -> Result<DroppedBoards, Error> {
         let selected: Vec<_> = self
             .records
             .iter()
@@ -344,11 +351,17 @@ impl Ledger {
                 })
             })
             .collect();
-        let boards = selected.len();
+        let dropped = DroppedBoards {
+            boards: selected.len(),
+            purged: selected
+                .iter()
+                .filter(|(_, record)| record.removal_pending())
+                .count(),
+        };
         for (key, record) in selected {
             self.store(&key, record).await?;
         }
-        Ok(boards)
+        Ok(dropped)
     }
 }
 
@@ -610,11 +623,18 @@ pub(super) mod tests {
         );
 
         let unknown = RelayDrop::Handle("0123456789ab".into());
-        assert_eq!(ledger.drop_boards(&unknown, NOW).await.unwrap(), 0);
+        assert_eq!(ledger.drop_boards(&unknown, NOW).await.unwrap().boards, 0);
         let stranger = RelayDrop::From(DeviceId::from_bytes([99; 32]));
-        assert_eq!(ledger.drop_boards(&stranger, NOW).await.unwrap(), 0);
+        assert_eq!(ledger.drop_boards(&stranger, NOW).await.unwrap().boards, 0);
         let pinned_handle = RelayDrop::Handle(handle(&pinned));
-        assert_eq!(ledger.drop_boards(&pinned_handle, NOW).await.unwrap(), 1);
+        assert_eq!(
+            ledger
+                .drop_boards(&pinned_handle, NOW)
+                .await
+                .unwrap()
+                .boards,
+            1
+        );
         assert_eq!(
             ledger
                 .boards()
@@ -624,7 +644,10 @@ pub(super) mod tests {
             1
         );
         let from_phone = RelayDrop::From(phone);
-        assert_eq!(ledger.drop_boards(&from_phone, NOW).await.unwrap(), 1);
+        assert_eq!(
+            ledger.drop_boards(&from_phone, NOW).await.unwrap().boards,
+            1
+        );
         drop(ledger);
 
         prepare(&pool).await.unwrap();
@@ -782,8 +805,17 @@ pub(super) mod tests {
         let handle_of = |instruction: RelayInstruction| handle(&key(instruction.board));
 
         let from_bob = RelayDrop::From(bob);
-        assert_eq!(ledger.drop_boards(&from_bob, NOW + 1).await.unwrap(), 3);
-        assert_eq!(ledger.drop_boards(&from_bob, NOW + 1).await.unwrap(), 0);
+        assert_eq!(
+            ledger.drop_boards(&from_bob, NOW + 1).await.unwrap(),
+            DroppedBoards {
+                boards: 3,
+                purged: 1
+            }
+        );
+        assert_eq!(
+            ledger.drop_boards(&from_bob, NOW + 1).await.unwrap(),
+            DroppedBoards::default()
+        );
         assert_eq!(
             listed(&ledger),
             [
@@ -794,7 +826,14 @@ pub(super) mod tests {
             .into()
         );
         let by_handle = RelayDrop::Handle(handle_of(both_dropped));
-        assert_eq!(ledger.drop_boards(&by_handle, NOW + 1).await.unwrap(), 1);
+        assert_eq!(
+            ledger
+                .drop_boards(&by_handle, NOW + 1)
+                .await
+                .unwrap()
+                .boards,
+            1
+        );
         assert_eq!(ledger.counts(), [(alice, 1), (bob, 0)].into());
         drop(ledger);
 
@@ -813,7 +852,10 @@ pub(super) mod tests {
             ledger.apply(bob, rejoined, NOW + 2).await.unwrap(),
             RelayAnswer::Carrying
         );
-        assert_eq!(ledger.drop_boards(&everyone, NOW + 3).await.unwrap(), 1);
+        assert_eq!(
+            ledger.drop_boards(&everyone, NOW + 3).await.unwrap().boards,
+            1
+        );
         assert_eq!(
             listed(&ledger),
             [
@@ -925,7 +967,11 @@ pub(super) mod tests {
         );
         let by_handle = RelayDrop::Handle(handle(&key(seed_house)));
         assert_eq!(
-            ledger.drop_boards(&by_handle, NOW + 1_000).await.unwrap(),
+            ledger
+                .drop_boards(&by_handle, NOW + 1_000)
+                .await
+                .unwrap()
+                .boards,
             1
         );
         assert_eq!(

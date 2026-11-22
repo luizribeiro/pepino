@@ -16,7 +16,7 @@ use tokio::{
 use crate::{
     DeviceCredentials, Error, Node, NodeSettings, NodeStatus,
     relay_control::{IncomingInstruction, RelayAnswer, RelayChannel, RelayReceipt},
-    relay_ledger::{self, CarriedBoard, Ledger, RelayDrop},
+    relay_ledger::{self, CarriedBoard, DroppedBoards, Ledger, RelayDrop},
     relay_purge,
     relay_refusals::Refusals,
     status_state::Status,
@@ -42,7 +42,7 @@ pub struct RelayStatus {
     pub boards: Vec<CarriedBoard>,
 }
 
-type DropRequest = (RelayDrop, oneshot::Sender<Result<usize, Error>>);
+type DropRequest = (RelayDrop, oneshot::Sender<Result<DroppedBoards, Error>>);
 
 #[derive(Clone)]
 pub struct RelayMonitor {
@@ -67,8 +67,8 @@ impl RelayMonitor {
         Ok(result)
     }
 
-    /// Returns how many boards were selected. Their copies are deleted when the node next starts.
-    pub async fn drop_boards(&self, selection: RelayDrop) -> Result<usize, Error> {
+    /// Copies that lost their last requester are deleted when the node next starts.
+    pub async fn drop_boards(&self, selection: RelayDrop) -> Result<DroppedBoards, Error> {
         let (reply, dropped) = oneshot::channel();
         self.drops
             .send((selection, reply))

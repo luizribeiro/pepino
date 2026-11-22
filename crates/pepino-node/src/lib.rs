@@ -33,7 +33,9 @@ pub use relay::{Relay, RelayEnd, RelayMonitor, RelayStatus};
 pub use relay_control::{
     RelayAnswer, RelayChannel, RelayInstruction, RelayReceipt, RelayRevision, validate_relay_id,
 };
-pub use relay_ledger::{CLOCK_TOLERANCE_MS as RELAY_CLOCK_TOLERANCE_MS, CarriedBoard, RelayDrop};
+pub use relay_ledger::{
+    CLOCK_TOLERANCE_MS as RELAY_CLOCK_TOLERANCE_MS, CarriedBoard, DroppedBoards, RelayDrop,
+};
 pub use settings::{BootstrapNode, MdnsMode, NodeSettings, peer_relay_url};
 pub use status::{NodeEvent, NodeEvents, SyncCounts};
 pub use status_state::{BoardStatus, NodeStatus};

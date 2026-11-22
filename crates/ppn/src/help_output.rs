@@ -84,7 +84,7 @@ pub(super) fn for_command(command: &Command) -> Value {
         ),
         "relay drop" => (
             "relay_drop",
-            "dropped Number of boards whose stored copy the relay deletes",
+            "dropped Number of boards whose requests the relay ended\npurged Number of stored copies the relay deletes",
         ),
         "board new" | "board use" | "board rename" => (
             "board",

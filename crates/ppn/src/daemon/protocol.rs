@@ -132,7 +132,7 @@ pub enum Outcome {
         departure: Option<pepino_app::BoardDeparture>,
     },
     RelayDropped {
-        boards: usize,
+        dropped: pepino_node::DroppedBoards,
     },
     Stopping,
     Error {
@@ -145,7 +145,9 @@ impl Outcome {
     pub(super) fn ends_serving(&self) -> Option<super::server::End> {
         match self {
             Self::Stopping => Some(super::server::End::Stopped),
-            Self::RelayDropped { .. } => Some(super::server::End::Restart),
+            Self::RelayDropped { dropped } if dropped.purged > 0 => {
+                Some(super::server::End::Restart)
+            }
             _ => None,
         }
     }
@@ -271,4 +273,17 @@ fn a_board_request_control_message_has_no_capabilities() {
             "v": 1, "request": { "op": "board_request", "name": "Garden tablet" }
         })
     );
+}
+
+#[cfg(test)]
+#[test]
+fn a_relay_drop_restarts_the_node_only_when_a_copy_must_be_purged() {
+    let dropped = |purged| Outcome::RelayDropped {
+        dropped: pepino_node::DroppedBoards { boards: 2, purged },
+    };
+    assert!(dropped(0).ends_serving().is_none());
+    assert!(matches!(
+        dropped(1).ends_serving(),
+        Some(super::server::End::Restart)
+    ));
 }

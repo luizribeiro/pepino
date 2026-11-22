@@ -286,20 +286,27 @@ fn boards(context: &Context<'_>) -> Result<CommandResult, CliError> {
     Ok(CommandResult::document(Boards(status)))
 }
 
-struct Dropped(usize);
+struct Dropped(pepino_node::DroppedBoards);
+
+impl Dropped {
+    fn consequence(&self) -> String {
+        match self.0.purged {
+            0 => "Other devices still request them, so the relay keeps its copies.".into(),
+            purged => format!("The relay restarts its node and deletes {purged} stored copies."),
+        }
+    }
+}
 
 impl Render for Dropped {
     fn human(&self, _: &Terminal) -> String {
-        format!(
-            "Dropped {} boards. The relay restarts its node and deletes the copies that no device requests.",
-            self.0
-        )
+        format!("Dropped {} boards. {}", self.0.boards, self.consequence())
     }
 
     fn json_fields(self) -> Map<String, Value> {
         Map::from_iter([
             ("kind".into(), json!("relay_drop")),
-            ("dropped".into(), json!(self.0)),
+            ("dropped".into(), json!(self.0.boards)),
+            ("purged".into(), json!(self.0.purged)),
         ])
     }
 }
@@ -333,7 +340,7 @@ fn drop_boards(
         ));
     }
     match call(config, Operation::RelayDrop { boards })?.ok_or_else(not_running)? {
-        Outcome::RelayDropped { boards } => Ok(CommandResult::document(Dropped(boards))),
+        Outcome::RelayDropped { dropped } => Ok(CommandResult::document(Dropped(dropped))),
         Outcome::Error { code, message } if code == "not_found" => {
             Err(CliError::new(ErrorKind::NotFound, message)
                 .with_hint("Run ppn relay boards to list the handles."))
@@ -379,5 +386,31 @@ fn a_board_requested_by_two_devices_is_listed_under_each_and_counted_once() {
                 {"handle": "3f9a12c4d5e6", "removal_pending": false},
             ]},
         ])
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn a_drop_reports_whether_the_relay_deletes_copies() {
+    let kept = Dropped(pepino_node::DroppedBoards {
+        boards: 2,
+        purged: 0,
+    });
+    assert_eq!(
+        kept.consequence(),
+        "Other devices still request them, so the relay keeps its copies."
+    );
+    let purged = Dropped(pepino_node::DroppedBoards {
+        boards: 3,
+        purged: 1,
+    });
+    assert_eq!(
+        purged.consequence(),
+        "The relay restarts its node and deletes 1 stored copies."
+    );
+    let fields = purged.json_fields();
+    assert_eq!(
+        (&fields["dropped"], &fields["purged"]),
+        (&json!(3), &json!(1))
     );
 }

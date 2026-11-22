@@ -141,8 +141,8 @@ async fn cycle(
                 Err(error) => Outcome::error("failure", &format!("Could not read the relay status. {error}")),
             },
             Operation::RelayDrop { boards } => match monitor.drop_boards(boards).await {
-                Ok(0) => Outcome::error("not_found", "No carried board matches."),
-                Ok(boards) => Outcome::RelayDropped { boards },
+                Ok(dropped) if dropped.boards == 0 => Outcome::error("not_found", "No carried board matches."),
+                Ok(dropped) => Outcome::RelayDropped { dropped },
                 Err(error) => Outcome::error("failure", &format!("Could not drop the boards. {error}")),
             },
             Operation::Stop => Outcome::Stopping,
