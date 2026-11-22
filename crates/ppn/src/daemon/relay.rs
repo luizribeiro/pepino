@@ -18,6 +18,10 @@ use super::{
     server::{self, End},
 };
 
+fn relay_failure(problem: &str, cause: impl std::fmt::Display) -> CliError {
+    failure(&format!("{problem}. {cause}"))
+}
+
 const FIRST_RETRY: Duration = Duration::from_millis(250);
 const LONGEST_RETRY: Duration = Duration::from_secs(60);
 const STABLE_AFTER: Duration = Duration::from_secs(60);
@@ -25,7 +29,7 @@ const STABLE_AFTER: Duration = Duration::from_secs(60);
 enum Cycle {
     Stopped,
     Restart,
-    Failed(&'static str),
+    Failed(String),
 }
 
 struct Backoff(Duration);
@@ -67,7 +71,7 @@ pub(super) async fn run(
             Cycle::Stopped => return Ok(()),
             Cycle::Restart => FIRST_RETRY,
             Cycle::Failed(problem) => {
-                log(level, LogLevel::Error, problem);
+                log(level, LogLevel::Error, &problem);
                 backoff.next(began.elapsed())
             }
         };
@@ -99,19 +103,26 @@ async fn cycle(
         _ = terminate.recv() => return Ok(Cycle::Stopped),
         _ = interrupt.recv() => return Ok(Cycle::Stopped),
         purged = Relay::purge_removed(settings) => {
-            purged.map_err(|_| failure("Could not delete removed boards from the relay database."))?;
+            purged.map_err(|error| relay_failure("Could not delete removed boards from the relay database", error))?;
         }
     }
     let mut relay = tokio::select! {
         _ = terminate.recv() => return Ok(Cycle::Stopped),
         _ = interrupt.recv() => return Ok(Cycle::Stopped),
         result = timeout(STARTUP_LIMIT, Relay::start(settings.clone(), trusted, config.max_boards.value)) => {
-            result.ok().and_then(Result::ok).ok_or_else(|| failure("Could not start the relay node."))?
+            const PROBLEM: &str = "Could not start the relay node";
+            match result {
+                Ok(relay) => relay.map_err(|error| relay_failure(PROBLEM, error))?,
+                Err(_) => {
+                    let limit = format!("startup took longer than {} seconds", STARTUP_LIMIT.as_secs());
+                    return Err(relay_failure(PROBLEM, limit));
+                }
+            }
         }
     };
     let monitor = relay
         .monitor()
-        .map_err(|_| failure("Could not monitor the relay node."))?;
+        .map_err(|error| relay_failure("Could not monitor the relay node", error))?;
     log(level, LogLevel::Info, "relay ready");
     let end = tokio::select! {
         biased;
@@ -127,7 +138,7 @@ async fn cycle(
                         relay: Some(relay),
                     }
                 },
-                Err(_) => Outcome::error("failure", "Could not read the relay status."),
+                Err(error) => Outcome::error("failure", &format!("Could not read the relay status. {error}")),
             },
             Operation::Stop => Outcome::Stopping,
             _ => Outcome::error("permission_denied", "This daemon runs in relay mode. Use a device data directory for device operations."),
@@ -138,15 +149,15 @@ async fn cycle(
         },
         result = relay.run() => Ok(match result {
             Ok(RelayEnd::Restart) => Cycle::Restart,
-            Ok(RelayEnd::StreamEnded) => Cycle::Failed("a board subscription ended"),
-            Err(_) => Cycle::Failed("the relay node could not process an instruction"),
+            Ok(RelayEnd::StreamEnded) => Cycle::Failed("a board subscription ended".into()),
+            Err(error) => Cycle::Failed(format!("the relay node failed: {error}")),
         }),
     };
     drop(monitor);
     relay
         .shutdown()
         .await
-        .map_err(|_| shutdown_failure("the relay node", "network shutdown failed"))?;
+        .map_err(|error| shutdown_failure("the relay node", error))?;
     end
 }
 
@@ -160,4 +171,18 @@ fn repeated_failures_wait_longer_until_the_relay_runs_stably() {
     assert_eq!(delays[8..], [LONGEST_RETRY, LONGEST_RETRY]);
     assert_eq!(backoff.next(STABLE_AFTER), FIRST_RETRY);
     assert_eq!(backoff.next(crashed_after), FIRST_RETRY * 2);
+}
+
+#[cfg(test)]
+#[test]
+fn a_relay_failure_names_its_cause() {
+    let error = relay_failure(
+        "Could not start the relay node",
+        pepino_node::Error::Storage("unable to open database file".into()),
+    );
+    assert_eq!(error.kind(), crate::error::ErrorKind::Failure);
+    assert_eq!(
+        error.to_string(),
+        "Could not start the relay node. node storage: unable to open database file"
+    );
 }

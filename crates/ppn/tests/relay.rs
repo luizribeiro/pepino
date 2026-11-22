@@ -273,6 +273,10 @@ mod network {
         wait_state(&device, "Greenhouse", "carrying");
         assert_eq!(relay.json(&["daemon", "status"])["pid"], pid);
         let log = fs::read_to_string(relay.data.join("daemon.log")).unwrap();
+        assert!(
+            log.contains("the relay node failed: node storage:"),
+            "{log}"
+        );
         assert!(log.contains("restarting the relay node"), "{log}");
         device.stop();
         relay.stop();

@@ -130,7 +130,9 @@ impl Relay {
     ) -> Result<(RelayChannel, Ledger, watch::Sender<RelayStatus>), Error> {
         let ledger = Ledger::load(node.pool()?.clone(), trusted, cap).await?;
         for board in ledger.records.values().filter_map(|record| record.board) {
-            node.carry_board(board, stream_ended.clone()).await?;
+            node.carry_board(board, stream_ended.clone())
+                .await
+                .map_err(|error| subscription_error(&error, board))?;
         }
         let channel = node.relay_channel(node.device_id()).await?;
         let (status, _) = watch::channel(RelayStatus {
@@ -205,9 +207,7 @@ impl Relay {
                     .await
                 {
                     Ok(()) | Err(Error::BoardOpen(_)) => (),
-                    Err(_) => {
-                        return Err(Error::Node("could not subscribe to a relayed board".into()));
-                    }
+                    Err(error) => return Err(subscription_error(&error, instruction.board)),
                 }
             }
             let relay_sequence = match answer {
@@ -235,6 +235,16 @@ impl Relay {
         drop((channel, ledger));
         node.shutdown().await
     }
+}
+
+// Board IDs are secret and the operator reads these errors in the daemon log.
+fn subscription_error(error: &Error, board: BoardId) -> Error {
+    let id = board.to_string();
+    let cause = error
+        .to_string()
+        .replace(&id, "<board>")
+        .replace(&id.to_uppercase(), "<board>");
+    Error::Node(format!("could not subscribe to a relayed board: {cause}"))
 }
 
 fn now_ms() -> u64 {
@@ -267,7 +277,7 @@ impl Node {
                 let (publisher, mut subscription) = node
                     .stream::<crate::receipt::Payload>(p2panda::Topic::from(*board.as_bytes()))
                     .await
-                    .map_err(|_| Error::Node("could not open relay replication".into()))?;
+                    .map_err(Error::node)?;
                 let lease = lease.attached();
                 let mut stopping = lease.stopping();
                 tokio::spawn(async move {
@@ -290,5 +300,30 @@ impl Node {
                 Ok(())
             })
             .await
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn subscription_errors_carry_their_cause_without_the_board_id() {
+    let board = BoardId::from_bytes(*b"XXboard-id-secret-0123456789abcd");
+    let id = board.to_string();
+    for (error, cause) in [
+        (Error::BoardOpen(board), "board <board> is already open"),
+        (
+            Error::Node(format!("no route for topic {}", id.to_uppercase())),
+            "node operation: no route for topic <board>",
+        ),
+        (
+            Error::Storage("database is locked".into()),
+            "node storage: database is locked",
+        ),
+    ] {
+        let message = subscription_error(&error, board).to_string();
+        assert_eq!(
+            message,
+            format!("node operation: could not subscribe to a relayed board: {cause}")
+        );
+        assert!(!message.to_lowercase().contains(&id));
     }
 }
