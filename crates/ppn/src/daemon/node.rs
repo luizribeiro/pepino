@@ -7,7 +7,7 @@ use crate::{
     error::{CliError, ErrorKind},
 };
 
-pub async fn settings(config: &Config) -> Result<NodeSettings, CliError> {
+pub async fn settings(config: &Config) -> Result<(NodeSettings, pepino_app::App), CliError> {
     let data = config.data_dir.value.as_path();
     let path = config.credentials_file.value.as_path();
     let options = OpenOptions {
@@ -42,7 +42,7 @@ pub async fn settings(config: &Config) -> Result<NodeSettings, CliError> {
             });
         }
     }
-    Ok(settings)
+    Ok((settings, app))
 }
 
 pub(super) fn relay_settings(config: &Config) -> Result<NodeSettings, CliError> {

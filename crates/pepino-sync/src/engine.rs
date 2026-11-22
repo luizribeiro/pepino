@@ -12,7 +12,10 @@ use tokio::{
 };
 use tokio_stream::wrappers::WatchStream;
 
-use crate::{BoardFailure, Status, Transport, board_workers::BoardWorkers};
+use crate::{
+    BoardFailure, Status, Transport,
+    board_workers::{self, BoardWorkers},
+};
 
 const SHUTDOWN_LIMIT: Duration = Duration::from_secs(4);
 
@@ -116,10 +119,22 @@ impl<T: Transport> SyncEngine<T> {
         };
         let app =
             Arc::new(App::open_with_options(data_dir, pepino_app::wall_time_ms(), options).await?);
-        let local = app.local_state().device_id;
-        if local != node.device_id() {
+        Self::start_prepared(settings, node, app, database, keys, true).await
+    }
+
+    pub(crate) async fn start_prepared(
+        settings: Settings,
+        node: Arc<T>,
+        app: Arc<App>,
+        database: std::path::PathBuf,
+        keys: Option<DeviceCredentials>,
+        open_boards: bool,
+    ) -> Result<Self, Error> {
+        let local = app.fresh_local_state().await?;
+        let device = local.device_id;
+        if device != node.device_id() {
             return Err(Error::DeviceMismatch {
-                local,
+                local: device,
                 node: node.device_id(),
             });
         }
@@ -127,10 +142,20 @@ impl<T: Transport> SyncEngine<T> {
         let (stop, stopping) = watch::channel(());
         let (board_stop, boards_stopping) = watch::channel(());
         let (nudges, nudged) = watch::channel(0);
-        let local = app.local_state();
         let roster_pending =
             (local.peer_hint().is_some() && !local.roster_ready()).then(|| local.catalog_board());
+        let board_joins: std::collections::BTreeMap<_, _> = local
+            .boards()
+            .iter()
+            .filter(|board| board_workers::should_open(&local, board.id))
+            .map(|board| (board.id, local.board_join_state(board.id)))
+            .collect();
         let (changes, status) = watch::channel(Status {
+            boards: board_joins
+                .keys()
+                .map(|&id| (id, Default::default()))
+                .collect(),
+            board_joins,
             node: node.status(),
             newer_catalog: local.newer_catalog_version(),
             roster_pending,
@@ -149,7 +174,9 @@ impl<T: Transport> SyncEngine<T> {
         board_workers.authority = keys
             .or_else(|| app.identity_credentials().ok())
             .map(|keys| (database, keys));
-        board_workers.open_missing(app.local_state()).await?;
+        if open_boards {
+            board_workers.open_missing(&local).await?;
+        }
         let boards = Arc::new(Mutex::new(board_workers));
         workers.spawn(crate::discover::run(boards.clone(), stopping.clone()));
         let progress_app = app.clone();
@@ -320,16 +347,16 @@ impl SyncEngine {
     pub async fn start_with_node_settings(
         node: Arc<Node>,
         settings: &NodeSettings,
+        app: Arc<App>,
     ) -> Result<Self, Error> {
-        let database = &settings.database_path;
-        let directory = database.parent().unwrap_or_else(|| Path::new("."));
         let keys = settings.credentials.clone();
-        let mut engine = Self::start_with_authority(
+        let mut engine = Self::start_prepared(
             Settings::default(),
             node.clone(),
-            directory,
-            database.clone(),
+            app,
+            settings.database_path.clone(),
             Some(keys.clone()),
+            false,
         )
         .await?;
         engine.workers.spawn(crate::relay_delivery::run(

@@ -89,6 +89,9 @@ impl SyncEngine {
             }));
         }
         local.check_invitable(board)?;
+        if workers.handle(board).is_none() {
+            workers.open_missing(&local).await?;
+        }
         let handle = workers
             .handle(board)
             .ok_or_else(|| AppError::PermissionDenied {

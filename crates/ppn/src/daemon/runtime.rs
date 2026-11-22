@@ -11,7 +11,6 @@ use tokio::{
     net::UnixListener,
     runtime::Builder,
     signal::unix::{Signal, SignalKind, signal},
-    time::timeout,
 };
 
 use crate::{
@@ -53,10 +52,15 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         None
     };
     let relay = pepino_app::is_relay(directory)?;
-    let settings = if relay {
-        node::relay_settings(config)?
+    let (settings, app) = if relay {
+        (node::relay_settings(config)?, None)
     } else {
-        node::settings(config).await?
+        let (settings, app) = tokio::select! {
+            _ = terminate.recv() => return Ok(()),
+            _ = interrupt.recv() => return Ok(()),
+            prepared = node::settings(config) => prepared?,
+        };
+        (settings, Some(Arc::new(app)))
     };
     let _lease = match _lease {
         Some(lock) => lock,
@@ -67,7 +71,7 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         .map_err(|error| CliError::new(ErrorKind::Failure, error.to_string()))?;
     prepare_parent(config, &path).map_err(socket_error)?;
     let socket = Socket::bind(path).await.map_err(socket_error)?;
-    if relay {
+    let Some(app) = app else {
         super::relay::run(
             &socket.listener,
             &settings,
@@ -80,12 +84,12 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         .await?;
         log(level, LogLevel::Info, "daemon stopped");
         return Ok(());
-    }
+    };
     let mut upgrade_logged = false;
     loop {
         let outcome = cycle(
             &socket.listener,
-            &settings,
+            (&settings, &app),
             level,
             started,
             &mut terminate,
@@ -112,7 +116,7 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
 
 async fn cycle(
     listener: &UnixListener,
-    settings: &NodeSettings,
+    (settings, app): (&NodeSettings, &Arc<pepino_app::App>),
     level: LogLevel,
     started: Instant,
     terminate: &mut Signal,
@@ -122,18 +126,18 @@ async fn cycle(
     let node = tokio::select! {
         _ = terminate.recv() => return Ok(End::Stopped),
         _ = interrupt.recv() => return Ok(End::Stopped),
-        result = timeout(STARTUP_LIMIT, Node::spawn(settings.clone())) => {
-            Arc::new(started_component("the network node", result)?)
+        result = Node::spawn(settings.clone()) => {
+            Arc::new(result.map_err(|error| failure(&format!("Could not start the network node. {error}")))?)
         }
     };
     let engine = tokio::select! {
         _ = terminate.recv() => None,
         _ = interrupt.recv() => None,
-        result = timeout(STARTUP_LIMIT, SyncEngine::start_with_node_settings(node.clone(), settings)) => Some(result),
+        result = SyncEngine::start_with_node_settings(node.clone(), settings, app.clone()) => Some(result),
     };
     let mut engine_stop = Ok(());
     let outcome = match engine {
-        Some(Ok(Ok(engine))) => {
+        Some(Ok(engine)) => {
             log(level, LogLevel::Info, "daemon ready");
             let end = tokio::select! {
                 biased;
@@ -151,7 +155,9 @@ async fn cycle(
             };
             end
         }
-        Some(result) => started_component("the sync engine", result).map(|_| End::Stopped),
+        Some(Err(error)) => Err(failure(&format!(
+            "Could not start the sync engine. {error}"
+        ))),
         None => Ok(End::Stopped),
     };
     let node = Arc::try_unwrap(node)
@@ -174,21 +180,6 @@ async fn log_catalog_upgrade(engine: &SyncEngine, level: LogLevel, logged: &mut 
         }
     }
     std::future::pending().await
-}
-
-fn started_component<T, E: std::fmt::Display>(
-    component: &str,
-    result: Result<Result<T, E>, tokio::time::error::Elapsed>,
-) -> Result<T, CliError> {
-    match result {
-        Ok(result) => {
-            result.map_err(|error| failure(&format!("Could not start {component}. {error}")))
-        }
-        Err(_) => Err(failure(&format!(
-            "Could not start {component}. Startup took longer than {} seconds.",
-            STARTUP_LIMIT.as_secs(),
-        ))),
-    }
 }
 
 pub(super) fn shutdown_failure(component: &str, error: impl std::fmt::Display) -> CliError {

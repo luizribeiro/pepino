@@ -187,3 +187,44 @@ async fn shutdown_cancels_a_board_that_does_not_close_before_the_deadline() {
     ));
     assert_eq!(Arc::strong_count(&node), 1);
 }
+
+#[tokio::test]
+async fn daemon_engine_can_report_boards_while_transport_open_is_blocked() {
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().unwrap();
+    let app = Arc::new(pepino_app::App::init(dir.path(), 0).await.unwrap());
+    let board = pepino_core::BoardId::from_bytes([83; 32]);
+    app.register_created_board(board, "Greenhouse")
+        .await
+        .unwrap();
+    let node = Arc::new(stub::Stub::new(app.local_state().device_id));
+    let (mut opening, release) = node.pause_next_open();
+    let startup = crate::SyncEngine::start_prepared(
+        Default::default(),
+        node,
+        app,
+        dir.path().join("node.sqlite"),
+        None,
+        false,
+    );
+    tokio::pin!(startup);
+    let engine = tokio::select! {
+        result = &mut startup => result.unwrap(),
+        result = &mut opening => {
+            result.unwrap();
+            panic!("engine startup was waiting for the transport to open a board");
+        }
+    };
+
+    tokio::time::timeout(WAIT, opening).await.unwrap().unwrap();
+    assert!(
+        engine
+            .board_join_states()
+            .await
+            .unwrap()
+            .contains_key(&board)
+    );
+    release.send(()).unwrap();
+    engine.shutdown().await.unwrap();
+}

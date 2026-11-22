@@ -12,6 +12,10 @@ use tokio::{sync::watch, task::JoinSet};
 
 use crate::{BoardFailure, DeliveryStream, Error, Status, Transport, TransportBoard};
 
+pub(crate) fn should_open(local: &LocalState, board: BoardId) -> bool {
+    !local.board_departure_confirmed(board) || local.needs_readmission_replay(board)
+}
+
 pub(crate) struct BoardWorkers<T: Transport> {
     pub node: Arc<T>,
     pub app: Arc<App>,
@@ -60,9 +64,11 @@ impl<T: Transport> BoardWorkers<T> {
     }
 
     pub async fn open_missing(&mut self, local: &LocalState) -> Result<(), Error> {
-        for board in local.boards().iter().filter(|board| {
-            !local.board_departure_confirmed(board.id) || local.needs_readmission_replay(board.id)
-        }) {
+        for board in local
+            .boards()
+            .iter()
+            .filter(|board| should_open(local, board.id))
+        {
             if self.stopping.has_changed().is_err() {
                 return Ok(());
             }

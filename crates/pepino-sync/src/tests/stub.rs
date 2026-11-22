@@ -8,7 +8,7 @@ use futures_util::{StreamExt, stream};
 use pepino_app::DeviceMembershipChange;
 use pepino_core::{BoardId, DeviceId, EventId};
 use pepino_node::{Error, NodeEvent, NodeEvents, NodeStatus, Role};
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio_stream::wrappers::{BroadcastStream, UnboundedReceiverStream};
 
 use crate::{Acknowledgement, Delivery, DeliveryStream, Transport, TransportBoard};
@@ -43,6 +43,12 @@ pub(super) struct Stub {
     queues: Arc<Mutex<BTreeMap<BoardId, Queue>>>,
     signals: broadcast::Sender<NodeEvent>,
     status: Arc<Mutex<NodeStatus>>,
+    pause_open: Mutex<Option<OpenPause>>,
+}
+
+struct OpenPause {
+    entered: oneshot::Sender<()>,
+    release: oneshot::Receiver<()>,
 }
 
 impl Stub {
@@ -67,7 +73,18 @@ impl Stub {
             queues: Arc::default(),
             signals: broadcast::channel(128).0,
             status: Arc::default(),
+            pause_open: Mutex::default(),
         }
+    }
+
+    pub(super) fn pause_next_open(&self) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (entered, waiting) = oneshot::channel();
+        let (release, gate) = oneshot::channel();
+        *self.pause_open.lock().unwrap() = Some(OpenPause {
+            entered,
+            release: gate,
+        });
+        (waiting, release)
     }
 }
 
@@ -390,6 +407,11 @@ impl Transport for Stub {
     }
 
     async fn open_board(&self, id: BoardId) -> Result<Board, Error> {
+        let pause = self.pause_open.lock().unwrap().take();
+        if let Some(OpenPause { entered, release }) = pause {
+            let _ = entered.send(());
+            let _ = release.await;
+        }
         let mut status = self.status.lock().unwrap();
         if status.boards.contains_key(&id) {
             return Err(Error::BoardOpen(id));
