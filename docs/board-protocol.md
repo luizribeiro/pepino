@@ -1,17 +1,17 @@
-# Board additions to application protocol v1
+# Board additions to application protocol v2
 
-The existing v1 JSON and CBOR envelopes accept optional `board` and `all_boards` fields.
+The v2 JSON and CBOR envelopes accept optional `board` and `all_boards` fields.
 A board reference can be an exact name, a full ID, or a unique hexadecimal ID prefix
 of four or more digits. Omitted `board` selects the host's current board. The default
 for `all_boards` is false. This field applies to task-listing requests.
 
 ```json
-{"v":1,"board":"Workshop","request":{"op":"add_task","title":"Sharpen the spade"}}
-{"v":1,"all_boards":true,"request":{"op":"list_open_tasks","filter":[],"today":"2026-11-20"}}
-{"v":1,"request":{"op":"board_list"}}
-{"v":1,"request":{"op":"board_show","board":"515151"}}
-{"v":1,"request":{"op":"board_use","board":"Workshop"}}
-{"v":1,"request":{"op":"board_rename","board":"Workshop","name":"Tool Shed"}}
+{"v":2,"board":"Workshop","request":{"op":"add_task","title":"Sharpen the spade"}}
+{"v":2,"all_boards":true,"request":{"op":"list_open_tasks","filter":[],"today":"2026-11-20"}}
+{"v":2,"request":{"op":"board_list"}}
+{"v":2,"request":{"op":"board_show","board":"515151"}}
+{"v":2,"request":{"op":"board_use","board":"Workshop"}}
+{"v":2,"request":{"op":"board_rename","board":"Workshop","name":"Tool Shed"}}
 ```
 
 `board_list` returns kind `boards` with a `boards` array. Show, use, and rename return
@@ -22,7 +22,7 @@ invocation's selection. `board_use` saves the host preference. `board_rename` re
 a catalog revision for the daemon to publish. A blank name yields `invalid_input`.
 
 ```json
-{"v":1,"result":{"ok":{"kind":"board","board":{"id":"5151515151515151515151515151515151515151515151515151515151515151","name":"Tool Shed","current":true,"open":3,"total":5,"membership":"joined"}}}}
+{"v":2,"result":{"ok":{"kind":"board","board":{"id":"5151515151515151515151515151515151515151515151515151515151515151","name":"Tool Shed","current":true,"open":3,"total":5,"membership":"joined"}}}}
 ```
 
 A listing that spans boards or uses `all_boards` adds a `board` object
@@ -36,8 +36,8 @@ Creation uses the daemon's same-user socket. The node creates an encrypted space
 the daemon attaches the returned handle to its sync engine.
 
 ```json
-{"v":1,"request":{"op":"create_board","name":"Workshop"}}
-{"v":1,"result":{"kind":"board_created","board":"5151515151515151515151515151515151515151515151515151515151515151"}}
+{"v":2,"request":{"op":"create_board","name":"Workshop"}}
+{"v":2,"result":{"kind":"board_created","board":"5151515151515151515151515151515151515151515151515151515151515151"}}
 ```
 
 Daemon status includes observed device membership by board in `board_members` and
@@ -47,13 +47,13 @@ per-board activity in `boards`. The CLI adds `selected_board` to `board ls`,
 
 ## Identity roster
 
-These application requests use the same v1 envelope.
+These application requests use the same v2 envelope.
 
 ```json
-{"v":1,"request":{"op":"identity_show"}}
-{"v":1,"request":{"op":"identity_rename","name":"Ada Gardener"}}
-{"v":1,"request":{"op":"device_rename","name":"Garden laptop"}}
-{"v":1,"request":{"op":"device_rename","device":"ferrum","name":"Greenhouse tablet"}}
+{"v":2,"request":{"op":"identity_show"}}
+{"v":2,"request":{"op":"identity_rename","name":"Ada Gardener"}}
+{"v":2,"request":{"op":"device_rename","name":"Garden laptop"}}
+{"v":2,"request":{"op":"device_rename","device":"ferrum","name":"Greenhouse tablet"}}
 ```
 
 Show and identity rename return kind `identity` with an `identity` object.

@@ -675,8 +675,8 @@ async fn a_projection_failure_after_the_commit_reports_that_the_write_landed() {
 
 async fn read_golden(app: &mut App, request: Value, expected: Value) {
     use pepino_app::{WireFormat, WireRequest, WireResponse};
-    let request = json!({"v":1,"request":request});
-    let expected = json!({"v":1,"result":expected});
+    let request = json!({"v":2,"request":request});
+    let expected = json!({"v":2,"result":expected});
     let wire: WireRequest = WireFormat::Json
         .decode(&serde_json::to_vec(&request).unwrap())
         .unwrap();
@@ -803,7 +803,7 @@ async fn status_reports_local_context_and_counts_from_the_log() {
             "cache_stale":!local.roster_ready(),"rejected_roster_entries":0},
         "device":{"id":local.device_id.to_string(),"name":local.device_name},
         "board":{"id":board.to_string(),"name":"Greenhouse"},
-        "data_dir":directory.path(),"credentials_file":directory.path().join("credentials.cbor"),"network":"offline","protocol_version":1,
+        "data_dir":directory.path(),"credentials_file":directory.path().join("credentials.cbor"),"network":"offline","protocol_version":2,
         "counts":{"open":0,"closed":0,"events":0,"applied":0,"skipped":{"unknown_version":0,"unknown_event":0,"unknown_value":0,"invalid":0,"forged_author":0}}
     });
     let identity = expected["identity"].clone();

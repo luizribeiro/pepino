@@ -296,6 +296,7 @@ mod tests {
         prefs.merge(forged, NOW);
         assert_eq!(prefs, before);
     }
+
     #[test]
     fn deletions_free_live_slots_and_a_remote_tombstone_does_not_evict_a_view() {
         let mut prefs = Preferences::default();

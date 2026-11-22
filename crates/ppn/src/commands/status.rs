@@ -73,6 +73,13 @@ fn document(
             )
         })
         .unwrap_or_default();
+    let newer_catalog = local.newer_catalog_version();
+    let upgrade = newer_catalog.map_or("", |_| pepino_app::CATALOG_UPGRADE_NOTICE);
+    let upgrade_line = if upgrade.is_empty() {
+        String::new()
+    } else {
+        format!("\n{upgrade}")
+    };
     let roster = local.roster();
     let last_contact = roster
         .keys()
@@ -211,7 +218,7 @@ fn document(
                 .as_deref()
                 .unwrap_or("offline (daemon not running)");
             Ok(format!(
-                "Identity: {} ({}) · {} devices{roster_note}\nRejected roster entries: {}\nRejected board card entries: {rejected_board_card_entries}\nDropped board cards: {dropped_board_cards}\nDropped refused membership records: {dropped_membership_records}\nDevice: {} (node ID {}){notice}{contact}\nBoard: {} ({})\n{selected_line}\nMembership:\n  {membership_rows}\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}",
+                "Identity: {} ({}) · {} devices{roster_note}\nRejected roster entries: {}\nRejected board card entries: {rejected_board_card_entries}\nDropped board cards: {dropped_board_cards}\nDropped refused membership records: {dropped_membership_records}\nDevice: {} (node ID {}){notice}{contact}\nBoard: {} ({})\n{selected_line}\nMembership:\n  {membership_rows}\nData directory: {}\nCredentials: {}\nnetwork: {network}\nTasks: {} open, {} closed\nEvents: {} total, {} applied\nSkipped events: {} unknown version, {} unknown event, {} unknown value, {} invalid, {} forged author\nProtocol: v{}{upgrade_line}",
                 single_line(&identity.display_name),
                 short_id(&identity.id),
                 identity.roster.len(),
@@ -235,6 +242,12 @@ fn document(
             ))
         },
         move |fields| {
+            if let Some(version) = newer_catalog {
+                fields.insert(
+                    "newer_catalog".into(),
+                    serde_json::json!({"version":version,"message":upgrade}),
+                );
+            }
             let boards = boards.into_iter().map(|(board, state, sync, role, owner, waiting, departure)| {
                 let membership = if let Some(departure) = departure { serde_json::json!(departure) } else if waiting { serde_json::json!("waiting_for_access") } else { serde_json::json!(state) };
                 serde_json::json!({"id": board.id, "name": board.name, "membership": membership, "sync": if departure.is_some() { "paused" } else { sync }, "role": role, "shared": owner.is_some(), "owner": owner})

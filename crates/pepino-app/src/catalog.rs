@@ -8,11 +8,16 @@ use crate::app::{lock, worker};
 use crate::identity::SignedEdit;
 use crate::{App, AppError, BoardJoinState, LocalBoard, LocalState, Response, WireFormat};
 
+pub const CATALOG_UPGRADE_NOTICE: &str =
+    "another of your devices runs a newer pepino; upgrade this one";
+
 const PREFIX: &[u8] = b"pepino-board-catalog\0";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct CatalogState {
     revisions: BTreeMap<BoardId, Revision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    newer_catalog: Option<u32>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) relays: crate::board_relays::RelayCatalog,
     #[serde(
@@ -157,6 +162,17 @@ struct Announcement {
 }
 
 impl LocalState {
+    pub fn newer_catalog_version(&self) -> Option<u32> {
+        self.catalog
+            .newer_catalog
+            .filter(|&version| version > crate::PROTOCOL_VERSION)
+    }
+
+    fn trusts_catalog_sender(&self, signer: DeviceId) -> bool {
+        self.active_roster_device(signer)
+            || (self.roster_root().is_none() && self.other_devices.contains_key(&signer))
+    }
+
     pub fn created_boards(&self) -> &BTreeSet<BoardId> {
         &self.catalog.created_here
     }
@@ -286,9 +302,7 @@ impl LocalState {
         self.catalog
             .identity
             .merge(board, self.identity_id, announcement.roster)?;
-        let bootstrap_sender =
-            self.roster_root().is_none() && self.other_devices.contains_key(&signer);
-        if !self.active_roster_device(signer) && !bootstrap_sender {
+        if !self.trusts_catalog_sender(signer) {
             return Ok(());
         }
         if let Ok(info) = MemberInfo::from_hex(&announcement.member)
@@ -418,11 +432,36 @@ impl App {
         let Some(bytes) = bytes.strip_prefix(PREFIX) else {
             return Ok(false);
         };
-        if let Ok(announcement) = WireFormat::Cbor.decode(bytes) {
-            self.try_update_local_state(move |local| {
-                local.merge_catalog(board, signer, announcement, now)
-            })
-            .await?;
+        let wire = WireFormat::Cbor;
+        match wire.decode(bytes) {
+            Ok(announcement) => {
+                self.try_update_local_state(move |local| {
+                    local.merge_catalog(board, signer, announcement, now)
+                })
+                .await?;
+            }
+            Err(AppError::UnsupportedVersion {
+                requested,
+                supported,
+            }) if requested > supported => {
+                #[derive(Deserialize)]
+                struct Header {
+                    identity: IdentityId,
+                }
+                if let Ok(Header { identity }) = wire.decode_value(bytes) {
+                    self.update_local(move |local| {
+                        if board == local.catalog_board()
+                            && identity == local.identity_id
+                            && local.trusts_catalog_sender(signer)
+                        {
+                            local.catalog.newer_catalog =
+                                local.catalog.newer_catalog.max(Some(requested));
+                        }
+                    })
+                    .await?;
+                }
+            }
+            Err(_) => {}
         }
         Ok(true)
     }
@@ -853,4 +892,52 @@ fn two_devices_recover_both_legacy_filters_after_a_catalog_exchange() {
         assert!(local.catalog.migrated_views.is_empty());
         assert!(!local.catalog.written_views.contains("view/identical"));
     }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn recognizes_newer_catalogs_before_decoding_their_body() {
+    #[derive(Serialize)]
+    struct FutureCatalog {
+        v: u32,
+        identity: IdentityId,
+        future_field: &'static str,
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::init(dir.path(), 0).await.unwrap();
+    let local = app.local_state();
+    let board = local.catalog_board();
+    let writer = local.device_id;
+    let body = FutureCatalog {
+        v: crate::PROTOCOL_VERSION + 1,
+        identity: local.identity_id,
+        future_field: "garden supplies",
+    };
+    let mut bytes = PREFIX.to_vec();
+    bytes.extend(WireFormat::Cbor.encode(&body).unwrap());
+
+    app.receive_catalog(board, DeviceId::from_bytes([81; 32]), &bytes, 0)
+        .await
+        .unwrap();
+    app.receive_catalog(BoardId::from_bytes([82; 32]), writer, &bytes, 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        app.fresh_local_state()
+            .await
+            .unwrap()
+            .newer_catalog_version(),
+        None
+    );
+    for _ in 0..2 {
+        assert!(app.receive_catalog(board, writer, &bytes, 0).await.unwrap());
+    }
+    assert_eq!(
+        app.fresh_local_state()
+            .await
+            .unwrap()
+            .newer_catalog_version(),
+        Some(crate::PROTOCOL_VERSION + 1)
+    );
 }

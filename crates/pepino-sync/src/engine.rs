@@ -132,6 +132,7 @@ impl<T: Transport> SyncEngine<T> {
             (local.peer_hint().is_some() && !local.roster_ready()).then(|| local.catalog_board());
         let (changes, status) = watch::channel(Status {
             node: node.status(),
+            newer_catalog: local.newer_catalog_version(),
             roster_pending,
             ..Default::default()
         });

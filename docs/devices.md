@@ -103,6 +103,8 @@ most 1,024 UTF-8 bytes after trimming surrounding whitespace. Renames
 are saved locally and propagate through the first board when daemons sync.
 Known devices' past work displays the current identity name.
 
+Upgrade all of your devices together.
+
 On upgrade, each device publishes the additions it recorded on that host
 once its own admission is in the synced roster. The originating device
 creates the initial record. Older additions keep an unknown add time.

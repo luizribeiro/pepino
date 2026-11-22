@@ -170,7 +170,9 @@ async fn ingest_catalog<A>(
             Ok(true) => match app.fresh_local_state().await {
                 Ok(local) => {
                     status.send_if_modified(|state| {
-                        let mut changed = false;
+                        let newer = local.newer_catalog_version();
+                        let mut changed = state.newer_catalog != newer;
+                        state.newer_catalog = newer;
                         for board in local
                             .boards()
                             .iter()

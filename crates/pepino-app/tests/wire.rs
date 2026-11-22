@@ -139,15 +139,15 @@ fn versioned_messages_have_a_shared_json_and_cbor_codec() {
     }
     assert_eq!(
         serde_json::to_value(request).unwrap(),
-        json!({"v":1,"request":{"op":"get_task","task":"97ad"}})
+        json!({"v":2,"request":{"op":"get_task","task":"97ad"}})
     );
     assert_eq!(
         serde_json::to_value(ok).unwrap(),
-        json!({"v":1,"result":{"ok":{"kind":"write","changed":false,"tasks":[],"edges":[]}}})
+        json!({"v":2,"result":{"ok":{"kind":"write","changed":false,"tasks":[],"edges":[]}}})
     );
     assert_eq!(
         serde_json::to_value(error).unwrap(),
-        json!({"v":1,"result":{"error":{"kind":"not_found","field":"task","task":"97ad"}}})
+        json!({"v":2,"result":{"error":{"kind":"not_found","field":"task","task":"97ad"}}})
     );
 }
 
@@ -165,9 +165,9 @@ fn both_codecs_check_the_version_before_the_operation_and_reject_extra_fields() 
             })
         );
         for invalid in [
-            json!({"v":1,"request":{"op":"add_task","title":"Replace the latch","tag":["greenhouse"]}}),
-            json!({"v":1,"request":{"op":"get_task","task":"97ad","tags":[]} }),
-            json!({"v":1,"request":{"op":"get_task","task":"97ad"},"extra":true}),
+            json!({"v":2,"request":{"op":"add_task","title":"Replace the latch","tag":["greenhouse"]}}),
+            json!({"v":2,"request":{"op":"get_task","task":"97ad","tags":[]} }),
+            json!({"v":2,"request":{"op":"get_task","task":"97ad"},"extra":true}),
         ] {
             let bytes = format.encode(&invalid).unwrap();
             assert!(matches!(
@@ -313,7 +313,7 @@ fn task_comments_and_edge_effects_have_stable_shapes() {
         round_trip(&effect);
     }
 
-    let response = json!({"v":1,"result":{"ok":{"kind":"task","task":record,"edges":[]}}});
+    let response = json!({"v":2,"result":{"ok":{"kind":"task","task":record,"edges":[]}}});
     let wire = WireResponse::new(Ok(Response::Task {
         edges: vec![],
         task: Box::new(task),

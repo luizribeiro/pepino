@@ -35,6 +35,65 @@ mod network {
     use std::{net::UdpSocket, os::unix::fs::PermissionsExt};
 
     #[test]
+    fn status_and_daemon_report_a_newer_catalog_once() {
+        #[derive(serde::Serialize)]
+        struct FutureCatalog {
+            v: u32,
+            identity: pepino_core::IdentityId,
+            new_field: bool,
+        }
+
+        let mut fixture = Fixture::new("");
+        let path = &fixture.sandbox.config;
+        let config = std::fs::read_to_string(path)
+            .unwrap()
+            .replace("log_level = 'off'", "log_level = 'warn'");
+        std::fs::write(path, config).unwrap();
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let version = pepino_app::PROTOCOL_VERSION + 1;
+        runtime.block_on(async {
+            let app = pepino_app::App::open(&fixture.data, 0).await.unwrap();
+            let local = app.local_state();
+            let mut bytes = b"pepino-board-catalog\0".to_vec();
+            bytes.extend(
+                pepino_app::WireFormat::Cbor
+                    .encode(&FutureCatalog {
+                        v: version,
+                        identity: local.identity_id,
+                        new_field: true,
+                    })
+                    .unwrap(),
+            );
+            for _ in 0..2 {
+                app.receive_catalog(local.catalog_board(), local.device_id, &bytes)
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let message = "another of your devices runs a newer pepino; upgrade this one";
+        assert!(fixture.run(&["status"]).contains(message));
+        let status = as_json(&fixture.run(&["status", "--json"]));
+        assert_eq!(
+            status["newer_catalog"],
+            json!({"version":version,"message":message})
+        );
+
+        fixture.foreground();
+        fixture.run(&["daemon", "status"]);
+        fixture.run(&["daemon", "status"]);
+        fixture.run(&["daemon", "stop"]);
+        let output = fixture.wait_foreground();
+        assert!(output.status.success(), "{output:?}");
+        let log = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(log.matches(message).count(), 1, "{log}");
+    }
+
+    #[test]
     fn serves_control_requests_refuses_a_second_instance_and_stops() {
         let mut fixture = Fixture::new("");
         let pid = fixture.foreground();

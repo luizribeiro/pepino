@@ -4,7 +4,7 @@ use crate::app::invalid;
 use crate::state::storage;
 use crate::{AppError, Request, Response};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -100,7 +100,7 @@ impl WireFormat {
         self.decode_value(bytes)
     }
 
-    fn decode_value<T: DeserializeOwned>(self, mut bytes: &[u8]) -> Result<T, AppError> {
+    pub(super) fn decode_value<T: DeserializeOwned>(self, mut bytes: &[u8]) -> Result<T, AppError> {
         match self {
             Self::Json => serde_json::from_slice(bytes).map_err(|error| invalid("request", error)),
             Self::Cbor => {
@@ -119,14 +119,14 @@ impl WireFormat {
 #[test]
 fn routing_is_optional_in_both_wire_formats() {
     let routed =
-        serde_json::json!({"v":1,"board":"Workshop","all_boards":true,"request":{"op":"status"}});
+        serde_json::json!({"v":2,"board":"Workshop","all_boards":true,"request":{"op":"status"}});
     for format in [WireFormat::Json, WireFormat::Cbor] {
         let request: WireRequest = format.decode(&format.encode(&routed).unwrap()).unwrap();
         assert_eq!(request.board.as_deref(), Some("Workshop"));
         assert!(request.all_boards);
     }
     let request: WireRequest = WireFormat::Json
-        .decode(br#"{"v":1,"request":{"op":"status"}}"#)
+        .decode(br#"{"v":2,"request":{"op":"status"}}"#)
         .unwrap();
     assert!(request.board.is_none());
     assert!(!request.all_boards);

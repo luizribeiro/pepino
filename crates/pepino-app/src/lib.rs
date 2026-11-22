@@ -22,6 +22,7 @@ mod board_request;
 mod board_requests;
 pub use board_relays::{BoardRelay, RelayCopy, RelayState};
 mod catalog;
+pub use catalog::CATALOG_UPGRADE_NOTICE;
 mod device_grant;
 mod device_grant_auth;
 mod device_install;

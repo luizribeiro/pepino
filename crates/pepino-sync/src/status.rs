@@ -6,6 +6,7 @@ use pepino_node::{NodeEvent, NodeStatus};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Status {
+    pub newer_catalog: Option<u32>,
     pub board_joins: BTreeMap<BoardId, BoardJoinState>,
     pub(crate) catalog_generation: u64,
     pub(crate) roster_pending: Option<BoardId>,

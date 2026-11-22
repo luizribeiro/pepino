@@ -19,7 +19,7 @@ async fn board_requests_route_tasks_and_update_only_local_current() {
         .await
         .unwrap();
     let request =
-        json!({"v":1,"board":"5151","request":{"op":"add_task","title":"Measure ash boards"}});
+        json!({"v":2,"board":"5151","request":{"op":"add_task","title":"Measure ash boards"}});
     for format in [WireFormat::Json, WireFormat::Cbor] {
         let bytes = format.encode(&request).unwrap();
         let wire: WireRequest = format.decode(&bytes).unwrap();

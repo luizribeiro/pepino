@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use futures_util::StreamExt;
 use pepino_node::{Node, NodeSettings};
 use pepino_sync::SyncEngine;
 use tokio::{
@@ -80,6 +81,7 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         log(level, LogLevel::Info, "daemon stopped");
         return Ok(());
     }
+    let mut upgrade_logged = false;
     loop {
         let outcome = cycle(
             &socket.listener,
@@ -88,6 +90,7 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
             started,
             &mut terminate,
             &mut interrupt,
+            &mut upgrade_logged,
         )
         .await?;
         if matches!(outcome, End::Stopped) {
@@ -114,6 +117,7 @@ async fn cycle(
     started: Instant,
     terminate: &mut Signal,
     interrupt: &mut Signal,
+    upgrade_logged: &mut bool,
 ) -> Result<End, CliError> {
     let node = tokio::select! {
         _ = terminate.recv() => return Ok(End::Stopped),
@@ -136,6 +140,7 @@ async fn cycle(
                 _ = terminate.recv() => Ok(End::Stopped),
                 _ = interrupt.recv() => Ok(End::Stopped),
                 result = server::serve(listener, &engine, started) => result.map_err(socket_error),
+                () = log_catalog_upgrade(&engine, level, upgrade_logged) => unreachable!("status monitoring does not end"),
             };
             node.prepare_shutdown();
             engine_stop = match engine.shutdown().await {
@@ -155,6 +160,20 @@ async fn cycle(
         .await
         .map_err(|error| shutdown_failure("the network node", error))?;
     engine_stop.and(outcome)
+}
+
+async fn log_catalog_upgrade(engine: &SyncEngine, level: LogLevel, logged: &mut bool) {
+    if !*logged {
+        let mut changes = std::pin::pin!(engine.status_changes());
+        while let Some(status) = changes.next().await {
+            if status.newer_catalog.is_some() {
+                log(level, LogLevel::Warn, pepino_app::CATALOG_UPGRADE_NOTICE);
+                *logged = true;
+                break;
+            }
+        }
+    }
+    std::future::pending().await
 }
 
 pub(super) fn shutdown_failure(component: &str, error: impl std::fmt::Display) -> CliError {
