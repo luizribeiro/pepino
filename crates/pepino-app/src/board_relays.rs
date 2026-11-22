@@ -32,6 +32,14 @@ impl std::fmt::Display for RelayState {
     }
 }
 
+/// What is known about a relay's stored copy of a board.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RelayCopy {
+    Absent,
+    RemovalPending,
+    Kept,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct BoardRelay {
     pub revision: RelayRevision,
@@ -47,6 +55,25 @@ impl BoardRelay {
             self.state,
             RelayState::Requested | RelayState::Unreachable | RelayState::RemovalPendingRestart
         )
+    }
+
+    fn releasable_by(&self, device: DeviceId) -> bool {
+        self.carry && self.revision.writer == device && self.state != RelayState::Refused
+    }
+
+    fn copy(&self, device: DeviceId) -> RelayCopy {
+        match (self.carry, self.state) {
+            (true, RelayState::Refused)
+            | (false, RelayState::Removed | RelayState::RemovalPendingRestart) => RelayCopy::Absent,
+            (false, RelayState::Requested) if self.revision.writer == device => {
+                RelayCopy::RemovalPending
+            }
+            _ => RelayCopy::Kept,
+        }
+    }
+
+    fn sequence_after(&self, now: u64) -> Option<u64> {
+        Some(now.max(self.revision.sequence.checked_add(1)?))
     }
 
     fn record(&mut self, answer: Option<RelayAnswer>) {
@@ -89,6 +116,49 @@ impl LocalState {
             .get(&board)
             .into_iter()
             .flat_map(|entries| entries.iter().map(|(&id, entry)| (id, entry)))
+    }
+
+    pub fn relay_copies(&self, board: BoardId) -> impl Iterator<Item = (DeviceId, RelayCopy)> {
+        self.board_relays(board)
+            .map(|(relay, entry)| (relay, entry.copy(self.device_id)))
+    }
+
+    /// Boards this person has left whose relay copies this device handed over and can remove.
+    pub fn departed_boards_on_relays(&self) -> impl Iterator<Item = BoardId> {
+        self.boards().iter().map(|board| board.id).filter(|&board| {
+            self.board_departure_confirmed(board) && self.holds_relay_copies(board)
+        })
+    }
+
+    fn holds_relay_copies(&self, board: BoardId) -> bool {
+        self.board_relays(board)
+            .any(|(_, entry)| entry.releasable_by(self.device_id))
+    }
+
+    fn release_relays(&mut self, board: BoardId, now: u64) {
+        let device = self.device_id;
+        for entry in self
+            .catalog
+            .relays
+            .get_mut(&board)
+            .into_iter()
+            .flat_map(BTreeMap::values_mut)
+        {
+            if entry.releasable_by(device)
+                && let Some(sequence) = entry.sequence_after(now)
+            {
+                *entry = BoardRelay {
+                    revision: RelayRevision {
+                        sequence,
+                        writer: device,
+                    },
+                    state: RelayState::Requested,
+                    carry: false,
+                    relay_url: entry.relay_url.take(),
+                    reason: None,
+                };
+            }
+        }
     }
 
     fn pending_relay(
@@ -178,13 +248,9 @@ impl App {
                 }
                 let sequence = match previous {
                     None => now,
-                    Some(entry) => now.max(
-                        entry
-                            .revision
-                            .sequence
-                            .checked_add(1)
-                            .ok_or_else(|| invalid("relay", "revision space exhausted"))?,
-                    ),
+                    Some(entry) => entry
+                        .sequence_after(now)
+                        .ok_or_else(|| invalid("relay", "revision space exhausted"))?,
                 };
                 entries.insert(
                     peer.id,
@@ -199,6 +265,22 @@ impl App {
                         reason: None,
                     },
                 );
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Asks every relay this device handed the board to for removal. A device that may no
+    /// longer write leaves the requests as they are.
+    pub async fn release_board_relays(
+        &self,
+        board: BoardId,
+        now: u64,
+    ) -> Result<LocalState, AppError> {
+        self.try_update_local_state(move |local| {
+            if local.check_device_write().is_ok() {
+                local.release_relays(board, now);
             }
             Ok(())
         })
@@ -319,4 +401,112 @@ async fn a_superseded_request_moves_past_the_relay_revision() {
         .await
         .unwrap();
     assert_eq!(request(&app.fresh_local_state().await.unwrap()), refused);
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn releasing_a_board_asks_only_the_relays_this_device_handed_it_to() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
+    let board = app.local_state().board_id();
+    let device = app.local_state().device_id;
+    let relay = |name: &str| {
+        pepino_node::DeviceCredentials::load_or_create(dir.path().join(name))
+            .unwrap()
+            .device_id()
+    };
+    let [carrying, refused, foreign, unanswered] = [
+        "carrying.cbor",
+        "refused.cbor",
+        "foreign.cbor",
+        "unanswered.cbor",
+    ]
+    .map(relay);
+    let requested = 1_795_300_000_000;
+    for id in [carrying, refused, foreign, unanswered] {
+        let peer = PeerHint {
+            id,
+            relay_url: Some("https://relay.example/".into()),
+        };
+        app.set_board_relay(vec![board], peer, true, requested)
+            .await
+            .unwrap();
+    }
+    let revision = RelayRevision {
+        sequence: requested,
+        writer: device,
+    };
+    for (id, answer) in [
+        (carrying, RelayAnswer::Carrying),
+        (refused, RelayAnswer::NotTrusted),
+        (foreign, RelayAnswer::Carrying),
+    ] {
+        app.record_relay_answer(board, id, revision, Some(answer))
+            .await
+            .unwrap();
+    }
+    let tablet = DeviceId::from_bytes([91; 32]);
+    app.update_local(move |local| {
+        let entries = local.catalog.relays.get_mut(&board).unwrap();
+        entries.get_mut(&foreign).unwrap().revision.writer = tablet;
+    })
+    .await
+    .unwrap();
+    let before = app.fresh_local_state().await.unwrap();
+    let copies = |local: &LocalState| local.relay_copies(board).collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        copies(&before),
+        [
+            (carrying, RelayCopy::Kept),
+            (refused, RelayCopy::Absent),
+            (foreign, RelayCopy::Kept),
+            (unanswered, RelayCopy::Kept),
+        ]
+        .into()
+    );
+    assert!(before.holds_relay_copies(board));
+    assert_eq!(before.departed_boards_on_relays().count(), 0);
+
+    let later = requested + 60_000;
+    let released = app.release_board_relays(board, later).await.unwrap();
+    assert_eq!(
+        copies(&released),
+        [
+            (carrying, RelayCopy::RemovalPending),
+            (refused, RelayCopy::Absent),
+            (foreign, RelayCopy::Kept),
+            (unanswered, RelayCopy::RemovalPending),
+        ]
+        .into()
+    );
+    assert!(!released.holds_relay_copies(board));
+    let entries: BTreeMap<_, _> = released.board_relays(board).collect();
+    for id in [carrying, unanswered] {
+        let entry = entries[&id];
+        assert_eq!(entry.revision.sequence, later);
+        assert_eq!(entry.revision.writer, device);
+        assert_eq!(entry.state, RelayState::Requested);
+        assert!(!entry.carry);
+        assert_eq!(entry.relay_url.as_deref(), Some("https://relay.example/"));
+    }
+    assert_eq!(
+        entries[&refused],
+        before.board_relays(board).collect::<BTreeMap<_, _>>()[&refused]
+    );
+    assert_eq!(entries[&foreign].revision.writer, tablet);
+    assert_eq!(
+        app.release_board_relays(board, later + 1).await.unwrap(),
+        released
+    );
+
+    let removal = entries[&carrying].revision;
+    app.record_relay_answer(board, carrying, removal, Some(RelayAnswer::Removed))
+        .await
+        .unwrap();
+    app.record_relay_answer(board, unanswered, removal, None)
+        .await
+        .unwrap();
+    let answered = app.fresh_local_state().await.unwrap();
+    assert_eq!(copies(&answered)[&carrying], RelayCopy::Absent);
+    assert_eq!(copies(&answered)[&unanswered], RelayCopy::Kept);
 }

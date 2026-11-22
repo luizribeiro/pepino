@@ -20,7 +20,7 @@ mod board_people;
 mod board_relays;
 mod board_request;
 mod board_requests;
-pub use board_relays::{BoardRelay, RelayState};
+pub use board_relays::{BoardRelay, RelayCopy, RelayState};
 mod catalog;
 mod device_grant;
 mod device_grant_auth;

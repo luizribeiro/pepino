@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use futures_util::{StreamExt, stream::FuturesUnordered};
@@ -84,7 +84,7 @@ pub(crate) async fn run(
             _ = stopping.changed() => return Ok(()),
             _ = tick.tick() => {
                 let step = async {
-                    if let Ok(local) = app.fresh_local_state().await {
+                    if let Ok(local) = state_with_departures_released(&app).await {
                         delivery.refresh(&local, &node, &app).await;
                     }
                 };
@@ -99,6 +99,19 @@ pub(crate) async fn run(
             }
         }
     }
+}
+
+async fn state_with_departures_released(app: &App) -> Result<LocalState, pepino_app::AppError> {
+    let mut local = app.fresh_local_state().await?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            elapsed.as_millis().try_into().unwrap_or(u64::MAX)
+        });
+    for board in local.departed_boards_on_relays().collect::<Vec<_>>() {
+        local = app.release_board_relays(board, now).await?;
+    }
+    Ok(local)
 }
 
 impl Delivery {
