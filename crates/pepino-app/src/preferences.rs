@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{AppError, app::invalid};
 
-const MAX_ENTRIES: usize = 256;
+const MAX_LIVE: usize = 256;
+const MAX_TOMBSTONES: usize = 1024;
 const MAX_KEY_BYTES: usize = 128;
 const MAX_VALUE_BYTES: usize = 4096;
 
@@ -76,12 +77,18 @@ impl Preferences {
         now: u64,
     ) -> Result<(), AppError> {
         validate(&key, value.as_deref())?;
-        if self.0.len() >= MAX_ENTRIES && !self.0.contains_key(&key) {
+        if value.is_some()
+            && self.get(&key).is_none_or(|entry| entry.value.is_none())
+            && self
+                .0
+                .values()
+                .filter(|entry| entry.value.is_some())
+                .count()
+                >= MAX_LIVE
+        {
             return Err(invalid(
                 "preference",
-                format!(
-                    "identity preference limit of {MAX_ENTRIES} keys reached (including deletions)"
-                ),
+                format!("identity preference limit of {MAX_LIVE} live keys reached"),
             ));
         }
         let mut clock = Clock::new();
@@ -103,7 +110,11 @@ impl Preferences {
             return Err(clock_error());
         }
         let entry = Preference::new(&key, value, writer, hlc);
+        let deleted = entry.value.is_none();
         self.0.insert(key, entry);
+        if deleted {
+            self.trim_tombstones();
+        }
         Ok(())
     }
 
@@ -122,10 +133,32 @@ impl Preferences {
                     .is_none_or(|old| old.revision() < entry.revision())
             {
                 self.0.insert(key, entry);
-                // Keeping the lowest keys makes truncation independent of delivery order.
-                if self.0.len() > MAX_ENTRIES {
-                    self.0.pop_last();
-                }
+            }
+        }
+        let mut live = 0;
+        self.0.retain(|_, entry| {
+            live += usize::from(entry.value.is_some());
+            entry.value.is_none() || live <= MAX_LIVE
+        });
+        self.trim_tombstones();
+    }
+
+    fn trim_tombstones(&mut self) {
+        let mut tombstones: Vec<_> = self
+            .0
+            .iter()
+            .filter(|(_, entry)| entry.value.is_none())
+            .map(|(key, entry)| (entry.revision(), key))
+            .collect();
+        if tombstones.len() > MAX_TOMBSTONES {
+            let excess = tombstones.len() - MAX_TOMBSTONES;
+            tombstones.select_nth_unstable(excess);
+            let expired: Vec<_> = tombstones[..excess]
+                .iter()
+                .map(|(_, key)| (*key).clone())
+                .collect();
+            for key in expired {
+                self.0.remove(&key);
             }
         }
     }
@@ -245,17 +278,7 @@ mod tests {
     #[test]
     fn caps_merged_keys_and_ignores_invalid_entries() {
         let mut prefs = Preferences::default();
-        for i in 0..MAX_ENTRIES {
-            prefs.merge(event(&format!("view/tool-{i:03}"), None, 3, 2), NOW);
-        }
-        let incoming = event("view/greenhouse", Some("tag:garden"), 3, 2);
-        let mut opposite = incoming.clone();
-        opposite.merge(prefs.clone(), NOW);
-        prefs.merge(incoming, NOW);
-        assert_eq!(prefs, opposite);
-        assert_eq!(prefs.0.len(), MAX_ENTRIES);
-        assert!(prefs.get("view/tool-255").is_none());
-
+        prefs.merge(event("view/greenhouse", Some("tag:garden"), 3, 2), NOW);
         let before = prefs.clone();
         let oversized = "é".repeat(MAX_VALUE_BYTES);
         prefs.merge(event("view/greenhouse", Some(&oversized), 3, 3), NOW);
@@ -266,28 +289,96 @@ mod tests {
         assert_eq!(prefs, before);
     }
     #[test]
-    fn rejects_oversized_writes_and_counts_tombstones_towards_the_limit() {
+    fn deletions_free_live_slots_and_a_remote_tombstone_does_not_evict_a_view() {
+        let mut prefs = Preferences::default();
+        let writer = DeviceId::from_bytes([1; 32]);
+        for index in 0..MAX_LIVE {
+            prefs
+                .write(
+                    format!("view/old-{index:03}"),
+                    Some("tag:tools".into()),
+                    writer,
+                    NOW,
+                )
+                .unwrap();
+        }
+        let full = prefs
+            .write("view/zebra".into(), Some("tag:garden".into()), writer, NOW)
+            .unwrap_err();
+        assert!(full.to_string().contains("256 live keys"));
+        for index in 0..MAX_LIVE {
+            prefs
+                .write(format!("view/old-{index:03}"), None, writer, NOW)
+                .unwrap();
+        }
+        prefs
+            .write("view/zebra".into(), Some("tag:garden".into()), writer, NOW)
+            .unwrap();
+        prefs.merge(event("view/aaa", None, 2, 0), NOW);
+        assert_eq!(
+            prefs.get("view/zebra").unwrap().value.as_deref(),
+            Some("tag:garden")
+        );
+        prefs
+            .write(
+                "view/old-000".into(),
+                Some("tag:repair".into()),
+                writer,
+                NOW,
+            )
+            .unwrap();
+    }
+
+    proptest! {
+        #[test]
+        fn fold_converges_across_both_caps_for_distinct_live_and_deleted_keys(
+            ranks in any::<[u16; 3]>(),
+            shift in 0u32..10_000,
+        ) {
+            let snapshots: Vec<_> = (0..3).map(|device| {
+                let live = (0..100).map(|i| (format!("view/live-{device}-{i:03}"), Some("tag:garden")));
+                let deleted = (0..360).map(|i| (format!("view/deleted-{device}-{i:03}"), None));
+                Preferences(live.chain(deleted).enumerate().map(|(i, (key, value))| {
+                    let clock = Hlc {wall_ms: NOW, counter: shift + i as u32};
+                    let entry = Preference::new(&key, value.map(str::to_owned), DeviceId::from_bytes([device + 1; 32]), clock);
+                    (key, entry)
+                }).collect())
+            }).collect();
+            let mut baseline = Preferences::default();
+            for snapshot in &snapshots {
+                baseline.merge(snapshot.clone(), NOW);
+            }
+            let mut permuted: Vec<_> = ranks.into_iter().zip(snapshots).collect();
+            permuted.sort_by_key(|(rank, _)| *rank);
+            let mut folded = Preferences::default();
+            for (_, snapshot) in permuted {
+                folded.merge(snapshot.clone(), NOW);
+                folded.merge(snapshot, NOW);
+            }
+            prop_assert_eq!(&baseline, &folded);
+            prop_assert_eq!(folded.iter().filter(|(_, e)| e.value.is_some()).count(), MAX_LIVE);
+            prop_assert_eq!(folded.iter().filter(|(_, e)| e.value.is_none()).count(), MAX_TOMBSTONES);
+            prop_assert!(!folded.iter().any(|(_, e)| e.value.is_none() && e.hlc.counter == shift + 100));
+        }
+    }
+
+    #[test]
+    fn rejects_oversized_writes() {
         let mut prefs = Preferences::default();
         let writer = DeviceId::from_bytes([42; 32]);
-        let write = |prefs: &mut Preferences, key, value| prefs.write(key, value, writer, 8);
-        let oversized = write(
-            &mut prefs,
-            "view/greenhouse".into(),
-            Some("é".repeat(MAX_VALUE_BYTES)),
-        )
-        .unwrap_err();
-        assert!(oversized.to_string().contains("4096 bytes"));
-        assert!(write(&mut prefs, "greenhouse".into(), None).is_err());
-        for i in 0..MAX_ENTRIES {
-            write(&mut prefs, format!("view/tool-{i:03}"), None).unwrap();
-        }
-        let full = write(&mut prefs, "view/greenhouse".into(), None).unwrap_err();
-        assert!(full.to_string().contains("256 keys"));
-        write(
-            &mut prefs,
-            "view/tool-001".into(),
-            Some("tag:hardware".into()),
-        )
-        .unwrap();
+        let oversized = prefs
+            .write(
+                "view/greenhouse".into(),
+                Some("é".repeat(MAX_VALUE_BYTES)),
+                writer,
+                NOW,
+            )
+            .unwrap_err();
+        assert!(
+            oversized
+                .to_string()
+                .contains(&format!("{MAX_VALUE_BYTES} bytes"))
+        );
+        assert!(prefs.write("greenhouse".into(), None, writer, NOW).is_err());
     }
 }
