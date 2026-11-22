@@ -1,141 +1,114 @@
 # Share a board
 
-Create a board for the work you want to share. Your first board is never
-shareable. It carries your private catalog, and its history contains the IDs
-that grant access to your other boards. Every new member receives the full
-history of the board they join.
+Invite another person to a board, set what they can do, and remove them or
+leave. Both people need `ppn` set up with the same `network` setting, and
+their devices must be able to [reach each other](daemon.md).
+
+Your first board cannot be shared. Create one for the shared work:
 
 ```sh
-# Luiz creates the shared board.
 ppn board new House
-
-# Ana runs this on an initialized device.
-ppn board request --name 'Garden tablet'
-
-# Luiz reads Ana's request and verifies the fingerprint with her.
-ppn board invite - --board House --role write --fingerprint FINGERPRINT < request.txt
-
-# Ana reads Luiz's grant.
-ppn board join - --timeout 45s < grant.txt
 ```
 
-Exchange the request and grant through a private channel. Enter either code
-from standard input or use `--from-file`. Use `--fingerprint` for a script
-and compare it against the fingerprint shown on the requesting host.
-Interactive invitations prompt for confirmation. `--yes` confirms without prompting.
-Board requests expire after seven days. Prepare a fresh request each time
-you want to join another board.
+Everyone you invite can read the board's **entire history**, including work
+done before they joined. Everyone on a shared board must run the same `ppn`
+version; upgrade together.
 
-If the grantor is offline, a join can exit with status 7 (`pending`).
-The daemon keeps the invitation and completes the first sync when it finds
-the granting device. Use `ppn board ls`, `ppn status`, or `ppn sync` to check
-progress.
+## Invite someone
 
-## Access
+The invitation passes two secret codes over a private channel: a request from
+the person joining and a grant from a manager of the board.
 
-| Role | Access |
+1. The person joining creates a request and sends it to you:
+
+   ```console
+   $ ppn board request > request.txt
+   Device tablet, fingerprint XXXX-XXXX-XXXX-XXXX. This request code is secret. Expires 2026-11-29 05:04.
+   ```
+
+2. You confirm the fingerprint with them, by voice or another channel you
+   trust, then create the grant and send it back:
+
+   ```sh
+   ppn board invite --from-file request.txt --board House --role write \
+     --fingerprint XXXX-XXXX-XXXX-XXXX > grant.txt
+   ```
+
+3. They join while one of your devices is online:
+
+   ```console
+   $ ppn board join --from-file grant.txt --timeout 60s
+   Board joined. Initial sync complete.
+   ```
+
+A request is valid for seven days and for one invitation. If the join cannot
+reach your device in time it exits with status 7 and completes later by
+itself; `ppn board ls` shows the progress. The person's other devices get
+access automatically when a manager's device is online.
+
+## Choose a role
+
+| Role | Can do |
 | --- | --- |
-| `read` | Read tasks, comments, and the board's complete history. Give this to people who follow the work. |
-| `write` | Read the history and publish changes to tasks, assignments, and comments. Give this to people who work on the board. This is the default. |
-| `manage` | Write and manage invitations, roles, and removals. Give this to trusted people who administer the board. |
+| `read` | Read tasks, comments, and history. |
+| `write` | Also create and change tasks and comments. The default. |
+| `manage` | Also invite people, change roles, and remove people. |
 
-Recipients join under their existing identities. A manager's daemon
-adds confirmed active devices at the person's role and removes revoked
-devices. Each device signs a confirmation that identifies the person
-by identity ID and root signing key. A new device shows **waiting for
-access** until a manager enrolls it. A device that confirms two people
-on the same board shows an **identity conflict** and loses access.
+A role belongs to a person and applies to all their devices.
 
-Board members can see each person's display name and signed device roster,
-including device names, public IDs, and admission and revocation details.
-Identity cards also carry expiring device enrollment bundles with public
-signing and encryption material. A bundle only supplies the public
-credentials needed to enroll a device that has confirmed its identity.
-The card contains no private keys or private catalog capabilities.
+## See who is on a board
 
-Use `ppn board members House` to see people, effective device membership,
-and membership history. **Device roles differ** indicates a role change
-that has yet to reach every device. **Removal pending** indicates a
-revoked device that still has transport access. `ppn log --board House`
-also shows invitations, role changes, removals, and completed leaves.
-Records that lose to a concurrent removal appear as **superseded**. An
-invitation restores membership only if it follows every recorded removal
-for that person. A change that was declined because its author lost
-manager access or because it would leave the board without a manager
-appears as **not applied**. Use `--json` for full IDs and timestamps.
+```console
+$ ppn board members House
+Members of House
+Ada G (manage)
+  Garden laptop · member · added 2026-11-22T10:03:55.433Z
+Ana (write) · invited by Ada G on 2026-11-22T10:04:54.065903935Z
+  tablet · member · added 2026-11-22T10:04:46.216Z
+2026-11-22T10:04:54.111096Z · Ada G invited Ana as write
+```
 
-A read member sends signed roster updates and leave requests through an
-encrypted channel. Managers receive and relay those records. They can
-delay or drop updates. A device signature protects each roster edit and
-leave request from forgery. The departing manager hands the channel to
-another board manager before leaving. A blocked handoff is reported as
-an incomplete change.
+Members see each other's display names and device names. `ppn log --board
+House` shows membership changes next to task history.
 
-## Manage members
-
-Select a person by name, `name#suffix`, full identity ID, or `me`. If a
-name matches multiple people, the error lists the qualified names to
-use. The same references work with `ppn assign` and `assignee:` filters.
+## Change a role or remove someone
 
 ```sh
-ppn board role Ana write --board House
+ppn board role Ana read --board House
 ppn board remove Ana --board House --yes
+```
+
+Name a person by display name, by the `name#suffix` form that an ambiguity
+error suggests, or as `me`.
+
+Removal changes the board's keys, so the person cannot read anything new. It
+cannot take back what their devices already hold. If you invite them again
+they get the full history, including the time they were away.
+
+A board must keep at least one manager: `ppn` refuses a change that would
+leave none.
+
+**Two managers must not remove or demote each other at the same time.** If
+both changes go through, the board has no manager and nobody can ever fix
+it. Demoting or removing a manager therefore needs
+`--yes --i-understand-mutual-removal-risk`; agree on the change with the other
+manager first.
+
+## Leave a board and delete your copy
+
+```sh
 ppn board leave --board House --yes
+```
+
+Your devices stop syncing the board at once. A manager's device completes
+the departure when it is next online; until then `ppn board ls` shows
+`leaving (waiting for a manager)`, then `left`. A manager who leaves a board
+with one other manager needs `--i-understand-mutual-removal-risk` too.
+
+After you have left or been removed, the tasks stay readable on each device.
+To delete them, stop the daemon and forget the board, on every device:
+
+```sh
+ppn daemon stop
 ppn board forget House --yes
 ```
-
-Role changes and removals apply to all confirmed devices. A command reports
-completion after checking the transport membership. An incomplete result
-explains what still needs to happen. A non-manager
-who leaves pauses board task sync locally while a manager's daemon
-processes the signed request. Use `ppn status` or `ppn board ls` to check
-its progress. A sole managing person must promote another person
-before demoting themselves or leaving. Device revocation also checks
-for the last manager.
-
-Removing or demoting another manager requires `--yes` and
-`--i-understand-mutual-removal-risk`. A manager leaving a board with one
-other manager must also give this acknowledgement. Two managers can issue
-conflicting changes before they see one another's actions. The transport
-may apply both and leave the board unrecoverable. Coordinate manager changes before issuing these commands.
-
-Removing a person rotates the board's keys. The former member keeps
-everything they already decrypted, and the transport may still deliver
-ciphertext. A device that was offline during removal can be blocked on
-reconnect before it learns of the removal. Re-inviting a former member
-gives them the complete history, including work from the time they
-were away. Past tasks, comments, and assignments keep their authors
-and assignees.
-
-If a removal is interrupted because its author loses the Manage role, other
-managers do not complete it automatically. A current manager can run
-`ppn board remove` again.
-
-After departure, the local history is read-only. `ppn board forget House
---yes` deletes that host's application history and catalog entry for
-House. Stop the local daemon before forgetting a board. Run the command
-on each device where you want to remove the local history. A device-level
-removal leaves the person's board membership intact and cannot be used to
-forget the board.
-The node database can retain encrypted transport operations and
-membership metadata. Copies already exported or backed up must be
-deleted separately.
-
-A roster originally signed against a private catalog needs a portable
-proof before it can be used in an invitation. The command reports this
-case if the roster cannot be verified separately from the catalog.
-
-## Security
-
-A request contains a one-time secret. A grant contains a board ID and is
-authenticated using the request secret and the granting device's signing
-key. Treat both codes and full board IDs as secrets. Board IDs are
-capabilities. Keep them out of logs, shell history, and shared files.
-Standard input keeps codes out of process arguments. Look-alike names from
-different alphabets can appear identical. Verify the request fingerprint
-with the person through a trusted channel when it matters.
-
-Access applies to the selected board. The private catalogs and private
-boards of both people stay in their respective identities. Everyone
-granted access can see the board's entire history. Removal cannot retract
-anything a device already decrypted.
