@@ -128,10 +128,10 @@ mod tracking {
                 NodeEvent::ReplayEnded { board, error } => {
                     if let Some(item) = state.boards.get_mut(board) {
                         item.replaying = false;
-                        if let Some(error) = error {
-                            item.operation_read_error =
-                                Some(format!("replay board operations: {error}"));
-                        }
+                        item.operation_read_error =
+                            read_error("replay", error.as_deref()).or_else(|| {
+                                item.operation_read_error.take().filter(|_| error.is_some())
+                            });
                     }
                 }
                 NodeEvent::SyncStarted {
@@ -155,12 +155,10 @@ mod tracking {
                 } => {
                     if let Some(item) = state.boards.get_mut(board) {
                         item.active_syncs.remove(&(*peer, *session_id));
-                        if let Some(error) =
-                            error.as_ref().filter(|error| is_header_read_error(error))
-                        {
-                            item.operation_read_error =
-                                Some(format!("read a board operation during sync: {error}"));
-                        }
+                        item.operation_read_error =
+                            read_error("sync", error.as_deref()).or_else(|| {
+                                item.operation_read_error.take().filter(|_| error.is_some())
+                            });
                     }
                 }
                 NodeEvent::MembershipHeaderMeasured {
@@ -216,7 +214,14 @@ mod tracking {
         }
     }
 
-    // p2panda's public SyncError contains only the protocol error's display text.
+    fn read_error(phase: &str, error: Option<&str>) -> Option<String> {
+        error
+            .filter(|error| is_header_read_error(error))
+            .map(|error| format!("read a board operation during {phase}: {error}"))
+    }
+
+    // p2panda exposes sync and replay failures only as text. These are the Display strings of
+    // LogSyncError::DecodeHeader and SqliteError::Decode in the pinned p2panda 0.8.1.
     fn is_header_read_error(error: &str) -> bool {
         error.contains("failed decoding incoming header bytes:")
             || error.contains("could not decode corrupted 'header' value")
@@ -284,18 +289,45 @@ fn reconnect_requires_a_fresh_catch_up() {
 #[cfg(test)]
 mod operation_read_errors {
     use super::*;
-    use crate::NodeEvent;
+    use crate::{
+        HEADER_ITEM_LIMIT, NodeEvent,
+        header_headroom::tests::{header, store},
+    };
+    use p2panda_core::{AnyHeader, Hash};
+    use p2panda_store::{SqliteStore, operations::OperationStore};
 
     const BOARD: BoardId = BoardId::from_bytes([11; 32]);
     const PEER: DeviceId = DeviceId::from_bytes([22; 32]);
 
-    fn after_sync(error: Option<&str>) -> Option<String> {
+    fn incoming_header_error() -> String {
+        let oversized = AnyHeader::decode(&header(HEADER_ITEM_LIMIT + 1)).unwrap_err();
+        p2panda_sync::protocols::LogSyncError::DecodeHeader(oversized).to_string()
+    }
+
+    async fn stored_header_error() -> String {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = crate::relay_ledger::tests::open(&dir.path().join("node.sqlite")).await;
+        let hash = Hash::from_bytes([77; 32]);
+        store(&pool, &hash.to_string(), b"control".to_vec(), &[0x9f]).await;
+        let store = SqliteStore::from_pool(pool);
+        <SqliteStore as OperationStore<p2panda::operation::Operation, Hash>>::get_operation(
+            &store, &hash,
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+    }
+
+    fn opened() -> Status {
         let status = Status::default();
         status.send(NodeEvent::BoardOpened {
             board: BOARD,
             replaying: false,
         });
-        status.send(sync_ended(error));
+        status
+    }
+
+    fn read_error(status: &Status) -> Option<String> {
         status.snapshot().boards[&BOARD]
             .operation_read_error
             .clone()
@@ -316,45 +348,56 @@ mod operation_read_errors {
         }
     }
 
-    #[test]
-    fn a_sync_that_cannot_decode_a_header_is_recorded_for_its_board() {
-        for cause in [
-            "failed decoding incoming header bytes: DecodingHeader(LengthTooLarge)",
-            "database error: could not decode corrupted 'header' value",
-        ] {
+    fn replay_ended(error: Option<&str>) -> NodeEvent {
+        NodeEvent::ReplayEnded {
+            board: BOARD,
+            error: error.map(str::to_owned),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_header_errors_p2panda_produces_are_recorded_for_the_board() {
+        for cause in [incoming_header_error(), stored_header_error().await] {
+            let status = opened();
+            status.send(sync_ended(Some(&cause)));
             assert_eq!(
-                after_sync(Some(cause)),
+                read_error(&status),
                 Some(format!("read a board operation during sync: {cause}"))
+            );
+            let status = opened();
+            status.send(replay_ended(Some(&cause)));
+            assert_eq!(
+                read_error(&status),
+                Some(format!("read a board operation during replay: {cause}"))
             );
         }
     }
 
     #[test]
-    fn clean_and_interrupted_syncs_record_no_read_error() {
-        assert_eq!(after_sync(None), None);
-        assert_eq!(after_sync(Some("connection lost: timed out")), None);
+    fn other_sync_and_replay_failures_are_not_read_errors() {
+        for event in [
+            sync_ended(None),
+            sync_ended(Some("connection lost: timed out")),
+            replay_ended(None),
+            replay_ended(Some("a critical error occurred in the replay task")),
+        ] {
+            let status = opened();
+            status.send(event);
+            assert_eq!(read_error(&status), None);
+        }
     }
 
     #[test]
-    fn the_read_error_outlives_later_syncs_and_ends_with_the_board() {
-        let status = Status::default();
-        status.send(NodeEvent::BoardOpened {
-            board: BOARD,
-            replaying: true,
-        });
-        status.send(NodeEvent::ReplayEnded {
-            board: BOARD,
-            error: Some("store: row 14 has no header".into()),
-        });
-        status.send(sync_ended(None));
-        assert_eq!(
-            status.snapshot().boards[&BOARD]
-                .operation_read_error
-                .as_deref(),
-            Some("replay board operations: store: row 14 has no header")
-        );
-        status.send(NodeEvent::BoardClosed { board: BOARD });
-        assert!(!status.snapshot().boards.contains_key(&BOARD));
+    fn a_later_clean_sync_or_replay_clears_the_read_error() {
+        let cause = incoming_header_error();
+        for clean in [sync_ended(None), replay_ended(None)] {
+            let status = opened();
+            status.send(sync_ended(Some(&cause)));
+            status.send(sync_ended(Some("connection lost: timed out")));
+            assert!(read_error(&status).is_some());
+            status.send(clean);
+            assert_eq!(read_error(&status), None);
+        }
     }
 }
 

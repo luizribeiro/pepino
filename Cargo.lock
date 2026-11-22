@@ -3396,6 +3396,7 @@ dependencies = [
  "p2panda-net",
  "p2panda-spaces",
  "p2panda-store",
+ "p2panda-sync",
  "pepino-core",
  "proptest",
  "serde",

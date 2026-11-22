@@ -29,4 +29,5 @@ p2panda-encryption.workspace = true
 ed25519-dalek = "2.2"
 
 [dev-dependencies]
+p2panda-sync.workspace = true
 proptest = { version = "1", default-features = false, features = ["std"] }
