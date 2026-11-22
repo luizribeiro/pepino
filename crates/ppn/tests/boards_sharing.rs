@@ -1023,3 +1023,88 @@ fn a_removed_member_has_its_relays_delete_the_board_before_forgetting_it() {
     assert!(!warning.contains(&relay_id));
     relay.stop();
 }
+
+#[test]
+fn preferences_stay_private_when_two_identities_share_a_board() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = dir.path().file_name().unwrap().to_str().unwrap();
+    let owner = host(network, "Luiz", "Desktop", "Owner private");
+    let guest = host(network, "Ana", "Tablet", "Guest private");
+    let shared = owner.json(&["board", "new", "House"]);
+    let shared: pepino_core::BoardId = shared["board"]["id"].as_str().unwrap().parse().unwrap();
+    join(&owner, &guest, "write");
+
+    let owner_linked = Host::new(network);
+    let code = owner.add(&owner_linked.request("Owner linked"), &[]);
+    owner_linked.run(&["device", "join", &code, "--timeout", "60s"]);
+    let guest_linked = Host::new(network);
+    let code = guest.add(&guest_linked.request("Guest linked"), &[]);
+    guest_linked.run(&["device", "join", &code, "--timeout", "60s"]);
+
+    let filters = [
+        (&owner, &owner_linked, "owner-secret"),
+        (&guest, &guest_linked, "guest-secret"),
+    ];
+    for (source, linked, name) in filters {
+        let filter = format!("tag:{name}");
+        source.run(&["--board", "House", "view", "save", name, &filter]);
+        until(
+            || linked.json(&["view", "ls"]),
+            |list| list["views"] == serde_json::json!([{"name":name,"filter":filter}]),
+            WAIT,
+        );
+        source.run(&["--board", "House", "add", "Agree on the new door color"]);
+    }
+    for (host, own_name, other_name) in [
+        (&owner, "owner-secret", "guest-secret"),
+        (&guest, "guest-secret", "owner-secret"),
+    ] {
+        until(
+            || host.json(&["--board", "House", "ls"]),
+            |list| list["total"] == 2,
+            WAIT,
+        );
+        let listing = host.json(&["--board", "House", "view", "ls"]);
+        assert_eq!(
+            listing["views"],
+            serde_json::json!([{"name":own_name,"filter":format!("tag:{own_name}")}])
+        );
+        let local = std::fs::read_to_string(host.data.join("local.json")).unwrap();
+        assert!(!local.contains(other_name));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let app = pepino_app::App::open(&host.data, 0).await.unwrap();
+            let board = app.store().history(shared, None, None).await.unwrap();
+            assert_eq!(board.events.len(), 2);
+            assert!(app.store().undecodable(shared).await.unwrap().is_empty());
+            assert!(board.unordered.is_empty());
+
+            use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+            let mut db = SqliteConnection::connect_with(
+                &SqliteConnectOptions::new()
+                    .filename(host.data.join("pepino.sqlite"))
+                    .read_only(true),
+            )
+            .await
+            .unwrap();
+            let payloads: Vec<Vec<u8>> =
+                sqlx::query_scalar("SELECT bytes FROM event_log WHERE board = ?")
+                    .bind(shared.as_bytes().as_slice())
+                    .fetch_all(&mut db)
+                    .await
+                    .unwrap();
+            assert_eq!(payloads.len(), 2);
+            for bytes in payloads {
+                assert!(!bytes.starts_with(b"pepino-board-catalog\0"));
+                assert!(
+                    !bytes
+                        .windows(b"-secret".len())
+                        .any(|bytes| bytes == b"-secret")
+                );
+            }
+        });
+    }
+}
