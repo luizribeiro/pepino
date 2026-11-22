@@ -100,10 +100,16 @@ manager first.
 ppn board leave --board House --yes
 ```
 
-Your devices stop syncing the board at once. A manager's device completes
-the departure when it is next online; until then `ppn board ls` shows
-`leaving (waiting for a manager)`, then `left`. A manager who leaves a board
-with one other manager needs `--i-understand-mutual-removal-risk` too.
+Your devices stop syncing the board when they learn you are leaving. A
+reader or writer sends a signed request for a board manager to apply.
+`ppn board ls` shows `leaving (waiting for a manager)` while that request is
+pending, then `left` once the departure is confirmed.
+
+A manager publishes their departure directly. The board must keep at least
+one manager, so the last manager must promote someone before leaving. A
+manager who leaves a board with exactly one other manager also needs
+`--i-understand-mutual-removal-risk`. If the daemon cannot verify your current
+role, sync with a board manager and try again.
 
 After you have left or been removed, the tasks stay readable on each device.
 You can forget a voluntary departure once it is applied or your device
