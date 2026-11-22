@@ -82,8 +82,9 @@ pub(super) fn run(context: &Context<'_>, active: bool) -> Result<CommandResult, 
                                 .and_then(|network| network.board_members.get(&board.id))
                                 .or_else(|| local.observed_members(board.id))
                             {
-                                Some(members) if members.contains(&id) => "member",
-                                Some(_) if revoked => "removed",
+                                Some(members) if revoked && !members.contains(&id) => "removed",
+                                Some(members) if !revoked && members.contains(&id) => "member",
+                                Some(_) if revoked => "unknown",
                                 Some(_) => "pending",
                                 None => "unknown",
                             }
@@ -143,25 +144,26 @@ impl Render for Devices {
             .iter()
             .zip(&self.roster)
             .map(|(device, record)| {
+                let revoked = device.roster_state == RosterState::Revoked;
                 let mut text = format!(
-                    "{} ({}) · {} · member of {} of {} boards · {}",
+                    "{} ({}) · {}",
                     single_line(&device.name),
                     short_id(&device.id.to_string()),
-                    match device.roster_state {
-                        RosterState::Active => "active",
-                        RosterState::Revoked => "revoked",
-                    },
-                    device.member_of,
-                    device.total_boards,
-                    match device.state {
+                    if revoked { "revoked" } else { "active" },
+                );
+                if !revoked {
+                    let state = match device.state {
                         "seen_on_board" => "seen on the board",
                         "added_not_seen" => "added here, not yet seen",
                         "known_not_seen" => "in roster, not yet seen",
                         "leave_pending" => "leave requested, awaiting the first device",
-                        "revoked" => "board access listed below",
                         state => state,
-                    }
-                );
+                    };
+                    text.push_str(&format!(
+                        " · member of {} of {} boards · {state}",
+                        device.member_of, device.total_boards
+                    ));
+                }
                 if device.first_device {
                     text.push_str(" · first device");
                 }
@@ -192,7 +194,7 @@ impl Render for Devices {
                         self.settings.dates().timestamp(time, terminal)
                     ));
                 }
-                for board in &device.boards {
+                for board in device.boards.iter().filter(|_| !revoked) {
                     text.push_str(&format!(
                         "\n  {} ({}) · {}",
                         single_line(&board.name),
@@ -200,7 +202,7 @@ impl Render for Devices {
                         board.membership.replace('_', " ")
                     ));
                 }
-                if device.roster_state == RosterState::Revoked && self.settings.terminal.color {
+                if revoked && self.settings.terminal.color {
                     return format!("\x1b[2m{text}\x1b[0m");
                 }
                 text

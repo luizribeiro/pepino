@@ -88,6 +88,29 @@ fn online_revocation_rotates_access_across_boards_and_preserves_history() {
         boards.iter().all(|board| board["result"] == "removed"),
         "{result}"
     );
+    let listing = owner.json(&["device", "ls"]);
+    let revoked = listing["devices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == target)
+        .unwrap();
+    assert_eq!(revoked["state"], "revoked");
+    assert_eq!(revoked["member_of"], 0);
+    assert!(
+        revoked["boards"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|board| { matches!(board["membership"].as_str(), Some("removed" | "unknown")) })
+    );
+    let listing = owner.run(&["device", "ls"]);
+    let revoked = listing
+        .lines()
+        .find(|line| line.starts_with("Garden tablet ("))
+        .unwrap();
+    assert!(revoked.contains(" · revoked"), "{revoked}");
+    assert!(!revoked.contains("member of"), "{revoked}");
     until(
         || roster_state(&peer, &target),
         |row| row.as_ref().is_some_and(|row| row["state"] == "revoked"),
