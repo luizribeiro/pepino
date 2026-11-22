@@ -14,16 +14,17 @@ impl Render for ViewDefinition {
     fn json_fields(self) -> Map<String, Value> {
         Map::from_iter([
             ("kind".into(), "view".into()),
-            ("view".into(), json!(self.0)),
+            (
+                "view".into(),
+                json!({"name": self.0.name, "filter": self.0.filter}),
+            ),
         ])
     }
 }
 
 pub(super) fn saved_views(response: &Response) -> Result<String, CliError> {
     match response {
-        Response::Views { views } => {
-            Ok(views.iter().map(definition).collect::<Vec<_>>().join("\n"))
-        }
+        Response::Views { views } => Ok(views.iter().map(list_row).collect::<Vec<_>>().join("\n")),
         Response::ViewSaved { view, replaced } => {
             let verb = if *replaced { "Replaced" } else { "Saved" };
             Ok(format!("{verb} {}", view.name))
@@ -33,6 +34,14 @@ pub(super) fn saved_views(response: &Response) -> Result<String, CliError> {
             ErrorKind::Failure,
             "Expected a saved view response.",
         )),
+    }
+}
+
+fn list_row(view: &SavedView) -> String {
+    if let Some(label) = &view.recovered_as {
+        format!("{label} [@{}]  {}", view.name, view.filter)
+    } else {
+        definition(view)
     }
 }
 

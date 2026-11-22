@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use pepino_core::{DeviceId, EventId, Hlc};
+use pepino_core::{Clock, DeviceId, EventId, Hlc};
 use serde::{Deserialize, Serialize};
 
 use crate::{AppError, app::invalid};
@@ -22,7 +22,6 @@ pub(crate) struct Preference {
 }
 
 impl Preference {
-    #[cfg(test)]
     fn new(key: &str, value: Option<String>, writer: DeviceId, hlc: Hlc) -> Self {
         let id = Self::event_id(key, value.as_deref(), writer, hlc);
         Self {
@@ -58,6 +57,46 @@ impl Preferences {
 
     pub(crate) fn get(&self, key: &str) -> Option<&Preference> {
         self.0.get(key)
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, &Preference)> {
+        self.0.iter().map(|(key, entry)| (key.as_str(), entry))
+    }
+
+    pub(crate) fn write(
+        &mut self,
+        key: String,
+        value: Option<String>,
+        writer: DeviceId,
+        now: u64,
+    ) -> Result<(), AppError> {
+        validate(&key, value.as_deref())?;
+        if self.0.len() >= MAX_ENTRIES && !self.0.contains_key(&key) {
+            return Err(invalid(
+                "preference",
+                format!(
+                    "identity preference limit of {MAX_ENTRIES} keys reached (including deletions)"
+                ),
+            ));
+        }
+        let mut clock = self
+            .0
+            .values()
+            .map(|entry| entry.hlc)
+            .max()
+            .map_or_else(Clock::new, Clock::from_hlc);
+        let hlc = clock
+            .tick(now)
+            .map_err(|error| invalid("preference", error))?;
+        if crate::Hlc::from(hlc).utc().is_none() {
+            return Err(invalid(
+                "preference",
+                "timestamp is outside the supported range",
+            ));
+        }
+        let entry = Preference::new(&key, value, writer, hlc);
+        self.0.insert(key, entry);
+        Ok(())
     }
 
     pub(crate) fn merge(&mut self, incoming: Self) {
@@ -178,5 +217,30 @@ mod tests {
         forged.0.get_mut("view/greenhouse").unwrap().value = Some("tag:tools".into());
         prefs.merge(forged);
         assert_eq!(prefs, before);
+    }
+    #[test]
+    fn rejects_oversized_writes_and_counts_tombstones_towards_the_limit() {
+        let mut prefs = Preferences::default();
+        let writer = DeviceId::from_bytes([42; 32]);
+        let write = |prefs: &mut Preferences, key, value| prefs.write(key, value, writer, 8);
+        let oversized = write(
+            &mut prefs,
+            "view/greenhouse".into(),
+            Some("é".repeat(MAX_VALUE_BYTES)),
+        )
+        .unwrap_err();
+        assert!(oversized.to_string().contains("4096 bytes"));
+        assert!(write(&mut prefs, "greenhouse".into(), None).is_err());
+        for i in 0..MAX_ENTRIES {
+            write(&mut prefs, format!("view/tool-{i:03}"), None).unwrap();
+        }
+        let full = write(&mut prefs, "view/greenhouse".into(), None).unwrap_err();
+        assert!(full.to_string().contains("256 keys"));
+        write(
+            &mut prefs,
+            "view/tool-001".into(),
+            Some("tag:hardware".into()),
+        )
+        .unwrap();
     }
 }

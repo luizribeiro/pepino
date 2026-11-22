@@ -1263,12 +1263,16 @@ async fn listing_errors_report_source_positions_and_saved_view_chains() {
         directory.path(),
         json!({"first":"@missing","last":"is:open @first"}),
     );
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
     list_golden(&mut app,json!("@first"),None,None,
         json!({"error":{"kind":"invalid_input","field":"filter","reason":"unknown saved view \"missing\"","hint":"Use list_views to see available saved views","term":"@missing","position":{"kind":"byte","byte":0},"view_chain":["first"]}})).await;
+    let directory = tempfile::tempdir().unwrap();
+    fixture::open(directory.path(), NOW).await.unwrap();
     replace_saved_views(
         directory.path(),
         json!({"first":"@last","last":"is:open @first"}),
     );
+    let mut app = App::open(directory.path(), NOW).await.unwrap();
     list_golden(&mut app,json!("@first"),None,None,
         json!({"error":{"kind":"invalid_input","field":"filter","reason":"saved view cycle: first -> last -> first","term":"@first","position":{"kind":"byte","byte":8},"view_chain":["first","last","first"]}})).await;
 }
@@ -1423,11 +1427,12 @@ async fn an_edge_change_identifies_its_source_task() {
 #[tokio::test]
 async fn lists_only_parse_reachable_saved_filters() {
     let dir = tempfile::tempdir().unwrap();
-    let mut app = fixture::open(dir.path(), NOW).await.unwrap();
+    fixture::open(dir.path(), NOW).await.unwrap();
     replace_saved_views(
         dir.path(),
         json!({"weekend":"tag:hardware","broken":"tags:hardware","nested":"@broken"}),
     );
+    let mut app = App::open(dir.path(), NOW).await.unwrap();
     list_golden(
         &mut app,
         json!("@weekend"),

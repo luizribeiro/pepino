@@ -154,14 +154,25 @@ impl App {
             credentials_file,
             lock_timeout,
         };
-        if app.local.peer_hint().is_none()
+        let roster_keys = if app.local.peer_hint().is_none()
             && app.local.needs_roster_reconciliation()
             && app.local.has_legacy_roster()
-            && let Ok(keys) = app.identity_credentials()
         {
+            app.identity_credentials().ok()
+        } else {
+            None
+        };
+        let migrate_views =
+            !app.local.saved_views.is_empty() && app.local.check_device_write().is_ok();
+        if roster_keys.is_some() || migrate_views {
             let mut local = app.local.clone();
-            local.reconcile_identity(local.device_id, &keys, None)?;
-            app.persist_boards(local, guard).await?;
+            if let Some(keys) = roster_keys {
+                local.reconcile_identity(local.device_id, &keys, None)?;
+            }
+            if migrate_views {
+                local.migrate_views(now)?;
+            }
+            app.persist_local(local, guard).await?;
             app.migrate_on_write = false;
         }
         Ok(app)
@@ -269,7 +280,7 @@ impl App {
         all_boards: bool,
     ) -> Result<Response, AppError> {
         let guard = lock(&self.directory, self.lock_timeout).await?;
-        self.reload_state().await?;
+        self.local = self.fresh_local_state().await?;
         if matches!(&request, Request::Write(_)) {
             self.local.check_device_write()?;
         }
@@ -309,10 +320,10 @@ impl App {
             }
             Request::Write(WriteRequest::BoardUse { board }) => self.board_use(&board, guard).await,
             Request::Write(WriteRequest::SaveView { name, filter }) => {
-                self.save_view(name, &filter, guard).await
+                self.save_view(name, &filter, now, guard).await
             }
             Request::Write(WriteRequest::DeleteView { name, force }) => {
-                self.delete_view(name, force, guard).await
+                self.delete_view(name, force, now, guard).await
             }
             Request::Write(WriteRequest::ApplyToTasks { tasks, change }) => {
                 self.local.check_board_write(self.selected_board())?;

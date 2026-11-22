@@ -33,7 +33,7 @@ impl App {
             local.append_identity(&keys, Change::RenameIdentity(name))?;
         }
         if local != self.local {
-            self.persist_boards(local, guard).await?;
+            self.persist_local(local, guard).await?;
         }
         Ok(Response::Identity {
             identity: self.identity_record(),
@@ -64,7 +64,7 @@ impl App {
             device.name = name;
         }
         if local != self.local {
-            self.persist_boards(local, guard).await?;
+            self.persist_local(local, guard).await?;
         }
         Ok(Response::RosterDevice { device })
     }

@@ -28,7 +28,8 @@ impl App {
             .unwrap_or("default")
             .parse()
             .map_err(|error| invalid("sort", error))?;
-        let views = ViewFilters::new(&self.local.saved_views);
+        let filters = self.local.view_filters();
+        let views = ViewFilters::new(&filters);
         let saved = |name: &str| views.resolve(name);
         let people = |name: &str| {
             self.local

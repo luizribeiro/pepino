@@ -202,3 +202,57 @@ fn saved_filter_errors_point_to_the_supplied_filter_string() {
     );
     assert_eq!(error["view_chain"], serde_json::json!(["weekend"]));
 }
+#[test]
+fn legacy_views_migrate_once_and_keep_a_conflicting_filter() {
+    let (sandbox, data) = task_sandbox();
+    small_project(&sandbox);
+    sandbox.run(&["device", "rename", "Garden laptop"]);
+    sandbox.run(&["view", "save", "weekend", "tag:hardware"]);
+    sandbox.run(&["view", "save", "same", "is:open"]);
+    sandbox.run(&["view", "save", "removed", "tag:hardware"]);
+    sandbox.run(&["view", "rm", "removed"]);
+
+    let path = data.join("local.json");
+    let mut local: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    local["saved_views"] = json!({
+        "weekend": "tag:garden",
+        "same": "is:open",
+        "removed": "tag:garden",
+        "maintenance": "@weekend",
+    });
+    std::fs::write(&path, serde_json::to_vec(&local).unwrap()).unwrap();
+
+    let listing = as_json(&sandbox.run(&["view", "ls", "--json"]));
+    let saved = listing["views"].as_array().unwrap();
+    assert_eq!(saved.len(), 5);
+    assert!(saved.contains(&json!({"name":"weekend","filter":"tag:hardware"})));
+    assert!(saved.contains(&json!({"name":"same","filter":"is:open"})));
+    assert!(saved.contains(&json!({"name":"maintenance","filter":"@weekend"})));
+    assert!(!saved.iter().any(|row| row["name"] == "removed"));
+    let recovered = saved
+        .iter()
+        .find(|row| row["recovered_as"] == "weekend (from Garden laptop)")
+        .unwrap();
+    let recovery = recovered["name"].as_str().unwrap();
+    assert_eq!(recovered["filter"], "tag:garden");
+    assert_eq!(
+        sandbox.run(&["view", "show", recovery]),
+        format!("{recovery}  tag:garden\n")
+    );
+    let reference = format!("@{recovery}");
+    assert_eq!(
+        sandbox.run(&["ls", &reference]),
+        sandbox.run(&["ls", "tag:garden"])
+    );
+    let human = sandbox.run(&["view", "ls"]);
+    assert!(human.contains(&format!(
+        "weekend (from Garden laptop) [{reference}]  tag:garden"
+    )));
+
+    let bytes = std::fs::read(&path).unwrap();
+    let migrated: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(migrated.get("saved_views").is_none());
+    assert_eq!(as_json(&sandbox.run(&["view", "ls", "--json"])), listing);
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+}

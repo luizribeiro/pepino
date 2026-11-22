@@ -426,7 +426,7 @@ impl App {
         if board.name != name {
             let mut local = self.local.clone();
             local.name_board(board.id, name);
-            self.persist_boards(local, guard).await?;
+            self.persist_local(local, guard).await?;
             info.board.name = name.into();
         }
         Ok(Response::Board { board: info })

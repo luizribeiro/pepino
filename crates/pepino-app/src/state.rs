@@ -58,6 +58,7 @@ pub struct LocalState {
         skip_serializing_if = "crate::catalog::CatalogState::is_empty"
     )]
     pub(super) catalog: crate::catalog::CatalogState,
+    #[serde(default, skip_serializing_if = "SavedViews::is_empty")]
     pub(crate) saved_views: SavedViews,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) link: Option<Box<crate::device_grant::Link>>,

@@ -72,7 +72,7 @@ impl App {
         if !info.current {
             let mut local = self.local.clone();
             local.current = Some(board.id);
-            self.persist_boards(local, guard).await?;
+            self.persist_local(local, guard).await?;
             info.current = true;
         }
         Ok(Response::Board { board: info })
@@ -88,13 +88,13 @@ impl App {
         Ok(())
     }
 
-    pub(super) async fn persist_boards(
+    pub(super) async fn persist_local(
         &mut self,
         local: crate::LocalState,
         guard: File,
     ) -> Result<(), AppError> {
         let directory = self.directory.clone();
-        self.local = worker("persist boards", move || {
+        self.local = worker("persist local state", move || {
             let _guard = guard;
             local.replace(&directory)?;
             Ok::<_, AppError>(local)

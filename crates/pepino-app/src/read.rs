@@ -29,7 +29,7 @@ impl App {
                     .await
             }
             ReadRequest::PreviewDelete { tasks } => self.preview_delete(tasks).await,
-            ReadRequest::ListViews => self.list_views().await,
+            ReadRequest::ListViews => Ok(self.list_views()),
             ReadRequest::Log { task, limit } => self.log(task.as_deref(), limit).await,
             ReadRequest::BoardList => self.board_list().await,
             ReadRequest::BoardShow { board } => self.board_show(board.as_deref()).await,

@@ -188,14 +188,8 @@ async fn simultaneous_view_saves_preserve_both_definitions() {
             .unwrap(),
         Response::Views {
             views: vec![
-                SavedView {
-                    name: "hardware".into(),
-                    filter: "tag:hardware".into()
-                },
-                SavedView {
-                    name: "winter".into(),
-                    filter: "is:open due:tomorrow".into()
-                },
+                SavedView::new("hardware".into(), "tag:hardware".into()),
+                SavedView::new("winter".into(), "is:open due:tomorrow".into()),
             ],
         }
     );
