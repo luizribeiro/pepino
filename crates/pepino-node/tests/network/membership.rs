@@ -3,7 +3,7 @@ use std::path::Path;
 use futures_util::StreamExt;
 use p2panda::{
     Hash,
-    operation::{ExtensionsVariantV1, Operation, SpacesHeaderArgs},
+    operation::{ExtensionsVariantV1, LogId, Operation, SpacesHeaderArgs},
 };
 use p2panda_store::{SqliteStore, operations::OperationStore};
 use pepino_core::{DeviceId, EventId};
@@ -118,12 +118,7 @@ async fn the_first_publishes_after_removal_use_rotated_keys() {
 }
 
 async fn secret_id(path: &Path, id: EventId) -> [u8; 32] {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(SqliteConnectOptions::new().filename(path).read_only(true))
-        .await
-        .unwrap();
-    let store = SqliteStore::from_pool(pool);
+    let store = SqliteStore::from_pool(read_only_transport(path).await);
     let operation: Operation = store
         .get_operation(&Hash::from_bytes(*id.as_bytes()))
         .await
@@ -139,6 +134,91 @@ async fn secret_id(path: &Path, id: EventId) -> [u8; 32] {
         panic!("expected an application operation");
     };
     group_secret_id
+}
+
+#[tokio::test]
+#[cfg_attr(not(pepino_network_tests), ignore = "requires PEPINO_NETWORK_TESTS=1")]
+async fn readmission_syncs_after_the_welcome_ciphertext_outgrows_512_bytes() {
+    let dir = fixture_dir();
+    let network = network(dir.path());
+    let a_settings = settings(&network, dir.path().join("alice"));
+    let b_settings = settings(&network, dir.path().join("ben"));
+    let a = start(&a_settings).await;
+    let b = start(&b_settings).await;
+    let c = start(&settings(&network, dir.path().join("chloe"))).await;
+    let alice = a.create_board().await.unwrap();
+    let mut ben = enroll(&alice, &b, Role::Read).await;
+    let before = alice.publish(PLAN.to_vec()).await.unwrap();
+    expect(&mut ben.events().unwrap(), &[(before, a.device_id(), PLAN)]).await;
+    let mut changes = ben.membership_events();
+    alice.remove_member(b.device_id(), false).await.unwrap();
+    observe(&mut changes, b.device_id(), MemberState::Removed).await;
+    b.shutdown().await.unwrap();
+
+    let chloe = c.member_info().await.unwrap();
+    for _ in 0..12 {
+        alice.add_member(&chloe, Role::Read).await.unwrap();
+        alice.remove_member(c.device_id(), false).await.unwrap();
+    }
+    let b = start(&b_settings).await;
+    let mut ben = b.open_board(alice.id()).await.unwrap();
+    let mut removed = ben.events().unwrap();
+    assert!(matches!(
+        timeout(WAIT, removed.next()).await.unwrap(),
+        Some(Err(Error::Removed))
+    ));
+    assert!(removed.next().await.is_none());
+    let mut changes = ben.membership_events();
+    alice
+        .add_member(&b.member_info().await.unwrap(), Role::Read)
+        .await
+        .unwrap();
+    observe(&mut changes, b.device_id(), MemberState::Member(Role::Read)).await;
+    ben.wait_until_joined(WAIT).await.unwrap();
+    assert_eq!(
+        ben.member_state().await.unwrap(),
+        MemberState::Member(Role::Read)
+    );
+    let after = alice.publish(DONE.to_vec()).await.unwrap();
+    expect(&mut ben.events().unwrap(), &[(after, a.device_id(), DONE)]).await;
+
+    let pool = read_only_transport(&b_settings.database_path).await;
+    let log_id = LogId::digest(&[alice.id().as_bytes().as_slice(), b"space_control/v1"].concat());
+    let header: Vec<u8> = sqlx::query_scalar(
+        "SELECT header FROM operations_v1 WHERE log_id = ? ORDER BY seq_num DESC LIMIT 1",
+    )
+    .bind(p2panda_core::cbor::encode_cbor(&log_id).unwrap())
+    .fetch_one(&pool)
+    .await
+    .expect("the receiving device should have the key-agreement log");
+    let value: ciborium::Value = ciborium::from_reader(header.as_slice()).unwrap();
+    assert!(largest_byte_string(&value) > 512);
+    b.shutdown().await.unwrap();
+    c.shutdown().await.unwrap();
+    a.shutdown().await.unwrap();
+}
+
+async fn read_only_transport(path: &Path) -> sqlx::SqlitePool {
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(SqliteConnectOptions::new().filename(path).read_only(true))
+        .await
+        .unwrap()
+}
+
+fn largest_byte_string(value: &ciborium::Value) -> usize {
+    match value {
+        ciborium::Value::Bytes(bytes) => bytes.len(),
+        ciborium::Value::Array(values) => values.iter().map(largest_byte_string).max().unwrap_or(0),
+        ciborium::Value::Map(entries) => entries
+            .iter()
+            .flat_map(|(key, value)| [key, value])
+            .map(largest_byte_string)
+            .max()
+            .unwrap_or(0),
+        ciborium::Value::Tag(_, value) => largest_byte_string(value),
+        _ => 0,
+    }
 }
 
 #[tokio::test]
