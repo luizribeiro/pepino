@@ -52,17 +52,33 @@ impl RelayAnswer {
         Self::Superseded,
         Self::ClockAhead,
     ];
+}
 
-    // Every answer seals to the same length, so its ciphertext size does not reveal the outcome.
-    fn encode(self) -> [u8; 1] {
-        [self as u8]
+/// A relay's answer to one instruction. `relay_sequence` is the revision the relay holds when it
+/// answers `Superseded`, and zero otherwise.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RelayReceipt {
+    pub answer: RelayAnswer,
+    pub relay_sequence: u64,
+}
+
+impl RelayReceipt {
+    // Every receipt seals to the same length, so its ciphertext size does not reveal the outcome.
+    fn encode(self) -> [u8; 9] {
+        let mut bytes = [0; 9];
+        bytes[0] = self.answer as u8;
+        bytes[1..].copy_from_slice(&self.relay_sequence.to_be_bytes());
+        bytes
     }
 
     fn decode(bytes: &[u8]) -> Option<Self> {
-        let &[code] = bytes else {
-            return None;
-        };
-        Self::ALL.into_iter().find(|answer| *answer as u8 == code)
+        let (&code, sequence) = bytes.split_first()?;
+        Some(Self {
+            answer: RelayAnswer::ALL
+                .into_iter()
+                .find(|answer| *answer as u8 == code)?,
+            relay_sequence: u64::from_be_bytes(sequence.try_into().ok()?),
+        })
     }
 }
 
@@ -220,13 +236,13 @@ impl RelayChannel {
     pub(crate) async fn answer(
         &self,
         incoming: &IncomingInstruction,
-        answer: RelayAnswer,
+        receipt: RelayReceipt,
     ) -> Result<(), Error> {
         self.send_message(
             incoming.author,
             incoming.challenge,
             Direction::Answer,
-            &answer.encode(),
+            &receipt.encode(),
         )
         .await
     }
@@ -246,17 +262,17 @@ impl RelayChannel {
         &mut self,
         relay: DeviceId,
         keys: &DeviceCredentials,
-    ) -> Option<([u8; 16], RelayAnswer)> {
+    ) -> Option<([u8; 16], RelayReceipt)> {
         while let Some(message) = self.next().await {
             let author = DeviceId::from_bytes(*message.author().as_bytes());
             let body = message.body();
             if author == relay
                 && body.direction == Direction::Answer
-                && let Some(answer) = body
+                && let Some(receipt) = body
                     .open(author, keys)
-                    .and_then(|bytes| RelayAnswer::decode(&bytes))
+                    .and_then(|bytes| RelayReceipt::decode(&bytes))
             {
-                return Some((body.challenge, answer));
+                return Some((body.challenge, receipt));
             }
         }
         None
@@ -319,26 +335,31 @@ fn instruction_encoding_binds_sender_recipient_direction_and_challenge() {
 
 #[cfg(test)]
 #[test]
-fn all_answers_have_the_same_encrypted_length() {
+fn all_receipts_have_the_same_encrypted_length() {
     let dir = tempfile::tempdir().unwrap();
     let relay = DeviceCredentials::load_or_create(dir.path().join("relay.cbor")).unwrap();
     let device = DeviceCredentials::load_or_create(dir.path().join("device.cbor")).unwrap();
     let lengths: std::collections::BTreeSet<_> = RelayAnswer::ALL
         .into_iter()
-        .map(|answer| {
+        .zip([0, 1, 255, 65_536, 1_795_300_240_000, u64::MAX - 1, u64::MAX])
+        .map(|(answer, relay_sequence)| {
+            let receipt = RelayReceipt {
+                answer,
+                relay_sequence,
+            };
             let envelope = Envelope::seal(
                 relay.device_id(),
                 device.device_id(),
                 [17; 16],
                 Direction::Answer,
-                &answer.encode(),
+                &receipt.encode(),
             )
             .unwrap();
             assert_eq!(
                 envelope
                     .open(relay.device_id(), &device)
-                    .and_then(|bytes| RelayAnswer::decode(&bytes)),
-                Some(answer)
+                    .and_then(|bytes| RelayReceipt::decode(&bytes)),
+                Some(receipt)
             );
             (
                 envelope.sealed.ciphertext.len(),
@@ -347,8 +368,9 @@ fn all_answers_have_the_same_encrypted_length() {
         })
         .collect();
     assert_eq!(lengths.len(), 1);
-    for malformed in [&[][..], &[0, 0], &[RelayAnswer::ALL.len() as u8], &[255]] {
-        assert_eq!(RelayAnswer::decode(malformed), None);
+    let unknown_answer = [RelayAnswer::ALL.len() as u8, 0, 0, 0, 0, 0, 0, 0, 0];
+    for malformed in [&[][..], &[0], &[0; 8], &[0; 10], &unknown_answer] {
+        assert_eq!(RelayReceipt::decode(malformed), None);
     }
 }
 

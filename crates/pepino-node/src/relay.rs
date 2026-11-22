@@ -12,7 +12,7 @@ use tokio::sync::{Notify, watch};
 
 use crate::{
     DeviceCredentials, Error, Node, NodeSettings, NodeStatus,
-    relay_control::{IncomingInstruction, RelayAnswer, RelayChannel},
+    relay_control::{IncomingInstruction, RelayAnswer, RelayChannel, RelayReceipt},
     relay_ledger::Ledger,
     status_state::Status,
 };
@@ -122,9 +122,9 @@ impl Relay {
                 _ = self.stream_ended.notified() => return Ok(RelayEnd::Restart),
                 incoming = self.channel.receive_instruction() => incoming.ok_or(Error::Closed)?,
             };
-            if let Some(answer) = self.apply(&incoming).await? {
-                let _ = self.channel.answer(&incoming, answer).await;
-                if answer == RelayAnswer::RemovalPendingRestart {
+            if let Some(receipt) = self.apply(&incoming).await? {
+                let _ = self.channel.answer(&incoming, receipt).await;
+                if receipt.answer == RelayAnswer::RemovalPendingRestart {
                     return Ok(RelayEnd::Restart);
                 }
             }
@@ -134,9 +134,12 @@ impl Relay {
     async fn apply(
         &mut self,
         incoming: &IncomingInstruction,
-    ) -> Result<Option<RelayAnswer>, Error> {
-        let answer = if !self.ledger.is_trusted(incoming.author) {
-            self.ledger.reject().await?
+    ) -> Result<Option<RelayReceipt>, Error> {
+        let receipt = if !self.ledger.is_trusted(incoming.author) {
+            RelayReceipt {
+                answer: self.ledger.reject().await?,
+                relay_sequence: 0,
+            }
         } else {
             let Some(instruction) = incoming.open(&self.keys) else {
                 return Ok(None);
@@ -157,10 +160,17 @@ impl Relay {
                     }
                 }
             }
-            answer
+            let relay_sequence = match answer {
+                RelayAnswer::Superseded => self.ledger.sequence(instruction.board),
+                _ => 0,
+            };
+            RelayReceipt {
+                answer,
+                relay_sequence,
+            }
         };
         update_status(&self.status, &self.ledger);
-        Ok(Some(answer))
+        Ok(Some(receipt))
     }
 
     pub async fn shutdown(self) -> Result<(), Error> {

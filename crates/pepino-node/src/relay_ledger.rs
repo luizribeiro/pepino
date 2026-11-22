@@ -102,6 +102,12 @@ impl Ledger {
         Ok(RelayAnswer::NotTrusted)
     }
 
+    pub(super) fn sequence(&self, board: BoardId) -> u64 {
+        self.records
+            .get(&key(board))
+            .map_or(0, |record| record.revision.sequence)
+    }
+
     pub(super) fn counts(&self) -> BTreeMap<DeviceId, usize> {
         let mut counts: BTreeMap<_, _> = self.trusted.iter().map(|&id| (id, 0)).collect();
         for record in self
@@ -126,8 +132,8 @@ impl Ledger {
         if instruction.sequence > now_ms.saturating_add(CLOCK_TOLERANCE_MS) {
             return Ok(RelayAnswer::ClockAhead);
         }
-        let key = Hash::digest(instruction.board.as_bytes());
-        let key = key.as_bytes().as_slice();
+        let key = key(instruction.board);
+        let key = key.as_slice();
         let below_capacity = self
             .records
             .values()
@@ -151,6 +157,10 @@ impl Ledger {
         }
         Ok(answer)
     }
+}
+
+fn key(board: BoardId) -> Vec<u8> {
+    Hash::digest(board.as_bytes()).as_bytes().to_vec()
 }
 
 pub(super) async fn prepare(pool: &SqlitePool) -> Result<(), Error> {
@@ -268,6 +278,16 @@ pub(super) mod tests {
             ledger.apply(trusted, add(57), NOW).await.unwrap(),
             RelayAnswer::Carrying
         );
+        let earlier = RelayInstruction {
+            sequence: 0,
+            ..add(57)
+        };
+        assert_eq!(
+            ledger.apply(trusted, earlier, NOW).await.unwrap(),
+            RelayAnswer::Superseded
+        );
+        assert_eq!(ledger.sequence(earlier.board), 1);
+        assert_eq!(ledger.sequence(BoardId::from_bytes([58; 32])), 0);
         let restored = Ledger::load(pool.clone(), [trusted].into(), 1)
             .await
             .unwrap();

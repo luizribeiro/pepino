@@ -91,6 +91,19 @@ impl LocalState {
             .flat_map(|entries| entries.iter().map(|(&id, entry)| (id, entry)))
     }
 
+    fn pending_relay(
+        &mut self,
+        board: BoardId,
+        relay: DeviceId,
+        revision: RelayRevision,
+    ) -> Option<&mut BoardRelay> {
+        self.catalog
+            .relays
+            .get_mut(&board)?
+            .get_mut(&relay)
+            .filter(|entry| entry.revision == revision && entry.pending())
+    }
+
     pub(crate) fn merge_relays(&mut self, relays: RelayCatalog) {
         for (board, relays) in relays {
             if !self.boards().iter().any(|entry| entry.id == board) {
@@ -200,15 +213,27 @@ impl App {
         answer: Option<RelayAnswer>,
     ) -> Result<(), AppError> {
         self.update_local(move |local| {
-            if let Some(entry) = local
-                .catalog
-                .relays
-                .get_mut(&board)
-                .and_then(|relays| relays.get_mut(&relay))
-                && entry.revision == revision
-                && entry.pending()
-            {
+            if let Some(entry) = local.pending_relay(board, relay, revision) {
                 entry.record(answer);
+            }
+        })
+        .await
+    }
+
+    pub async fn advance_relay_revision(
+        &self,
+        board: BoardId,
+        relay: DeviceId,
+        revision: RelayRevision,
+        relay_sequence: u64,
+    ) -> Result<(), AppError> {
+        self.update_local(move |local| {
+            if let Some(entry) = local.pending_relay(board, relay, revision)
+                && let Some(sequence) = relay_sequence.checked_add(1)
+                && sequence > entry.revision.sequence
+            {
+                entry.revision.sequence = sequence;
+                entry.state = RelayState::Requested;
             }
         })
         .await
@@ -235,4 +260,63 @@ fn a_request_stamped_ahead_of_the_relay_clock_is_refused_with_the_cause() {
         Some("clock too far ahead of the relay")
     );
     assert!(!request.pending());
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn a_superseded_request_moves_past_the_relay_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
+    let board = app.local_state().board_id();
+    let relay = pepino_node::DeviceCredentials::load_or_create(dir.path().join("relay.cbor"))
+        .unwrap()
+        .device_id();
+    let peer = PeerHint {
+        id: relay,
+        relay_url: None,
+    };
+    let requested = 1_795_300_000_000;
+    let local = app
+        .set_board_relay(vec![board], peer, true, requested)
+        .await
+        .unwrap();
+    let request = |local: &LocalState| local.board_relays(board).next().unwrap().1.clone();
+    let original = request(&local).revision;
+    assert_eq!(original.sequence, requested);
+
+    let relay_sequence = requested + 240_000;
+    app.advance_relay_revision(board, relay, original, relay_sequence)
+        .await
+        .unwrap();
+    let advanced = request(&app.fresh_local_state().await.unwrap());
+    assert_eq!(advanced.revision.sequence, relay_sequence + 1);
+    assert_eq!(advanced.revision.writer, original.writer);
+    assert_eq!(advanced.state, RelayState::Requested);
+    assert!(advanced.carry);
+
+    for (revision, sequence) in [
+        (original, relay_sequence + 9),
+        (advanced.revision, requested),
+        (advanced.revision, u64::MAX),
+    ] {
+        app.advance_relay_revision(board, relay, revision, sequence)
+            .await
+            .unwrap();
+        assert_eq!(request(&app.fresh_local_state().await.unwrap()), advanced);
+    }
+
+    app.record_relay_answer(
+        board,
+        relay,
+        advanced.revision,
+        Some(RelayAnswer::Superseded),
+    )
+    .await
+    .unwrap();
+    let refused = request(&app.fresh_local_state().await.unwrap());
+    assert_eq!(refused.state, RelayState::Refused);
+    app.advance_relay_revision(board, relay, refused.revision, relay_sequence + 9)
+        .await
+        .unwrap();
+    assert_eq!(request(&app.fresh_local_state().await.unwrap()), refused);
 }

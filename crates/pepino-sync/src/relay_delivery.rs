@@ -8,7 +8,8 @@ use futures_util::{StreamExt, stream::FuturesUnordered};
 use pepino_app::{App, BoardRelay, LocalState, RelayState};
 use pepino_core::{BoardId, DeviceId};
 use pepino_node::{
-    DeviceCredentials, Node, RelayAnswer, RelayChannel, RelayInstruction, RelayRevision,
+    DeviceCredentials, Node, RelayAnswer, RelayChannel, RelayInstruction, RelayReceipt,
+    RelayRevision,
 };
 use tokio::sync::watch;
 
@@ -19,6 +20,13 @@ struct Attempt {
     revision: RelayRevision,
     challenge: [u8; 16],
     since: Instant,
+    advanced: bool,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum Step {
+    AdvancePast(u64),
+    Record(RelayAnswer),
 }
 
 impl Attempt {
@@ -29,6 +37,23 @@ impl Attempt {
             revision,
             challenge,
             since: Instant::now(),
+            advanced: false,
+        }
+    }
+
+    fn renewed(&self, revision: RelayRevision) -> Self {
+        Self {
+            advanced: self.advanced,
+            ..Self::new(revision)
+        }
+    }
+
+    fn step(&mut self, receipt: RelayReceipt) -> Step {
+        if receipt.answer == RelayAnswer::Superseded && !self.advanced {
+            self.advanced = true;
+            Step::AdvancePast(receipt.relay_sequence)
+        } else {
+            Step::Record(receipt.answer)
         }
     }
 }
@@ -127,7 +152,7 @@ impl Delivery {
     async fn receive(
         &mut self,
         keys: &DeviceCredentials,
-    ) -> (DeviceId, Option<([u8; 16], RelayAnswer)>) {
+    ) -> (DeviceId, Option<([u8; 16], RelayReceipt)>) {
         let mut reads = self
             .connections
             .iter_mut()
@@ -145,23 +170,31 @@ impl Delivery {
         &mut self,
         app: &App,
         relay: DeviceId,
-        answer: Option<([u8; 16], RelayAnswer)>,
+        receipt: Option<([u8; 16], RelayReceipt)>,
     ) {
-        let Some((challenge, answer)) = answer else {
+        let Some((challenge, receipt)) = receipt else {
             self.connections.remove(&relay);
             return;
         };
-        let Some((&board, attempt)) = self.connections.get(&relay).and_then(|connection| {
+        let Some((&board, attempt)) = self.connections.get_mut(&relay).and_then(|connection| {
             connection
                 .attempts
-                .iter()
+                .iter_mut()
                 .find(|(_, attempt)| attempt.challenge == challenge)
         }) else {
             return;
         };
-        let _ = app
-            .record_relay_answer(board, relay, attempt.revision, Some(answer))
-            .await;
+        let revision = attempt.revision;
+        let _ = match attempt.step(receipt) {
+            Step::AdvancePast(sequence) => {
+                app.advance_relay_revision(board, relay, revision, sequence)
+                    .await
+            }
+            Step::Record(answer) => {
+                app.record_relay_answer(board, relay, revision, Some(answer))
+                    .await
+            }
+        };
     }
 }
 
@@ -175,7 +208,7 @@ impl Connection {
                 .entry(board)
                 .or_insert_with(|| Attempt::new(entry.revision));
             if attempt.revision != entry.revision {
-                *attempt = Attempt::new(entry.revision);
+                *attempt = attempt.renewed(entry.revision);
             }
             let instruction = RelayInstruction {
                 board,
@@ -195,4 +228,37 @@ impl Connection {
             }
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_superseded_request_advances_once_and_then_reports_the_refusal() {
+    let laptop = DeviceId::from_bytes([17; 32]);
+    let revision = |sequence| RelayRevision {
+        sequence,
+        writer: laptop,
+    };
+    let superseded = RelayReceipt {
+        answer: RelayAnswer::Superseded,
+        relay_sequence: 1_795_300_240_000,
+    };
+    let mut attempt = Attempt::new(revision(1_795_300_000_000));
+    assert_eq!(
+        attempt.step(superseded),
+        Step::AdvancePast(1_795_300_240_000)
+    );
+    let mut resent = attempt.renewed(revision(1_795_300_240_001));
+    assert_ne!(resent.challenge, attempt.challenge);
+    assert_eq!(
+        resent.step(superseded),
+        Step::Record(RelayAnswer::Superseded)
+    );
+    let carrying = RelayReceipt {
+        answer: RelayAnswer::Carrying,
+        relay_sequence: 0,
+    };
+    assert_eq!(
+        Attempt::new(revision(1_795_300_000_000)).step(carrying),
+        Step::Record(RelayAnswer::Carrying)
+    );
 }

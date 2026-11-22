@@ -30,7 +30,7 @@ pub use membership_watch::{MembershipChange, MembershipEvent, MembershipEvents};
 pub use node::Node;
 pub use relay::{Relay, RelayEnd, RelayMonitor, RelayStatus};
 pub use relay_control::{
-    RelayAnswer, RelayChannel, RelayInstruction, RelayRevision, validate_relay_id,
+    RelayAnswer, RelayChannel, RelayInstruction, RelayReceipt, RelayRevision, validate_relay_id,
 };
 pub use settings::{BootstrapNode, MdnsMode, NodeSettings, peer_relay_url};
 pub use status::{NodeEvent, NodeEvents, SyncCounts};
