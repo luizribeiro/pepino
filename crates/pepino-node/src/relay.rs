@@ -27,6 +27,7 @@ const MAINTENANCE: Duration = Duration::from_secs(30);
 #[derive(Clone, Copy, Debug)]
 pub enum RelayEnd {
     Restart,
+    StreamEnded,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -151,7 +152,7 @@ impl Relay {
     pub async fn run(&mut self) -> Result<RelayEnd, Error> {
         loop {
             let incoming = tokio::select! {
-                _ = self.stream_ended.notified() => return Ok(RelayEnd::Restart),
+                _ = self.stream_ended.notified() => return Ok(RelayEnd::StreamEnded),
                 _ = self.maintenance.tick() => {
                     self.maintain().await?;
                     continue;

@@ -221,6 +221,63 @@ mod network {
         relay.stop();
     }
 
+    struct Fleet {
+        device: Host,
+        relay: Host,
+        address: String,
+    }
+
+    fn fleet() -> Fleet {
+        let root = tempfile::tempdir().unwrap();
+        let name = root.path().file_name().unwrap().to_str().unwrap();
+        let device = Host::owner(name);
+        let relay = Host::new(name);
+        let device_id = device.json(&["status"])["device"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let address = relay.json(&["relay", "init"])["address"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        success(
+            relay
+                .command()
+                .env("PPN_TRUSTED_DEVICES", &device_id)
+                .args(["daemon", "start", "--json"])
+                .output()
+                .unwrap(),
+        );
+        Fleet {
+            device,
+            relay,
+            address,
+        }
+    }
+
+    #[test]
+    fn the_relay_daemon_survives_a_failed_instruction() {
+        let Fleet {
+            device,
+            relay,
+            address,
+        } = fleet();
+        let pid = relay.json(&["daemon", "status"])["pid"].clone();
+        with_db(&relay.data.join("relay.sqlite"), false, async |db| {
+            sqlx::query("DROP TABLE pepino_relay_ledger")
+                .execute(db)
+                .await
+                .unwrap();
+        });
+        device.run(&["board", "relay", "add", &address]);
+        wait_state(&device, "Greenhouse", "carrying");
+        assert_eq!(relay.json(&["daemon", "status"])["pid"], pid);
+        let log = fs::read_to_string(relay.data.join("daemon.log")).unwrap();
+        assert!(log.contains("restarting the relay node"), "{log}");
+        device.stop();
+        relay.stop();
+    }
+
     fn wait_state(host: &Host, board: &str, state: &str) -> Value {
         until(
             || {
@@ -272,12 +329,22 @@ mod network {
     }
 
     fn read_db<T>(path: &Path, query: impl AsyncFnOnce(&mut SqliteConnection) -> T) -> T {
+        with_db(path, true, query)
+    }
+
+    fn with_db<T>(
+        path: &Path,
+        read_only: bool,
+        query: impl AsyncFnOnce(&mut SqliteConnection) -> T,
+    ) -> T {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
             .block_on(async {
-                let options = SqliteConnectOptions::new().filename(path).read_only(true);
+                let options = SqliteConnectOptions::new()
+                    .filename(path)
+                    .read_only(read_only);
                 let mut db = SqliteConnection::connect_with(&options).await.unwrap();
                 query(&mut db).await
             })

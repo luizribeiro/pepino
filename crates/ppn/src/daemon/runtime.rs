@@ -66,29 +66,30 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         .map_err(|error| CliError::new(ErrorKind::Failure, error.to_string()))?;
     prepare_parent(config, &path).map_err(socket_error)?;
     let socket = Socket::bind(path).await.map_err(socket_error)?;
+    if relay {
+        super::relay::run(
+            &socket.listener,
+            &settings,
+            config,
+            level,
+            started,
+            &mut terminate,
+            &mut interrupt,
+        )
+        .await?;
+        log(level, LogLevel::Info, "daemon stopped");
+        return Ok(());
+    }
     loop {
-        let outcome = if relay {
-            super::relay::cycle(
-                &socket.listener,
-                &settings,
-                config,
-                level,
-                started,
-                &mut terminate,
-                &mut interrupt,
-            )
-            .await?
-        } else {
-            cycle(
-                &socket.listener,
-                &settings,
-                level,
-                started,
-                &mut terminate,
-                &mut interrupt,
-            )
-            .await?
-        };
+        let outcome = cycle(
+            &socket.listener,
+            &settings,
+            level,
+            started,
+            &mut terminate,
+            &mut interrupt,
+        )
+        .await?;
         if matches!(outcome, End::Stopped) {
             log(level, LogLevel::Info, "daemon stopped");
             return Ok(());
@@ -96,11 +97,7 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         log(
             level,
             LogLevel::Warn,
-            if relay {
-                "restarting the relay node"
-            } else {
-                "sync worker failed; restarting the engine and node"
-            },
+            "sync worker failed; restarting the engine and node",
         );
         tokio::select! {
             _ = terminate.recv() => return Ok(()),
