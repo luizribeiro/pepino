@@ -62,6 +62,14 @@ For finer distinctions, read `error.code` in the JSON error.
 confirmation fails with status 1 unless you pass `--yes`. Commands that wait,
 such as `sync` and the joins, take `--timeout 45s`.
 
+`ppn board leave House --yes --json` reports local deletion in `left`.
+`still_listed_as_member` reports whether other members continue to list you.
+Leaving revokes nothing. A manager must remove you to stop sharing with your
+devices. If your local view shows you as the only manager, also pass
+`--i-understand-last-manager-risk`. Without it, the command returns status 1
+with `confirmation_required`. After removal, use `ppn board forget House --yes`,
+which reports local deletion in `forgotten`.
+
 ## Keep secrets out of arguments
 
 Request and grant codes are secrets, and command-line arguments are visible

@@ -26,6 +26,7 @@ kind `board` with a `board` object. Each entry contains `id`, `name`, `current`,
 `waiting_for_first_sync`, or `joined`. An omitted `board_show.board` uses the
 invocation's selection. `board_use` saves the host preference. `board_rename` records
 a catalog revision for the daemon to publish. A blank name yields `invalid_input`.
+A board entry includes `removed: true` after the viewer's membership is removed.
 
 ```json
 {"v":2,"result":{"ok":{"kind":"board","board":{"id":"5151515151515151515151515151515151515151515151515151515151515151","name":"Tool Shed","current":true,"open":3,"total":5,"membership":"joined"}}}}
@@ -50,6 +51,15 @@ Daemon status includes observed device membership by board in `board_members` an
 per-board activity in `boards`. The CLI adds `selected_board` to `board ls`,
 `board show`, and `status`, with `id`, `name`, and `source` (`--board`,
 `PPN_BOARD`, or `current`).
+
+Person-level membership cards record invitations, role changes, and removals.
+A receiving device checks the author's Manage role both at the signed
+authorization heads and in its current transport view. A local board deletion
+changes only the private catalog. Its optional `board_presence` map carries
+generations for deletions and re-invitations. At equal generations a deletion
+wins over an invitation. Older catalog snapshots cannot restore a deleted board.
+Leaving revokes nothing. A manager must remove the person to stop sharing with
+their devices.
 
 ## Identity roster
 

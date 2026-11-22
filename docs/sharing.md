@@ -84,8 +84,8 @@ ppn board role Ana read --board House
 ppn board remove Ana --board House --yes
 ```
 
-Name a person by display name, by the `name#suffix` form that an ambiguity
-error suggests, or as `me`.
+Name a person by display name or by the `name#suffix` form that an ambiguity
+error suggests. For role changes you can also use `me`.
 
 Removal changes the board's keys, so the person cannot read anything new. It
 cannot take back what their devices already hold. If you invite them again
@@ -103,29 +103,23 @@ manager first.
 ## Leave a board and delete your copy
 
 ```sh
-ppn board leave --board House --yes
+ppn board leave House --yes
 ```
 
-Your devices stop syncing the board when they learn you are leaving. A
-reader or writer sends a signed request for a board manager to apply.
-`ppn board ls` shows `leaving (waiting for a manager)` while that request is
-pending, then `left` once the departure is confirmed.
+This works offline. It deletes the local board history, queues drop requests
+for your relays, and removes the board from your private catalog. Your other
+devices delete their copies and queue their own relay drops when they next sync
+the catalog. A fresh invitation from a manager restores access and history.
 
-A manager publishes their departure directly. The board must keep at least
-one manager, so the last manager must promote someone before leaving. A
-manager who leaves a board with exactly one other manager also needs
-`--i-understand-mutual-removal-risk`. If the daemon cannot verify your current
-role, sync with a board manager and try again.
+Leaving revokes nothing. Other members still see you listed and share with your
+devices until a manager removes you.
 
-After you have left or been removed, the tasks stay readable on each device.
-You can forget a voluntary departure once it is applied or your device
-receives acceptance from a board manager on another identity.
-To delete them, stop the daemon and forget the board, on every device:
+If you are the only manager in your local view, promote someone first to keep
+invitations and removals possible. If you still want to leave, confirm the
+warning at a terminal or pass `--yes --i-understand-last-manager-risk`.
 
-```sh
-ppn daemon stop
-ppn board forget House --yes
-```
+After a manager removes you, you can still read your local history. To delete
+it from your devices, run `ppn board forget House --yes`.
 
 ## Boards with many removals
 
