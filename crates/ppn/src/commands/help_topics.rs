@@ -19,7 +19,11 @@ board: accepts a board name or an unambiguous hexadecimal ID prefix.
 
 Free text searches titles, descriptions and comments by case-insensitive
 substring. @name expands a saved view. Saved views follow you to all your
-devices. The latest change wins. Use ppn help dates for date forms.
+devices. The latest change wins. A recovered legacy view appears as
+name (from device) [@key] in ppn view ls. Use @key in filters and key
+with ppn view show or rm. JSON lists the label as recovered_as and names
+that could not be imported in not_imported.
+Use ppn help dates for date forms.
 Double quotes in filter syntax protect spaces, commas and operators.
 Inside quotes, use \" for a literal double quote and \\ for a backslash.
 The shell removes its own quotes. Each positional argument is one term.

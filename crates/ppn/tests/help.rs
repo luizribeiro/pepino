@@ -410,3 +410,11 @@ fn board_sharing_help_covers_confirmation_role_and_private_input() {
     let help = run_ppn(&["board", "join", "--help"]);
     assert!(help.contains("--timeout"));
 }
+
+#[test]
+fn filter_help_explains_recovered_views() {
+    let help = run_ppn(&["help", "filters"]);
+    assert!(help.contains("name (from device) [@key]"));
+    assert!(help.contains("recovered_as"));
+    assert!(help.contains("not_imported"));
+}
