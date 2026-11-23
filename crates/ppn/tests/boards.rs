@@ -265,7 +265,7 @@ fn task_commands_use_one_board_and_listings_can_span_boards() {
 }
 
 #[test]
-fn leaving_with_a_pinned_reader_warns_and_keeps_other_commands_available() {
+fn leaving_with_a_pinned_reader_keeps_other_commands_available() {
     use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 
     let (sandbox, data) = task_sandbox();
@@ -308,12 +308,12 @@ fn leaving_with_a_pinned_reader_warns_and_keeps_other_commands_available() {
                 args.extend(json.then_some("--json"));
                 let result = run(&args);
                 assert!(result.status.success(), "{result:?}");
-                assert!(String::from_utf8_lossy(&result.stderr).contains("from disk is pending"));
+                assert!(result.stderr.is_empty(), "{result:?}");
                 String::from_utf8(result.stdout).unwrap()
             };
             let workshop = as_json(&leave("Workshop", true));
             assert_eq!(workshop["left"], true);
-            assert_eq!(workshop["erasure_pending"], true);
+            assert!(workshop.get("erasure_pending").is_none());
             assert!(leave("Shed", false).contains("Deleted Shed"));
             let boards = success(run(&["board", "ls"]));
             assert!(boards.contains("Personal"));
