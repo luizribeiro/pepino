@@ -70,41 +70,6 @@ pub struct LocalBoard {
     pub name: String,
 }
 
-fn migrate_board_cleanup(value: &mut serde_json::Value) {
-    if value["catalog"].get("board_cleanup").is_none() {
-        return;
-    }
-    let listed: BTreeSet<_> = value["boards"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|board| board["id"].as_str().map(str::to_owned))
-        .collect();
-    let Some(catalog) = value
-        .get_mut("catalog")
-        .and_then(serde_json::Value::as_object_mut)
-    else {
-        return;
-    };
-    let Some(serde_json::Value::Object(stages)) = catalog.remove("board_cleanup") else {
-        return;
-    };
-    catalog.entry("pending_board_deletions").or_insert_with(|| {
-        serde_json::Value::Array(
-            stages
-                .into_iter()
-                .filter_map(|(board, stage)| {
-                    (matches!(
-                        stage.as_str(),
-                        Some("history" | "history_after_purge_attempt")
-                    ) && !listed.contains(&board))
-                    .then_some(board.into())
-                })
-                .collect(),
-        )
-    });
-}
-
 impl LocalState {
     pub fn current_board(&self) -> &LocalBoard {
         self.current
@@ -305,7 +270,6 @@ impl LocalState {
             version if version == u64::from(VERSION) => (),
             version => return Err(storage("unsupported local state version", version, false)),
         }
-        migrate_board_cleanup(&mut value);
         let mut local: Self = serde_json::from_value(value).map_err(decode_error)?;
         local.display_name = crate::write::safe_roster_name(&local.display_name);
         local.device_name = crate::write::safe_roster_name(&local.device_name);
@@ -645,27 +609,4 @@ mod tests {
                 if reason == "unsupported local state version: 4294967296"
         ));
     }
-}
-
-#[cfg(test)]
-#[test]
-fn legacy_cleanup_only_recovers_row_deletion_for_unlisted_boards() {
-    let mut value = serde_json::json!({
-        "boards": [{ "id": "rejoined", "name": "Workshop" }],
-        "catalog": {
-            "board_cleanup": {
-                "rejoined": "history_after_purge_attempt",
-                "interrupted": "history",
-                "interrupted_again": "history_after_purge_attempt",
-                "transport_only": "transport",
-                "started_purge": "purging"
-            }
-        }
-    });
-    migrate_board_cleanup(&mut value);
-    assert_eq!(
-        value["catalog"]["pending_board_deletions"],
-        serde_json::json!(["interrupted", "interrupted_again"])
-    );
-    assert!(value["catalog"].get("board_cleanup").is_none());
 }
