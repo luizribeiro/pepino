@@ -54,21 +54,51 @@ impl Spool {
 
     pub(crate) async fn pop(&self, board: BoardId) -> Result<Option<Vec<u8>>, Error> {
         let _write = self.writes.lock().await;
-        sqlx::query_scalar(
-            "DELETE FROM pepino_delivery WHERE id = (
-                SELECT id FROM pepino_delivery WHERE board = ? ORDER BY id LIMIT 1
-             ) RETURNING item",
+        let row: Option<(i64, Vec<u8>)> = sqlx::query_as(
+            "SELECT id, item FROM pepino_delivery WHERE board = ? ORDER BY id LIMIT 1",
         )
         .bind(board.as_bytes().as_slice())
         .fetch_optional(&self.pool)
         .await
-        .map_err(Error::storage)
+        .map_err(Error::storage)?;
+        let Some((id, item)) = row else {
+            return Ok(None);
+        };
+        sqlx::query("DELETE FROM pepino_delivery WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(Error::storage)?;
+        Ok(Some(item))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn an_empty_delivery_queue_does_not_need_a_sqlite_writer() {
+        use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
+
+        let directory = tempfile::tempdir().unwrap();
+        let options = SqliteConnectOptions::new()
+            .filename(directory.path().join("node.sqlite"))
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::ZERO);
+        let pool = SqlitePool::connect_with(options).await.unwrap();
+        let spool = Spool::create(pool.clone()).await.unwrap();
+        let writer = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        assert!(
+            spool
+                .pop(BoardId::from_bytes([30; 32]))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        writer.rollback().await.unwrap();
+    }
 
     #[tokio::test]
     async fn spills_in_board_order_and_clears_only_the_requested_board() {
