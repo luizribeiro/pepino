@@ -846,3 +846,96 @@ async fn junk_cards_are_persisted_together_before_the_first_ack() {
     assert_eq!(app.store().statistics(board).await.unwrap().total, 7);
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn readmission_waits_for_access_then_replays_cached_tasks_offline() {
+    use pepino_core::{Envelope, Event, Hlc, InitialFields};
+    use pepino_node::Role;
+
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([0xa1; 32]);
+    let device = DeviceId::from_bytes([0xa2; 32]);
+    let manager = DeviceId::from_bytes([0xa3; 32]);
+    let app = directory::prepare(dir.path(), board, device).await;
+    app.record_readmission_replay(board, true).await.unwrap();
+    let node = Arc::new(Stub::new(device));
+    node.defer_readmission();
+    let event = Envelope::new(
+        manager,
+        Hlc {
+            wall_ms: directory::NOW,
+            counter: 1,
+        },
+        Event::TaskCreated {
+            title: "Replace the greenhouse vent".into(),
+            fields: InitialFields::default(),
+        },
+    )
+    .unwrap();
+    let (receipt, mut attempting, release) = super::stub::Receipt::new().after_release();
+    node.cache_delivery(
+        board,
+        crate::Delivery {
+            operation: event.id(),
+            signer: manager,
+            bytes: event.encode().unwrap(),
+            ack: receipt,
+        },
+    );
+    let waiting = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    node.deliver_removal(board);
+    super::wait_for_status(&waiting, |status| !status.boards[&board].stream_retrying).await;
+    waiting.wait_idle(Duration::from_secs(3)).await.unwrap();
+    assert!(
+        app.fresh_local_state()
+            .await
+            .unwrap()
+            .needs_readmission_replay(board)
+    );
+
+    node.set_joined_members(
+        board,
+        [(device, Role::Write), (manager, Role::Manage)].into(),
+    );
+    let status = super::wait_for_status(&waiting, |status| status.restart_required.is_some()).await;
+    assert_eq!(status.restart_required.unwrap().board, board);
+    waiting.shutdown().await.unwrap();
+
+    let node = Arc::new(node.restarted());
+    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    node.set_joined_members(
+        board,
+        [(device, Role::Write), (manager, Role::Manage)].into(),
+    );
+    tokio::time::timeout(WAIT, attempting.wait_for(|started| *started))
+        .await
+        .unwrap()
+        .unwrap();
+    let local = app.fresh_local_state().await.unwrap();
+    let entry = local.boards().iter().find(|item| item.id == board).unwrap();
+    assert!(local.check_board_write(entry).is_err());
+    assert_eq!(
+        app.store().tasks(board).await.unwrap()[0].title,
+        "Replace the greenhouse vent"
+    );
+    release.send_replace(true);
+    super::until(
+        async || {
+            !app.fresh_local_state()
+                .await
+                .unwrap()
+                .needs_readmission_replay(board)
+        },
+        |done| *done,
+        Duration::from_secs(3),
+    )
+    .await;
+    let local = app.fresh_local_state().await.unwrap();
+    let entry = local.boards().iter().find(|item| item.id == board).unwrap();
+    local.check_board_write(entry).unwrap();
+    engine.shutdown().await.unwrap();
+}

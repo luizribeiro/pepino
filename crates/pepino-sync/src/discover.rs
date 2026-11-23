@@ -116,31 +116,6 @@ async fn reconcile<T: Transport>(
             });
         }
     }
-    let finished: Vec<_> = {
-        let status = boards.changes.borrow();
-        boards
-            .replaying
-            .iter()
-            .copied()
-            .filter(|id| {
-                node_status.boards.get(id).is_some_and(|node| {
-                    node.joined
-                        && node.synced_with_peer
-                        && node.active_syncs.is_empty()
-                        && !node.replaying
-                        && node.pending_deliveries == 0
-                }) && status
-                    .boards
-                    .get(id)
-                    .is_some_and(|board| !board.ingest_pending && !board.stream_retrying)
-            })
-            .collect()
-    };
-    for board in finished {
-        boards.app.record_readmission_replay(board, false).await?;
-        boards.replaying.remove(&board);
-        boards.changes.send_modify(|_| ());
-    }
     let mut members = BTreeMap::new();
     let mut enrolled = BTreeMap::new();
     for board in local.boards() {
@@ -171,6 +146,34 @@ async fn reconcile<T: Transport>(
                 members.insert(board.id, ids);
             }
         }
+    }
+    let finished: Vec<_> = {
+        let status = boards.changes.borrow();
+        boards
+            .replaying
+            .iter()
+            .copied()
+            .filter(|id| {
+                members
+                    .get(id)
+                    .is_none_or(|ids| ids.contains(&local.device_id))
+                    && node_status.boards.get(id).is_some_and(|node| {
+                        node.joined
+                            && node.active_syncs.is_empty()
+                            && !node.replaying
+                            && node.pending_deliveries == 0
+                    })
+                    && status
+                        .boards
+                        .get(id)
+                        .is_some_and(|board| !board.ingest_pending && !board.stream_retrying)
+            })
+            .collect()
+    };
+    for board in finished {
+        boards.app.record_readmission_replay(board, false).await?;
+        boards.replaying.remove(&board);
+        boards.changes.send_modify(|_| ());
     }
     if local.roster_ready() {
         let contacts = node_status

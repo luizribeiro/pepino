@@ -13,7 +13,8 @@ use tokio_stream::wrappers::{BroadcastStream, UnboundedReceiverStream};
 
 use crate::{Acknowledgement, Delivery, DeliveryStream, Transport, TransportBoard};
 
-type Queue = mpsc::UnboundedSender<Delivery<Receipt>>;
+type Queued = Result<Delivery<Receipt>, Error>;
+type Queue = mpsc::UnboundedSender<Queued>;
 
 #[derive(Default)]
 struct Publisher {
@@ -46,6 +47,8 @@ pub(super) struct Stub {
     signals: broadcast::Sender<NodeEvent>,
     status: Arc<Mutex<NodeStatus>>,
     pause_open: Mutex<Option<OpenPause>>,
+    defer_readmission: AtomicBool,
+    cached_delivery: Mutex<Option<(BoardId, Delivery<Receipt>)>>,
 }
 
 struct OpenPause {
@@ -61,6 +64,7 @@ impl Stub {
                 ..Default::default()
             }),
             instance: self.instance,
+            cached_delivery: Mutex::new(self.cached_delivery.lock().unwrap().take()),
             ..Self::new(self.device)
         }
     }
@@ -76,6 +80,8 @@ impl Stub {
             signals: broadcast::channel(128).0,
             status: Arc::default(),
             pause_open: Mutex::default(),
+            defer_readmission: AtomicBool::default(),
+            cached_delivery: Mutex::default(),
         }
     }
 
@@ -93,7 +99,8 @@ impl Stub {
 pub(super) struct Board {
     publisher: Arc<Publisher>,
     queues: Arc<Mutex<BTreeMap<BoardId, Queue>>>,
-    deliveries: Option<mpsc::UnboundedReceiver<Delivery<Receipt>>>,
+    deliveries: Option<mpsc::UnboundedReceiver<Queued>>,
+    deferred_readmission: bool,
     signals: broadcast::Sender<NodeEvent>,
     id: BoardId,
     status: Arc<Mutex<NodeStatus>>,
@@ -258,6 +265,21 @@ impl Stub {
         received
     }
 
+    pub(super) fn cache_delivery(&self, board: BoardId, delivery: Delivery<Receipt>) {
+        self.cached_delivery
+            .lock()
+            .unwrap()
+            .replace((board, delivery));
+    }
+
+    pub(super) fn defer_readmission(&self) {
+        self.defer_readmission.store(true, Ordering::Relaxed);
+    }
+
+    pub(super) fn deliver_removal(&self, board: BoardId) {
+        self.send_delivery(board, Err(Error::Removed));
+    }
+
     pub(super) fn deliver_operation(
         &self,
         id: BoardId,
@@ -266,18 +288,21 @@ impl Stub {
         bytes: Vec<u8>,
         ack: Receipt,
     ) {
-        pending(&self.status, &self.signals, id, true);
-        self.queues
-            .lock()
-            .unwrap()
-            .get(&id)
-            .unwrap()
-            .send(Delivery {
+        self.send_delivery(
+            id,
+            Ok(Delivery {
                 operation,
                 signer,
                 bytes,
                 ack,
-            })
+            }),
+        );
+    }
+
+    fn send_delivery(&self, id: BoardId, delivery: Queued) {
+        pending(&self.status, &self.signals, id, true);
+        self.queues.lock().unwrap()[&id]
+            .send(delivery)
             .ok()
             .unwrap();
     }
@@ -340,9 +365,34 @@ impl TransportBoard for Board {
         Ok(UnboundedReceiverStream::new(rx)
             .filter_map(move |delivery| {
                 pending(&status, &signals, id, false);
-                futures_util::future::ready((!delivery.ack.is_acked()).then_some(Ok(delivery)))
+                futures_util::future::ready(match delivery {
+                    Ok(delivery) if delivery.ack.is_acked() => None,
+                    delivery => Some(delivery),
+                })
             })
             .boxed())
+    }
+
+    fn readmission_replay_deferred(&self) -> bool {
+        self.deferred_readmission
+    }
+
+    fn membership_events(&self) -> Option<pepino_node::MembershipEvents> {
+        self.deferred_readmission.then(|| stream::pending().boxed())
+    }
+
+    async fn known_members(
+        &self,
+        _: &pepino_app::LocalState,
+        _: bool,
+    ) -> Result<Option<BTreeSet<DeviceId>>, Error> {
+        Ok(self
+            .publisher
+            .membership
+            .lock()
+            .unwrap()
+            .get(&self.id)
+            .map(|members| members.keys().copied().collect()))
     }
 
     async fn roles(&self) -> Result<BTreeMap<DeviceId, Role>, Error> {
@@ -495,10 +545,24 @@ impl Transport for Stub {
             publisher: self.publisher.clone(),
             queues: self.queues.clone(),
             deliveries: Some(receiver),
+            deferred_readmission: false,
             signals: self.signals.clone(),
             id,
             status: self.status.clone(),
         })
+    }
+
+    async fn open_board_for_readmission(&self, id: BoardId) -> Result<Board, Error> {
+        let mut board = self.open_board(id).await?;
+        board.deferred_readmission = self.defer_readmission.load(Ordering::Relaxed);
+        if !board.deferred_readmission {
+            let mut cached = self.cached_delivery.lock().unwrap();
+            if cached.as_ref().is_some_and(|(board, _)| *board == id) {
+                let (_, delivery) = cached.take().unwrap();
+                self.send_delivery(id, Ok(delivery));
+            }
+        }
+        Ok(board)
     }
 
     fn events(&self) -> NodeEvents {
