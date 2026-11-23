@@ -199,12 +199,21 @@ fn call(config: &Config, operation: Operation) -> Result<Option<Outcome>, CliErr
     let client = Client {
         path: socket_path(config),
     };
-    match client.call_with(operation, Duration::from_secs(2)) {
+    let limit = if matches!(operation, Operation::RelayDrop { .. }) {
+        // The ledger's SQLite connection can wait five seconds for another writer.
+        Duration::from_secs(8)
+    } else {
+        Duration::from_secs(2)
+    };
+    match client.call_with(operation, limit) {
         Ok(outcome) => Ok(Some(outcome)),
         Err(error) if ppn::daemon::client::unavailable(&error) => Ok(None),
-        Err(_) => Err(CliError::new(
+        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+            Err(CliError::new(ErrorKind::Busy, error.to_string()))
+        }
+        Err(error) => Err(CliError::new(
             ErrorKind::DaemonUnreachable,
-            "Could not reach the relay daemon.",
+            format!("Could not reach the relay daemon. {error}"),
         )),
     }
 }

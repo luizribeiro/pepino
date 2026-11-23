@@ -354,6 +354,49 @@ mod network {
         relay.stop();
     }
 
+    #[test]
+    fn dropping_a_board_waits_for_the_relay_database_writer() {
+        use std::{process::Stdio, time::Duration};
+
+        let Fleet {
+            device,
+            relay,
+            address,
+            ..
+        } = fleet();
+        device.run(&["board", "relay", "add", &address]);
+        wait_state(&device, "Greenhouse", "carrying");
+        let listing = relay.json(&["relay", "boards"]);
+        let handle = listing["devices"][0]["boards"][0]["handle"]
+            .as_str()
+            .unwrap();
+        let pid = relay.json(&["daemon", "status"])["pid"].clone();
+
+        let dropped = with_db(&relay.data.join("relay.sqlite"), false, async |db| {
+            let writer = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
+            let child = relay
+                .command()
+                .args(["relay", "drop", handle, "--yes", "--json"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut dropped =
+                tokio::task::spawn_blocking(move || child.wait_with_output().unwrap());
+            let early = tokio::time::timeout(Duration::from_millis(2600), &mut dropped).await;
+            assert_eq!(relay.json(&["daemon", "status"])["pid"], pid);
+            writer.rollback().await.unwrap();
+            match early {
+                Ok(output) => output.unwrap(),
+                Err(_) => dropped.await.unwrap(),
+            }
+        });
+        let result = super::as_json(&success(dropped));
+        assert_eq!(result["dropped"], 1);
+        until(|| carried(&relay), |count| *count == Some(0), WAIT);
+        assert_eq!(relay.json(&["daemon", "status"])["pid"], pid);
+    }
+
     fn carried(relay: &Host) -> Option<u64> {
         let output = relay.output(&["relay", "boards", "--json"]);
         serde_json::from_slice::<Value>(&output.stdout).ok()?["count"].as_u64()
