@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use futures_util::StreamExt;
 use pepino_app::{App, BoardCards, LocalState};
@@ -7,7 +7,8 @@ use tokio::sync::{oneshot, watch};
 
 use crate::{
     Acknowledgement, DeliveryStream, Error, Status, Transport, TransportBoard,
-    inbox::decode_board_cards, retry::Retry,
+    inbox::{reject_cards, report_card_version},
+    retry::Retry,
 };
 
 use super::{BoardWorkers, WorkerStop};
@@ -100,21 +101,39 @@ async fn receive<A: Acknowledgement>(
     mut stream: DeliveryStream<A>,
     status: &watch::Sender<Status>,
 ) {
-    while let Some(delivery) = stream.next().await {
+    let mut buffered = VecDeque::new();
+    loop {
+        let next = match buffered.pop_front() {
+            Some(delivery) => Some(delivery),
+            None => stream.next().await,
+        };
+        let Some(delivery) = next else { break };
         let Ok(delivery) = delivery else { continue };
         let mut retry = Retry::new();
-        while let Some(cards) = decode_board_cards(
-            app,
-            shared_board,
-            delivery.operation,
-            &delivery.bytes,
-            status,
-        )
-        .await
-        {
+        let mut first = match BoardCards::decode(&delivery.bytes) {
+            Ok(cards) => cards,
+            Err(error @ pepino_app::AppError::UnsupportedVersion { .. }) => {
+                report_card_version(status, shared_board, error);
+                None
+            }
+            Err(_) => {
+                reject_cards(
+                    app,
+                    shared_board,
+                    &mut stream,
+                    &mut buffered,
+                    delivery,
+                    status,
+                )
+                .await;
+                continue;
+            }
+        };
+        while let Some(cards) = first.take() {
             let local = match app.fresh_local_state().await {
                 Ok(local) => local,
                 Err(_) => {
+                    first = Some(cards);
                     retry.wait().await;
                     continue;
                 }
@@ -136,6 +155,7 @@ async fn receive<A: Acknowledgement>(
             {
                 break;
             }
+            first = BoardCards::decode(&delivery.bytes).ok().flatten();
             retry.wait().await;
         }
         while delivery.ack.ack().await.is_err() {

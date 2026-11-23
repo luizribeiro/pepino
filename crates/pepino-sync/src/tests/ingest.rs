@@ -779,3 +779,43 @@ async fn former_managers_and_unknown_board_cards_cannot_change_membership() {
     );
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn junk_cards_are_persisted_together_before_the_first_ack() {
+    use super::stub::Receipt;
+    use pepino_core::EventId;
+
+    let dir = tempfile::tempdir().unwrap();
+    let board = BoardId::from_bytes([93; 32]);
+    let owner = DeviceId::from_bytes([94; 32]);
+    let app = directory::prepare(dir.path(), board, owner).await;
+    let node = Arc::new(Stub::new(owner));
+    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    let bytes = b"pepino-board-people\0invalid-cbor".to_vec();
+    let (mut first_ack, _) = node.pause_before_ack(board, owner, bytes.clone());
+    for index in 1..8 {
+        node.deliver_operation(
+            board,
+            EventId::from_bytes([index + 80; 32]),
+            owner,
+            b"non-card delivery".to_vec(),
+            Receipt::new(),
+        );
+        node.deliver_operation(
+            board,
+            EventId::from_bytes([index; 32]),
+            owner,
+            bytes.clone(),
+            Receipt::new(),
+        );
+    }
+    tokio::time::timeout(WAIT, first_ack.wait_for(|started| *started))
+        .await
+        .unwrap()
+        .unwrap();
+    let local = app.fresh_local_state().await.unwrap();
+    assert_eq!(local.rejected_board_cards(), 8);
+    drop(engine);
+}

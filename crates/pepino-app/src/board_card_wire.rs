@@ -157,9 +157,20 @@ impl App {
         board: BoardId,
         operation: EventId,
     ) -> Result<(), AppError> {
+        self.reject_unknown_board_cards(board, vec![operation])
+            .await
+    }
+
+    pub async fn reject_unknown_board_cards(
+        &self,
+        board: BoardId,
+        operations: Vec<EventId>,
+    ) -> Result<(), AppError> {
         self.update_local(move |local| {
             if local.boards().iter().any(|entry| entry.id == board) {
-                local.catalog.reject_card(board, operation);
+                for operation in operations {
+                    local.catalog.reject_card(board, operation);
+                }
             }
         })
         .await

@@ -1,4 +1,6 @@
-use std::{future::poll_fn, task::Poll, time::Duration};
+use std::{collections::VecDeque, future::poll_fn, task::Poll, time::Duration};
+
+use futures_util::StreamExt;
 
 use pepino_app::{App, AppError, BoardCards, SyncStoreError};
 use pepino_core::BoardId;
@@ -20,6 +22,7 @@ pub(crate) async fn run<B: TransportBoard>(
     mut stopping: watch::Receiver<()>,
     authority: Option<&std::path::Path>,
 ) -> Result<(), Error> {
+    let mut buffered = VecDeque::new();
     let mut stream_retry = Retry::new();
     let mut last_stream_error = None;
     loop {
@@ -27,7 +30,10 @@ pub(crate) async fn run<B: TransportBoard>(
         let next = poll_fn(|cx| {
             let mut item = Poll::Pending;
             status.send_if_modified(|status| {
-                item = deliveries.as_mut().poll_next(cx);
+                item = match buffered.pop_front() {
+                    Some(delivery) => Poll::Ready(Some(delivery)),
+                    None => deliveries.poll_next_unpin(cx),
+                };
                 let board = status.boards.entry(id).or_default();
                 let retrying = matches!(item, Poll::Ready(Some(Err(_))));
                 let ingest = matches!(item, Poll::Ready(Some(Ok(_)) | None));
@@ -56,30 +62,35 @@ pub(crate) async fn run<B: TransportBoard>(
                 stream_retry = Retry::new();
                 last_stream_error = None;
                 let finish = async {
-                    if !ingest_cards(app, id, handle, &delivery, status, authority).await {
-                        ingest(app, id, &delivery, status).await;
+                    match BoardCards::decode(&delivery.bytes) {
+                        Ok(Some(cards)) => {
+                            ingest_cards(app, id, handle, &delivery, status, authority, cards).await
+                        }
+                        Ok(None) => ingest(app, id, &delivery, status).await,
+                        Err(error @ AppError::UnsupportedVersion { .. }) => {
+                            report_card_version(status, id, error)
+                        }
+                        Err(_) => {
+                            reject_cards(app, id, &mut deliveries, &mut buffered, delivery, status)
+                                .await;
+                            return;
+                        }
                     }
-                    let mut retry = Retry::new();
-                    while let Err(error) = delivery.ack.ack().await {
-                        record_error(
-                            status,
-                            id,
-                            format!("ack operation {}: {error}", delivery.operation),
-                        );
-                        retry.wait().await;
-                    }
+                    acknowledge(id, &delivery, status).await;
                 };
-                tokio::pin!(finish);
-                tokio::select! {
-                    biased;
-                    _ = stopping.changed() => {
-                        let _ = tokio::time::timeout(Duration::from_secs(1), finish).await;
-                        return Ok(());
+                {
+                    tokio::pin!(finish);
+                    tokio::select! {
+                        biased;
+                        _ = stopping.changed() => {
+                            let _ = tokio::time::timeout(Duration::from_secs(1), finish).await;
+                            return Ok(());
+                        }
+                        _ = &mut finish => (),
                     }
-                    _ = &mut finish => (),
                 }
                 status.send_modify(|state| {
-                    state.boards.entry(id).or_default().ingest_pending = false
+                    state.boards.entry(id).or_default().ingest_pending = !buffered.is_empty()
                 });
             }
             Err(pepino_node::Error::Removed) => return Err(pepino_node::Error::Removed.into()),
@@ -226,27 +237,63 @@ async fn manager_authority<B: TransportBoard>(
     )
 }
 
-pub(crate) async fn decode_board_cards(
+pub(crate) fn report_card_version(status: &watch::Sender<Status>, board: BoardId, error: AppError) {
+    record_error(status, board, format!("read board identity cards: {error}"));
+}
+
+pub(crate) async fn reject_cards<A: Acknowledgement>(
     app: &App,
     board: BoardId,
-    operation: pepino_core::EventId,
-    bytes: &[u8],
+    stream: &mut DeliveryStream<A>,
+    buffered: &mut VecDeque<Result<Delivery<A>, pepino_node::Error>>,
+    first: Delivery<A>,
     status: &watch::Sender<Status>,
-) -> Option<BoardCards> {
-    match BoardCards::decode(bytes) {
-        Ok(cards) => cards,
-        Err(error @ AppError::UnsupportedVersion { .. }) => {
-            record_error(status, board, format!("read board identity cards: {error}"));
-            None
-        }
-        Err(_) => {
-            let mut retry = Retry::new();
-            while let Err(error) = app.reject_unknown_board_card(board, operation).await {
-                record_error(status, board, format!("save rejected board card: {error}"));
-                retry.wait().await;
+) {
+    const MAX_BATCH: usize = 64;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(25);
+    let mut batch = vec![first];
+    for _ in 1..MAX_BATCH {
+        match tokio::time::timeout_at(deadline, stream.next()).await {
+            Ok(Some(Ok(next))) if matches!(BoardCards::decode(&next.bytes), Err(error) if !matches!(error, AppError::UnsupportedVersion { .. })) =>
+            {
+                batch.push(next);
             }
-            None
+            Ok(Some(Ok(next))) => buffered.push_back(Ok(next)),
+            Ok(Some(Err(error))) => {
+                buffered.push_back(Err(error));
+                break;
+            }
+            _ => break,
         }
+    }
+
+    let operations: Vec<_> = batch.iter().map(|delivery| delivery.operation).collect();
+    let mut retry = Retry::new();
+    while let Err(error) = app
+        .reject_unknown_board_cards(board, operations.clone())
+        .await
+    {
+        record_error(status, board, format!("save rejected board cards: {error}"));
+        retry.wait().await;
+    }
+    for delivery in &batch {
+        acknowledge(board, delivery, status).await;
+    }
+}
+
+async fn acknowledge<A: Acknowledgement>(
+    board: BoardId,
+    delivery: &Delivery<A>,
+    status: &watch::Sender<Status>,
+) {
+    let mut retry = Retry::new();
+    while let Err(error) = delivery.ack.ack().await {
+        record_error(
+            status,
+            board,
+            format!("ack operation {}: {error}", delivery.operation),
+        );
+        retry.wait().await;
     }
 }
 
@@ -257,13 +304,13 @@ async fn ingest_cards<B: TransportBoard>(
     delivery: &Delivery<B::Ack>,
     status: &watch::Sender<Status>,
     authority: Option<&std::path::Path>,
-) -> bool {
-    if !BoardCards::is_board_card(&delivery.bytes) {
-        return false;
-    }
+    cards: BoardCards,
+) {
     let mut retry = Retry::new();
-    while let Some(cards) =
-        decode_board_cards(app, board, delivery.operation, &delivery.bytes, status).await
+    let mut first = Some(cards);
+    while let Some(cards) = first
+        .take()
+        .or_else(|| BoardCards::decode(&delivery.bytes).ok().flatten())
     {
         if let BoardCards::Membership(change) = cards {
             let outcome = match manager_authority(handle, delivery).await {
@@ -370,5 +417,4 @@ async fn ingest_cards<B: TransportBoard>(
             }
         }
     }
-    true
 }
