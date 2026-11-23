@@ -3398,7 +3398,6 @@ dependencies = [
  "p2panda-store",
  "p2panda-sync",
  "pepino-core",
- "pepino-store",
  "proptest",
  "serde",
  "serde_bytes",

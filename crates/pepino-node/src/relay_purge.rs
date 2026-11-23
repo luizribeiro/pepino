@@ -1,10 +1,9 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use p2panda::{Topic, operation::LogId};
-use p2panda_core::cbor::{decode_cbor, encode_cbor};
-use p2panda_spaces::{AuthGroupState, global_groups_id};
+use p2panda_core::cbor::encode_cbor;
 use pepino_core::BoardId;
-use sqlx::{Connection, QueryBuilder, Sqlite, SqliteConnection, SqlitePool, Transaction};
+use sqlx::{Connection, Sqlite, SqliteConnection, SqlitePool, Transaction};
 
 use crate::{
     Error,
@@ -23,7 +22,7 @@ pub(super) async fn pending(
     if pending.peek().is_some() {
         let mut tx = pool.begin().await.map_err(Error::storage)?;
         for (key, record, board) in pending {
-            purge(&mut tx, board, false).await?;
+            purge(&mut tx, board).await?;
             sqlx::query("UPDATE pepino_relay_ledger SET record = ? WHERE key = ?")
                 .bind(encode(&record.purged())?)
                 .bind(key)
@@ -32,68 +31,6 @@ pub(super) async fn pending(
                 .map_err(Error::storage)?;
         }
         tx.commit().await.map_err(Error::storage)?;
-    }
-    Ok(())
-}
-
-pub(super) async fn device_boards(pool: &SqlitePool, boards: &[BoardId]) -> Result<(), Error> {
-    let _acks = crate::ack::AckStore::create(pool.clone()).await?;
-    let mut tx = pool.begin().await.map_err(Error::storage)?;
-    preserve_global_auth(&mut tx).await?;
-    for &board in boards {
-        purge(&mut tx, board, true).await?;
-        for query in [
-            "DELETE FROM pepino_board_ack WHERE board = ?",
-            "DELETE FROM pepino_ack_position WHERE board = ?",
-            "DELETE FROM pepino_ack_store WHERE board = ?",
-            "DELETE FROM pepino_delivery WHERE board = ?",
-        ] {
-            sqlx::query(query)
-                .bind(board.as_bytes().as_slice())
-                .execute(&mut *tx)
-                .await
-                .map_err(Error::storage)?;
-        }
-    }
-    tx.commit().await.map_err(Error::storage)?;
-    let mut connection = pool.acquire().await.map_err(Error::storage)?;
-    if !pepino_store::sqlite::checkpoint(&mut connection)
-        .await
-        .map_err(Error::storage)?
-    {
-        return Err(Error::storage("the node database write-ahead log is busy"));
-    }
-    Ok(())
-}
-
-async fn preserve_global_auth(tx: &mut Transaction<'_, Sqlite>) -> Result<(), Error> {
-    sqlx::query("CREATE TEMP TABLE pepino_purge_auth (hash TEXT PRIMARY KEY) WITHOUT ROWID")
-        .execute(&mut **tx)
-        .await
-        .map_err(Error::storage)?;
-    let stored: Option<Vec<u8>> = sqlx::query_scalar("SELECT state FROM groups_v1 WHERE id = ?")
-        .bind(global_groups_id().to_hex())
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(Error::storage)?;
-    let Some(stored) = stored else { return Ok(()) };
-    // Space repair resolves the node-wide authorization graph's signed messages by hash.
-    let groups: AuthGroupState<()> = decode_cbor(&stored[..]).map_err(Error::storage)?;
-    let hashes: Vec<_> = groups
-        .inner
-        .operations
-        .keys()
-        .map(|id| id.to_hex())
-        .collect();
-    for chunk in hashes.chunks(512) {
-        QueryBuilder::<Sqlite>::new("INSERT INTO temp.pepino_purge_auth (hash) ")
-            .push_values(chunk, |mut row, hash| {
-                row.push_bind(hash);
-            })
-            .build()
-            .execute(&mut **tx)
-            .await
-            .map_err(Error::storage)?;
     }
     Ok(())
 }
@@ -109,16 +46,28 @@ pub(super) async fn checkpoint(pool: &SqlitePool) -> Result<bool, Error> {
     let mut connection = SqliteConnection::connect_with(&options)
         .await
         .map_err(Error::storage)?;
-    let outcome = pepino_store::sqlite::checkpoint(&mut connection).await;
+    let outcome = sqlx::query_as::<_, (i64, i64, i64)>("PRAGMA wal_checkpoint(TRUNCATE)")
+        .fetch_one(&mut connection)
+        .await;
     connection.close().await.map_err(Error::storage)?;
-    outcome.map_err(Error::storage)
+    match outcome {
+        Ok((busy, _, _)) => Ok(busy == 0),
+        Err(error) if is_busy(&error) => Ok(false),
+        Err(error) => Err(Error::storage(error)),
+    }
 }
 
-async fn purge(
-    tx: &mut Transaction<'_, Sqlite>,
-    board: BoardId,
-    preserve_auth: bool,
-) -> Result<(), Error> {
+fn is_busy(error: &sqlx::Error) -> bool {
+    const SQLITE_BUSY: u32 = 5;
+    const SQLITE_LOCKED: u32 = 6;
+    error
+        .as_database_error()
+        .and_then(|error| error.code())
+        .and_then(|code| code.parse::<u32>().ok())
+        .is_some_and(|code| matches!(code & 0xff, SQLITE_BUSY | SQLITE_LOCKED))
+}
+
+async fn purge(tx: &mut Transaction<'_, Sqlite>, board: BoardId) -> Result<(), Error> {
     let topic = Topic::from(*board.as_bytes());
     let topic_bytes = encode_cbor(&topic).map_err(Error::storage)?;
 
@@ -135,30 +84,13 @@ async fn purge(
     .execute(&mut **tx)
     .await
     .map_err(Error::storage)?;
-    let mut operations = QueryBuilder::<Sqlite>::new(
+    sqlx::query(
         "DELETE FROM operations_v1 AS op
-        WHERE (log_id IN (",
-    );
-    operations
-        .push_bind(control)
-        .push(", ")
-        .push_bind(application)
-        .push(") OR (EXISTS (SELECT 1 FROM topics_v1 WHERE topic = ")
-        .push_bind(&topic_bytes)
-        .push(
-            " AND author = op.verifying_key AND data_id = op.log_id)
-               AND NOT EXISTS (SELECT 1 FROM topics_v1 WHERE topic != ",
-        )
-        .push_bind(&topic_bytes)
-        .push(" AND author = op.verifying_key AND data_id = op.log_id)))");
-    if preserve_auth {
-        operations.push(" AND op.hash NOT IN (SELECT hash FROM temp.pepino_purge_auth)");
-    }
-    operations
-        .build()
-        .execute(&mut **tx)
-        .await
-        .map_err(Error::storage)?;
+           WHERE log_id IN (?, ?)
+           OR (EXISTS (SELECT 1 FROM topics_v1 WHERE topic = ? AND author = op.verifying_key AND data_id = op.log_id)
+               AND NOT EXISTS (SELECT 1 FROM topics_v1 WHERE topic != ? AND author = op.verifying_key AND data_id = op.log_id))",
+    ).bind(&control).bind(&application).bind(&topic_bytes).bind(&topic_bytes)
+        .execute(&mut **tx).await.map_err(Error::storage)?;
     sqlx::query("DELETE FROM topics_v1 WHERE topic = ?")
         .bind(topic_bytes)
         .execute(&mut **tx)
@@ -357,98 +289,4 @@ mod tests {
             }
         }
     }
-}
-
-#[cfg(test)]
-#[tokio::test]
-async fn device_purge_removes_operations_secrets_and_receipts_from_disk() {
-    use futures_util::StreamExt;
-
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("node.sqlite");
-    let keys = crate::DeviceCredentials::load_or_create(dir.path().join("keys.cbor")).unwrap();
-    let node = crate::Node::spawn(crate::NodeSettings::offline(keys, &path))
-        .await
-        .unwrap();
-    let mut forgotten = node.create_board().await.unwrap();
-    let mut kept = node.create_board().await.unwrap();
-    let boards = [forgotten.id(), kept.id()];
-    let mut ids = Vec::new();
-    for (board, payload) in [
-        (&mut forgotten, b"Repair gate".as_slice()),
-        (&mut kept, b"Check pump".as_slice()),
-    ] {
-        let mut events = board.events().unwrap();
-        let id = board.publish(payload.to_vec()).await.unwrap();
-        let event = tokio::time::timeout(Duration::from_secs(60), events.next())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        assert_eq!(id, event.id);
-        event.ack().await.unwrap();
-        ids.push(id);
-    }
-    assert!(matches!(
-        crate::Node::purge_device_boards(&path, &boards[..1]).await,
-        Err(Error::DirectoryInUse(_))
-    ));
-    node.shutdown().await.unwrap();
-    let contains = |needle: &[u8]| {
-        std::fs::read_dir(dir.path()).unwrap().any(|entry| {
-            let path = entry.unwrap().path();
-            match std::fs::read(&path) {
-                Ok(bytes) => bytes.windows(needle.len()).any(|part| part == needle),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-                Err(error) => panic!("read {}: {error}", path.display()),
-            }
-        })
-    };
-    assert!(contains(boards[0].as_bytes()));
-    assert!(contains(boards[0].to_string().as_bytes()));
-    assert!(contains(ids[0].to_string().as_bytes()));
-    let pool = crate::node::open_database(&path, false).await.unwrap();
-    let state: Vec<u8> = sqlx::query_scalar("SELECT state FROM groups_v1 WHERE id = ?")
-        .bind(global_groups_id().to_hex())
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    let groups: AuthGroupState<()> = decode_cbor(&state[..]).unwrap();
-    assert_eq!(groups.inner.operations.len(), 2);
-    pool.close().await;
-
-    for _ in 0..2 {
-        crate::Node::purge_device_boards(&path, &boards[..1])
-            .await
-            .unwrap();
-    }
-    let pool = crate::node::open_database(&path, false).await.unwrap();
-    for id in groups.inner.operations.keys() {
-        let found: bool =
-            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM operations_v1 WHERE hash = ?)")
-                .bind(id.to_hex())
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert!(found, "the authorization graph still references {id}");
-    }
-    pool.close().await;
-    assert!(!contains(boards[0].as_bytes()));
-    assert!(!contains(boards[0].to_string().as_bytes()));
-    assert!(!contains(ids[0].to_string().as_bytes()));
-    assert!(contains(boards[1].to_string().as_bytes()));
-    assert!(contains(ids[1].to_string().as_bytes()));
-    assert!(
-        crate::Node::persisted_members(&path, boards[0])
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    assert_eq!(
-        crate::Node::persisted_members(&path, boards[1])
-            .await
-            .unwrap()
-            .len(),
-        1
-    );
 }

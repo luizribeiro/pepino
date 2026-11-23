@@ -40,30 +40,6 @@ impl Node {
         Self::spawn_mode(settings, false, stopping).await
     }
 
-    /// Purge boards from a stopped device node, including their cached space secrets.
-    pub async fn purge_device_boards(
-        path: &std::path::Path,
-        boards: &[pepino_core::BoardId],
-    ) -> Result<(), Error> {
-        if boards.is_empty() {
-            return Ok(());
-        }
-        let _lock = crate::worker::lock_database(path)?;
-        if !path.try_exists().map_err(Error::storage)? {
-            return Ok(());
-        }
-        let pool = open_database(path, true).await?;
-        let result = async {
-            p2panda_store::sqlite::run_pending_migrations(&pool)
-                .await
-                .map_err(Error::storage)?;
-            crate::relay_purge::device_boards(&pool, boards).await
-        }
-        .await;
-        pool.close().await;
-        result
-    }
-
     pub(crate) async fn spawn_relay(settings: NodeSettings) -> Result<Self, Error> {
         Self::spawn_mode(settings, true, std::future::pending())
             .await?
