@@ -23,7 +23,9 @@ had no security audit. Do not rely on it against a capable attacker.
   nodes sync a board, when, and how much, though not what.
 - **Removal is not retroactive.** A removed person or device keeps everything
   it already received. Removal changes the keys, so it protects only what
-  comes after.
+  comes after. A person whose removal card is still in flight or was refused
+  after the remover lost Manage access can enroll another device by revoking
+  the removed device in their own roster until an effective removal card applies.
 - **Leaving is local.** Leave and forget delete this device's board history
   and catalog metadata. The next daemon start purges the board's encrypted
   operations, space secrets, and delivery state from `node.sqlite`. The node

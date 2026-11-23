@@ -470,3 +470,91 @@ async fn reconcile_records_transport_refusal_to_remove_the_last_manager() {
     assert!(world.node.membership_changes().is_empty());
     world.workers.abort().await;
 }
+
+async fn enrollment_after_tablet_removal(revoke: bool, effective: bool) -> (bool, bool) {
+    let mut world = world().await;
+    let (ada, ben) = (world.ada, world.ben);
+    let cora = DeviceId::from_bytes([203; 32]);
+    world.node.set_operation_role(Role::Manage);
+    world
+        .app
+        .record_membership(
+            BOARD,
+            record(
+                1,
+                ada,
+                ben,
+                MembershipAction::Invited(BoardRole::Write),
+                &[],
+                None,
+            ),
+        )
+        .await
+        .unwrap();
+    world.node.set_joined_members(
+        BOARD,
+        [
+            (ada, Role::Manage),
+            (cora, Role::Write),
+            (world.tablet, Role::Write),
+        ]
+        .into(),
+    );
+    transport_removal(&world, world.tablet).await;
+    let mut removal = record(
+        2,
+        if effective { ada } else { cora },
+        ben,
+        MembershipAction::Removed,
+        &[1],
+        None,
+    );
+    if !effective {
+        removal.applied = false;
+        removal.refusal = Some(MembershipRefusal::AuthorNoLongerManager);
+    }
+    world.app.record_membership(BOARD, removal).await.unwrap();
+    if revoke {
+        world
+            .ben_app
+            .record_device_revocation(world.tablet, std::time::SystemTime::now().into())
+            .await
+            .unwrap();
+        let card = world
+            .ben_app
+            .fresh_local_state()
+            .await
+            .unwrap()
+            .identity_card()
+            .unwrap();
+        world
+            .app
+            .receive_board_cards(BOARD, ben.1, None, pepino_app::BoardCards::Update(card))
+            .await
+            .unwrap();
+    }
+    rounds(&world, &mut Repairs::default(), 3).await;
+    let now = roles(&world).await;
+    world.workers.abort().await;
+    (now.contains_key(&ben.1), now.contains_key(&world.tablet))
+}
+
+#[tokio::test]
+async fn a_removed_tablet_blocks_a_sibling_until_self_revoked() {
+    assert_eq!(
+        enrollment_after_tablet_removal(false, false).await,
+        (false, false)
+    );
+    assert_eq!(
+        enrollment_after_tablet_removal(true, false).await,
+        (true, false)
+    );
+}
+
+#[tokio::test]
+async fn effective_person_removal_blocks_a_sibling_even_after_self_revocation() {
+    assert_eq!(
+        enrollment_after_tablet_removal(true, true).await,
+        (false, false)
+    );
+}

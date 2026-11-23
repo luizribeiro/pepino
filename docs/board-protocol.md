@@ -65,14 +65,24 @@ register rules for `board/<id>`. Installing a grant writes a live entry.
 Leaving or forgetting writes a tombstone. The later entry by `(HLC, event ID)`
 wins. Entries from unknown writers or more than 24 hours ahead of the local
 clock are ignored. Each register keeps up to 256 live entries and 1,024
-tombstones. Devices discard tombstones for boards absent from their local
-catalog and register.
+tombstones, including tombstones for boards the device has never listed.
 
-As with saved views, skew within the 24-hour window can change which offline
-edit wins. An older snapshot can restore a board after the relevant tombstone
-expires from the bounded register, or on a device that never knew the board
-and discarded its tombstone. Leaving revokes nothing. A manager must remove
-the person to stop sharing with their devices.
+An earlier leave can win over a later rejoin when the devices' clocks differ
+within the 24-hour window. The winning tombstone deletes the local copy and
+queues a transport purge. Recover with a saved grant if its matching request
+and decryption secret are still available, or ask for a fresh invite. An older
+snapshot can also restore a board after its tombstone ages out of the bounded
+register.
+
+The device daemon purges transport data at startup. A running daemon retains
+a left board's ciphertext and keys until it restarts. Leaving revokes nothing.
+A manager must remove the person to stop sharing with their devices.
+
+A removed person can get another device enrolled by revoking the removed device
+in their own roster if the manager handling enrollment has yet to apply the
+person's removal card, or refused it because the remover lost Manage access.
+Revoked devices do not block enrollment. An effective person-level removal
+card prevents this enrollment.
 
 ## Identity roster
 
