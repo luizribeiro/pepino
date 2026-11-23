@@ -64,7 +64,7 @@ fn assign_reports_an_unknown_person_at_the_reference() {
     assert_eq!(error["field"], "assignees[0]");
     assert_eq!(
         error["hint"],
-        "If they recently joined the board, retry after `ppn sync`."
+        "Use `me`, a display name, or an identity ID or prefix. If they recently joined the board, retry after `ppn sync`."
     );
     assert!(
         error["message"]
