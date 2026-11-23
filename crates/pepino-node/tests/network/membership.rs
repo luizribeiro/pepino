@@ -441,12 +441,13 @@ async fn remaining_peers_block_a_device_removed_while_offline() {
 async fn concurrent_removals_are_visible_to_existing_and_late_managers() {
     let dir = fixture_dir();
     let network = network(dir.path());
-    let a_settings = settings(&network, dir.path().join("alice"));
-    let b_settings = settings(&network, dir.path().join("ben"));
+    let a_settings = local_settings(&network, dir.path().join("alice"));
+    let b_settings = local_settings(&network, dir.path().join("ben"));
     let a = start(&a_settings).await;
-    let b = start(&b_settings).await;
     let alice = a.create_board().await.unwrap();
     let id = alice.id();
+    let address = owner_peer_info(&a_settings, &a).await;
+    let b = start_peer(&b_settings, &address, id).await;
     let mut ben = enroll(&alice, &b, Role::Manage).await;
     let chloe = start(&settings(&network, dir.path().join("chloe"))).await;
     let dana = start(&settings(&network, dir.path().join("dana"))).await;
@@ -495,9 +496,16 @@ async fn concurrent_removals_are_visible_to_existing_and_late_managers() {
     }
 
     let a = start(&a_settings).await;
-    let b = start(&b_settings).await;
     let alice = a.open_board(id).await.unwrap();
+    let address = owner_peer_info(&a_settings, &a).await;
+    let b = start_peer(&b_settings, &address, id).await;
     let ben = b.open_board(id).await.unwrap();
+    until(
+        async || b.status().synced_peers.contains(&a.device_id()),
+        |synced| *synced,
+        WAIT,
+    )
+    .await;
     let both_removed = |states: &pepino_node::MemberStates| {
         removed
             .iter()
@@ -515,7 +523,12 @@ async fn concurrent_removals_are_visible_to_existing_and_late_managers() {
         WAIT,
     )
     .await;
-    let late = start(&settings(&network, dir.path().join("late-manager"))).await;
+    let late = start_peer(
+        &local_settings(&network, dir.path().join("late-manager")),
+        &address,
+        id,
+    )
+    .await;
     let late_board = enroll(&alice, &late, Role::Manage).await;
     let fresh = alice.publish(DONE.to_vec()).await.unwrap();
     for replica in [&ben, &late_board] {

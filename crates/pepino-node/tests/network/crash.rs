@@ -1,21 +1,15 @@
 use std::{
     collections::{HashMap, HashSet},
-    net::Ipv6Addr,
     os::unix::process::ExitStatusExt,
     path::PathBuf,
     process::Command,
 };
 
-use p2panda_net::{addrs::NodeInfo, iroh_endpoint::EndpointAddr};
-use p2panda_store::{Transaction, address_book::AddressBookStore, sqlite::SqliteStore};
-use pepino_core::{BoardId, EventId};
-use pepino_node::{BoardHandle, MdnsMode, Node, NodeSettings, Role};
-use sqlx::{
-    SqlitePool,
-    sqlite::{SqliteConnectOptions, SqliteJournalMode},
+use super::support::{
+    WAIT, enroll, fixture_dir, local_settings, network, next, owner_peer_info, start, start_peer,
 };
-
-use super::support::{WAIT, enroll, fixture_dir, network, next, settings, start, until};
+use pepino_core::{BoardId, EventId};
+use pepino_node::{BoardHandle, Role};
 
 const EVENTS: usize = 24;
 
@@ -102,66 +96,6 @@ async fn abort_recovers_exactly_the_random_unacknowledged_subset() {
         .unwrap();
     assert_eq!(next(&mut events).await.id, sentinel);
     a.shutdown().await.unwrap();
-}
-
-fn local_settings(network: &str, dir: PathBuf) -> NodeSettings {
-    let mut settings = settings(network, dir);
-    settings.mdns = MdnsMode::Disabled;
-    settings.bind_ip_v6 = Some(Ipv6Addr::LOCALHOST);
-    settings
-}
-
-async fn address_book(settings: &NodeSettings, create: bool) -> SqlitePool {
-    let options = SqliteConnectOptions::new()
-        .filename(&settings.database_path)
-        .create_if_missing(create)
-        .journal_mode(SqliteJournalMode::Wal);
-    SqlitePool::connect_with(options).await.unwrap()
-}
-
-async fn owner_peer_info(settings: &NodeSettings, owner: &Node) -> NodeInfo {
-    let pool = address_book(settings, false).await;
-    let store = SqliteStore::from_pool(pool.clone());
-    let id = p2panda::VerifyingKey::from_bytes(owner.device_id().as_bytes()).unwrap();
-    let endpoint = until(
-        async || {
-            AddressBookStore::<_, NodeInfo>::node_info(&store, &id)
-                .await
-                .unwrap()
-                .and_then(|info| EndpointAddr::try_from(info).ok())
-        },
-        |endpoint| {
-            endpoint
-                .as_ref()
-                .is_some_and(|value| value.ip_addrs().any(|addr| addr.ip().is_loopback()))
-        },
-        WAIT,
-    )
-    .await
-    .unwrap();
-    pool.close().await;
-    let addrs = endpoint
-        .ip_addrs()
-        .copied()
-        .filter(|addr| addr.ip().is_loopback());
-    NodeInfo::from(addrs.fold(EndpointAddr::new(endpoint.id), EndpointAddr::with_ip_addr))
-}
-
-async fn start_peer(settings: &NodeSettings, owner: &NodeInfo, board: BoardId) -> Node {
-    let pool = address_book(settings, true).await;
-    p2panda_store::sqlite::run_pending_migrations(&pool)
-        .await
-        .unwrap();
-    let store = SqliteStore::from_pool(pool.clone());
-    let transaction = store.begin().await.unwrap();
-    store.insert_node_info_tx(owner.clone()).await.unwrap();
-    let topics = [p2panda::Topic::from(*board.as_bytes())].into();
-    AddressBookStore::<_, NodeInfo>::set_topics_tx(&store, owner.node_id, topics)
-        .await
-        .unwrap();
-    store.commit(transaction).await.unwrap();
-    pool.close().await;
-    start(settings).await
 }
 
 async fn publish_history(board: &BoardHandle, author: usize) -> Vec<(EventId, usize)> {
