@@ -182,9 +182,10 @@ impl App {
                 "this grant does not match the saved request",
             ));
         }
-        let (mut local, guard) = self.resume_board_history(local, guard).await?;
+        let mut local = local;
+        self.delete_pending_board_rows(&mut local, board).await?;
         local.install_share(&grant, receipt, crate::wall_time_ms())?;
-        let (local, _guard) = self.save_cleanup(local, guard).await?;
+        let (local, _guard) = self.save_board_catalog(local, guard).await?;
         Ok((board, peer, local.board_join_state(board)))
     }
 }

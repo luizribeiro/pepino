@@ -156,7 +156,9 @@ impl App {
             credentials_file,
             lock_timeout,
         };
-        (app.local, guard) = app.resume_board_history(app.local.clone(), guard).await?;
+        (app.local, guard) = app
+            .retry_board_row_deletions(app.local.clone(), guard, &Default::default())
+            .await?;
         let roster_keys = if app.local.peer_hint().is_none()
             && app.local.needs_roster_reconciliation()
             && app.local.has_legacy_roster()

@@ -6,6 +6,10 @@ const GREENHOUSE: BoardId = BoardId::from_bytes([84; 32]);
 async fn source() -> LocalState {
     let dir = tempfile::tempdir().unwrap();
     let app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
+    prepare_source(&app).await
+}
+
+async fn prepare_source(app: &App) -> LocalState {
     let keys = app.identity_credentials().unwrap();
     let mut source = app
         .reconcile_identity(keys.device_id(), &keys)
@@ -303,4 +307,93 @@ async fn a_fast_roster_clock_can_restore_a_board_with_a_grant_issued_before_leav
     assert!(!local.board_forgotten(WORKSHOP));
     assert!(!local.board_deletion_pending(WORKSHOP));
     assert!(local.needs_readmission_replay(WORKSHOP));
+}
+
+#[tokio::test]
+async fn a_sibling_tombstone_is_accepted_during_a_failed_deletion() {
+    use pepino_core::{Envelope, Event, Hlc, InitialFields};
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+
+    let dir = tempfile::tempdir().unwrap();
+    let app = crate::write::fixture::open(dir.path(), 0).await.unwrap();
+    let source = prepare_source(&app).await;
+    source.replace(dir.path()).unwrap();
+    let event = Envelope::new(
+        source.device_id,
+        Hlc {
+            wall_ms: 1000,
+            counter: 0,
+        },
+        Event::TaskCreated {
+            title: "Sharpen the chisels".into(),
+            fields: InitialFields::default(),
+        },
+    )
+    .unwrap();
+    app.store()
+        .append(WORKSHOP, &event.encode().unwrap(), Some(source.device_id))
+        .await
+        .unwrap();
+
+    let options = SqliteConnectOptions::new().filename(dir.path().join(crate::app::DATABASE));
+    let mut db = SqliteConnection::connect_with(&options).await.unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fail_workshop_deletion BEFORE DELETE ON event_log
+         BEGIN SELECT RAISE(FAIL, 'workshop deletion blocked'); END",
+    )
+    .execute(&mut db)
+    .await
+    .unwrap();
+    let receive = |snapshot: &LocalState| {
+        let mut bytes = PREFIX.to_vec();
+        bytes.extend(WireFormat::Cbor.encode(&announcement(snapshot)).unwrap());
+        bytes
+    };
+
+    let mut sibling = source.clone();
+    leave(&mut sibling, 2000);
+    let tombstone = receive(&sibling);
+    assert!(
+        app.receive_catalog(source.catalog_board(), source.device_id, &tombstone, 2000)
+            .await
+            .unwrap()
+    );
+    let left = app.fresh_local_state().await.unwrap();
+    assert!(left.board_forgotten(WORKSHOP));
+    assert!(left.board_deletion_pending(WORKSHOP));
+    assert!(left.resolve_board("Workshop", "board").is_err());
+
+    sibling.catalog.pending_board_deletions.clear();
+    install_workshop(&mut sibling, 3000);
+    sibling
+        .change_board_presence(GREENHOUSE, true, 3000)
+        .unwrap();
+    sibling.forget_board(GREENHOUSE, 3000);
+    let readmission = receive(&sibling);
+    assert!(matches!(
+        app.receive_catalog(source.catalog_board(), source.device_id, &readmission, 3000).await,
+        Err(AppError::Storage { reason, .. }) if reason.contains("workshop deletion blocked")
+    ));
+    let local = app.fresh_local_state().await.unwrap();
+    assert!(local.board_forgotten(GREENHOUSE));
+    assert!(local.board_forgotten(WORKSHOP));
+    assert!(local.board_deletion_pending(WORKSHOP));
+
+    sqlx::query("DROP TRIGGER fail_workshop_deletion")
+        .execute(&mut db)
+        .await
+        .unwrap();
+    assert!(
+        app.receive_catalog(source.catalog_board(), source.device_id, &readmission, 4000)
+            .await
+            .unwrap()
+    );
+    let reopened = app.fresh_local_state().await.unwrap();
+    assert_eq!(
+        reopened.resolve_board("Workshop", "board").unwrap().id,
+        WORKSHOP
+    );
+    assert!(!reopened.board_deletion_pending(WORKSHOP));
+    assert!(reopened.board_forgotten(GREENHOUSE));
+    assert_eq!(app.store().statistics(WORKSHOP).await.unwrap().total, 0);
 }

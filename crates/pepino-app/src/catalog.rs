@@ -161,7 +161,7 @@ fn presence_board(key: &str) -> Option<BoardId> {
     (board.to_string() == encoded).then_some(board)
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Announcement {
     v: u32,
     identity: IdentityId,
@@ -540,15 +540,45 @@ impl App {
             return Ok(false);
         };
         let wire = WireFormat::Cbor;
-        match wire.decode(bytes) {
+        match wire.decode::<Announcement>(bytes) {
             Ok(announcement) => {
                 let guard = lock(&self.directory, self.lock_timeout).await?;
-                let local = self.fresh_local_state().await?;
-                let (previous, guard) = self.resume_board_history(local, guard).await?;
+                let mut previous = self.fresh_local_state().await?;
                 let mut local = previous.clone();
+                let pending = std::mem::take(&mut local.catalog.pending_board_deletions);
+                let guarded = (!pending.is_empty()).then(|| announcement.clone());
                 local.merge_catalog(board, signer, announcement, now)?;
-                if local != previous {
-                    self.save_and_resume_board_cleanup(local, guard).await?;
+                let mut failed = BTreeSet::new();
+                let mut relist_error = None;
+                for entry in &local.boards {
+                    if pending.contains(&entry.id)
+                        && !previous.boards.iter().any(|old| old.id == entry.id)
+                        && let Err(error) = self
+                            .delete_pending_board_rows(&mut previous, entry.id)
+                            .await
+                    {
+                        failed.insert(entry.id);
+                        relist_error.get_or_insert(error);
+                    }
+                }
+                if let Some(announcement) = guarded.filter(|_| !failed.is_empty()) {
+                    local = previous.clone();
+                    local.merge_catalog(board, signer, announcement, now)?;
+                }
+                local
+                    .catalog
+                    .pending_board_deletions
+                    .extend(previous.catalog.pending_board_deletions.iter().copied());
+                let (local, guard) =
+                    if local != previous || pending != previous.catalog.pending_board_deletions {
+                        self.save_board_catalog(local, guard).await?
+                    } else {
+                        (local, guard)
+                    };
+                self.retry_board_row_deletions(local, guard, &failed)
+                    .await?;
+                if let Some(error) = relist_error {
+                    return Err(error);
                 }
             }
             Err(AppError::UnsupportedVersion {

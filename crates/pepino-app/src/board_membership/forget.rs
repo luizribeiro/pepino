@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::{collections::BTreeSet, fs::File, io::Write};
 
 use pepino_core::BoardId;
 use pepino_node::{MemberState, MemberStates, Role};
@@ -22,7 +22,7 @@ impl LocalState {
         }
     }
 
-    pub(crate) fn board_deletion_pending(&self, board: BoardId) -> bool {
+    pub fn board_deletion_pending(&self, board: BoardId) -> bool {
         self.catalog.pending_board_deletions.contains(&board)
     }
 
@@ -50,49 +50,67 @@ impl App {
         let mut local = self.fresh_local_state().await?;
         local.check_device_write()?;
         local.check_invitable(board)?;
-        let (local, _guard) = if local.boards().iter().any(|known| known.id == board) {
+        let (local, guard) = if local.boards().iter().any(|known| known.id == board) {
             local.change_board_presence(board, true, now)?;
             local.forget_board(board, now);
-            self.save_and_resume_board_cleanup(local, guard).await?
+            self.save_board_catalog(local, guard).await?
         } else {
-            self.resume_board_history(local, guard).await?
+            (local, guard)
         };
+        let (local, _guard) = self
+            .retry_board_row_deletions(local, guard, &BTreeSet::new())
+            .await?;
         Ok(local)
     }
 
-    pub(crate) async fn save_and_resume_board_cleanup(
-        &self,
-        local: LocalState,
-        guard: File,
-    ) -> Result<(LocalState, File), AppError> {
-        let (local, guard) = self.save_cleanup(local, guard).await?;
-        self.resume_board_history(local, guard).await
-    }
-
-    pub(crate) async fn resume_board_history(
+    pub(crate) async fn retry_board_row_deletions(
         &self,
         mut local: LocalState,
-        mut guard: File,
+        guard: File,
+        already_attempted: &BTreeSet<BoardId>,
     ) -> Result<(LocalState, File), AppError> {
-        while let Some(&board) = local.catalog.pending_board_deletions.first() {
-            if local.boards().iter().any(|entry| entry.id == board) {
-                return Err(crate::state::storage(
-                    "complete board deletion",
-                    "the board is still listed",
-                    false,
-                ));
+        let pending = local.catalog.pending_board_deletions.clone();
+        for &board in pending.difference(already_attempted) {
+            if let Err(error) = self.delete_pending_board_rows(&mut local, board).await {
+                let id = board.to_string();
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "Could not delete local rows for board {}: {error}",
+                    &id[..6]
+                );
             }
-            self.store()
-                .forget_board(board)
-                .await
-                .map_err(store_error)?;
-            local.catalog.pending_board_deletions.remove(&board);
-            (local, guard) = self.save_cleanup(local, guard).await?;
         }
-        Ok((local, guard))
+        if pending != local.catalog.pending_board_deletions {
+            self.save_board_catalog(local, guard).await
+        } else {
+            Ok((local, guard))
+        }
     }
 
-    pub(crate) async fn save_cleanup(
+    pub(crate) async fn delete_pending_board_rows(
+        &self,
+        local: &mut LocalState,
+        board: BoardId,
+    ) -> Result<(), AppError> {
+        if !local.board_deletion_pending(board) {
+            return Ok(());
+        }
+        if local.boards().iter().any(|entry| entry.id == board) {
+            return Err(crate::state::storage(
+                "complete board deletion",
+                "the board is still listed",
+                false,
+            ));
+        }
+        self.store()
+            .forget_board(board)
+            .await
+            .map_err(store_error)?;
+        local.catalog.pending_board_deletions.remove(&board);
+        Ok(())
+    }
+
+    pub(crate) async fn save_board_catalog(
         &self,
         local: LocalState,
         guard: File,
@@ -397,4 +415,86 @@ async fn a_pinned_reader_does_not_leave_a_deletion_marker() {
             .is_ok_and(|bytes| bytes.windows(title.len()).any(|part| part == title))
     }));
     snapshot.rollback().await.unwrap();
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn a_failed_deletion_does_not_block_open_or_another_leave() {
+    use pepino_core::{Envelope, Event, Hlc, InitialFields};
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::init(dir.path(), 0).await.unwrap();
+    let workshop = BoardId::from_bytes([79; 32]);
+    let greenhouse = BoardId::from_bytes([80; 32]);
+    let author = app.local_state().device_id;
+    for (board, name, title) in [
+        (workshop, "Workshop repairs", "Sharpen the chisels"),
+        (greenhouse, "Greenhouse rota", "Water the seedlings"),
+    ] {
+        app.register_created_board(board, name).await.unwrap();
+        let event = Envelope::new(
+            author,
+            Hlc {
+                wall_ms: 1000,
+                counter: 0,
+            },
+            Event::TaskCreated {
+                title: title.into(),
+                fields: InitialFields::default(),
+            },
+        )
+        .unwrap();
+        app.store()
+            .append(board, &event.encode().unwrap(), Some(author))
+            .await
+            .unwrap();
+    }
+
+    let options = SqliteConnectOptions::new().filename(dir.path().join(crate::app::DATABASE));
+    let mut db = SqliteConnection::connect_with(&options).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TRIGGER fail_workshop_deletion BEFORE DELETE ON event_log
+         WHEN OLD.board = X'{workshop}'
+         BEGIN SELECT RAISE(FAIL, 'workshop deletion blocked'); END"
+    )))
+    .execute(&mut db)
+    .await
+    .unwrap();
+
+    let left = app.forget_board(workshop, 2000).await.unwrap();
+    assert!(left.board_forgotten(workshop));
+    assert!(left.board_deletion_pending(workshop));
+    let opened = App::open(dir.path(), 3000).await.unwrap();
+    assert!(opened.local_state().board_deletion_pending(workshop));
+    assert!(
+        opened
+            .local_state()
+            .resolve_board("Workshop repairs", "board")
+            .is_err()
+    );
+    assert_eq!(
+        opened.store().statistics(greenhouse).await.unwrap().total,
+        1
+    );
+    let both_left = opened.forget_board(greenhouse, 4000).await.unwrap();
+    assert!(both_left.board_forgotten(greenhouse));
+    assert!(!both_left.board_deletion_pending(greenhouse));
+    assert!(both_left.board_deletion_pending(workshop));
+    assert_eq!(
+        opened.store().statistics(greenhouse).await.unwrap().total,
+        0
+    );
+    assert_eq!(opened.store().statistics(workshop).await.unwrap().total, 1);
+
+    sqlx::query("DROP TRIGGER fail_workshop_deletion")
+        .execute(&mut db)
+        .await
+        .unwrap();
+    let reopened = App::open(dir.path(), 5000).await.unwrap();
+    assert!(!reopened.local_state().board_deletion_pending(workshop));
+    assert_eq!(
+        reopened.store().statistics(workshop).await.unwrap().total,
+        0
+    );
 }
