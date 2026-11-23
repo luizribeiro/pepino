@@ -50,11 +50,17 @@ impl BoardEvent {
 type Receiver = mpsc::Receiver<Result<BoardEvent, Error>>;
 
 #[derive(Clone)]
-pub(crate) struct DeliveryInbox(Arc<Mutex<Option<Receiver>>>);
+pub(crate) struct DeliveryInbox {
+    receiver: Arc<Mutex<Option<Receiver>>>,
+    end_on_removal: bool,
+}
 
 impl DeliveryInbox {
-    pub(crate) fn new(rx: Receiver) -> Self {
-        Self(Arc::new(Mutex::new(Some(rx))))
+    pub(crate) fn new(rx: Receiver, end_on_removal: bool) -> Self {
+        Self {
+            receiver: Arc::new(Mutex::new(Some(rx))),
+            end_on_removal,
+        }
     }
 
     pub(crate) fn subscribe(
@@ -62,7 +68,7 @@ impl DeliveryInbox {
         on_delivery: impl Fn() + Send + Sync + 'static,
     ) -> Result<BoardEvents, Error> {
         let rx = self
-            .0
+            .receiver
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()
@@ -83,8 +89,11 @@ fn subscribe(
                 if held.is_none() {
                     match rx.as_mut()?.recv().await? {
                         Ok(event) => held = Some(event),
-                        Err(Error::Removed) => {
-                            *inbox.0.lock().unwrap_or_else(PoisonError::into_inner) = rx.take();
+                        Err(Error::Removed) if inbox.end_on_removal => {
+                            *inbox
+                                .receiver
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner) = rx.take();
                             return Some((Err(Error::Removed), (rx, None, on_delivery, inbox)));
                         }
                         Err(error) => return Some((Err(error), (rx, None, on_delivery, inbox))),
@@ -129,7 +138,7 @@ mod tests {
     #[tokio::test]
     async fn removal_ends_the_stream_and_releases_the_receiver() {
         let (tx, rx) = mpsc::channel(2);
-        let inbox = DeliveryInbox::new(rx);
+        let inbox = DeliveryInbox::new(rx, true);
         let mut first = inbox.subscribe(|| {}).unwrap();
         assert!(matches!(inbox.subscribe(|| {}), Err(Error::EventsTaken)));
         tx.send(Err(Error::Removed)).await.unwrap();
@@ -148,6 +157,28 @@ mod tests {
             Some(Err(Error::Decode { .. }))
         ));
         assert!(resumed.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_readmission_stream_keeps_its_receiver_across_removal() {
+        let (tx, rx) = mpsc::channel(2);
+        let inbox = DeliveryInbox::new(rx, false);
+        let mut replay = inbox.subscribe(|| {}).unwrap();
+        tx.send(Err(Error::Removed)).await.unwrap();
+        tx.send(Err(Error::Decode {
+            id: EventId::from_bytes([2; 32]),
+            details: "bad payload".into(),
+        }))
+        .await
+        .unwrap();
+        drop(tx);
+        assert!(matches!(replay.next().await, Some(Err(Error::Removed))));
+        assert!(matches!(inbox.subscribe(|| {}), Err(Error::EventsTaken)));
+        assert!(matches!(
+            replay.next().await,
+            Some(Err(Error::Decode { .. }))
+        ));
+        assert!(replay.next().await.is_none());
     }
 
     #[tokio::test]
@@ -176,7 +207,7 @@ mod tests {
         tx.send(Ok(event)).await.unwrap();
         drop(tx);
         let (delivered, count) = tokio::sync::watch::channel(0);
-        let mut stream = DeliveryInbox::new(rx)
+        let mut stream = DeliveryInbox::new(rx, true)
             .subscribe(move || {
                 delivered.send_modify(|n| *n += 1);
             })
@@ -236,7 +267,7 @@ mod tests {
         drop(tx);
         let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let count_delivered = count.clone();
-        let mut events = DeliveryInbox::new(rx)
+        let mut events = DeliveryInbox::new(rx, true)
             .subscribe(move || {
                 count_delivered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             })

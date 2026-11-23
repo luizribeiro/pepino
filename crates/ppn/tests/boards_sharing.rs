@@ -942,6 +942,15 @@ fn a_linked_reader_leaves_locally_and_all_devices_rejoin_after_removal() {
         wait_for_house_task(host, returning);
         wait_for_house_task(host, id);
         let log = std::fs::read_to_string(host.data.join("daemon.log")).unwrap();
+        let house = board(host, "House");
+        let id = house["id"].as_str().unwrap();
+        assert!(
+            !log.contains(&format!(
+                "board {}: delivery stream ended: stream closed",
+                &id[..6]
+            )),
+            "{log}"
+        );
         assert!(
             !log.contains("delivery stream ended: replay after readmission"),
             "{log}"

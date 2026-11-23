@@ -259,7 +259,7 @@ impl BoardHandle {
             status: delivery_status,
             receipts,
             confirmation_timeout,
-            events: DeliveryInbox::new(events),
+            events: DeliveryInbox::new(events, !readmission),
             events_taken: false,
             stop,
             done: tokio::spawn(task.drive(subscription, joined)),
@@ -273,7 +273,8 @@ impl BoardHandle {
     /// Take this board's single consumer stream. An event ID identifies every redelivery of that event.
     ///
     /// Removal ends the stream with [`Error::Removed`]. Once readmitted, call this
-    /// again after consuming that item to resume application delivery.
+    /// again after consuming that item to resume application delivery. A handle opened
+    /// by [`Node::open_board_for_readmission`] keeps its stream through removal.
     pub fn events(&mut self) -> Result<BoardEvents, Error> {
         let board = self.id;
         let status = self.status.clone();
