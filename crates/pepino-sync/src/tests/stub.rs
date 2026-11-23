@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -343,12 +343,16 @@ impl TransportBoard for Board {
         devices: &BTreeSet<DeviceId>,
         invitation: Option<EventId>,
     ) -> Result<bool, Error> {
+        let members = self.roles().await?;
         let invites = self.publisher.readmission_invites.lock().unwrap();
-        Ok(devices.iter().all(|device| {
-            invites
-                .get(&(self.id, *device))
-                .is_none_or(|&expected| expected.is_some() && expected == invitation)
-        }))
+        Ok(devices
+            .iter()
+            .filter(|device| !members.contains_key(*device))
+            .all(|device| {
+                invites
+                    .get(&(self.id, *device))
+                    .is_none_or(|&expected| expected.is_some() && expected == invitation)
+            }))
     }
 
     async fn apply_device_change(&self, change: DeviceMembershipChange) -> Result<(), Error> {

@@ -344,6 +344,12 @@ async fn a_readmitted_device_can_resume_and_replay() {
         .await
         .unwrap();
     let restored = observe(&mut changes, c.device_id(), MemberState::Member(Role::Read)).await;
+    assert!(
+        alice
+            .permits_reenrollment(&[c.device_id()].into(), None)
+            .await
+            .unwrap()
+    );
     assert_eq!(
         restored.change,
         Some((a.device_id(), MembershipChange::Added))
@@ -445,12 +451,20 @@ async fn concurrent_removals_are_visible_to_existing_and_late_managers() {
     let chloe = start(&settings(&network, dir.path().join("chloe"))).await;
     let dana = start(&settings(&network, dir.path().join("dana"))).await;
     let removed = [chloe.device_id(), dana.device_id()];
-    for device in [&chloe, &dana] {
-        alice
-            .add_member(&device.member_info().await.unwrap(), Role::Write)
-            .await
-            .unwrap();
-    }
+    let mut alice_changes = alice.membership_events();
+    ben.add_member(&chloe.member_info().await.unwrap(), Role::Write)
+        .await
+        .unwrap();
+    observe(
+        &mut alice_changes,
+        removed[0],
+        MemberState::Member(Role::Write),
+    )
+    .await;
+    alice
+        .add_member(&dana.member_info().await.unwrap(), Role::Write)
+        .await
+        .unwrap();
     let before = alice.publish(PLAN.to_vec()).await.unwrap();
     expect(&mut ben.events().unwrap(), &[(before, a.device_id(), PLAN)]).await;
 

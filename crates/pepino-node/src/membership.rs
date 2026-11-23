@@ -370,7 +370,12 @@ impl BoardHandle {
             .iter()
             .map(|device| MemberId::from_bytes(device.as_bytes()).map_err(Error::storage))
             .collect::<Result<std::collections::HashSet<_>, _>>()?;
-        let removed = &state.removed & &devices;
+        let mut removed = &state.removed & &devices;
+        if !removed.is_empty() {
+            for (member, _) in state.groups_y.members(state.group_id) {
+                removed.remove(&member);
+            }
+        }
         if removed.is_empty() {
             return Ok(true);
         }

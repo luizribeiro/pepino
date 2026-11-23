@@ -56,8 +56,9 @@ Person-level membership cards record invitations, role changes, and removals.
 A receiving device checks the author's Manage role both at the signed
 authorization heads and in its current transport view. Before enrolling a
 device, a reconciling manager checks that the effective invitation covers the
-transport removals of the person's non-revoked devices. Signed heads supply
-the causal order. Current Manage supplies authority.
+removal of each non-revoked device of that person that transport still lists
+as removed. Signed heads supply the causal order. Current Manage supplies
+authority.
 
 The private catalog's separate `board_presence_register` uses the preferences
 register rules for `board/<id>`. Installing a grant writes a live entry.
