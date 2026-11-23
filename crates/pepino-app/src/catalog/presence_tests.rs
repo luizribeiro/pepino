@@ -244,3 +244,37 @@ async fn a_stale_sibling_cannot_restore_a_left_created_board_on_a_later_device()
 async fn a_stale_sibling_cannot_restore_a_left_joined_board_on_a_later_device() {
     assert_stale_snapshot_does_not_restore_board(WORKSHOP, "Workshop").await;
 }
+
+#[tokio::test]
+async fn a_fresh_grant_cancels_an_unstarted_purge_but_replays_and_can_leave_again() {
+    use crate::board_membership::forget::BoardCleanup;
+
+    let mut local = source().await;
+    leave(&mut local, 1000);
+    local
+        .catalog
+        .board_cleanup
+        .insert(WORKSHOP, BoardCleanup::Transport);
+    let mut purging = local.clone();
+    purging
+        .catalog
+        .board_cleanup
+        .insert(WORKSHOP, BoardCleanup::Purging);
+    let mut already_purged = local.clone();
+    already_purged.catalog.board_cleanup.remove(&WORKSHOP);
+
+    for state in [&mut local, &mut purging, &mut already_purged] {
+        install_workshop(state, 2000);
+        assert!(state.needs_readmission_replay(WORKSHOP));
+        assert!(!state.board_forgotten(WORKSHOP));
+    }
+    assert!(!local.board_needs_transport_purge(WORKSHOP));
+    assert!(purging.board_needs_transport_purge(WORKSHOP));
+    assert!(!already_purged.board_needs_transport_purge(WORKSHOP));
+
+    leave(&mut local, 3000);
+    assert_eq!(
+        local.catalog.board_cleanup[&WORKSHOP],
+        BoardCleanup::History
+    );
+}

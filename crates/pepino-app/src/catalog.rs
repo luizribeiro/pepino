@@ -346,6 +346,7 @@ impl LocalState {
                 .is_some_and(|entry| entry.value.is_none())
                 || self.board_removed(id)
             {
+                self.cancel_pending_board_purge(id);
                 self.catalog.readmission_replays.insert(id);
             }
         }
@@ -544,13 +545,12 @@ impl App {
         match wire.decode(bytes) {
             Ok(announcement) => {
                 let guard = lock(&self.directory, self.lock_timeout).await?;
-                let previous = self.fresh_local_state().await?;
+                let local = self.fresh_local_state().await?;
+                let (previous, guard) = self.resume_board_history(local, guard).await?;
                 let mut local = previous.clone();
                 local.merge_catalog(board, signer, announcement, now)?;
                 if local != previous {
                     self.save_and_resume_board_cleanup(local, guard).await?;
-                } else {
-                    self.resume_board_history(local, guard).await?;
                 }
             }
             Err(AppError::UnsupportedVersion {

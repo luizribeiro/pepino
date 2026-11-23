@@ -12,7 +12,9 @@ use crate::{
 #[serde(rename_all = "snake_case")]
 pub(crate) enum BoardCleanup {
     History,
+    HistoryAfterPurgeAttempt,
     Transport,
+    Purging,
 }
 
 impl LocalState {
@@ -29,8 +31,18 @@ impl LocalState {
         }
     }
 
+    pub fn pending_board_purges(&self) -> impl Iterator<Item = BoardId> + '_ {
+        self.catalog.board_cleanup.keys().copied()
+    }
+
     pub fn board_needs_transport_purge(&self, board: BoardId) -> bool {
         self.catalog.board_cleanup.contains_key(&board)
+    }
+
+    pub(crate) fn cancel_pending_board_purge(&mut self, board: BoardId) {
+        if self.catalog.board_cleanup.get(&board) == Some(&BoardCleanup::Transport) {
+            self.catalog.board_cleanup.remove(&board);
+        }
     }
 
     pub(crate) fn forget_board(&mut self, board: BoardId, now: u64) {
@@ -38,15 +50,20 @@ impl LocalState {
             self.release_relays(board, now);
         }
         if self.boards().iter().any(|entry| entry.id == board) {
-            self.catalog
-                .board_cleanup
-                .insert(board, BoardCleanup::History);
+            let stage = match self.catalog.board_cleanup.get(&board) {
+                Some(BoardCleanup::Purging | BoardCleanup::HistoryAfterPurgeAttempt) => {
+                    BoardCleanup::HistoryAfterPurgeAttempt
+                }
+                _ => BoardCleanup::History,
+            };
+            self.catalog.board_cleanup.insert(board, stage);
         }
         for (&channel, route) in &self.catalog.card_exchanges {
             if route.board == board {
                 self.catalog
                     .board_cleanup
-                    .insert(channel, BoardCleanup::Transport);
+                    .entry(channel)
+                    .or_insert(BoardCleanup::Transport);
             }
         }
         if let Some(link) = &mut self.link {
@@ -92,14 +109,17 @@ impl App {
     ) -> Result<(LocalState, File), AppError> {
         let mut changed = false;
         for (&board, stage) in &mut local.catalog.board_cleanup {
-            if *stage == BoardCleanup::History {
-                self.store()
-                    .forget_board(board)
-                    .await
-                    .map_err(store_error)?;
-                *stage = BoardCleanup::Transport;
-                changed = true;
-            }
+            let next = match *stage {
+                BoardCleanup::History => BoardCleanup::Transport,
+                BoardCleanup::HistoryAfterPurgeAttempt => BoardCleanup::Purging,
+                BoardCleanup::Transport | BoardCleanup::Purging => continue,
+            };
+            self.store()
+                .forget_board(board)
+                .await
+                .map_err(store_error)?;
+            *stage = next;
+            changed = true;
         }
         if changed {
             self.save_cleanup(local, guard).await
@@ -115,13 +135,37 @@ impl App {
             return Ok(());
         }
         let (mut local, guard) = self.resume_board_history(local, guard).await?;
-        let boards: Vec<_> = local.catalog.board_cleanup.keys().copied().collect();
-        pepino_node::Node::purge_device_boards(
+        let boards: Vec<_> = local.pending_board_purges().collect();
+        let pending: Vec<_> = boards
+            .iter()
+            .copied()
+            .filter(|board| local.catalog.board_cleanup[board] == BoardCleanup::Transport)
+            .collect();
+        for &board in &pending {
+            local
+                .catalog
+                .board_cleanup
+                .insert(board, BoardCleanup::Purging);
+        }
+        // SQLite can commit the deletion before the WAL can be truncated.
+        let (mut local, guard) = self.save_cleanup(local, guard).await?;
+        if let Err(error) = pepino_node::Node::purge_device_boards(
             &self.directory.join(crate::initialize::NODE_DATABASE),
             &boards,
         )
         .await
-        .map_err(|error| crate::state::storage("purge board transport", error, true))?;
+        {
+            if matches!(error, pepino_node::Error::DirectoryInUse(_)) {
+                for board in pending {
+                    local
+                        .catalog
+                        .board_cleanup
+                        .insert(board, BoardCleanup::Transport);
+                }
+                self.save_cleanup(local, guard).await?;
+            }
+            return Err(crate::state::storage("purge board transport", error, true));
+        }
         local.catalog.board_cleanup.clear();
         self.save_cleanup(local, guard).await?;
         Ok(())
@@ -325,6 +369,25 @@ async fn a_crash_after_catalog_save_resumes_board_history_and_transport_deletion
             .unwrap()
             .is_empty()
     );
+
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+    let options = SqliteConnectOptions::new().filename(&path);
+    let mut reader = SqliteConnection::connect_with(&options).await.unwrap();
+    let mut snapshot = reader.begin().await.unwrap();
+    let _: i64 = sqlx::query_scalar("SELECT count(*) FROM operations_v1")
+        .fetch_one(&mut *snapshot)
+        .await
+        .unwrap();
+    assert!(reopened.purge_forgotten_board_transport().await.is_err());
+    let mut interrupted = reopened.fresh_local_state().await.unwrap();
+    assert_eq!(
+        interrupted.catalog.board_cleanup[&forgotten],
+        BoardCleanup::Purging
+    );
+    interrupted.cancel_pending_board_purge(forgotten);
+    assert!(interrupted.board_needs_transport_purge(forgotten));
+    snapshot.rollback().await.unwrap();
+    reader.close().await.unwrap();
 
     reopened.purge_forgotten_board_transport().await.unwrap();
     let disk = std::fs::read_to_string(dir.path().join(crate::state::FILE_NAME)).unwrap();

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     App, AppError, BoardGrant, BoardJoinState, LocalState, PeerHint, SharedAccess, SignedGrant,
-    app::invalid,
+    app::{invalid, lock},
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -83,6 +83,7 @@ impl LocalState {
         );
         let forgotten = self.board_forgotten(id);
         self.change_board_presence(id, false, now)?;
+        self.cancel_pending_board_purge(id);
         self.name_board(id, &grant.board.name);
         if existing.is_some() || forgotten {
             self.catalog.observed_board_removals.remove(&id);
@@ -93,6 +94,7 @@ impl LocalState {
             self.catalog.readmission_replays.insert(id);
         }
         if let Some(channel) = grant.card_exchange {
+            self.cancel_pending_board_purge(channel);
             self.add_card_exchange(
                 channel,
                 crate::CardExchange {
@@ -151,34 +153,34 @@ impl App {
         let board = grant.board.id;
         let peer = grant.peer.clone();
         let binding = grant.request.clone();
-        let local = self
-            .try_update_local_state(move |local| {
-                local.check_device_write()?;
-                if local
-                    .catalog
-                    .joined_shares
-                    .get(&board)
-                    .is_some_and(|saved| saved.receipt.as_ref() == Some(&receipt))
-                {
-                    return Ok(());
-                }
-                if local
-                    .catalog
-                    .board_request
-                    .as_ref()
-                    .map(crate::BoardRequest::binding)
-                    .transpose()?
-                    .as_ref()
-                    != Some(&binding)
-                {
-                    return Err(invalid(
-                        "grant",
-                        "this grant does not match the saved request",
-                    ));
-                }
-                local.install_share(&grant, receipt, crate::wall_time_ms())
-            })
-            .await?;
+        let guard = lock(&self.directory, self.lock_timeout).await?;
+        let local = self.fresh_local_state().await?;
+        local.check_device_write()?;
+        if local
+            .catalog
+            .joined_shares
+            .get(&board)
+            .is_some_and(|saved| saved.receipt.as_ref() == Some(&receipt))
+        {
+            return Ok((board, peer, local.board_join_state(board)));
+        }
+        if local
+            .catalog
+            .board_request
+            .as_ref()
+            .map(crate::BoardRequest::binding)
+            .transpose()?
+            .as_ref()
+            != Some(&binding)
+        {
+            return Err(invalid(
+                "grant",
+                "this grant does not match the saved request",
+            ));
+        }
+        let (mut local, guard) = self.resume_board_history(local, guard).await?;
+        local.install_share(&grant, receipt, crate::wall_time_ms())?;
+        let (local, _guard) = self.save_and_resume_board_cleanup(local, guard).await?;
         Ok((board, peer, local.board_join_state(board)))
     }
 }
