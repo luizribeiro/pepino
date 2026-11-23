@@ -75,6 +75,8 @@ impl Status {
         self.restart_required.is_none()
             && self.boards.iter().all(|(id, board)| {
                 board.paused
+                    || (self.board_joins.get(id) == Some(&BoardJoinState::WaitingToBeAdded)
+                        && node.boards.get(id).is_some_and(|signals| !signals.joined))
                     || (!board.closed
                         && board.outbox_pending == Some(0)
                         && !board.ingest_pending
@@ -165,5 +167,22 @@ fn an_unrelated_connected_peer_does_not_block_private_board_idle() {
     status.node.connected_peers.insert(stranger);
     assert!(status.is_idle());
     status.node.connected_peers.insert(member);
+    assert!(!status.is_idle());
+}
+
+#[cfg(test)]
+#[test]
+fn waiting_for_access_is_idle_with_connected_peers() {
+    let board = BoardId::from_bytes([42; 32]);
+    let peer = DeviceId::from_bytes([43; 32]);
+    let mut status = Status {
+        board_joins: [(board, BoardJoinState::WaitingToBeAdded)].into(),
+        ..Default::default()
+    };
+    status.boards.insert(board, Default::default());
+    status.node.boards.insert(board, Default::default());
+    status.node.connected_peers.insert(peer);
+    assert!(status.is_idle());
+    status.node.boards.get_mut(&board).unwrap().joined = true;
     assert!(!status.is_idle());
 }

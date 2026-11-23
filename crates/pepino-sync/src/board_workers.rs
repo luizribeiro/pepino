@@ -184,14 +184,13 @@ impl<T: Transport> BoardWorkers<T> {
         let nudged = self.nudged.clone();
         let poll = self.poll;
         let node_instance = self.node.instance_id();
-        let readmitting = local.needs_readmission_replay(id);
         let authority = self.authority.as_ref().map(|(path, _)| path.clone());
         let (evict, mut evicted) = oneshot::channel();
         let (finished, closed) = oneshot::channel();
         self.board_workers.insert(id, WorkerStop { evict, closed });
         self.workers.spawn(async move {
             let result = {
-                let inbox = receive((&app, authority.as_deref()), id, board.as_ref(), stream, &status, stopping.clone(), readmitting);
+                let inbox = receive(&app, id, board.as_ref(), stream, &status, stopping.clone(), authority.as_deref());
                 tokio::pin!(inbox);
                 tokio::select! {
                     biased;
@@ -268,13 +267,13 @@ async fn close_board(board: Arc<impl TransportBoard>) -> Result<(), pepino_node:
 }
 
 async fn receive<B: TransportBoard>(
-    (app, authority): (&App, Option<&std::path::Path>),
+    app: &App,
     id: BoardId,
     board: &B,
     stream: DeliveryStream<B::Ack>,
     status: &watch::Sender<Status>,
     mut stopping: watch::Receiver<()>,
-    readmitting: bool,
+    authority: Option<&std::path::Path>,
 ) -> Result<(), Error> {
     use futures_util::StreamExt;
     use pepino_node::{Error as NodeError, MemberState};
@@ -290,7 +289,7 @@ async fn receive<B: TransportBoard>(
     let Some(changes) = &mut membership else {
         return Ok(());
     };
-    status.send_modify(|status| status.boards.entry(id).or_default().stream_retrying = readmitting);
+    status.send_modify(|status| status.boards.entry(id).or_default().stream_retrying = false);
     loop {
         let local = app.local_state();
         let active = match board.known_members(local, false).await {
