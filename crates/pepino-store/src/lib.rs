@@ -134,11 +134,33 @@ impl Store {
         version: i64,
     ) -> Result<SqliteConnection, StoreError> {
         let mut connection = SqliteConnection::connect_with(&options).await?;
-        let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
+        let result = Self::migrate(connection.begin().await?, version).await;
+        match result {
+            Err(
+                StoreError::Database {
+                    kind: DatabaseErrorKind::Busy,
+                    ..
+                }
+                | StoreError::Migration {
+                    kind: DatabaseErrorKind::Busy,
+                    ..
+                },
+            ) => {
+                Self::migrate(connection.begin_with("BEGIN IMMEDIATE").await?, version).await?;
+            }
+            result => result?,
+        }
+        Ok(connection)
+    }
+
+    async fn migrate(
+        mut tx: sqlx::Transaction<'_, sqlx::Sqlite>,
+        version: i64,
+    ) -> Result<(), StoreError> {
         MIGRATOR.run(&mut *tx).await?;
         fold::upgrade(&mut tx, version).await?;
         tx.commit().await?;
-        Ok(connection)
+        Ok(())
     }
 }
 
@@ -182,6 +204,29 @@ mod tests {
         );
         let fresh = Store::open(dir.path().join("fresh.sqlite")).await.unwrap();
         assert_ne!(fresh.instance_id().await.unwrap(), original);
+    }
+
+    #[tokio::test]
+    async fn a_current_bound_store_opens_while_a_writer_holds_the_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pepino.sqlite");
+        let board = BoardId::from_bytes([73; 32]);
+        let identity = pepino_core::IdentityId::from_bytes([78; 32]);
+        let device = pepino_core::DeviceId::from_bytes([79; 32]);
+        let store = Store::open(&path).await.unwrap();
+        store.bind_local(board, identity, device).await.unwrap();
+        let mut writer = store.connection.lock().await;
+        let transaction = writer.begin_with("BEGIN IMMEDIATE").await.unwrap();
+
+        let reopened = Store::open_existing(&path).await.unwrap();
+        reopened.bind_local(board, identity, device).await.unwrap();
+        assert!(matches!(
+            reopened
+                .bind_local(board, identity, pepino_core::DeviceId::from_bytes([80; 32]))
+                .await,
+            Err(StoreError::LocalBindingMismatch)
+        ));
+        transaction.rollback().await.unwrap();
     }
 
     #[tokio::test]

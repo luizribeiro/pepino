@@ -13,13 +13,22 @@ impl Store {
         device: DeviceId,
     ) -> Result<(), StoreError> {
         let mut connection = self.connection.lock().await;
-        let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
-        let binding: Option<([u8; 32], [u8; 32], [u8; 32])> =
-            sqlx::query_as("SELECT board, identity, device FROM local_binding")
-                .fetch_optional(&mut *tx)
-                .await?;
+        let binding = || {
+            sqlx::query_as::<_, ([u8; 32], [u8; 32], [u8; 32])>(
+                "SELECT board, identity, device FROM local_binding",
+            )
+        };
         let expected = (*board.as_bytes(), *identity.as_bytes(), *device.as_bytes());
-        if let Some(binding) = binding {
+        if let Some(saved) = binding().fetch_optional(&mut *connection).await? {
+            return if saved == expected {
+                Ok(())
+            } else {
+                Err(StoreError::LocalBindingMismatch)
+            };
+        }
+
+        let mut tx = connection.begin_with("BEGIN IMMEDIATE").await?;
+        if let Some(binding) = binding().fetch_optional(&mut *tx).await? {
             if binding != expected {
                 return Err(StoreError::LocalBindingMismatch);
             }
