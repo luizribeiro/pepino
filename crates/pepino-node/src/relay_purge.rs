@@ -390,12 +390,19 @@ async fn device_purge_removes_operations_secrets_and_receipts_from_disk() {
         Err(Error::DirectoryInUse(_))
     ));
     node.shutdown().await.unwrap();
-    let contains = |needle: &str| {
-        std::fs::read(&path)
-            .unwrap()
-            .windows(needle.len())
-            .any(|part| part == needle.as_bytes())
+    let contains = |needle: &[u8]| {
+        std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+            let path = entry.unwrap().path();
+            match std::fs::read(&path) {
+                Ok(bytes) => bytes.windows(needle.len()).any(|part| part == needle),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => panic!("read {}: {error}", path.display()),
+            }
+        })
     };
+    assert!(contains(boards[0].as_bytes()));
+    assert!(contains(boards[0].to_string().as_bytes()));
+    assert!(contains(ids[0].to_string().as_bytes()));
     let pool = crate::node::open_database(&path, false).await.unwrap();
     let state: Vec<u8> = sqlx::query_scalar("SELECT state FROM groups_v1 WHERE id = ?")
         .bind(global_groups_id().to_hex())
@@ -405,8 +412,6 @@ async fn device_purge_removes_operations_secrets_and_receipts_from_disk() {
     let groups: AuthGroupState<()> = decode_cbor(&state[..]).unwrap();
     assert_eq!(groups.inner.operations.len(), 2);
     pool.close().await;
-    assert!(contains(&boards[0].to_string()));
-    assert!(contains(&ids[0].to_string()));
 
     for _ in 0..2 {
         crate::Node::purge_device_boards(&path, &boards[..1])
@@ -424,10 +429,11 @@ async fn device_purge_removes_operations_secrets_and_receipts_from_disk() {
         assert!(found, "the authorization graph still references {id}");
     }
     pool.close().await;
-    assert!(!contains(&boards[0].to_string()));
-    assert!(!contains(&ids[0].to_string()));
-    assert!(contains(&boards[1].to_string()));
-    assert!(contains(&ids[1].to_string()));
+    assert!(!contains(boards[0].as_bytes()));
+    assert!(!contains(boards[0].to_string().as_bytes()));
+    assert!(!contains(ids[0].to_string().as_bytes()));
+    assert!(contains(boards[1].to_string().as_bytes()));
+    assert!(contains(ids[1].to_string().as_bytes()));
     assert!(
         crate::Node::persisted_members(&path, boards[0])
             .await
