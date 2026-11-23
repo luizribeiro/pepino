@@ -53,7 +53,7 @@ pub(crate) struct CatalogState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) board_request: Option<crate::BoardRequest>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) consumed_board_requests: BTreeMap<String, (BoardId, u64)>,
+    pub(crate) consumed_board_requests: BTreeMap<String, (Option<BoardId>, u64)>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) joined_shares: BTreeMap<BoardId, crate::board_install::JoinedShare>,
     #[serde(
@@ -98,11 +98,11 @@ pub(crate) struct CatalogState {
 impl CatalogState {
     pub(crate) fn forget_board(&mut self, board: BoardId, device: DeviceId) {
         self.revisions.remove(&board);
-        if let Some(relays) = self.relays.get_mut(&board) {
-            relays.retain(|_, writers| {
-                writers.retain(|writer, _| *writer == device);
-                !writers.is_empty()
-            });
+        self.prune_forgotten_board_relays(board, device);
+        for (used_for, _) in self.consumed_board_requests.values_mut() {
+            if *used_for == Some(board) {
+                *used_for = None;
+            }
         }
         self.shared.remove(&board);
         self.people.remove(&board);

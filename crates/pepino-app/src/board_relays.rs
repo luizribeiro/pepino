@@ -202,6 +202,24 @@ impl BoardRelay {
     }
 }
 
+impl crate::catalog::CatalogState {
+    pub(crate) fn prune_forgotten_board_relays(&mut self, board: BoardId, device: DeviceId) {
+        if let Some(relays) = self.relays.get_mut(&board) {
+            relays.retain(|_, writers| {
+                writers.retain(|writer, entry| {
+                    *writer == device
+                        && !entry.carry
+                        && (entry.pending() || entry.has_possible_copy())
+                });
+                !writers.is_empty()
+            });
+            if relays.is_empty() {
+                self.relays.remove(&board);
+            }
+        }
+    }
+}
+
 impl LocalState {
     pub fn board_relays(&self, board: BoardId) -> impl Iterator<Item = (DeviceId, &BoardRelay)> {
         self.catalog
@@ -445,6 +463,11 @@ impl App {
                     ) && answer.is_some()))
             {
                 entry.record(answer);
+            }
+            if local.board_forgotten(board) {
+                local
+                    .catalog
+                    .prune_forgotten_board_relays(board, local.device_id);
             }
         })
         .await

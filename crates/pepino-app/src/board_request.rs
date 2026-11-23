@@ -209,14 +209,14 @@ impl crate::App {
             consumed.retain(|_, (_, expires)| *expires > now);
             if consumed
                 .get(&key)
-                .is_some_and(|(previous, _)| *previous != board)
+                .is_some_and(|(previous, _)| *previous != Some(board))
             {
                 return Err(invalid(
                     "request",
                     "This board request has already been used for another board.",
                 ));
             }
-            consumed.insert(key, (board, expiry));
+            consumed.insert(key, (Some(board), expiry));
             Ok(())
         })
         .await?;

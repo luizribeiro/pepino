@@ -106,10 +106,15 @@ manager first.
 ppn board leave House --yes
 ```
 
-This works offline. It deletes the local board history, queues drop requests
-for your relays, and removes the board from your private catalog. Your other
-devices delete their copies and queue their own relay drops when they next sync
-the catalog. A fresh invitation from a manager restores access and history.
+This works offline. It removes the board from your private catalog and erases
+its local task, publication, and membership history. Your other devices do
+the same when they next sync the catalog. Each device queues its own relay
+drops. At the next daemon start, it purges the board's encrypted transport
+history, space secrets, and delivery state from `node.sqlite`. The node keeps
+signed authorization messages that its shared group index needs for repair.
+The board ID stays in the catalog tombstone and in any outstanding purge or
+relay drop requests. A fresh invitation from a manager restores access and
+history.
 
 Leaving revokes nothing. Other members still see you listed and share with your
 devices until a manager removes you.

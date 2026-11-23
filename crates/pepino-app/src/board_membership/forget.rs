@@ -169,8 +169,22 @@ async fn forgetting_queues_only_the_selected_boards_relay_removal() {
     .await
     .unwrap();
 
+    app.try_update_local_state(move |local| {
+        local
+            .catalog
+            .consumed_board_requests
+            .insert("workshop invite".into(), (Some(workshop), 3000));
+        Ok(())
+    })
+    .await
+    .unwrap();
+
     let local = app.forget_board(workshop, 2000).await.unwrap();
     assert!(local.board_forgotten(workshop));
+    assert_eq!(
+        local.catalog.consumed_board_requests["workshop invite"],
+        (None, 3000)
+    );
     assert!(local.resolve_board("Workshop", "board").is_err());
     assert_eq!(
         local.resolve_board("Greenhouse", "board").unwrap().id,
@@ -188,6 +202,18 @@ async fn forgetting_queues_only_the_selected_boards_relay_removal() {
     );
     let reopened = app.fresh_local_state().await.unwrap();
     assert_eq!(local, reopened);
+    let (_, drop_request) = local.board_relays(workshop).next().unwrap();
+    app.record_relay_answer(
+        workshop,
+        relay,
+        drop_request.revision,
+        Some(pepino_node::RelayAnswer::Removed),
+    )
+    .await
+    .unwrap();
+    let settled = app.fresh_local_state().await.unwrap();
+    assert_eq!(settled.board_relays(workshop).count(), 0);
+    assert_eq!(settled.board_relays(greenhouse).count(), 1);
     assert!(app.forget_board(local.catalog_board(), 2000).await.is_err());
 }
 

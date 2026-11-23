@@ -24,8 +24,15 @@ had no security audit. Do not rely on it against a capable attacker.
 - **Removal is not retroactive.** A removed person or device keeps everything
   it already received. Removal changes the keys, so it protects only what
   comes after.
-- **Leaving is local.** It revokes nothing. A manager must remove you for
-  other members to stop sharing with your devices.
+- **Leaving is local.** Leave and forget delete this device's board history
+  and catalog metadata. The next daemon start purges the board's encrypted
+  operations, space secrets, and delivery state from `node.sqlite`. The node
+  keeps the signed authorization messages used by its shared group index.
+  These carry membership metadata. A catalog tombstone retains the board ID.
+  Cleanup markers and unfinished relay drops also retain the ID while they
+  are needed. Earlier references can remain in the encrypted private-catalog
+  history and in backups. A manager must remove you for other members to stop
+  sharing with your devices.
 - **History is all or nothing.** A new member or device reads the whole board
   history.
 - **Names prove nothing.** People choose their own display names. The
