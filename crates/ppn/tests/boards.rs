@@ -313,11 +313,111 @@ fn leaving_with_a_pinned_reader_keeps_other_commands_available() {
             };
             let workshop = as_json(&leave("Workshop", true));
             assert_eq!(workshop["left"], true);
-            assert!(workshop.get("erasure_pending").is_none());
+            assert_eq!(workshop["deletion_pending"], false);
             assert!(leave("Shed", false).contains("Deleted Shed"));
             let boards = success(run(&["board", "ls"]));
             assert!(boards.contains("Personal"));
             assert!(!boards.contains("Workshop") && !boards.contains("Shed"));
             snapshot.rollback().await.unwrap();
         });
+}
+
+#[test]
+fn leaving_while_a_writer_holds_the_database_succeeds_with_deletion_pending() {
+    use pepino_core::BoardId;
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+
+    let (sandbox, data) = common::uninitialized_task_sandbox();
+    common::fixture::prepare_blocking(&data);
+    let workshop = BoardId::from_bytes([83; 32]);
+    let greenhouse = BoardId::from_bytes([84; 32]);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let app = pepino_app::App::open(&data, 0).await.unwrap();
+        app.register_created_board(workshop, "Workshop")
+            .await
+            .unwrap();
+        app.register_created_board(greenhouse, "Greenhouse")
+            .await
+            .unwrap();
+    });
+    sandbox.run(&["add", "--board", "Workshop", "Sharpen the chisels"]);
+    sandbox.run(&["add", "--board", "Greenhouse", "Water the seedlings"]);
+    let options = SqliteConnectOptions::new().filename(data.join("pepino.sqlite"));
+    let mut writer = runtime
+        .block_on(SqliteConnection::connect_with(&options))
+        .unwrap();
+    let tx = runtime
+        .block_on(writer.begin_with("BEGIN IMMEDIATE"))
+        .unwrap();
+
+    let leave = |name, json: bool| {
+        let mut args = vec![
+            "board",
+            "leave",
+            name,
+            "--yes",
+            "--i-understand-last-manager-risk",
+        ];
+        args.extend(json.then_some("--json"));
+        let out = sandbox.command().args(args).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let stdout = String::from_utf8(out.stdout).unwrap();
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        let id = if json { workshop } else { greenhouse }.to_string();
+        assert!(
+            stderr.contains(&format!(
+                "Could not delete local rows for board {}",
+                &id[..6]
+            )),
+            "{stderr}"
+        );
+        assert!(!stderr.contains(&id), "{stderr}");
+        (stdout, stderr)
+    };
+    let (stdout, stderr) = leave("Workshop", true);
+    assert!(stderr.contains("database is locked"), "{stderr}");
+    let result = as_json(&stdout);
+    assert_eq!(result["left"], true);
+    assert_eq!(result["deletion_pending"], true);
+
+    let boards = sandbox.command().args(["board", "ls"]).output().unwrap();
+    assert!(boards.status.success(), "{boards:?}");
+    let boards = String::from_utf8(boards.stdout).unwrap();
+    assert!(boards.contains("Personal") && boards.contains("Greenhouse"));
+    assert!(!boards.contains("Workshop"));
+    runtime.block_on(tx.rollback()).unwrap();
+
+    runtime
+        .block_on(
+            sqlx::query(
+                "CREATE TRIGGER fail_greenhouse_deletion BEFORE DELETE ON event_log
+         WHEN instr(CAST(OLD.bytes AS TEXT), 'Water the seedlings') > 0
+         BEGIN SELECT RAISE(FAIL, 'greenhouse deletion blocked'); END",
+            )
+            .execute(&mut writer),
+        )
+        .unwrap();
+    let (stdout, stderr) = leave("Greenhouse", false);
+    assert!(
+        stdout.contains("Pepino will retry deleting the local copy at the next command."),
+        "{stdout}"
+    );
+    assert!(stderr.contains("greenhouse deletion blocked"), "{stderr}");
+    runtime
+        .block_on(sqlx::query("DROP TRIGGER fail_greenhouse_deletion").execute(&mut writer))
+        .unwrap();
+    let boards = sandbox.run(&["board", "ls"]);
+    assert!(boards.contains("Personal"));
+    runtime.block_on(async {
+        let app = pepino_app::App::open(&data, 0).await.unwrap();
+        for board in [workshop, greenhouse] {
+            assert!(app.local_state().board_forgotten(board));
+            assert!(!app.local_state().board_deletion_pending(board));
+            assert_eq!(app.store().statistics(board).await.unwrap().total, 0);
+        }
+    });
 }

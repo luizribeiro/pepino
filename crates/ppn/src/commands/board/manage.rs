@@ -203,8 +203,12 @@ pub(super) fn discard(
         prompt.push_str(LAST_MANAGER);
     }
     let confirmed = context.confirm(&prompt)?;
-    let kept = if confirmed {
-        app.forget_board(board.id)?
+    let updated = confirmed.then(|| app.forget_board(board.id)).transpose()?;
+    let deletion_pending = updated
+        .as_ref()
+        .is_some_and(|local| local.board_deletion_pending(board.id));
+    let kept = if let Some(updated) = updated {
+        updated
             .relay_copies(board.id)
             .filter_map(|(relay, copy)| (copy == RelayCopy::Kept).then_some(relay))
             .collect::<std::collections::BTreeSet<DeviceId>>()
@@ -222,6 +226,7 @@ pub(super) fn discard(
             }),
         ),
         ("board".into(), json!(board)),
+        ("deletion_pending".into(), json!(deletion_pending)),
         ("relay_copies_kept".into(), json!(kept)),
     ]);
     fields.insert(
@@ -233,16 +238,16 @@ pub(super) fn discard(
     let warnings = kept.into_iter().map(|relay| format!(
         "Relay {relay} may keep its copy of {name}. Run ppn relay drop on the relay to delete it."
     )).collect::<Vec<_>>();
-    Ok(CommandResult::document(ResultDocument {
-        human: match (confirmed, leaving, still_listed) {
-            (true, _, true) => format!("Deleted {name} from your local catalog. {LOCAL_LEAVE}"),
-            (true, _, false) => format!("Forgot {name} from your local catalog."),
-            (false, true, _) => "Leave cancelled.".into(),
-            (false, false, _) => "Forget cancelled.".into(),
-        },
-        fields,
-    })
-    .with_warnings(warnings))
+    let mut human = match (confirmed, leaving, still_listed) {
+        (true, _, true) => format!("Deleted {name} from your local catalog. {LOCAL_LEAVE}"),
+        (true, _, false) => format!("Forgot {name} from your local catalog."),
+        (false, true, _) => "Leave cancelled.".into(),
+        (false, false, _) => "Forget cancelled.".into(),
+    };
+    if deletion_pending {
+        human.push_str(" Pepino will retry deleting the local copy at the next command.");
+    }
+    Ok(CommandResult::document(ResultDocument { human, fields }).with_warnings(warnings))
 }
 
 struct ResultDocument {
