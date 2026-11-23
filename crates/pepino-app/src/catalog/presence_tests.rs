@@ -122,6 +122,10 @@ async fn a_late_tombstone_cannot_delete_a_new_grant_on_an_unaware_device() {
     deliver(&mut sibling, &leaver, announcement(&leaver), 2100);
     assert!(sibling.resolve_board("Workshop", "board").is_ok());
     let signer = sibling.device_id;
+    deliver(&mut leaver, &sibling, announcement(&sibling), 2100);
+    assert!(leaver.board_forgotten(WORKSHOP));
+    assert!(leaver.board_deletion_pending(WORKSHOP));
+    leaver.catalog.pending_board_deletions.remove(&WORKSHOP);
     leaver
         .merge_catalog(leaver.catalog_board(), signer, rejoined, 2100)
         .unwrap();
@@ -134,6 +138,7 @@ async fn a_later_offline_leave_wins_over_an_older_rejoin() {
     let mut source = source().await;
     let mut sibling = source.clone();
     leave(&mut source, 1000);
+    source.catalog.pending_board_deletions.remove(&WORKSHOP);
     install_workshop(&mut source, 2000);
     leave(&mut sibling, 9000);
     deliver(&mut sibling, &source, announcement(&source), 9500);
@@ -185,7 +190,7 @@ async fn unknown_tombstones_are_kept_within_the_same_bound() {
     assert!(!sibling.board_forgotten(tombstone(75)));
     assert!(sibling.board_forgotten(tombstone(76)));
     assert!(sibling.board_forgotten(tombstone(1099)));
-    assert!(!sibling.board_needs_transport_purge(tombstone(1099)));
+    assert!(!sibling.board_deletion_pending(tombstone(1099)));
 }
 
 #[tokio::test]
@@ -246,37 +251,16 @@ async fn a_stale_sibling_cannot_restore_a_left_joined_board_on_a_later_device() 
 }
 
 #[tokio::test]
-async fn a_fresh_grant_cancels_an_unstarted_purge_but_replays_and_can_leave_again() {
-    use crate::board_membership::forget::BoardCleanup;
-
+async fn a_fresh_grant_after_deletion_replays_and_can_leave_again() {
     let mut local = source().await;
     leave(&mut local, 1000);
-    local
-        .catalog
-        .board_cleanup
-        .insert(WORKSHOP, BoardCleanup::Transport);
-    let mut purging = local.clone();
-    purging
-        .catalog
-        .board_cleanup
-        .insert(WORKSHOP, BoardCleanup::Purging);
-    let mut already_purged = local.clone();
-    already_purged.catalog.board_cleanup.remove(&WORKSHOP);
-
-    for state in [&mut local, &mut purging, &mut already_purged] {
-        install_workshop(state, 2000);
-        assert!(state.needs_readmission_replay(WORKSHOP));
-        assert!(!state.board_forgotten(WORKSHOP));
-    }
-    assert!(!local.board_needs_transport_purge(WORKSHOP));
-    assert!(purging.board_needs_transport_purge(WORKSHOP));
-    assert!(!already_purged.board_needs_transport_purge(WORKSHOP));
-
+    assert!(local.catalog.pending_board_deletions.remove(&WORKSHOP));
+    install_workshop(&mut local, 2000);
+    assert!(local.needs_readmission_replay(WORKSHOP));
+    assert!(!local.board_forgotten(WORKSHOP));
+    assert!(!local.board_deletion_pending(WORKSHOP));
     leave(&mut local, 3000);
-    assert_eq!(
-        local.catalog.board_cleanup[&WORKSHOP],
-        BoardCleanup::History
-    );
+    assert!(local.board_deletion_pending(WORKSHOP));
 }
 
 #[tokio::test]
@@ -297,20 +281,15 @@ async fn reaching_the_board_presence_limit_reports_boards() {
 }
 
 #[tokio::test]
-async fn a_fast_roster_clock_can_cancel_a_purge_with_a_grant_issued_before_leave() {
-    use crate::board_membership::forget::BoardCleanup;
-
+async fn a_fast_roster_clock_can_restore_a_board_with_a_grant_issued_before_leave() {
     let base = source().await;
     let mut local = base.clone();
     leave(&mut local, 1000);
-    local
-        .catalog
-        .board_cleanup
-        .insert(WORKSHOP, BoardCleanup::Transport);
+    assert!(local.catalog.pending_board_deletions.remove(&WORKSHOP));
 
     deliver(&mut local, &base, announcement(&base), 2000);
     assert!(local.board_forgotten(WORKSHOP));
-    assert!(local.board_needs_transport_purge(WORKSHOP));
+    assert!(local.resolve_board("Workshop", "board").is_err());
 
     let mut fast = base.clone();
     install_workshop(&mut fast, 500 + 3_600_000);
@@ -318,10 +297,10 @@ async fn a_fast_roster_clock_can_cancel_a_purge_with_a_grant_issued_before_leave
     foreign.device_id = DeviceId::from_bytes([99; 32]);
     deliver(&mut local, &foreign, announcement(&fast), 2000);
     assert!(local.board_forgotten(WORKSHOP));
-    assert!(local.board_needs_transport_purge(WORKSHOP));
+    assert!(local.resolve_board("Workshop", "board").is_err());
 
     deliver(&mut local, &fast, announcement(&fast), 2000);
     assert!(!local.board_forgotten(WORKSHOP));
-    assert!(!local.board_needs_transport_purge(WORKSHOP));
+    assert!(!local.board_deletion_pending(WORKSHOP));
     assert!(local.needs_readmission_replay(WORKSHOP));
 }

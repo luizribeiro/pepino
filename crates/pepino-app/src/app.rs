@@ -48,7 +48,7 @@ impl App {
         now: u64,
         options: OpenOptions,
     ) -> Result<Self, AppError> {
-        Self::startup(data_dir, now, options, true, true).await
+        Self::startup(data_dir, now, options, true).await
     }
 
     pub async fn open(data_dir: impl AsRef<Path>, now: u64) -> Result<Self, AppError> {
@@ -60,16 +60,7 @@ impl App {
         now: u64,
         options: OpenOptions,
     ) -> Result<Self, AppError> {
-        Self::startup(data_dir, now, options, false, true).await
-    }
-
-    /// Open the store with cleanup deferred to the daemon's startup cycle.
-    pub async fn open_for_daemon(
-        data_dir: impl AsRef<Path>,
-        now: u64,
-        options: OpenOptions,
-    ) -> Result<Self, AppError> {
-        Self::startup(data_dir, now, options, false, false).await
+        Self::startup(data_dir, now, options, false).await
     }
 
     async fn startup(
@@ -77,7 +68,6 @@ impl App {
         now: u64,
         options: OpenOptions,
         initialize: bool,
-        recover_history: bool,
     ) -> Result<Self, AppError> {
         let directory = data_dir.as_ref().to_owned();
         let lock_timeout = options.lock_timeout;
@@ -166,9 +156,7 @@ impl App {
             credentials_file,
             lock_timeout,
         };
-        if recover_history {
-            (app.local, guard) = app.resume_board_history(app.local.clone(), guard).await?;
-        }
+        (app.local, guard) = app.resume_board_history(app.local.clone(), guard).await?;
         let roster_keys = if app.local.peer_hint().is_none()
             && app.local.needs_roster_reconciliation()
             && app.local.has_legacy_roster()
@@ -229,7 +217,7 @@ impl App {
         let local = self.fresh_local_state().await?;
         if local.device_leave_requested_at().is_some()
             || local.board_forgotten(board)
-            || local.board_needs_transport_purge(board)
+            || local.board_deletion_pending(board)
             || (local.board_removed(board) && !local.needs_readmission_replay(board))
         {
             return Err(SyncStoreError::BoardInactive);
@@ -246,7 +234,7 @@ impl App {
     ) -> Result<(), SyncStoreError> {
         let _guard = lock(&self.directory, self.lock_timeout).await?;
         let local = self.fresh_local_state().await?;
-        if local.board_forgotten(board) || local.board_needs_transport_purge(board) {
+        if local.board_forgotten(board) || local.board_deletion_pending(board) {
             return Ok(());
         }
         Ok(self.store.record_undecodable(board, signer, bytes).await?)

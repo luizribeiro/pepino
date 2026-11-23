@@ -1,15 +1,11 @@
 use pepino_core::BoardId;
 use sqlx::Connection;
 
-use crate::{Store, StoreError, board_key::BoardKey, sqlite};
+use crate::{Store, StoreError, board_key::BoardKey};
 
 impl Store {
-    /// Delete the board history. False means its rows are gone but pages still need scrubbing.
-    pub async fn forget_board(&self, board: BoardId) -> Result<bool, StoreError> {
+    pub async fn forget_board(&self, board: BoardId) -> Result<(), StoreError> {
         let mut db = self.connection.lock().await;
-        sqlx::query("PRAGMA secure_delete = ON")
-            .execute(&mut *db)
-            .await?;
         let mut tx = db.begin().await?;
         for statement in [
             "DELETE FROM publication WHERE board = ?",
@@ -24,22 +20,10 @@ impl Store {
                 .await?;
         }
         tx.commit().await?;
-        if let Some(readers) = &self.readers {
-            let options = readers
-                .connect_options()
-                .as_ref()
-                .clone()
-                .read_only(false)
-                .busy_timeout(std::time::Duration::ZERO);
-            let mut scrub = sqlx::SqliteConnection::connect_with(&options).await?;
-            if !sqlite::checkpoint(&mut scrub).await? {
-                return Ok(false);
-            }
-            // Earlier writes may have freed pages before secure_delete was enabled.
-            sqlx::query("VACUUM").execute(&mut scrub).await?;
-            return Ok(sqlite::checkpoint(&mut scrub).await?);
-        }
-        Ok(true)
+        let _ = sqlx::query("PRAGMA wal_checkpoint(PASSIVE)")
+            .execute(&mut *db)
+            .await;
+        Ok(())
     }
 }
 

@@ -14,7 +14,6 @@ mod log;
 mod prefix;
 mod publication;
 pub mod query;
-pub mod sqlite;
 mod statistics;
 mod task;
 mod traversal;

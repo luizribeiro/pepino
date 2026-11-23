@@ -72,8 +72,8 @@ pub(crate) struct CatalogState {
     pub(crate) observed_board_removals: BTreeSet<BoardId>,
     #[serde(default, rename = "forgotten_boards", skip_serializing)]
     legacy_forgotten_boards: BTreeSet<BoardId>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub(crate) board_cleanup: BTreeMap<BoardId, crate::board_membership::forget::BoardCleanup>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(crate) pending_board_deletions: BTreeSet<BoardId>,
     #[serde(
         default,
         rename = "board_presence_register",
@@ -301,10 +301,6 @@ impl LocalState {
                 .is_none()
             {
                 self.change_board_presence(board, true, 0)?;
-                self.catalog
-                    .board_cleanup
-                    .entry(board)
-                    .or_insert(crate::board_membership::forget::BoardCleanup::Transport);
             }
         }
         Ok(())
@@ -326,7 +322,9 @@ impl LocalState {
                 && self.knows_roster_device(entry.writer)
                 && match entry.value.as_deref() {
                     None => true,
-                    Some("present") => revisions.contains_key(&id),
+                    Some("present") => {
+                        revisions.contains_key(&id) && !self.board_deletion_pending(id)
+                    }
                     Some(_) => false,
                 }
         });
@@ -346,7 +344,6 @@ impl LocalState {
                 .is_some_and(|entry| entry.value.is_none())
                 || self.board_removed(id)
             {
-                self.cancel_pending_board_purge(id);
                 self.catalog.readmission_replays.insert(id);
             }
         }
@@ -370,6 +367,7 @@ impl LocalState {
 
     fn merge_board(&mut self, id: BoardId, revision: Revision) {
         if self.board_forgotten(id)
+            || self.board_deletion_pending(id)
             || revision.name.trim().is_empty()
             || self
                 .catalog
@@ -550,13 +548,6 @@ impl App {
                 let mut local = previous.clone();
                 local.merge_catalog(board, signer, announcement, now)?;
                 if local != previous {
-                    for board in local
-                        .boards()
-                        .iter()
-                        .filter(|board| previous.board_forgotten(board.id))
-                    {
-                        self.check_forgotten_rows(&local, board.id).await?;
-                    }
                     self.save_and_resume_board_cleanup(local, guard).await?;
                 }
             }
@@ -1100,6 +1091,8 @@ async fn a_catalog_tombstone_wins_over_old_announcements_until_readmission() {
     );
 
     let forgotten = source.clone();
+    source.catalog.pending_board_deletions.remove(&workshop);
+    sibling.catalog.pending_board_deletions.remove(&workshop);
     source.change_board_presence(workshop, false, 3000).unwrap();
     source.name_board(workshop, "Workshop");
     for snapshot in [&source, &forgotten] {

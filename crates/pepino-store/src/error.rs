@@ -45,7 +45,7 @@ pub enum DatabaseErrorKind {
 }
 
 impl DatabaseErrorKind {
-    pub(crate) fn classify(error: &sqlx::Error) -> Self {
+    fn classify(error: &sqlx::Error) -> Self {
         if matches!(error, sqlx::Error::Io(error) if matches!(
             error.kind(), std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
         )) {

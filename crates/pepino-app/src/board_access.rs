@@ -86,6 +86,11 @@ impl LocalState {
             path: format!("board {:?}", board.name),
             reason: reason.into(),
         };
+        if self.board_deletion_pending(board.id) {
+            return Err(denied(
+                "deleting the previous local history is still pending",
+            ));
+        }
         if self.needs_readmission_replay(board.id) {
             return Err(denied(
                 "waiting for board history to sync after readmission",
