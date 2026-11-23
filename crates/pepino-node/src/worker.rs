@@ -103,9 +103,7 @@ impl Worker {
         drop(self.stop);
         tokio::time::timeout(SHUTDOWN_LIMIT, self.done)
             .await
-            .map_err(|_| {
-                Error::Worker("timed out stopping network tasks or closing node.sqlite".into())
-            })?
+            .map_err(|_| Error::ShutdownWorkerTimeout)?
             .map_err(|_| Error::Worker("network worker exited during shutdown".into()))?
     }
 }

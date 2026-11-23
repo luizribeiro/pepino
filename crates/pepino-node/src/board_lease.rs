@@ -99,7 +99,7 @@ impl OpenBoards {
             }
         })
         .await
-        .map_err(|_| Error::Worker("timed out closing board subscriptions".into()))
+        .map_err(|_| Error::ShutdownSubscriptionsTimeout)
     }
     fn drained(&self) -> bool {
         let leases = self.0.leases.lock().unwrap_or_else(PoisonError::into_inner);

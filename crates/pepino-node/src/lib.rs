@@ -101,6 +101,10 @@ pub enum Error {
     DirectoryInUse(std::path::PathBuf),
     #[error("node storage: timed out waiting for the node database writer")]
     ShutdownWriterTimeout,
+    #[error("node runtime: timed out closing board subscriptions")]
+    ShutdownSubscriptionsTimeout,
+    #[error("node runtime: timed out stopping network tasks or closing node.sqlite")]
+    ShutdownWorkerTimeout,
     #[error("node storage: {0}")]
     Storage(String),
     #[error("node operation: {0}")]

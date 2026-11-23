@@ -48,7 +48,7 @@ impl App {
         now: u64,
         options: OpenOptions,
     ) -> Result<Self, AppError> {
-        Self::startup(data_dir, now, options, true).await
+        Self::startup(data_dir, now, options, true, true).await
     }
 
     pub async fn open(data_dir: impl AsRef<Path>, now: u64) -> Result<Self, AppError> {
@@ -60,7 +60,16 @@ impl App {
         now: u64,
         options: OpenOptions,
     ) -> Result<Self, AppError> {
-        Self::startup(data_dir, now, options, false).await
+        Self::startup(data_dir, now, options, false, true).await
+    }
+
+    /// Open the store with cleanup deferred to the daemon's startup cycle.
+    pub async fn open_for_daemon(
+        data_dir: impl AsRef<Path>,
+        now: u64,
+        options: OpenOptions,
+    ) -> Result<Self, AppError> {
+        Self::startup(data_dir, now, options, false, false).await
     }
 
     async fn startup(
@@ -68,6 +77,7 @@ impl App {
         now: u64,
         options: OpenOptions,
         initialize: bool,
+        recover_history: bool,
     ) -> Result<Self, AppError> {
         let directory = data_dir.as_ref().to_owned();
         let lock_timeout = options.lock_timeout;
@@ -156,7 +166,9 @@ impl App {
             credentials_file,
             lock_timeout,
         };
-        (app.local, guard) = app.resume_board_history(app.local.clone(), guard).await?;
+        if recover_history {
+            (app.local, guard) = app.resume_board_history(app.local.clone(), guard).await?;
+        }
         let roster_keys = if app.local.peer_hint().is_none()
             && app.local.needs_roster_reconciliation()
             && app.local.has_legacy_roster()

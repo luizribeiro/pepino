@@ -95,7 +95,7 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
     };
     let mut logged = StatusLog::default();
     loop {
-        app.purge_forgotten_board_transport().await?;
+        try_purge(&app, |message| log(level, LogLevel::Warn, message)).await;
         let outcome = cycle(
             &socket.listener,
             &settings,
@@ -118,7 +118,49 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         tokio::select! {
             _ = terminate.recv() => return Ok(()),
             _ = interrupt.recv() => return Ok(()),
-            _ = tokio::time::sleep(Duration::from_millis(250)) => (),
+            _ = restart_delay() => (),
+        }
+    }
+}
+
+async fn try_purge(app: &pepino_app::App, mut warn: impl FnMut(&str)) {
+    if let Err(error) = app.purge_forgotten_board_transport().await {
+        let message = format!("could not finish board cleanup; will retry at next start: {error}");
+        if let Ok(local) = app.fresh_local_state().await {
+            let mut boards = local.pending_board_purges().peekable();
+            if boards.peek().is_none() {
+                warn(&crate::error::shorten_message_ids(&message));
+            }
+            for board in boards {
+                warn(&board_line(board, &message));
+            }
+        } else {
+            warn(&crate::error::shorten_message_ids(&message));
+        }
+    }
+}
+
+async fn restart_delay() {
+    tokio::time::sleep(Duration::from_millis(250)).await;
+}
+
+async fn start_node(
+    settings: &NodeSettings,
+    mut stopping: oneshot::Receiver<()>,
+) -> Result<Option<Node>, pepino_node::Error> {
+    loop {
+        match Node::spawn_until_stopped(settings.clone(), async {
+            let _ = (&mut stopping).await;
+        })
+        .await
+        {
+            Err(pepino_node::Error::DirectoryInUse(_)) => {
+                tokio::select! {
+                    _ = &mut stopping => return Ok(None),
+                    _ = restart_delay() => (),
+                }
+            }
+            result => return result,
         }
     }
 }
@@ -139,11 +181,9 @@ async fn cycle(
     let mut node = None;
     let outcome = {
         let start = async {
-            let transport = Node::spawn_until_stopped(settings.clone(), async {
-                let _ = stopping.await;
-            })
-            .await
-            .map_err(|error| failure(&format!("Could not start the network node. {error}")))?;
+            let transport = start_node(settings, stopping)
+                .await
+                .map_err(|error| failure(&format!("Could not start the network node. {error}")))?;
             let Some(transport) = transport else {
                 return Ok(());
             };
@@ -200,6 +240,15 @@ async fn cycle(
     if let Some(node) = node {
         let mut engine_stop = Ok(());
         if let Some(engine) = engine.into_inner() {
+            if matches!(outcome, Ok(End::Restart))
+                && let Some(reason) = engine.status().restart_required
+            {
+                log(
+                    level,
+                    LogLevel::Warn,
+                    &board_line(reason.board, &reason.cause),
+                );
+            }
             node.prepare_shutdown();
             engine_stop = match engine.shutdown().await {
                 Err(pepino_sync::Error::RestartRequired(_))
@@ -229,6 +278,24 @@ async fn cycle(
                     level,
                     LogLevel::Warn,
                     "the network node closed after reaching the database writer deadline",
+                );
+            }
+            Err(pepino_node::Error::ShutdownSubscriptionsTimeout)
+                if matches!(outcome, Ok(End::Restart)) =>
+            {
+                log(
+                    level,
+                    LogLevel::Warn,
+                    "the network node closed after reaching the board subscription deadline",
+                );
+            }
+            Err(pepino_node::Error::ShutdownWorkerTimeout)
+                if matches!(outcome, Ok(End::Restart)) =>
+            {
+                log(
+                    level,
+                    LogLevel::Warn,
+                    "waiting for the previous network node to release its database",
                 );
             }
             result => result.map_err(|error| shutdown_failure("the network node", error))?,

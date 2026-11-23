@@ -160,10 +160,19 @@ async fn cycle(
         }),
     };
     drop(monitor);
-    relay
-        .shutdown()
-        .await
-        .map_err(|error| shutdown_failure("the relay node", error))?;
+    match relay.shutdown().await {
+        Err(
+            error @ (pepino_node::Error::ShutdownWriterTimeout
+            | pepino_node::Error::ShutdownSubscriptionsTimeout),
+        ) if matches!(end, Ok(Cycle::Restart | Cycle::Failed(_))) => {
+            log(
+                level,
+                LogLevel::Warn,
+                &format!("the relay node closed: {error}"),
+            );
+        }
+        result => result.map_err(|error| shutdown_failure("the relay node", error))?,
+    }
     end
 }
 

@@ -145,3 +145,72 @@ async fn stop_joins_the_engine_when_workers_start_before_readiness() {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn a_failed_board_purge_leaves_the_daemon_available_until_the_next_start() {
+    let startup = Startup::new().await;
+    let old_node = Node::spawn(startup.settings.clone()).await.unwrap();
+    let house = old_node.create_board().await.unwrap();
+    let board = house.id();
+    startup
+        .app
+        .register_created_board(board, "House")
+        .await
+        .unwrap();
+    startup
+        .app
+        .forget_board(board, pepino_app::wall_time_ms())
+        .await
+        .unwrap();
+
+    let mut warnings = Vec::new();
+    try_purge(&startup.app, |warning| warnings.push(warning.to_owned())).await;
+    assert_eq!(warnings.len(), 1);
+    let id = board.to_string();
+    assert!(warnings[0].contains(&id[..6]));
+    assert!(!warnings[0].contains(&id));
+    assert!(
+        startup
+            .app
+            .fresh_local_state()
+            .await
+            .unwrap()
+            .board_needs_transport_purge(board)
+    );
+
+    house.close().await.unwrap();
+    let (prepared, preparing) = oneshot::channel();
+    let (release, wait) = oneshot::channel();
+    let running = startup.run(prepared, wait);
+    let operate = async {
+        let status = startup.request("status").await;
+        assert!(status["result"]["status"]["network"]["starting_ms"].is_u64());
+        old_node.shutdown().await.unwrap();
+        preparing.await.unwrap();
+        release.send(()).unwrap();
+        let stopped = startup.request("stop").await;
+        assert_eq!(stopped["result"]["kind"], "stopping");
+    };
+    let (end, ()) = timeout(Duration::from_secs(60), async {
+        tokio::join!(running, operate)
+    })
+    .await
+    .unwrap();
+    assert!(matches!(end.unwrap(), End::Stopped));
+
+    try_purge(&startup.app, |warning| panic!("{warning}")).await;
+    assert!(
+        !startup
+            .app
+            .fresh_local_state()
+            .await
+            .unwrap()
+            .board_needs_transport_purge(board)
+    );
+    assert!(
+        Node::persisted_members(&startup.settings.database_path, board)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
