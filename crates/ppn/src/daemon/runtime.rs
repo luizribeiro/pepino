@@ -117,13 +117,9 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         tokio::select! {
             _ = terminate.recv() => return Ok(()),
             _ = interrupt.recv() => return Ok(()),
-            _ = restart_delay(Duration::from_millis(250)) => (),
+            _ = tokio::time::sleep(Duration::from_millis(250)) => (),
         }
     }
-}
-
-async fn restart_delay(delay: Duration) {
-    tokio::time::sleep(delay).await;
 }
 
 async fn start_node(
@@ -145,7 +141,7 @@ async fn start_node(
                 }
                 tokio::select! {
                     _ = &mut stopping => return Ok(None),
-                    _ = restart_delay(remaining.min(Duration::from_millis(250))) => (),
+                    _ = tokio::time::sleep(remaining.min(Duration::from_millis(250))) => (),
                 }
             }
             result => return result,
