@@ -160,7 +160,7 @@ struct Members {
     board: String,
     settings: RenderSettings,
     people: Vec<Value>,
-    history: Vec<Value>,
+    history: Vec<super::history::Row>,
     removed: bool,
     reader_updates_unavailable: bool,
 }
