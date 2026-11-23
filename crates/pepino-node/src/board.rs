@@ -46,6 +46,7 @@ struct BoardConfig {
     status: Status,
     confirmation_timeout: Duration,
     replaying: bool,
+    readmission: bool,
 }
 
 pub struct BoardHandle {
@@ -102,6 +103,7 @@ impl Node {
                         status,
                         confirmation_timeout,
                         replaying: false,
+                        readmission: false,
                     },
                     subscription,
                     async { Ok(space) },
@@ -127,7 +129,7 @@ impl Node {
         id: BoardId,
         options: OpenBoardOptions,
     ) -> Result<BoardHandle, Error> {
-        self.open(id, options, None).await
+        self.open(id, options, None, false).await
     }
 
     /// Open a board, replaying its full history when the event store changes.
@@ -137,7 +139,13 @@ impl Node {
         id: BoardId,
         store_instance: [u8; 16],
     ) -> Result<BoardHandle, Error> {
-        self.open(id, OpenBoardOptions::default(), Some(store_instance))
+        self.open(id, OpenBoardOptions::default(), Some(store_instance), false)
+            .await
+    }
+
+    /// Replay a board after readmission, retaining decoded deliveries until access returns.
+    pub async fn open_board_for_readmission(&self, id: BoardId) -> Result<BoardHandle, Error> {
+        self.open(id, OpenBoardOptions { from_start: true }, None, true)
             .await
     }
 
@@ -146,6 +154,7 @@ impl Node {
         id: BoardId,
         options: OpenBoardOptions,
         store_instance: Option<[u8; 16]>,
+        readmission: bool,
     ) -> Result<BoardHandle, Error> {
         let node = self.inner.clone();
         let acks = self.acks.clone();
@@ -180,6 +189,7 @@ impl Node {
                         status,
                         confirmation_timeout,
                         replaying,
+                        readmission,
                     },
                     subscription,
                     pending.joined(),
@@ -203,6 +213,7 @@ impl BoardHandle {
             status,
             confirmation_timeout,
             replaying,
+            readmission,
         } = config;
         let id = lease.id;
         status.send(NodeEvent::BoardOpened {
@@ -229,6 +240,7 @@ impl BoardHandle {
             replay_status,
             events: events_tx,
             ejected: false,
+            readmission,
             receipts: receipts.clone(),
             author: node.id(),
             headroom: Default::default(),

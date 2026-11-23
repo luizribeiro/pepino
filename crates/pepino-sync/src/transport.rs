@@ -275,8 +275,7 @@ impl Transport for Node {
     }
 
     async fn open_board_for_readmission(&self, board: BoardId) -> Result<Self::Board, Error> {
-        self.open_board_with(board, pepino_node::OpenBoardOptions { from_start: true })
-            .await
+        Node::open_board_for_readmission(self, board).await
     }
 
     async fn local_member_bundle(&self) -> Result<Option<MemberInfo>, Error> {

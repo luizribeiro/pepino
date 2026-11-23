@@ -273,7 +273,7 @@ async fn stream_errors_back_off_and_keep_the_board_non_idle_until_repoll() {
     let attempt = |error: &str| {
         Err::<crate::Delivery<super::stub::Receipt>, _>(pepino_node::Error::Node(error.into()))
     };
-    let stream = stream::iter([attempt("interrupted"), attempt("still interrupted")])
+    let mut stream = stream::iter([attempt("interrupted"), attempt("still interrupted")])
         .map(move |item| {
             polled.send(Instant::now()).unwrap();
             item
@@ -307,7 +307,7 @@ async fn stream_errors_back_off_and_keep_the_board_non_idle_until_repoll() {
     };
     let (_stop, stopping) = watch::channel(());
     tokio::select! {
-        result = crate::inbox::run(&app, board, &handle, stream, &status, stopping, None) => panic!("{result:?}"),
+        result = crate::inbox::run(&app, board, &handle, &mut stream, &status, stopping, None) => panic!("{result:?}"),
         _ = async { tokio::join!(observe, seq); } => (),
     }
 }

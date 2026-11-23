@@ -53,6 +53,7 @@ pub(crate) struct BoardTask {
     pub(crate) stop: oneshot::Receiver<()>,
     pub(crate) events: DeliveryWriter,
     pub(crate) ejected: bool,
+    pub(crate) readmission: bool,
     pub(crate) receipts: Receipts,
     pub(crate) author: p2panda::NodeId,
     pub(crate) headroom: Headroom,
@@ -172,7 +173,7 @@ impl BoardTask {
             _ => (),
         }
         board_status(&self.status, self.lease.id, &event);
-        if self.ejected {
+        if self.ejected && !self.readmission {
             return Ok(());
         }
         if let StreamEvent::Processed { operation, source } = event {
@@ -237,6 +238,7 @@ mod tests {
             stop: stop_rx,
             events,
             ejected: false,
+            readmission: false,
             receipts,
             author: p2panda::Credentials::generate().verifying_key(),
             headroom: Headroom::default(),

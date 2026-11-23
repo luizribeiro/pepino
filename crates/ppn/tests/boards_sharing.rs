@@ -941,6 +941,11 @@ fn a_linked_reader_leaves_locally_and_all_devices_rejoin_after_removal() {
     }
     until(
         || member(&owner, "Ben"),
+        let log = std::fs::read_to_string(host.data.join("daemon.log")).unwrap();
+        assert!(
+            !log.contains("delivery stream ended: replay after readmission"),
+            "{log}"
+        );
         |person| {
             person["former_member"] == false
                 && person["devices"].as_array().is_some_and(|devices| {

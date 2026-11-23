@@ -17,7 +17,7 @@ pub(crate) async fn run<B: TransportBoard>(
     app: &App,
     id: BoardId,
     handle: &B,
-    mut deliveries: DeliveryStream<B::Ack>,
+    deliveries: &mut DeliveryStream<B::Ack>,
     status: &watch::Sender<Status>,
     mut stopping: watch::Receiver<()>,
     authority: Option<&std::path::Path>,
@@ -71,7 +71,7 @@ pub(crate) async fn run<B: TransportBoard>(
                             report_card_version(status, id, error)
                         }
                         Err(_) => {
-                            reject_cards(app, id, &mut deliveries, &mut buffered, delivery, status)
+                            reject_cards(app, id, deliveries, &mut buffered, delivery, status)
                                 .await;
                             return;
                         }

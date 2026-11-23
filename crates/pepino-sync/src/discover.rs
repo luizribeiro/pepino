@@ -128,7 +128,7 @@ async fn reconcile<T: Transport>(
                 }) && status
                     .boards
                     .get(id)
-                    .is_some_and(|board| !board.ingest_pending)
+                    .is_some_and(|board| !board.ingest_pending && !board.stream_retrying)
             })
             .collect()
     };
