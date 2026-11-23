@@ -1,9 +1,10 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use p2panda::{Topic, operation::LogId};
-use p2panda_core::cbor::encode_cbor;
+use p2panda_core::cbor::{decode_cbor, encode_cbor};
+use p2panda_spaces::{AuthGroupState, global_groups_id};
 use pepino_core::BoardId;
-use sqlx::{Connection, Sqlite, SqliteConnection, SqlitePool, Transaction};
+use sqlx::{Connection, QueryBuilder, Sqlite, SqliteConnection, SqlitePool, Transaction};
 
 use crate::{
     Error,
@@ -22,7 +23,7 @@ pub(super) async fn pending(
     if pending.peek().is_some() {
         let mut tx = pool.begin().await.map_err(Error::storage)?;
         for (key, record, board) in pending {
-            purge(&mut tx, board).await?;
+            purge(&mut tx, board, false).await?;
             sqlx::query("UPDATE pepino_relay_ledger SET record = ? WHERE key = ?")
                 .bind(encode(&record.purged())?)
                 .bind(key)
@@ -38,8 +39,9 @@ pub(super) async fn pending(
 pub(super) async fn device_boards(pool: &SqlitePool, boards: &[BoardId]) -> Result<(), Error> {
     let _acks = crate::ack::AckStore::create(pool.clone()).await?;
     let mut tx = pool.begin().await.map_err(Error::storage)?;
+    preserve_global_auth(&mut tx).await?;
     for &board in boards {
-        purge(&mut tx, board).await?;
+        purge(&mut tx, board, true).await?;
         for query in [
             "DELETE FROM pepino_board_ack WHERE board = ?",
             "DELETE FROM pepino_ack_position WHERE board = ?",
@@ -56,6 +58,38 @@ pub(super) async fn device_boards(pool: &SqlitePool, boards: &[BoardId]) -> Resu
     tx.commit().await.map_err(Error::storage)?;
     if !checkpoint(pool).await? {
         return Err(Error::storage("the node database write-ahead log is busy"));
+    }
+    Ok(())
+}
+
+async fn preserve_global_auth(tx: &mut Transaction<'_, Sqlite>) -> Result<(), Error> {
+    sqlx::query("CREATE TEMP TABLE pepino_purge_auth (hash TEXT PRIMARY KEY) WITHOUT ROWID")
+        .execute(&mut **tx)
+        .await
+        .map_err(Error::storage)?;
+    let stored: Option<Vec<u8>> = sqlx::query_scalar("SELECT state FROM groups_v1 WHERE id = ?")
+        .bind(global_groups_id().to_hex())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(Error::storage)?;
+    let Some(stored) = stored else { return Ok(()) };
+    // Space repair resolves the node-wide authorization graph's signed messages by hash.
+    let groups: AuthGroupState<()> = decode_cbor(&stored[..]).map_err(Error::storage)?;
+    let hashes: Vec<_> = groups
+        .inner
+        .operations
+        .keys()
+        .map(|id| id.to_hex())
+        .collect();
+    for chunk in hashes.chunks(512) {
+        QueryBuilder::<Sqlite>::new("INSERT INTO temp.pepino_purge_auth (hash) ")
+            .push_values(chunk, |mut row, hash| {
+                row.push_bind(hash);
+            })
+            .build()
+            .execute(&mut **tx)
+            .await
+            .map_err(Error::storage)?;
     }
     Ok(())
 }
@@ -92,7 +126,11 @@ fn is_busy(error: &sqlx::Error) -> bool {
         .is_some_and(|code| matches!(code & 0xff, SQLITE_BUSY | SQLITE_LOCKED))
 }
 
-async fn purge(tx: &mut Transaction<'_, Sqlite>, board: BoardId) -> Result<(), Error> {
+async fn purge(
+    tx: &mut Transaction<'_, Sqlite>,
+    board: BoardId,
+    preserve_auth: bool,
+) -> Result<(), Error> {
     let topic = Topic::from(*board.as_bytes());
     let topic_bytes = encode_cbor(&topic).map_err(Error::storage)?;
 
@@ -109,13 +147,30 @@ async fn purge(tx: &mut Transaction<'_, Sqlite>, board: BoardId) -> Result<(), E
     .execute(&mut **tx)
     .await
     .map_err(Error::storage)?;
-    sqlx::query(
+    let mut operations = QueryBuilder::<Sqlite>::new(
         "DELETE FROM operations_v1 AS op
-           WHERE log_id IN (?, ?)
-           OR (EXISTS (SELECT 1 FROM topics_v1 WHERE topic = ? AND author = op.verifying_key AND data_id = op.log_id)
-               AND NOT EXISTS (SELECT 1 FROM topics_v1 WHERE topic != ? AND author = op.verifying_key AND data_id = op.log_id))",
-    ).bind(&control).bind(&application).bind(&topic_bytes).bind(&topic_bytes)
-        .execute(&mut **tx).await.map_err(Error::storage)?;
+        WHERE (log_id IN (",
+    );
+    operations
+        .push_bind(control)
+        .push(", ")
+        .push_bind(application)
+        .push(") OR (EXISTS (SELECT 1 FROM topics_v1 WHERE topic = ")
+        .push_bind(&topic_bytes)
+        .push(
+            " AND author = op.verifying_key AND data_id = op.log_id)
+               AND NOT EXISTS (SELECT 1 FROM topics_v1 WHERE topic != ",
+        )
+        .push_bind(&topic_bytes)
+        .push(" AND author = op.verifying_key AND data_id = op.log_id)))");
+    if preserve_auth {
+        operations.push(" AND op.hash NOT IN (SELECT hash FROM temp.pepino_purge_auth)");
+    }
+    operations
+        .build()
+        .execute(&mut **tx)
+        .await
+        .map_err(Error::storage)?;
     sqlx::query("DELETE FROM topics_v1 WHERE topic = ?")
         .bind(topic_bytes)
         .execute(&mut **tx)
@@ -357,6 +412,15 @@ async fn device_purge_removes_operations_secrets_and_receipts_from_disk() {
             .windows(needle.len())
             .any(|part| part == needle.as_bytes())
     };
+    let pool = crate::node::open_database(&path, false).await.unwrap();
+    let state: Vec<u8> = sqlx::query_scalar("SELECT state FROM groups_v1 WHERE id = ?")
+        .bind(global_groups_id().to_hex())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let groups: AuthGroupState<()> = decode_cbor(&state[..]).unwrap();
+    assert_eq!(groups.inner.operations.len(), 2);
+    pool.close().await;
     assert!(contains(&boards[0].to_string()));
     assert!(contains(&ids[0].to_string()));
 
@@ -365,6 +429,17 @@ async fn device_purge_removes_operations_secrets_and_receipts_from_disk() {
             .await
             .unwrap();
     }
+    let pool = crate::node::open_database(&path, false).await.unwrap();
+    for id in groups.inner.operations.keys() {
+        let found: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM operations_v1 WHERE hash = ?)")
+                .bind(id.to_hex())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(found, "the authorization graph still references {id}");
+    }
+    pool.close().await;
     assert!(!contains(&boards[0].to_string()));
     assert!(!contains(&ids[0].to_string()));
     assert!(contains(&boards[1].to_string()));
