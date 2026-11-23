@@ -103,6 +103,8 @@ pub(super) struct Board {
 pub(super) struct Receipt {
     done: watch::Sender<bool>,
     before_ack: Option<watch::Sender<bool>>,
+    release_ack: Option<watch::Receiver<bool>>,
+    on_ack: Option<Arc<dyn Fn() + Send + Sync>>,
     failures: Arc<AtomicUsize>,
 }
 
@@ -111,8 +113,23 @@ impl Receipt {
         Self {
             done: watch::channel(false).0,
             before_ack: None,
+            release_ack: None,
+            on_ack: None,
             failures: Arc::default(),
         }
+    }
+
+    pub(super) fn after_release(mut self) -> (Self, watch::Receiver<bool>, watch::Sender<bool>) {
+        let (started, attempting) = watch::channel(false);
+        let (release, released) = watch::channel(false);
+        self.before_ack = Some(started);
+        self.release_ack = Some(released);
+        (self, attempting, release)
+    }
+
+    pub(super) fn observe_ack(mut self, observe: impl Fn() + Send + Sync + 'static) -> Self {
+        self.on_ack = Some(Arc::new(observe));
+        self
     }
 
     pub(super) fn with_failures(mut self, count: usize) -> Self {
@@ -289,7 +306,11 @@ impl Acknowledgement for Receipt {
     async fn ack(&self) -> Result<(), Error> {
         if let Some(started) = &self.before_ack {
             started.send_replace(true);
-            std::future::pending::<()>().await;
+            if let Some(mut released) = self.release_ack.clone() {
+                released.wait_for(|released| *released).await.unwrap();
+            } else {
+                std::future::pending::<()>().await;
+            }
         }
         if self
             .failures
@@ -299,6 +320,9 @@ impl Acknowledgement for Receipt {
             .is_ok()
         {
             return Err(Error::Worker("test acknowledgement failure".into()));
+        }
+        if let Some(observe) = &self.on_ack {
+            observe();
         }
         self.done.send_replace(true);
         Ok(())

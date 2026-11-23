@@ -783,7 +783,8 @@ async fn former_managers_and_unknown_board_cards_cannot_change_membership() {
 #[tokio::test]
 async fn junk_cards_are_persisted_together_before_the_first_ack() {
     use super::stub::Receipt;
-    use pepino_core::EventId;
+    use pepino_core::{Envelope, Event, EventId, Hlc, InitialFields};
+    use std::sync::Mutex;
 
     let dir = tempfile::tempdir().unwrap();
     let board = BoardId::from_bytes([93; 32]);
@@ -794,14 +795,35 @@ async fn junk_cards_are_persisted_together_before_the_first_ack() {
         .await
         .unwrap();
     let bytes = b"pepino-board-people\0invalid-cbor".to_vec();
-    let (mut first_ack, _) = node.pause_before_ack(board, owner, bytes.clone());
+    let (receipt, mut first_ack, release) = Receipt::new().after_release();
+    node.deliver_operation(
+        board,
+        EventId::from_bytes([27; 32]),
+        owner,
+        bytes.clone(),
+        receipt,
+    );
+    let delivered = Arc::new(Mutex::new(Vec::new()));
     for index in 1..8 {
+        let order = delivered.clone();
+        let event = Envelope::new(
+            owner,
+            Hlc {
+                wall_ms: directory::NOW,
+                counter: u32::from(8 - index),
+            },
+            Event::TaskCreated {
+                title: format!("Check greenhouse window {index}"),
+                fields: InitialFields::default(),
+            },
+        )
+        .unwrap();
         node.deliver_operation(
             board,
             EventId::from_bytes([index + 80; 32]),
             owner,
-            b"non-card delivery".to_vec(),
-            Receipt::new(),
+            event.encode().unwrap(),
+            Receipt::new().observe_ack(move || order.lock().unwrap().push(index)),
         );
         node.deliver_operation(
             board,
@@ -817,5 +839,10 @@ async fn junk_cards_are_persisted_together_before_the_first_ack() {
         .unwrap();
     let local = app.fresh_local_state().await.unwrap();
     assert_eq!(local.rejected_board_cards(), 8);
-    drop(engine);
+    assert!(delivered.lock().unwrap().is_empty());
+    release.send_replace(true);
+    engine.wait_idle(WAIT).await.unwrap();
+    assert_eq!(*delivered.lock().unwrap(), [1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(app.store().statistics(board).await.unwrap().total, 7);
+    engine.shutdown().await.unwrap();
 }
