@@ -325,10 +325,7 @@ impl LocalState {
             id != self.catalog_board()
                 && self.knows_roster_device(entry.writer)
                 && match entry.value.as_deref() {
-                    None => {
-                        self.boards().iter().any(|board| board.id == id)
-                            || previous.get(key).is_some()
-                    }
+                    None => true,
                     Some("present") => revisions.contains_key(&id),
                     Some(_) => false,
                 }

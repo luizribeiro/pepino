@@ -142,7 +142,7 @@ async fn a_later_offline_leave_wins_over_an_older_rejoin() {
 }
 
 #[tokio::test]
-async fn unknown_tombstones_are_dropped_and_known_tombstones_are_bounded() {
+async fn unknown_tombstones_are_kept_within_the_same_bound() {
     let source = source().await;
     let mut sibling = source.clone();
     let mut hostile = announcement(&source);
@@ -169,9 +169,23 @@ async fn unknown_tombstones_are_dropped_and_known_tombstones_are_bounded() {
     );
     deliver(&mut sibling, &source, hostile, 2000);
     assert_eq!(
-        sibling.catalog.board_presence,
-        source.catalog.board_presence
+        sibling
+            .catalog
+            .board_presence
+            .iter()
+            .filter(|(_, entry)| entry.value.is_none())
+            .count(),
+        1024
     );
+    let tombstone = |n: u32| {
+        let mut id = [7u8; 32];
+        id[..4].copy_from_slice(&n.to_be_bytes());
+        BoardId::from_bytes(id)
+    };
+    assert!(!sibling.board_forgotten(tombstone(75)));
+    assert!(sibling.board_forgotten(tombstone(76)));
+    assert!(sibling.board_forgotten(tombstone(1099)));
+    assert!(!sibling.board_needs_transport_purge(tombstone(1099)));
 }
 
 #[tokio::test]
@@ -197,4 +211,36 @@ async fn legacy_generation_is_discarded_but_local_deletion_is_retained() {
             .unwrap()
             .contains_key("forgotten_boards")
     );
+}
+
+async fn assert_stale_snapshot_does_not_restore_board(board: BoardId, name: &str) {
+    let stale = source().await;
+    let mut leaver = stale.clone();
+    leaver.change_board_presence(board, true, 1000).unwrap();
+    leaver.forget_board(board, 1000);
+
+    let mut later = stale.clone();
+    later.boards.retain(|entry| entry.id != board);
+    later.catalog.revisions.remove(&board);
+    later.catalog.shared.remove(&board);
+    later
+        .catalog
+        .board_presence
+        .retain_entries(|key, _| key != presence_key(board));
+    deliver(&mut later, &leaver, announcement(&leaver), 1100);
+    assert!(later.board_forgotten(board));
+    deliver(&mut later, &stale, announcement(&stale), 1200);
+    assert!(later.board_forgotten(board));
+    assert!(later.resolve_board(name, "board").is_err());
+    assert!(later.shared_access(board).is_none());
+}
+
+#[tokio::test]
+async fn a_stale_sibling_cannot_restore_a_left_created_board_on_a_later_device() {
+    assert_stale_snapshot_does_not_restore_board(GREENHOUSE, "Greenhouse").await;
+}
+
+#[tokio::test]
+async fn a_stale_sibling_cannot_restore_a_left_joined_board_on_a_later_device() {
+    assert_stale_snapshot_does_not_restore_board(WORKSHOP, "Workshop").await;
 }
