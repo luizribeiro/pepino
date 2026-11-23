@@ -295,3 +295,33 @@ async fn reaching_the_board_presence_limit_reports_boards() {
     assert!(matches!(error, AppError::InvalidInput { field, reason, .. }
         if field == "board" && reason == "board presence limit of 256 live keys reached"));
 }
+
+#[tokio::test]
+async fn a_fast_roster_clock_can_cancel_a_purge_with_a_grant_issued_before_leave() {
+    use crate::board_membership::forget::BoardCleanup;
+
+    let base = source().await;
+    let mut local = base.clone();
+    leave(&mut local, 1000);
+    local
+        .catalog
+        .board_cleanup
+        .insert(WORKSHOP, BoardCleanup::Transport);
+
+    deliver(&mut local, &base, announcement(&base), 2000);
+    assert!(local.board_forgotten(WORKSHOP));
+    assert!(local.board_needs_transport_purge(WORKSHOP));
+
+    let mut fast = base.clone();
+    install_workshop(&mut fast, 500 + 3_600_000);
+    let mut foreign = fast.clone();
+    foreign.device_id = DeviceId::from_bytes([99; 32]);
+    deliver(&mut local, &foreign, announcement(&fast), 2000);
+    assert!(local.board_forgotten(WORKSHOP));
+    assert!(local.board_needs_transport_purge(WORKSHOP));
+
+    deliver(&mut local, &fast, announcement(&fast), 2000);
+    assert!(!local.board_forgotten(WORKSHOP));
+    assert!(!local.board_needs_transport_purge(WORKSHOP));
+    assert!(local.needs_readmission_replay(WORKSHOP));
+}

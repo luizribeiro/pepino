@@ -67,15 +67,17 @@ wins. Entries from unknown writers or more than 24 hours ahead of the local
 clock are ignored. Each register keeps up to 256 live entries and 1,024
 tombstones, including tombstones for boards the device has never listed.
 
-An earlier leave can win over a later rejoin when the devices' clocks differ
-within the 24-hour window. The winning tombstone deletes the local copy and
+Clock skew within the 24-hour window can make an earlier leave win over a
+later rejoin or make an earlier grant win over a later leave. The winning tombstone deletes the local copy and
 queues a transport purge. Recover with a saved grant if its matching request
 and decryption secret are still available, or ask for a fresh invite. An older
 snapshot can also restore a board after its tombstone ages out of the bounded
 register.
 
 The device daemon purges transport data at startup. A running daemon retains
-a left board's ciphertext and keys until it restarts. Leaving revokes nothing.
+a left board's ciphertext and keys until it restarts. A rejoin before the
+transport purge starts cancels it and keeps those keys and ciphertext.
+Leaving revokes nothing.
 A manager must remove the person to stop sharing with their devices.
 
 A removed person can get another device enrolled by revoking the removed device

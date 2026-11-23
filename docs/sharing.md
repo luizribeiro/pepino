@@ -50,7 +50,9 @@ the person joining and a grant from a manager of the board.
 A request is valid for seven days and for one invitation. If the join cannot
 reach your device in time it exits with status 7 and completes later by
 itself; `ppn board ls` shows the progress. The person's other devices get
-access automatically when a manager's device is online.
+access automatically when a manager's device is online. If assigning by name
+returns `unknown person` just after a join, run `ppn sync` to receive the
+person's identity card and retry.
 
 ## Choose a role
 
@@ -113,8 +115,10 @@ drops. At the next daemon start, it purges the board's encrypted transport
 history, space secrets, and delivery state from `node.sqlite`. The node keeps
 signed authorization messages that its shared group index needs for repair.
 The board ID stays in the catalog tombstone and in any outstanding purge or
-relay drop requests. A fresh invitation from a manager restores access and
-history.
+relay drop requests. If a database reader delays disk erasure, the leave still
+succeeds and Pepino retries cleanup later. A fresh invitation from a manager
+restores access and history. Rejoining before the transport purge starts keeps
+the cached keys and ciphertext.
 
 Leaving revokes nothing. Other members still see you listed and share with your
 devices until a manager removes you.
