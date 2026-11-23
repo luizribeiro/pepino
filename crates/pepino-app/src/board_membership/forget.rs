@@ -95,17 +95,12 @@ impl App {
         if !local.board_deletion_pending(board) {
             return Ok(());
         }
-        if local.boards().iter().any(|entry| entry.id == board) {
-            return Err(crate::state::storage(
-                "complete board deletion",
-                "the board is still listed",
-                false,
-            ));
+        if !local.boards().iter().any(|entry| entry.id == board) {
+            self.store()
+                .forget_board(board)
+                .await
+                .map_err(store_error)?;
         }
-        self.store()
-            .forget_board(board)
-            .await
-            .map_err(store_error)?;
         local.catalog.pending_board_deletions.remove(&board);
         Ok(())
     }
@@ -496,5 +491,59 @@ async fn a_failed_deletion_does_not_block_open_or_another_leave() {
     assert_eq!(
         reopened.store().statistics(workshop).await.unwrap().total,
         0
+    );
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn a_deletion_marker_on_a_listed_board_is_cleared_with_its_rows_kept() {
+    use pepino_core::{Envelope, Event, Hlc, InitialFields};
+
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::init(dir.path(), 0).await.unwrap();
+    let workshop = BoardId::from_bytes([78; 32]);
+    let mut local = app
+        .register_created_board(workshop, "Workshop repairs")
+        .await
+        .unwrap();
+    let event = Envelope::new(
+        local.device_id,
+        Hlc {
+            wall_ms: 1000,
+            counter: 0,
+        },
+        Event::TaskCreated {
+            title: "Sharpen the chisels".into(),
+            fields: InitialFields::default(),
+        },
+    )
+    .unwrap();
+    app.store()
+        .append(workshop, &event.encode().unwrap(), Some(local.device_id))
+        .await
+        .unwrap();
+    local.catalog.pending_board_deletions.insert(workshop);
+    local.replace(dir.path()).unwrap();
+
+    let opened = App::open(dir.path(), 3000).await.unwrap();
+    assert_eq!(
+        opened
+            .local_state()
+            .resolve_board("Workshop repairs", "board")
+            .unwrap()
+            .id,
+        workshop
+    );
+    assert!(
+        !opened
+            .fresh_local_state()
+            .await
+            .unwrap()
+            .board_deletion_pending(workshop)
+    );
+    assert_eq!(opened.store().statistics(workshop).await.unwrap().total, 1);
+    assert_eq!(
+        opened.store().board(workshop).await.unwrap().tasks().len(),
+        1
     );
 }
