@@ -78,10 +78,10 @@ async fn commits_skipped_events_before_acknowledging() {
     let mut board = node.open_board(id).await.unwrap();
     let (status, _) = tokio::sync::watch::channel(Status::default());
     let mut receipt = node.deliver(id, signer, vec![0x82, 2, 0xf6]);
-    let mut deliveries = board.deliveries().unwrap();
+    let deliveries = board.deliveries().unwrap();
     let (_stop, stopping) = tokio::sync::watch::channel(());
     tokio::select! {
-        result = inbox::run(&app, id, &board, &mut deliveries, &status, stopping, None) => panic!("{result:?}"),
+        result = inbox::run(&app, id, &board, deliveries, &status, stopping, None) => panic!("{result:?}"),
         result = tokio::time::timeout(WAIT, receipt.wait_for(|acked| *acked)) => {
             result.unwrap().unwrap();
             assert_eq!(app.store().statistics(id).await.unwrap().unknown_version, 1);

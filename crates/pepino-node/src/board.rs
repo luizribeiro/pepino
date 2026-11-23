@@ -40,13 +40,19 @@ pub struct OpenBoardOptions {
     pub from_start: bool,
 }
 
+impl OpenBoardOptions {
+    fn replay_from_start(self, readmission: bool, member: Option<&crate::MemberState>) -> bool {
+        self.from_start && (!readmission || matches!(member, Some(crate::MemberState::Member(_))))
+    }
+}
+
 struct BoardConfig {
     membership: MemberStates,
     acks: AckStore,
     status: Status,
     confirmation_timeout: Duration,
     replaying: bool,
-    readmission: bool,
+    readmission_replay_deferred: bool,
 }
 
 pub struct BoardHandle {
@@ -59,6 +65,7 @@ pub struct BoardHandle {
     runtime: Handle,
     joined: watch::Receiver<JoinState>,
     replaying: watch::Receiver<bool>,
+    readmission_replay_deferred: bool,
     status: WeakStatus,
     receipts: Receipts,
     confirmation_timeout: Duration,
@@ -103,7 +110,7 @@ impl Node {
                         status,
                         confirmation_timeout,
                         replaying: false,
-                        readmission: false,
+                        readmission_replay_deferred: false,
                     },
                     subscription,
                     async { Ok(space) },
@@ -143,7 +150,7 @@ impl Node {
             .await
     }
 
-    /// Replay a board after readmission, retaining decoded deliveries until access returns.
+    /// Replay cached history after readmission once the stored membership grants access.
     pub async fn open_board_for_readmission(&self, id: BoardId) -> Result<BoardHandle, Error> {
         self.open(id, OpenBoardOptions { from_start: true }, None, true)
             .await
@@ -163,18 +170,18 @@ impl Node {
         let lease = self.boards.reserve(id)?;
         self.worker
             .run(async move {
+                let membership = read_members(acks.pool.clone(), id).await?;
+                let member =
+                    membership.get(&pepino_core::DeviceId::from_bytes(*node.id().as_bytes()));
+                let from_start = options.replay_from_start(readmission, member);
                 acks.spool.clear(id).await?;
-                let from = if acks
-                    .reset_for(id, store_instance, options.from_start)
-                    .await?
-                {
+                let from = if acks.reset_for(id, store_instance, from_start).await? {
                     StreamFrom::Start
                 } else {
                     acks.upgrade_legacy(id).await?;
                     StreamFrom::Frontier
                 };
                 let replaying = cursor::needs_replay(&acks.pool, id, node.id()).await?;
-                let membership = read_members(acks.pool.clone(), id).await?;
                 lease.check_open()?;
                 let (pending, subscription) = node
                     .space_from::<Payload>(Hash::from_bytes(*id.as_bytes()), from)
@@ -189,7 +196,7 @@ impl Node {
                         status,
                         confirmation_timeout,
                         replaying,
-                        readmission,
+                        readmission_replay_deferred: readmission && !from_start,
                     },
                     subscription,
                     pending.joined(),
@@ -213,7 +220,7 @@ impl BoardHandle {
             status,
             confirmation_timeout,
             replaying,
-            readmission,
+            readmission_replay_deferred,
         } = config;
         let id = lease.id;
         status.send(NodeEvent::BoardOpened {
@@ -240,7 +247,6 @@ impl BoardHandle {
             replay_status,
             events: events_tx,
             ejected: false,
-            readmission,
             receipts: receipts.clone(),
             author: node.id(),
             headroom: Default::default(),
@@ -256,10 +262,11 @@ impl BoardHandle {
             runtime: Handle::current(),
             joined: state,
             replaying,
+            readmission_replay_deferred,
             status: delivery_status,
             receipts,
             confirmation_timeout,
-            events: DeliveryInbox::new(events, !readmission),
+            events: DeliveryInbox::new(events),
             events_taken: false,
             stop,
             done: tokio::spawn(task.drive(subscription, joined)),
@@ -270,11 +277,14 @@ impl BoardHandle {
         self.id
     }
 
+    pub fn readmission_replay_deferred(&self) -> bool {
+        self.readmission_replay_deferred
+    }
+
     /// Take this board's single consumer stream. An event ID identifies every redelivery of that event.
     ///
     /// Removal ends the stream with [`Error::Removed`]. Once readmitted, call this
-    /// again after consuming that item to resume application delivery. A handle opened
-    /// by [`Node::open_board_for_readmission`] keeps its stream through removal.
+    /// again after consuming that item to resume application delivery.
     pub fn events(&mut self) -> Result<BoardEvents, Error> {
         let board = self.id;
         let status = self.status.clone();
@@ -407,4 +417,16 @@ fn publish_error(error: PublishSpaceError) -> Error {
         }
         _ => Error::PublishNotSubmitted(error.to_string()),
     }
+}
+
+#[cfg(test)]
+#[test]
+fn readmission_replays_cached_history_after_access_returns() {
+    use crate::{MemberState, Role};
+
+    let options = OpenBoardOptions { from_start: true };
+    assert!(!options.replay_from_start(true, None));
+    assert!(!options.replay_from_start(true, Some(&MemberState::Removed)));
+    assert!(options.replay_from_start(true, Some(&MemberState::Member(Role::Read))));
+    assert!(options.replay_from_start(false, None));
 }

@@ -124,7 +124,11 @@ async fn reconcile<T: Transport>(
             .copied()
             .filter(|id| {
                 node_status.boards.get(id).is_some_and(|node| {
-                    node.joined && !node.replaying && node.pending_deliveries == 0
+                    node.joined
+                        && node.synced_with_peer
+                        && node.active_syncs.is_empty()
+                        && !node.replaying
+                        && node.pending_deliveries == 0
                 }) && status
                     .boards
                     .get(id)

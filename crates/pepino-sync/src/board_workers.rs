@@ -139,7 +139,7 @@ impl<T: Transport> BoardWorkers<T> {
                     }
                     Err(error) => return Err(error.into()),
                 };
-                if replay {
+                if replay && !handle.readmission_replay_deferred() {
                     self.replaying.insert(board.id);
                 }
                 self.start_board(local, board.id, handle)?;
@@ -184,14 +184,14 @@ impl<T: Transport> BoardWorkers<T> {
         let nudged = self.nudged.clone();
         let poll = self.poll;
         let node_instance = self.node.instance_id();
-        let replaying = self.replaying.contains(&id);
+        let readmitting = local.needs_readmission_replay(id);
         let authority = self.authority.as_ref().map(|(path, _)| path.clone());
         let (evict, mut evicted) = oneshot::channel();
         let (finished, closed) = oneshot::channel();
         self.board_workers.insert(id, WorkerStop { evict, closed });
         self.workers.spawn(async move {
             let result = {
-                let inbox = receive((&app, authority.as_deref()), id, board.as_ref(), stream, &status, stopping.clone(), replaying);
+                let inbox = receive((&app, authority.as_deref()), id, board.as_ref(), stream, &status, stopping.clone(), readmitting);
                 tokio::pin!(inbox);
                 tokio::select! {
                     biased;
@@ -271,62 +271,45 @@ async fn receive<B: TransportBoard>(
     (app, authority): (&App, Option<&std::path::Path>),
     id: BoardId,
     board: &B,
-    mut stream: DeliveryStream<B::Ack>,
+    stream: DeliveryStream<B::Ack>,
     status: &watch::Sender<Status>,
     mut stopping: watch::Receiver<()>,
-    replaying: bool,
+    readmitting: bool,
 ) -> Result<(), Error> {
     use futures_util::StreamExt;
     use pepino_node::{Error as NodeError, MemberState};
-
-    let catalog = app.local_state().catalog_board();
     let mut membership = board.membership_events();
-    loop {
-        match crate::inbox::run(
-            app,
-            id,
-            board,
-            &mut stream,
-            status,
-            stopping.clone(),
-            authority,
-        )
-        .await
-        {
-            Err(Error::Node(NodeError::Removed)) => {
-                if id != catalog {
-                    app.observe_board_removal(id, true).await?;
-                }
+    match crate::inbox::run(app, id, board, stream, status, stopping.clone(), authority).await {
+        Err(Error::Node(NodeError::Removed)) => {
+            if id != app.local_state().catalog_board() {
+                app.observe_board_removal(id, true).await?;
             }
-            result => return result,
         }
-        let Some(changes) = &mut membership else {
-            return Ok(());
+        result => return result,
+    }
+    let Some(changes) = &mut membership else {
+        return Ok(());
+    };
+    status.send_modify(|status| status.boards.entry(id).or_default().stream_retrying = readmitting);
+    loop {
+        let local = app.local_state();
+        let active = match board.known_members(local, false).await {
+            Ok(members) => members.is_some_and(|members| members.contains(&local.device_id)),
+            Err(NodeError::NotJoined) => false,
+            Err(error) => return Err(error.into()),
         };
-        status
-            .send_modify(|status| status.boards.entry(id).or_default().stream_retrying = replaying);
-        loop {
-            let local = app.fresh_local_state().await?;
-            if board
-                .known_members(&local, false)
-                .await?
-                .is_some_and(|members| members.contains(&local.device_id))
-            {
-                app.observe_board_removal(id, false).await?;
-                if replaying && local.needs_readmission_replay(id) {
-                    break;
-                }
-                app.record_readmission_replay(id, true).await?;
-                return Err(Error::DeliveryStream("replay after readmission".into()));
-            }
-            tokio::select! {
-                _ = stopping.changed() => return Ok(()),
-                event = changes.next() => match event {
-                    None => return Ok(()),
-                    Some(Ok(event)) if matches!(event.members.get(&app.local_state().device_id), Some(MemberState::Member(_))) => (),
-                    _ => continue,
-                },
-            }
+        if active {
+            app.observe_board_removal(id, false).await?;
+            app.record_readmission_replay(id, true).await?;
+            return Err(Error::DeliveryStream("replay after readmission".into()));
+        }
+        tokio::select! {
+            _ = stopping.changed() => return Ok(()),
+            event = changes.next() => match event {
+                None => return Ok(()),
+                Some(Ok(event)) if matches!(event.members.get(&app.local_state().device_id), Some(MemberState::Member(_))) => (),
+                _ => continue,
+            },
         }
     }
 }

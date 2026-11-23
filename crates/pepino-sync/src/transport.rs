@@ -37,6 +37,10 @@ pub trait TransportBoard: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Option<BTreeSet<DeviceId>>, Error>> + Send {
         async { Ok(None) }
     }
+    fn readmission_replay_deferred(&self) -> bool {
+        false
+    }
+
     fn membership_events(&self) -> Option<pepino_node::MembershipEvents> {
         None
     }
@@ -184,6 +188,10 @@ impl TransportBoard for BoardHandle {
             }
         }
         Ok(Some(ids))
+    }
+
+    fn readmission_replay_deferred(&self) -> bool {
+        BoardHandle::readmission_replay_deferred(self)
     }
 
     fn membership_events(&self) -> Option<pepino_node::MembershipEvents> {

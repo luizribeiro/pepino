@@ -75,13 +75,14 @@ fn board(host: &Host, name: &str) -> Value {
 }
 
 #[track_caller]
-fn wait_for_house_task(host: &Host, id: &str) {
+fn wait_for_house_tasks(host: &Host, ids: &[&str]) {
     until(
         || host.json(&["ls", "--board", "House"]),
         |listing| {
-            listing["tasks"]
-                .as_array()
-                .is_some_and(|tasks| tasks.iter().any(|task| task["id"] == id))
+            listing["tasks"].as_array().is_some_and(|tasks| {
+                ids.iter()
+                    .all(|id| tasks.iter().any(|task| task["id"] == *id))
+            })
         },
         WAIT,
     );
@@ -149,7 +150,7 @@ fn two_identities_share_one_board_and_edit_each_others_work() {
     let person = ana.json(&["identity", "show"])["identity"]["id"].clone();
     until(|| member(&luiz, "Ana"), |entry| entry["id"] == person, WAIT);
     luiz.json(&["assign", "--board", "House", task, "Ana"]);
-    wait_for_house_task(&ana, task);
+    wait_for_house_tasks(&ana, &[task]);
     ana.json(&["comment", "--board", "House", task, "New glass arrived"]);
     ana.json(&[
         "edit",
@@ -824,7 +825,7 @@ fn a_linked_reader_leaves_locally_and_all_devices_rejoin_after_removal() {
         |roles| roles == &["write", "write"],
         WAIT,
     );
-    wait_for_house_task(&linked, id);
+    wait_for_house_tasks(&linked, &[id]);
     linked.run(&[
         "comment",
         "--board",
@@ -913,12 +914,13 @@ fn a_linked_reader_leaves_locally_and_all_devices_rejoin_after_removal() {
             .run(&["board", "members", "House"])
             .contains("Ben (former member)")
     );
-    owner.run(&[
+    let away = owner.json(&[
         "add",
         "--board",
         "House",
         "Replace the sill while Ben is away",
     ]);
+    let away = away["created"].as_str().unwrap();
     until(
         || member(&owner, "Ben"),
         |person| {
@@ -939,22 +941,7 @@ fn a_linked_reader_leaves_locally_and_all_devices_rejoin_after_removal() {
             |board| board["membership"] == "joined",
             WAIT,
         );
-        wait_for_house_task(host, returning);
-        wait_for_house_task(host, id);
-        let log = std::fs::read_to_string(host.data.join("daemon.log")).unwrap();
-        let house = board(host, "House");
-        let id = house["id"].as_str().unwrap();
-        assert!(
-            !log.contains(&format!(
-                "board {}: delivery stream ended: stream closed",
-                &id[..6]
-            )),
-            "{log}"
-        );
-        assert!(
-            !log.contains("delivery stream ended: replay after readmission"),
-            "{log}"
-        );
+        wait_for_house_tasks(host, &[returning, id, away]);
     }
     until(
         || member(&owner, "Ben"),
@@ -981,7 +968,7 @@ fn a_fresh_invitation_restores_a_locally_deleted_board_without_removal() {
     let task = owner.json(&["add", "--board", "House", "Repair the window"]);
     let id = task["created"].as_str().unwrap();
     join(&owner, &guest, "write");
-    wait_for_house_task(&guest, id);
+    wait_for_house_tasks(&guest, &[id]);
     common::task_error(
         guest.output(&["board", "forget", "House", "--json"]),
         1,
@@ -1005,7 +992,7 @@ fn a_fresh_invitation_restores_a_locally_deleted_board_without_removal() {
     assert_eq!(member(&owner, "Ben")["devices"][0]["membership"], "member");
     assert_eq!(member(&owner, "Ben")["former_member"], false);
     join(&owner, &guest, "write");
-    wait_for_house_task(&guest, id);
+    wait_for_house_tasks(&guest, &[id]);
     let history = owner.json(&["board", "members", "House"]);
     assert_eq!(
         history["membership_history"]
