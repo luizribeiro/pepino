@@ -26,12 +26,11 @@ had no security audit. Do not rely on it against a capable attacker.
   comes after. A person whose removal card is still in flight or was refused
   after the remover lost Manage access can enroll another device by revoking
   the removed device in their own roster until an effective removal card applies.
-- **Leaving is local.** Leave and forget delete the board's tasks and history
-  from the app database and stop syncing it. Encrypted operations and keys
-  stay in the device's node store. The catalog tombstone retains the board
-  ID. Deleted pages can persist in database files until overwritten. To
-  erase all local data on the device, remove its data directory. A manager
-  must remove you for other members to stop sharing with your devices.
+- **Leaving is local.** Leave and forget delete the board's tasks and task
+  history from the app database and stop syncing it. See
+  [what stays on the device](sharing.md#what-stays-on-the-device), including
+  encrypted operations, keys, and earlier catalog entries. A manager must
+  remove you for other members to stop sharing with your devices.
 - **History is all or nothing.** A new member or device reads the whole board
   history.
 - **Names prove nothing.** People choose their own display names. The

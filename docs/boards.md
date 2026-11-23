@@ -60,9 +60,9 @@ a board by name and also works inside a [saved view](tasks.md#save-a-view).
 Task IDs resolve within the selected board, and links join tasks on the same
 board only. You cannot move a task to another board.
 
-## Delete your copy of a board
+## Leave a board
 
-Use `ppn board leave House` to [delete a board from your devices](sharing.md#leave-a-board-and-delete-your-copy).
+Use `ppn board leave House` to leave a board. See [what stays on the device](sharing.md#what-stays-on-the-device).
 Use `ppn board forget House` after a manager removes you. Both commands
 require confirmation and remove the board from your private catalog. Leaving
 revokes nothing. Only a manager can remove you from the shared board.

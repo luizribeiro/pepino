@@ -69,14 +69,12 @@ tombstones, including tombstones for boards the device has never listed.
 
 Clock skew within the 24-hour window can make an earlier leave win over a
 later rejoin or make an earlier grant win over a later leave. The winning
-tombstone deletes the board's tasks and history from the app database and
-stops syncing the board. Its ID stays in the tombstone, and encrypted
-operations and keys stay in the device's node store. Deleted pages can
-persist in database files until overwritten. To erase all local data on the
-device, remove its data directory. Recover access with a saved grant if its
-matching request and decryption secret are available, or ask for a fresh
-invite. An older snapshot can restore a board after its tombstone ages out
-of the bounded register. Leaving revokes nothing. A manager must remove the
+tombstone deletes the board's tasks and task history from the app database and
+stops syncing the board. See [what stays on the device](sharing.md#what-stays-on-the-device).
+Recover access with a saved grant if its matching request and decryption
+secret are available, or ask for a fresh invite. If a tombstone ages out of
+the register and a stale snapshot relists the board, it shows only operations
+received from then on. Leaving revokes nothing. A manager must remove the
 person to stop sharing with their devices.
 
 A removed person can get another device enrolled by revoking the removed device

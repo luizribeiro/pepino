@@ -102,20 +102,27 @@ it. Demoting or removing a manager therefore needs
 `--yes --i-understand-mutual-removal-risk`; agree on the change with the other
 manager first.
 
-## Leave a board and delete your copy
+## Leave a board
 
 ```sh
 ppn board leave House --yes
 ```
 
-This works offline. It removes the board from your private catalog, deletes
-its tasks and history from the app database, and stops syncing the board.
-Your other devices do the same when they next sync the catalog. Each device
-asks its relays to drop its copies. The encrypted operations and keys stay
-in the device's node store, and the board ID stays in the catalog tombstone.
-Deleted pages can persist in database files until overwritten. To erase all
-local data on this device, remove its data directory. A fresh invitation
-from a manager restores access and history.
+This works offline. It removes the board from your catalog, deletes its tasks
+and task history from the app database, and stops syncing it. Your other
+devices do the same when they next sync the catalog. Each device asks its
+relays to drop their copies. A fresh invitation restores access and history.
+
+### What stays on the device
+
+Encrypted operations, keys, and membership state stay in `node.sqlite`. The
+board ID stays in the catalog tombstone and unfinished relay drop requests.
+Earlier catalog entries, including the board name, stay in private catalog
+history on this and sibling devices and in backups. Deleted pages can persist
+until overwritten.
+
+To erase the device's local data, stop its daemon and remove its data
+directory. This removes its identity and every other board on that device.
 
 Leaving revokes nothing. Other members still see you listed and share with your
 devices until a manager removes you.
@@ -124,8 +131,8 @@ If you are the only manager in your local view, promote someone first to keep
 invitations and removals possible. If you still want to leave, confirm the
 warning at a terminal or pass `--yes --i-understand-last-manager-risk`.
 
-After a manager removes you, you can still read your local history. To delete
-it from your devices, run `ppn board forget House --yes`.
+After a manager removes you, you can still read your local task history. Use
+`ppn board forget House --yes` to remove it from the app database.
 
 ## Boards with many removals
 

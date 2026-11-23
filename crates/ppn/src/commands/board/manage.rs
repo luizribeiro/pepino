@@ -192,8 +192,9 @@ pub(super) fn discard(
             .with_hint("Pass --yes and --i-understand-last-manager-risk to board leave."));
     }
     let name = single_line(&board.name);
-    let mut prompt =
-        format!("Delete the local task and membership history for {name} on all your devices?");
+    let mut prompt = format!(
+        "Remove {name} from your catalog and delete its tasks and task history from the app database on all your devices?"
+    );
     if active {
         prompt.push(' ');
         prompt.push_str(LOCAL_LEAVE);

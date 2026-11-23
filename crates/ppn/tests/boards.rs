@@ -421,3 +421,50 @@ fn leaving_while_a_writer_holds_the_database_succeeds_with_deletion_pending() {
         }
     });
 }
+
+#[test]
+fn leave_confirmation_names_the_data_deleted_from_the_app() {
+    let (sandbox, data) = common::uninitialized_task_sandbox();
+    common::fixture::prepare_blocking(&data);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let app = pepino_app::App::open(&data, 0).await.unwrap();
+        app.register_created_board(pepino_core::BoardId::from_bytes([85; 32]), "Workshop")
+            .await
+            .unwrap();
+    });
+    let output = sandbox
+        .command()
+        .args(["board", "leave", "Workshop", "--json"])
+        .output()
+        .unwrap();
+    let error = common::task_error(output, 1, "confirmation_required");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("delete its tasks and task history from the app database")
+    );
+    let mut command = sandbox.command();
+    command.args(["board", "leave", "Workshop"]);
+    let declined = common::task_terminal(
+        command,
+        Some(
+            b"n
+",
+        ),
+    );
+    assert!(declined.status.success(), "{declined:?}");
+    assert!(
+        String::from_utf8_lossy(&declined.stderr)
+            .contains("delete its tasks and task history from the app database")
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&declined.stdout).trim(),
+        "Leave cancelled."
+    );
+    assert!(sandbox.run(&["board", "ls"]).contains("Workshop"));
+}
