@@ -74,9 +74,10 @@ impl<T: Transport> BoardWorkers<T> {
     }
 
     pub(crate) async fn close_forgotten(&mut self, local: &LocalState) -> bool {
+        let absent = |id| !local.boards().iter().any(|board| board.id == id);
         let node = self.node.status();
         if let Some(&board) = self.board_workers.keys().find(|&&board| {
-            local.board_forgotten(board)
+            absent(board)
                 && !node
                     .boards
                     .get(&board)
@@ -91,10 +92,7 @@ impl<T: Transport> BoardWorkers<T> {
             });
             return true;
         }
-        for (board, worker) in self
-            .board_workers
-            .extract_if(.., |board, _| local.board_forgotten(*board))
-        {
+        for (board, worker) in self.board_workers.extract_if(.., |board, _| absent(*board)) {
             self.handles.remove(&board);
             self.replaying.remove(&board);
             let _ = worker.evict.send(());
@@ -115,6 +113,12 @@ impl<T: Transport> BoardWorkers<T> {
             .filter(|board| should_open(local, board.id))
         {
             if self.stopping.has_changed().is_err() {
+                return Ok(());
+            }
+            if local.board_needs_transport_purge(board.id) {
+                self.changes.send_modify(|status| {
+                    require_restart(status, board.id, "purge a board before reopening it");
+                });
                 return Ok(());
             }
             if !self.handles.contains_key(&board.id) {

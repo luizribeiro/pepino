@@ -72,6 +72,8 @@ pub(crate) struct CatalogState {
     pub(crate) observed_board_removals: BTreeSet<BoardId>,
     #[serde(default, rename = "forgotten_boards", skip_serializing)]
     legacy_forgotten_boards: BTreeSet<BoardId>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) board_cleanup: BTreeMap<BoardId, crate::board_membership::forget::BoardCleanup>,
     #[serde(
         default,
         rename = "board_presence_register",
@@ -299,6 +301,10 @@ impl LocalState {
                 .is_none()
             {
                 self.change_board_presence(board, true, 0)?;
+                self.catalog
+                    .board_cleanup
+                    .entry(board)
+                    .or_insert(crate::board_membership::forget::BoardCleanup::Transport);
             }
         }
         Ok(())
@@ -545,19 +551,9 @@ impl App {
                 let mut local = previous.clone();
                 local.merge_catalog(board, signer, announcement, now)?;
                 if local != previous {
-                    for removed in previous
-                        .boards()
-                        .iter()
-                        .filter(|entry| local.board_forgotten(entry.id))
-                    {
-                        self.delete_board_history(removed.id).await?;
-                    }
-                    let directory = self.directory.clone();
-                    worker("save board catalog", move || {
-                        let _guard = guard;
-                        local.replace(&directory)
-                    })
-                    .await??;
+                    self.save_and_resume_board_cleanup(local, guard).await?;
+                } else {
+                    self.resume_board_history(local, guard).await?;
                 }
             }
             Err(AppError::UnsupportedVersion {

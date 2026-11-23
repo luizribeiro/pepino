@@ -86,7 +86,7 @@ impl App {
             Ok::<_, AppError>(directory)
         })
         .await??;
-        let guard = lock(&directory, lock_timeout).await?;
+        let mut guard = lock(&directory, lock_timeout).await?;
         let credentials_file = options
             .credentials_file
             .as_ref()
@@ -156,6 +156,7 @@ impl App {
             credentials_file,
             lock_timeout,
         };
+        (app.local, guard) = app.resume_board_history(app.local.clone(), guard).await?;
         let roster_keys = if app.local.peer_hint().is_none()
             && app.local.needs_roster_reconciliation()
             && app.local.has_legacy_roster()
@@ -216,6 +217,7 @@ impl App {
         let local = self.fresh_local_state().await?;
         if local.device_leave_requested_at().is_some()
             || local.board_forgotten(board)
+            || local.board_needs_transport_purge(board)
             || (local.board_removed(board) && !local.needs_readmission_replay(board))
         {
             return Err(SyncStoreError::BoardInactive);
@@ -231,7 +233,8 @@ impl App {
         bytes: &[u8],
     ) -> Result<(), SyncStoreError> {
         let _guard = lock(&self.directory, self.lock_timeout).await?;
-        if self.fresh_local_state().await?.board_forgotten(board) {
+        let local = self.fresh_local_state().await?;
+        if local.board_forgotten(board) || local.board_needs_transport_purge(board) {
             return Ok(());
         }
         Ok(self.store.record_undecodable(board, signer, bytes).await?)

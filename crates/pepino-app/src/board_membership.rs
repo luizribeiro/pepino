@@ -1,4 +1,4 @@
-mod forget;
+pub(crate) mod forget;
 pub(crate) mod history;
 mod removal;
 

@@ -95,6 +95,7 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
     };
     let mut logged = StatusLog::default();
     loop {
+        app.purge_forgotten_board_transport().await?;
         let outcome = cycle(
             &socket.listener,
             &settings,
