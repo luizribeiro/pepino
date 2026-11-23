@@ -263,3 +263,61 @@ fn task_commands_use_one_board_and_listings_can_span_boards() {
         assert_eq!(error["message"], "both tasks must be on the same board");
     }
 }
+
+#[test]
+fn leaving_with_a_pinned_reader_warns_and_keeps_other_commands_available() {
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+
+    let (sandbox, data) = task_sandbox();
+    seed_tasks(&data, async |app| {
+        for (board, name) in [(81, "Workshop"), (82, "Shed")] {
+            app.register_created_board(BoardId::from_bytes([board; 32]), name)
+                .await
+                .unwrap();
+        }
+    });
+    let run = |args: &[&str]| sandbox.command().args(args).output().unwrap();
+    success(run(&[
+        "add",
+        "--board",
+        "Workshop",
+        "Repair the greenhouse vent",
+    ]));
+    success(run(&["add", "--board", "Shed", "Replace the shed latch"]));
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let options = SqliteConnectOptions::new().filename(data.join("pepino.sqlite"));
+            let mut reader = SqliteConnection::connect_with(&options).await.unwrap();
+            let mut snapshot = reader.begin().await.unwrap();
+            let _: i64 = sqlx::query_scalar("SELECT count(*) FROM event_log")
+                .fetch_one(&mut *snapshot)
+                .await
+                .unwrap();
+            let leave = |name, json: bool| {
+                let mut args = vec![
+                    "board",
+                    "leave",
+                    name,
+                    "--yes",
+                    "--i-understand-last-manager-risk",
+                ];
+                args.extend(json.then_some("--json"));
+                let result = run(&args);
+                assert!(result.status.success(), "{result:?}");
+                assert!(String::from_utf8_lossy(&result.stderr).contains("from disk is pending"));
+                String::from_utf8(result.stdout).unwrap()
+            };
+            let workshop = as_json(&leave("Workshop", true));
+            assert_eq!(workshop["left"], true);
+            assert_eq!(workshop["erasure_pending"], true);
+            assert!(leave("Shed", false).contains("Deleted Shed"));
+            let boards = success(run(&["board", "ls"]));
+            assert!(boards.contains("Personal"));
+            assert!(!boards.contains("Workshop") && !boards.contains("Shed"));
+            snapshot.rollback().await.unwrap();
+        });
+}

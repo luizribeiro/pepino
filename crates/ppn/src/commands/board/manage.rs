@@ -203,11 +203,13 @@ pub(super) fn discard(
         prompt.push_str(LAST_MANAGER);
     }
     let confirmed = context.confirm(&prompt)?;
-    let kept: std::collections::BTreeSet<DeviceId> = if confirmed {
-        app.forget_board(board.id)?
+    let (kept, erasure_pending) = if confirmed {
+        let updated = app.forget_board(board.id)?;
+        let kept = updated
             .relay_copies(board.id)
             .filter_map(|(relay, copy)| (copy == RelayCopy::Kept).then_some(relay))
-            .collect::<std::collections::BTreeSet<_>>()
+            .collect::<std::collections::BTreeSet<DeviceId>>();
+        (kept, updated.board_history_cleanup_pending(board.id))
     } else {
         Default::default()
     };
@@ -230,9 +232,15 @@ pub(super) fn discard(
     );
     let still_listed = confirmed && active;
     fields.insert("still_listed_as_member".into(), json!(still_listed));
-    let warnings = kept.into_iter().map(|relay| format!(
+    let mut warnings = kept.into_iter().map(|relay| format!(
         "Relay {relay} may keep its copy of {name}. Run ppn relay drop on the relay to delete it."
     )).collect::<Vec<_>>();
+    if erasure_pending {
+        warnings.push(format!(
+            "Erasing {name} from disk is pending. Pepino will retry when the database is available."
+        ));
+        fields.insert("erasure_pending".into(), json!(true));
+    }
     Ok(CommandResult::document(ResultDocument {
         human: match (confirmed, leaving, still_listed) {
             (true, _, true) => format!("Deleted {name} from your local catalog. {LOCAL_LEAVE}"),
