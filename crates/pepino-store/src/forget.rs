@@ -6,6 +6,9 @@ use crate::{Store, StoreError, board_key::BoardKey};
 impl Store {
     pub async fn forget_board(&self, board: BoardId) -> Result<(), StoreError> {
         let mut db = self.connection.lock().await;
+        sqlx::query("PRAGMA secure_delete = ON")
+            .execute(&mut *db)
+            .await?;
         let mut tx = db.begin().await?;
         for statement in [
             "DELETE FROM publication WHERE board = ?",
@@ -54,8 +57,17 @@ async fn forgetting_one_board_does_not_change_other_boards() {
             .await
             .unwrap();
     }
+    sqlx::query("PRAGMA secure_delete = OFF")
+        .execute(&mut *store.connection.lock().await)
+        .await
+        .unwrap();
     store.forget_board(board).await.unwrap();
     store.forget_board(board).await.unwrap();
+    let secure_delete: i64 = sqlx::query_scalar("PRAGMA secure_delete")
+        .fetch_one(&mut *store.connection.lock().await)
+        .await
+        .unwrap();
+    assert_eq!(secure_delete, 1);
     assert!(store.board(board).await.unwrap().tasks().is_empty());
     assert_eq!(store.statistics(board).await.unwrap().total, 0);
     assert_eq!(store.board(private).await.unwrap().tasks().len(), 1);
