@@ -26,15 +26,12 @@ had no security audit. Do not rely on it against a capable attacker.
   comes after. A person whose removal card is still in flight or was refused
   after the remover lost Manage access can enroll another device by revoking
   the removed device in their own roster until an effective removal card applies.
-- **Leaving is local.** Leave and forget delete this device's board history
-  and catalog metadata. The next daemon start purges the board's encrypted
-  operations, space secrets, and delivery state from `node.sqlite`. The node
-  keeps the signed authorization messages used by its shared group index.
-  These carry membership metadata. A catalog tombstone retains the board ID.
-  Cleanup markers and unfinished relay drops also retain the ID while they
-  are needed. Earlier references can remain in the encrypted private-catalog
-  history and in backups. A manager must remove you for other members to stop
-  sharing with your devices.
+- **Leaving is local.** Leave and forget delete the board's tasks and history
+  from the app database and stop syncing it. Encrypted operations and keys
+  stay in the device's node store. The catalog tombstone retains the board
+  ID. Deleted pages can persist in database files until overwritten. To
+  erase all local data on the device, remove its data directory. A manager
+  must remove you for other members to stop sharing with your devices.
 - **History is all or nothing.** A new member or device reads the whole board
   history.
 - **Names prove nothing.** People choose their own display names. The

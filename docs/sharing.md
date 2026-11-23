@@ -108,17 +108,14 @@ manager first.
 ppn board leave House --yes
 ```
 
-This works offline. It removes the board from your private catalog and erases
-its local task, publication, and membership history. Your other devices do
-the same when they next sync the catalog. Each device queues its own relay
-drops. At the next daemon start, it purges the board's encrypted transport
-history, space secrets, and delivery state from `node.sqlite`. The node keeps
-signed authorization messages that its shared group index needs for repair.
-The board ID stays in the catalog tombstone and in any outstanding purge or
-relay drop requests. If a database reader delays disk erasure, the leave still
-succeeds and Pepino retries cleanup later. A fresh invitation from a manager
-restores access and history. Rejoining before the transport purge starts keeps
-the cached keys and ciphertext.
+This works offline. It removes the board from your private catalog, deletes
+its tasks and history from the app database, and stops syncing the board.
+Your other devices do the same when they next sync the catalog. Each device
+asks its relays to drop its copies. The encrypted operations and keys stay
+in the device's node store, and the board ID stays in the catalog tombstone.
+Deleted pages can persist in database files until overwritten. To erase all
+local data on this device, remove its data directory. A fresh invitation
+from a manager restores access and history.
 
 Leaving revokes nothing. Other members still see you listed and share with your
 devices until a manager removes you.
