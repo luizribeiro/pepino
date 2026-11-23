@@ -1,7 +1,7 @@
 use pepino_core::BoardId;
 use sqlx::Connection;
 
-use crate::{Store, StoreError, board_key::BoardKey};
+use crate::{DatabaseErrorKind, Store, StoreError, board_key::BoardKey, sqlite};
 
 impl Store {
     pub async fn forget_board(&self, board: BoardId) -> Result<(), StoreError> {
@@ -23,6 +23,14 @@ impl Store {
                 .await?;
         }
         tx.commit().await?;
+        // Earlier writes may have freed pages before secure_delete was enabled.
+        sqlx::query("VACUUM").execute(&mut *db).await?;
+        if !sqlite::checkpoint(&mut db).await? {
+            return Err(StoreError::Database {
+                kind: DatabaseErrorKind::Busy,
+                source: std::io::Error::other("the app database write-ahead log is busy").into(),
+            });
+        }
         Ok(())
     }
 }

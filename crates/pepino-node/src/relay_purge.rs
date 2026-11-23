@@ -105,25 +105,9 @@ pub(super) async fn checkpoint(pool: &SqlitePool) -> Result<bool, Error> {
     let mut connection = SqliteConnection::connect_with(&options)
         .await
         .map_err(Error::storage)?;
-    let outcome = sqlx::query_as::<_, (i64, i64, i64)>("PRAGMA wal_checkpoint(TRUNCATE)")
-        .fetch_one(&mut connection)
-        .await;
+    let outcome = pepino_store::sqlite::checkpoint(&mut connection).await;
     connection.close().await.map_err(Error::storage)?;
-    match outcome {
-        Ok((busy, _, _)) => Ok(busy == 0),
-        Err(error) if is_busy(&error) => Ok(false),
-        Err(error) => Err(Error::storage(error)),
-    }
-}
-
-fn is_busy(error: &sqlx::Error) -> bool {
-    const SQLITE_BUSY: u32 = 5;
-    const SQLITE_LOCKED: u32 = 6;
-    error
-        .as_database_error()
-        .and_then(|error| error.code())
-        .and_then(|code| code.parse::<u32>().ok())
-        .is_some_and(|code| matches!(code & 0xff, SQLITE_BUSY | SQLITE_LOCKED))
+    outcome.map_err(Error::storage)
 }
 
 async fn purge(

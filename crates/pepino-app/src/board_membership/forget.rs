@@ -351,3 +351,60 @@ async fn a_crash_after_catalog_save_resumes_board_history_and_transport_deletion
             .any(|bytes| bytes == operation.to_string().as_bytes())
     );
 }
+
+#[cfg(test)]
+#[tokio::test]
+async fn forgetting_leaves_no_task_text_in_any_file() {
+    use pepino_core::{Envelope, Event, Hlc, InitialFields};
+
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::init(dir.path(), 0).await.unwrap();
+    let workshop = BoardId::from_bytes([75; 32]);
+    app.register_created_board(workshop, "Workshop")
+        .await
+        .unwrap();
+    let author = app.local_state().device_id;
+    for n in 0..40u32 {
+        let event = Envelope::new(
+            author,
+            Hlc {
+                wall_ms: 1000 + u64::from(n),
+                counter: 0,
+            },
+            Event::TaskCreated {
+                title: format!("Workshop private repair notes replace latch {n}"),
+                fields: InitialFields::default(),
+            },
+        )
+        .unwrap();
+        app.store()
+            .append(workshop, &event.encode().unwrap(), Some(author))
+            .await
+            .unwrap();
+    }
+    let scan = || {
+        let mut hits = Vec::new();
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_file() {
+                let bytes = std::fs::read(&path).unwrap();
+                let needle = b"Workshop private repair notes";
+                let count = bytes
+                    .windows(needle.len())
+                    .filter(|part| part == needle)
+                    .count();
+                if count != 0 {
+                    hits.push((path.file_name().unwrap().to_owned(), count));
+                }
+            }
+        }
+        hits
+    };
+    assert!(!scan().is_empty());
+    app.forget_board(workshop, 2000).await.unwrap();
+    assert!(scan().is_empty(), "while open: {:?}", scan());
+    drop(app);
+    assert!(scan().is_empty(), "after close: {:?}", scan());
+    let _reopened = App::open(dir.path(), 3000).await.unwrap();
+    assert!(scan().is_empty(), "after reopen: {:?}", scan());
+}
