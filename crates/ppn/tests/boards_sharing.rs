@@ -147,6 +147,7 @@ fn two_identities_share_one_board_and_edit_each_others_work() {
         );
     }
     let person = ana.json(&["identity", "show"])["identity"]["id"].clone();
+    until(|| member(&luiz, "Ana"), |entry| entry["id"] == person, WAIT);
     luiz.json(&["assign", "--board", "House", task, "Ana"]);
     wait_for_house_task(&ana, task);
     ana.json(&["comment", "--board", "House", task, "New glass arrived"]);
@@ -160,6 +161,8 @@ fn two_identities_share_one_board_and_edit_each_others_work() {
     ]);
     let second = ana.json(&["add", "--board", "House", "Order window putty"]);
     let second = second["created"].as_str().unwrap();
+    let owner = luiz.json(&["identity", "show"])["identity"]["id"].clone();
+    until(|| member(&ana, "Luiz"), |entry| entry["id"] == owner, WAIT);
     ana.json(&["assign", "--board", "House", second, "Luiz"]);
     let confirmed = until(
         || luiz.json(&["ls", "--board", "House", "assignee:me"]),
@@ -938,14 +941,14 @@ fn a_linked_reader_leaves_locally_and_all_devices_rejoin_after_removal() {
         );
         wait_for_house_task(host, returning);
         wait_for_house_task(host, id);
-    }
-    until(
-        || member(&owner, "Ben"),
         let log = std::fs::read_to_string(host.data.join("daemon.log")).unwrap();
         assert!(
             !log.contains("delivery stream ended: replay after readmission"),
             "{log}"
         );
+    }
+    until(
+        || member(&owner, "Ben"),
         |person| {
             person["former_member"] == false
                 && person["devices"].as_array().is_some_and(|devices| {
