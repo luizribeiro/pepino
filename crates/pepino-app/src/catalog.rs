@@ -550,6 +550,13 @@ impl App {
                 let mut local = previous.clone();
                 local.merge_catalog(board, signer, announcement, now)?;
                 if local != previous {
+                    for board in local
+                        .boards()
+                        .iter()
+                        .filter(|board| previous.board_forgotten(board.id))
+                    {
+                        self.check_forgotten_rows(&local, board.id).await?;
+                    }
                     self.save_and_resume_board_cleanup(local, guard).await?;
                 }
             }

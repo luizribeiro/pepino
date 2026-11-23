@@ -1,10 +1,11 @@
 use pepino_core::BoardId;
 use sqlx::Connection;
 
-use crate::{DatabaseErrorKind, Store, StoreError, board_key::BoardKey, sqlite};
+use crate::{Store, StoreError, board_key::BoardKey, sqlite};
 
 impl Store {
-    pub async fn forget_board(&self, board: BoardId) -> Result<(), StoreError> {
+    /// Delete the board history. False means its rows are gone but pages still need scrubbing.
+    pub async fn forget_board(&self, board: BoardId) -> Result<bool, StoreError> {
         let mut db = self.connection.lock().await;
         sqlx::query("PRAGMA secure_delete = ON")
             .execute(&mut *db)
@@ -23,15 +24,22 @@ impl Store {
                 .await?;
         }
         tx.commit().await?;
-        // Earlier writes may have freed pages before secure_delete was enabled.
-        sqlx::query("VACUUM").execute(&mut *db).await?;
-        if !sqlite::checkpoint(&mut db).await? {
-            return Err(StoreError::Database {
-                kind: DatabaseErrorKind::Busy,
-                source: std::io::Error::other("the app database write-ahead log is busy").into(),
-            });
+        if let Some(readers) = &self.readers {
+            let options = readers
+                .connect_options()
+                .as_ref()
+                .clone()
+                .read_only(false)
+                .busy_timeout(std::time::Duration::ZERO);
+            let mut scrub = sqlx::SqliteConnection::connect_with(&options).await?;
+            if !sqlite::checkpoint(&mut scrub).await? {
+                return Ok(false);
+            }
+            // Earlier writes may have freed pages before secure_delete was enabled.
+            sqlx::query("VACUUM").execute(&mut scrub).await?;
+            return Ok(sqlite::checkpoint(&mut scrub).await?);
         }
-        Ok(())
+        Ok(true)
     }
 }
 

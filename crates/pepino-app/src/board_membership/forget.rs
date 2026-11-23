@@ -35,6 +35,13 @@ impl LocalState {
         self.catalog.board_cleanup.keys().copied()
     }
 
+    pub fn board_history_cleanup_pending(&self, board: BoardId) -> bool {
+        matches!(
+            self.catalog.board_cleanup.get(&board),
+            Some(BoardCleanup::History | BoardCleanup::HistoryAfterPurgeAttempt)
+        )
+    }
+
     pub fn board_needs_transport_purge(&self, board: BoardId) -> bool {
         self.catalog.board_cleanup.contains_key(&board)
     }
@@ -108,24 +115,55 @@ impl App {
         guard: File,
     ) -> Result<(LocalState, File), AppError> {
         let mut changed = false;
+        let mut cancelled = Vec::new();
         for (&board, stage) in &mut local.catalog.board_cleanup {
             let next = match *stage {
                 BoardCleanup::History => BoardCleanup::Transport,
                 BoardCleanup::HistoryAfterPurgeAttempt => BoardCleanup::Purging,
                 BoardCleanup::Transport | BoardCleanup::Purging => continue,
             };
-            self.store()
-                .forget_board(board)
-                .await
-                .map_err(store_error)?;
-            *stage = next;
-            changed = true;
+            if matches!(self.store().forget_board(board).await, Ok(true)) {
+                if next == BoardCleanup::Transport
+                    && local.boards.iter().any(|entry| entry.id == board)
+                {
+                    cancelled.push(board);
+                } else {
+                    *stage = next;
+                }
+                changed = true;
+            }
+        }
+        for board in cancelled {
+            local.catalog.board_cleanup.remove(&board);
         }
         if changed {
             self.save_cleanup(local, guard).await
         } else {
             Ok((local, guard))
         }
+    }
+
+    pub(crate) async fn check_forgotten_rows(
+        &self,
+        local: &LocalState,
+        board: BoardId,
+    ) -> Result<(), AppError> {
+        if local.board_history_cleanup_pending(board)
+            && self
+                .store()
+                .statistics(board)
+                .await
+                .map_err(store_error)?
+                .total
+                != 0
+        {
+            return Err(crate::state::storage(
+                "restore board",
+                "deleting its previous local history is still pending",
+                true,
+            ));
+        }
+        Ok(())
     }
 
     pub async fn purge_forgotten_board_transport(&self) -> Result<(), AppError> {
@@ -135,7 +173,18 @@ impl App {
             return Ok(());
         }
         let (mut local, guard) = self.resume_board_history(local, guard).await?;
-        let boards: Vec<_> = local.pending_board_purges().collect();
+        let boards: Vec<_> = local
+            .pending_board_purges()
+            .filter(|&board| !local.board_history_cleanup_pending(board))
+            .collect();
+        let history_pending = boards.len() != local.catalog.board_cleanup.len();
+        if boards.is_empty() {
+            return if history_pending {
+                Err(history_cleanup_pending())
+            } else {
+                Ok(())
+            };
+        }
         let pending: Vec<_> = boards
             .iter()
             .copied()
@@ -166,8 +215,13 @@ impl App {
             }
             return Err(crate::state::storage("purge board transport", error, true));
         }
-        local.catalog.board_cleanup.clear();
+        for board in boards {
+            local.catalog.board_cleanup.remove(&board);
+        }
         self.save_cleanup(local, guard).await?;
+        if history_pending {
+            return Err(history_cleanup_pending());
+        }
         Ok(())
     }
 
@@ -183,6 +237,14 @@ impl App {
         })
         .await?
     }
+}
+
+fn history_cleanup_pending() -> AppError {
+    crate::state::storage(
+        "purge board history",
+        "erasing app database pages is still pending",
+        true,
+    )
 }
 
 #[cfg(test)]
@@ -470,4 +532,82 @@ async fn forgetting_leaves_no_task_text_in_any_file() {
     assert!(scan().is_empty(), "after close: {:?}", scan());
     let _reopened = App::open(dir.path(), 3000).await.unwrap();
     assert!(scan().is_empty(), "after reopen: {:?}", scan());
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn a_pinned_reader_defers_erasure_without_blocking_leave_or_open() {
+    use pepino_core::{Envelope, Event, Hlc, InitialFields};
+    use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::init(dir.path(), 0).await.unwrap();
+    let board = BoardId::from_bytes([75; 32]);
+    app.register_created_board(board, "Greenhouse repairs")
+        .await
+        .unwrap();
+    let wanted = BoardId::from_bytes([76; 32]);
+    app.register_created_board(wanted, "Workshop repairs")
+        .await
+        .unwrap();
+    let author = app.local_state().device_id;
+    for n in 0..40 {
+        let event = Envelope::new(
+            author,
+            Hlc {
+                wall_ms: 1000 + n,
+                counter: 0,
+            },
+            Event::TaskCreated {
+                title: format!("Private greenhouse repair notes {n}"),
+                fields: InitialFields::default(),
+            },
+        )
+        .unwrap();
+        app.store()
+            .append(board, &event.encode().unwrap(), Some(author))
+            .await
+            .unwrap();
+    }
+
+    let options = SqliteConnectOptions::new().filename(dir.path().join("pepino.sqlite"));
+    let mut reader = SqliteConnection::connect_with(&options).await.unwrap();
+    let mut snapshot = reader.begin().await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM event_log")
+        .fetch_one(&mut *snapshot)
+        .await
+        .unwrap();
+    assert_eq!(count, 40);
+
+    let left = app.forget_board(board, 2000).await.unwrap();
+    assert!(left.board_forgotten(board));
+    assert!(left.board_history_cleanup_pending(board));
+    let reopened = App::open(dir.path(), 3000).await.unwrap();
+    assert!(reopened.local_state().board_history_cleanup_pending(board));
+    assert_eq!(reopened.store().statistics(board).await.unwrap().total, 0);
+
+    let left = app.forget_board(wanted, 2000).await.unwrap();
+    assert!(left.board_history_cleanup_pending(wanted));
+    let mut rejoined = app.fresh_local_state().await.unwrap();
+    rejoined.change_board_presence(wanted, false, 3500).unwrap();
+    rejoined.name_board(wanted, "Workshop repairs");
+    rejoined.replace(dir.path()).unwrap();
+
+    snapshot.rollback().await.unwrap();
+    drop(reader);
+    let reopened = App::open(dir.path(), 4000).await.unwrap();
+    assert!(!reopened.local_state().board_history_cleanup_pending(board));
+    assert!(reopened.local_state().board_needs_transport_purge(board));
+    assert!(
+        reopened
+            .local_state()
+            .resolve_board("Workshop repairs", "board")
+            .is_ok()
+    );
+    assert!(!reopened.local_state().board_needs_transport_purge(wanted));
+    let marker = b"Private greenhouse repair notes";
+    for file in std::fs::read_dir(dir.path()).unwrap() {
+        let bytes = std::fs::read(file.unwrap().path()).unwrap();
+        assert!(!bytes.windows(marker.len()).any(|part| part == marker));
+    }
 }

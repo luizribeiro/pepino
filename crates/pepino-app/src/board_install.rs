@@ -179,6 +179,7 @@ impl App {
             ));
         }
         let (mut local, guard) = self.resume_board_history(local, guard).await?;
+        self.check_forgotten_rows(&local, board).await?;
         local.install_share(&grant, receipt, crate::wall_time_ms())?;
         let (local, _guard) = self.save_and_resume_board_cleanup(local, guard).await?;
         Ok((board, peer, local.board_join_state(board)))
