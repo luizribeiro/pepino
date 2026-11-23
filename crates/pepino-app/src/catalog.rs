@@ -284,7 +284,7 @@ impl LocalState {
         forgotten: bool,
         now: u64,
     ) -> Result<(), AppError> {
-        self.catalog.board_presence.write(
+        self.catalog.board_presence.write_board_presence(
             presence_key(board),
             (!forgotten).then(|| "present".into()),
             self.device_id,

@@ -83,6 +83,28 @@ impl Preferences {
         writer: DeviceId,
         now: u64,
     ) -> Result<(), AppError> {
+        self.write_entry(key, value, writer, now, "preference", "identity preference")
+    }
+
+    pub(crate) fn write_board_presence(
+        &mut self,
+        key: String,
+        value: Option<String>,
+        writer: DeviceId,
+        now: u64,
+    ) -> Result<(), AppError> {
+        self.write_entry(key, value, writer, now, "board", "board presence")
+    }
+
+    fn write_entry(
+        &mut self,
+        key: String,
+        value: Option<String>,
+        writer: DeviceId,
+        now: u64,
+        field: &str,
+        register: &str,
+    ) -> Result<(), AppError> {
         validate(&key, value.as_deref())?;
         if value.is_some()
             && self.get(&key).is_none_or(|entry| entry.value.is_none())
@@ -94,8 +116,8 @@ impl Preferences {
                 >= MAX_LIVE
         {
             return Err(invalid(
-                "preference",
-                format!("identity preference limit of {MAX_LIVE} live keys reached"),
+                field,
+                format!("{register} limit of {MAX_LIVE} live keys reached"),
             ));
         }
         let mut clock = Clock::new();
@@ -105,7 +127,7 @@ impl Preferences {
         }
         let clock_error = || {
             invalid(
-                "preference",
+                field,
                 previous.map_or_else(
                     || "the local clock is outside the supported range".into(),
                     |entry| format!("check the clock on device {}", entry.writer),

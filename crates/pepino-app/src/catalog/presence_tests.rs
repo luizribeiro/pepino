@@ -278,3 +278,20 @@ async fn a_fresh_grant_cancels_an_unstarted_purge_but_replays_and_can_leave_agai
         BoardCleanup::History
     );
 }
+
+#[tokio::test]
+async fn reaching_the_board_presence_limit_reports_boards() {
+    let mut local = source().await;
+    for n in 0..255u32 {
+        let mut id = [9; 32];
+        id[..4].copy_from_slice(&n.to_be_bytes());
+        local
+            .change_board_presence(BoardId::from_bytes(id), false, 1000)
+            .unwrap();
+    }
+    let error = local
+        .change_board_presence(BoardId::from_bytes([10; 32]), false, 1000)
+        .unwrap_err();
+    assert!(matches!(error, AppError::InvalidInput { field, reason, .. }
+        if field == "board" && reason == "board presence limit of 256 live keys reached"));
+}
