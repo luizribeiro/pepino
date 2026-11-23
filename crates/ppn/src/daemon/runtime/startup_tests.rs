@@ -214,3 +214,19 @@ async fn a_failed_board_purge_leaves_the_daemon_available_until_the_next_start()
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn startup_exits_if_the_previous_node_keeps_its_lock() {
+    let startup = Startup::new().await;
+    let old = Node::spawn(startup.settings.clone()).await.unwrap();
+    let (_stop, stopping) = oneshot::channel();
+    assert!(matches!(
+        timeout(
+            Duration::from_secs(10),
+            start_node(&startup.settings, stopping, Duration::from_millis(5)),
+        )
+        .await,
+        Ok(Err(pepino_node::Error::DirectoryInUse(_)))
+    ));
+    old.shutdown().await.unwrap();
+}

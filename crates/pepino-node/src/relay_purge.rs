@@ -56,7 +56,11 @@ pub(super) async fn device_boards(pool: &SqlitePool, boards: &[BoardId]) -> Resu
         }
     }
     tx.commit().await.map_err(Error::storage)?;
-    if !checkpoint(pool).await? {
+    let mut connection = pool.acquire().await.map_err(Error::storage)?;
+    if !pepino_store::sqlite::checkpoint(&mut connection)
+        .await
+        .map_err(Error::storage)?
+    {
         return Err(Error::storage("the node database write-ahead log is busy"));
     }
     Ok(())

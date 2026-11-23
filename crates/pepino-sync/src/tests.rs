@@ -229,3 +229,44 @@ async fn daemon_engine_can_report_boards_while_transport_open_is_blocked() {
     release.send(()).unwrap();
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_listed_board_retries_an_interrupted_purge_before_opening() {
+    use crate::SyncEngine;
+    use pepino_app::App;
+    use pepino_core::BoardId;
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().unwrap();
+    let app = App::init(dir.path(), directory::NOW).await.unwrap();
+    let device = app.local_state().device_id;
+    let board = BoardId::from_bytes([0x81; 32]);
+    app.register_created_board(board, "Allotment repairs")
+        .await
+        .unwrap();
+    let path = dir.path().join("local.json");
+    let mut local: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    local["catalog"]["board_cleanup"] = serde_json::json!({board.to_string(): "purging"});
+    std::fs::write(path, serde_json::to_vec(&local).unwrap()).unwrap();
+
+    let node = Arc::new(stub::Stub::new(device));
+    let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
+        .await
+        .unwrap();
+    let failure = wait_for_status(&engine, |status| status.restart_required.is_some())
+        .await
+        .restart_required
+        .unwrap();
+    assert_eq!(failure.board, board);
+    assert!(!engine.status().node.boards.contains_key(&board));
+    engine.shutdown().await.unwrap();
+
+    app.purge_forgotten_board_transport().await.unwrap();
+    let engine = SyncEngine::start(Default::default(), Arc::new(node.restarted()), dir.path())
+        .await
+        .unwrap();
+    let status = wait_for_status(&engine, |status| status.node.boards.contains_key(&board)).await;
+    assert!(status.restart_required.is_none());
+    engine.shutdown().await.unwrap();
+}

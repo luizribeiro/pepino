@@ -108,15 +108,21 @@ impl<T: Transport> BoardWorkers<T> {
     }
 
     pub async fn open_missing(&mut self, local: &LocalState) -> Result<(), Error> {
-        for board in local
-            .boards()
-            .iter()
-            .filter(|board| should_open(local, board.id))
-        {
+        for board in local.boards() {
             if self.stopping.has_changed().is_err() {
                 return Ok(());
             }
-            if !self.handles.contains_key(&board.id) {
+            if local.board_needs_transport_purge(board.id) {
+                self.changes.send_modify(|status| {
+                    require_restart(
+                        status,
+                        board.id,
+                        "retry the purge before reopening the board",
+                    );
+                });
+                return Ok(());
+            }
+            if should_open(local, board.id) && !self.handles.contains_key(&board.id) {
                 let replay = local.needs_readmission_replay(board.id);
                 let opening = if replay {
                     self.node.open_board_for_readmission(board.id).await

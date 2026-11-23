@@ -94,8 +94,14 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         return Ok(());
     };
     let mut logged = StatusLog::default();
+    let normal_delay = Duration::from_millis(250);
+    let mut delay = normal_delay;
     loop {
-        try_purge(&app, |message| log(level, LogLevel::Warn, message)).await;
+        if try_purge(&app, |message| log(level, LogLevel::Warn, message)).await {
+            delay = normal_delay;
+        } else {
+            delay = (delay * 2).min(STARTUP_LIMIT);
+        }
         let outcome = cycle(
             &socket.listener,
             &settings,
@@ -118,12 +124,12 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         tokio::select! {
             _ = terminate.recv() => return Ok(()),
             _ = interrupt.recv() => return Ok(()),
-            _ = restart_delay() => (),
+            _ = restart_delay(delay) => (),
         }
     }
 }
 
-async fn try_purge(app: &pepino_app::App, mut warn: impl FnMut(&str)) {
+async fn try_purge(app: &pepino_app::App, mut warn: impl FnMut(&str)) -> bool {
     if let Err(error) = app.purge_forgotten_board_transport().await {
         let message = format!("could not finish board cleanup; will retry at next start: {error}");
         if let Ok(local) = app.fresh_local_state().await {
@@ -137,27 +143,35 @@ async fn try_purge(app: &pepino_app::App, mut warn: impl FnMut(&str)) {
         } else {
             warn(&crate::error::shorten_message_ids(&message));
         }
+        return false;
     }
+    true
 }
 
-async fn restart_delay() {
-    tokio::time::sleep(Duration::from_millis(250)).await;
+async fn restart_delay(delay: Duration) {
+    tokio::time::sleep(delay).await;
 }
 
 async fn start_node(
     settings: &NodeSettings,
     mut stopping: oneshot::Receiver<()>,
+    lock_wait: Duration,
 ) -> Result<Option<Node>, pepino_node::Error> {
+    let deadline = tokio::time::Instant::now() + lock_wait;
     loop {
         match Node::spawn_until_stopped(settings.clone(), async {
             let _ = (&mut stopping).await;
         })
         .await
         {
-            Err(pepino_node::Error::DirectoryInUse(_)) => {
+            Err(error @ pepino_node::Error::DirectoryInUse(_)) => {
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(error);
+                }
                 tokio::select! {
                     _ = &mut stopping => return Ok(None),
-                    _ = restart_delay() => (),
+                    _ = restart_delay(remaining.min(Duration::from_millis(250))) => (),
                 }
             }
             result => return result,
@@ -181,7 +195,7 @@ async fn cycle(
     let mut node = None;
     let outcome = {
         let start = async {
-            let transport = start_node(settings, stopping)
+            let transport = start_node(settings, stopping, STARTUP_LIMIT)
                 .await
                 .map_err(|error| failure(&format!("Could not start the network node. {error}")))?;
             let Some(transport) = transport else {
