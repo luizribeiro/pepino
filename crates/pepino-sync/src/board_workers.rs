@@ -16,8 +16,7 @@ use tokio::{
 use crate::{BoardFailure, DeliveryStream, Error, Status, Transport, TransportBoard};
 
 pub(crate) fn should_open(local: &LocalState, board: BoardId) -> bool {
-    !local.board_needs_transport_purge(board)
-        && (!local.board_removal_confirmed(board) || local.needs_readmission_replay(board))
+    !local.board_removal_confirmed(board) || local.needs_readmission_replay(board)
 }
 
 struct WorkerStop {
@@ -110,16 +109,6 @@ impl<T: Transport> BoardWorkers<T> {
     pub async fn open_missing(&mut self, local: &LocalState) -> Result<(), Error> {
         for board in local.boards() {
             if self.stopping.has_changed().is_err() {
-                return Ok(());
-            }
-            if local.board_needs_transport_purge(board.id) {
-                self.changes.send_modify(|status| {
-                    require_restart(
-                        status,
-                        board.id,
-                        "retry the purge before reopening the board",
-                    );
-                });
                 return Ok(());
             }
             if should_open(local, board.id) && !self.handles.contains_key(&board.id) {

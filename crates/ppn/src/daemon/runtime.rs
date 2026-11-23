@@ -94,14 +94,7 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         return Ok(());
     };
     let mut logged = StatusLog::default();
-    let normal_delay = Duration::from_millis(250);
-    let mut delay = normal_delay;
     loop {
-        if try_purge(&app, |message| log(level, LogLevel::Warn, message)).await {
-            delay = normal_delay;
-        } else {
-            delay = (delay * 2).min(STARTUP_LIMIT);
-        }
         let outcome = cycle(
             &socket.listener,
             &settings,
@@ -124,28 +117,9 @@ async fn run_async(config: &Config, level: LogLevel) -> Result<(), CliError> {
         tokio::select! {
             _ = terminate.recv() => return Ok(()),
             _ = interrupt.recv() => return Ok(()),
-            _ = restart_delay(delay) => (),
+            _ = restart_delay(Duration::from_millis(250)) => (),
         }
     }
-}
-
-async fn try_purge(app: &pepino_app::App, mut warn: impl FnMut(&str)) -> bool {
-    if let Err(error) = app.purge_forgotten_board_transport().await {
-        let message = format!("could not finish board cleanup; will retry at next start: {error}");
-        if let Ok(local) = app.fresh_local_state().await {
-            let mut boards = local.pending_board_purges().peekable();
-            if boards.peek().is_none() {
-                warn(&crate::error::shorten_message_ids(&message));
-            }
-            for board in boards {
-                warn(&board_line(board, &message));
-            }
-        } else {
-            warn(&crate::error::shorten_message_ids(&message));
-        }
-        return false;
-    }
-    true
 }
 
 async fn restart_delay(delay: Duration) {

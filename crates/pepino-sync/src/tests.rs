@@ -231,7 +231,7 @@ async fn daemon_engine_can_report_boards_while_transport_open_is_blocked() {
 }
 
 #[tokio::test]
-async fn a_listed_board_retries_an_interrupted_purge_before_opening() {
+async fn legacy_purge_markers_do_not_restart_the_engine() {
     use crate::SyncEngine;
     use pepino_app::App;
     use pepino_core::BoardId;
@@ -252,18 +252,6 @@ async fn a_listed_board_retries_an_interrupted_purge_before_opening() {
 
     let node = Arc::new(stub::Stub::new(device));
     let engine = SyncEngine::start(Default::default(), node.clone(), dir.path())
-        .await
-        .unwrap();
-    let failure = wait_for_status(&engine, |status| status.restart_required.is_some())
-        .await
-        .restart_required
-        .unwrap();
-    assert_eq!(failure.board, board);
-    assert!(!engine.status().node.boards.contains_key(&board));
-    engine.shutdown().await.unwrap();
-
-    app.purge_forgotten_board_transport().await.unwrap();
-    let engine = SyncEngine::start(Default::default(), Arc::new(node.restarted()), dir.path())
         .await
         .unwrap();
     let status = wait_for_status(&engine, |status| status.node.boards.contains_key(&board)).await;

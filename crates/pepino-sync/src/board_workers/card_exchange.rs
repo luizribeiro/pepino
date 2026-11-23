@@ -33,8 +33,6 @@ impl<T: Transport> BoardWorkers<T> {
                 false
             };
             if !(own || manager)
-                || local.board_needs_transport_purge(channel)
-                || local.board_needs_transport_purge(exchange.board)
                 || self.handles.contains_key(&channel)
                 || self.stopping.has_changed().is_err()
             {
