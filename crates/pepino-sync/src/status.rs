@@ -74,9 +74,17 @@ impl Status {
     pub(crate) fn idle_with(&self, node: &NodeStatus) -> bool {
         self.restart_required.is_none()
             && self.boards.iter().all(|(id, board)| {
+                let signals = node.boards.get(id);
+                if self.board_joins.get(id) == Some(&BoardJoinState::WaitingToBeAdded)
+                    && let Some(signals) = signals.filter(|signals| !signals.joined)
+                {
+                    return !board.ingest_pending
+                        && !board.stream_retrying
+                        && !signals.replaying
+                        && signals.active_syncs.is_empty()
+                        && signals.pending_deliveries == 0;
+                }
                 board.paused
-                    || (self.board_joins.get(id) == Some(&BoardJoinState::WaitingToBeAdded)
-                        && node.boards.get(id).is_some_and(|signals| !signals.joined))
                     || (!board.closed
                         && board.outbox_pending == Some(0)
                         && !board.ingest_pending
@@ -179,9 +187,46 @@ fn waiting_for_access_is_idle_with_connected_peers() {
         board_joins: [(board, BoardJoinState::WaitingToBeAdded)].into(),
         ..Default::default()
     };
-    status.boards.insert(board, Default::default());
+    status.boards.insert(
+        board,
+        BoardStatus {
+            outbox_pending: Some(0),
+            ..Default::default()
+        },
+    );
     status.node.boards.insert(board, Default::default());
     status.node.connected_peers.insert(peer);
+    assert!(!status.board_caught_up(board, &status.node));
+    assert!(status.is_idle());
+    status.boards.get_mut(&board).unwrap().ingest_pending = true;
+    assert!(!status.is_idle());
+    status.boards.get_mut(&board).unwrap().ingest_pending = false;
+    status
+        .node
+        .boards
+        .get_mut(&board)
+        .unwrap()
+        .pending_deliveries = 3;
+    assert!(!status.is_idle());
+    let signals = status.node.boards.get_mut(&board).unwrap();
+    signals.pending_deliveries = 0;
+    signals.active_syncs.insert(
+        (peer, 1),
+        pepino_node::SyncCounts {
+            incoming_operations: 3,
+            outgoing_operations: 0,
+            incoming_bytes: 900,
+            outgoing_bytes: 0,
+        },
+    );
+    assert!(!status.is_idle());
+    status
+        .node
+        .boards
+        .get_mut(&board)
+        .unwrap()
+        .active_syncs
+        .clear();
     assert!(status.is_idle());
     status.node.boards.get_mut(&board).unwrap().joined = true;
     assert!(!status.is_idle());
