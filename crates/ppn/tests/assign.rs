@@ -53,11 +53,18 @@ fn assign_reports_an_unknown_person_at_the_reference() {
         ])
         .output()
         .unwrap();
+    let human = sandbox
+        .command()
+        .args(["assign", &task, "Unregistered greenhouse colleague"])
+        .output()
+        .unwrap();
+    assert_eq!(human.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&human.stderr).contains("retry after `ppn sync`"));
     let error = task_error(output, 2, "invalid_input");
     assert_eq!(error["field"], "assignees[0]");
     assert_eq!(
         error["hint"],
-        "Use `me`, a display name, or an identity ID or prefix."
+        "If they recently joined the board, retry after `ppn sync`."
     );
     assert!(
         error["message"]
